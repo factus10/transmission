@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-unsigned/
+*.dmg
+*.zip
+
+# Secrets / credentials — never commit
+.env
+.env.*
+
+# Local editor / tooling
+.claude/
+.DS_Store
+*.log
+
+# Client data & scratch captures — never commit
+# (the app reads user-provided spreadsheets; none belong in the repo)
+*.xlsx
+*.xls
+*.xlsm
+*.ods
+*.csv
+*.winnow
+
+
+
+
+# Locally generated app prefs
+prefs.json
