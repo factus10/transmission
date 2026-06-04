@@ -1,0 +1,79 @@
+{
+  "name": "transmission",
+  "version": "2.2.0",
+  "description": "Content audit, IA, and migration workspace for website replatforms — assess every page, architect the new site, and direct the build",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder --mac --universal",
+    "build:arm": "electron-builder --mac --arm64",
+    "build:intel": "electron-builder --mac --x64"
+  },
+  "dependencies": {
+    "d3": "^7.9.0",
+    "exceljs": "^4.4.0",
+    "marked": "^4.3.0",
+    "mermaid": "^11.14.0",
+    "mustache": "^4.2.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^29.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.jakala.transmission",
+    "productName": "Transmission",
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "icon": "assets/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": {
+        "teamId": "D4YLNBMZ79"
+      }
+    },
+    "dmg": {
+      "title": "Transmission",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "assets/**/*",
+      "rubrics/**/*",
+      "node_modules/**/*",
+      "!node_modules/*/{CHANGELOG.md,README.md,readme.md,*.d.ts}",
+      "!node_modules/.cache"
+    ]
+  }
+}
