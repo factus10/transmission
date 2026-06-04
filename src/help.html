@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Transmission — Help</title>
+  <style>
+    :root {
+      --bg-base:       #f5f5f5;
+      --bg-surface:    #ffffff;
+      --border:        #e0e0e0;
+      --border-light:  #d0d0d0;
+      --text-primary:  #1a1a1a;
+      --text-secondary:#4b4b4b;
+      --text-muted:    #636363;
+      --font-sans:     'IBM Plex Sans', system-ui, sans-serif;
+      --font-mono:     'IBM Plex Mono', 'Menlo', monospace;
+      --radius:        4px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-base:       #1a1a1a;
+        --bg-surface:    #2a2a2a;
+        --border:        #3a3a3a;
+        --border-light:  #444444;
+        --text-primary:  #e5e5e5;
+        --text-secondary:#a3a3a3;
+        --text-muted:    #737373;
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
+
+    #help-body {
+      padding: 20px 24px 32px;
+      overflow-y: auto;
+      height: 100%;
+    }
+
+    .help-section { margin-bottom: 20px; }
+
+    .help-section h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 6px;
+    }
+
+    .help-section p {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      margin-bottom: 6px;
+    }
+
+    .help-section ul { padding-left: 20px; margin-bottom: 6px; }
+
+    .help-section li {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      margin-bottom: 2px;
+    }
+
+    .help-section code {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: var(--bg-base);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1px 5px;
+    }
+
+    .help-code {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: var(--bg-base);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      line-height: 1.6;
+      overflow-x: auto;
+      white-space: pre;
+      margin-bottom: 8px;
+      color: var(--text-primary);
+    }
+
+    .help-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+
+    .help-table th {
+      text-align: left;
+      font-weight: 600;
+      color: var(--text-primary);
+      border-bottom: 2px solid var(--border);
+      padding: 6px 8px;
+    }
+
+    .help-table td {
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+      padding: 5px 8px;
+    }
+
+    .help-table code {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: var(--bg-base);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1px 4px;
+    }
+
+    h2 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin: 24px 0 12px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    h2:first-child { margin-top: 0; }
+
+    .help-section h4 {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 10px 0 4px;
+    }
+
+    .help-toc {
+      margin-bottom: 20px;
+      padding: 12px 16px;
+      background: var(--bg-base);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    .help-toc ul {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 8px;
+      columns: 2;
+      column-gap: 24px;
+    }
+
+    .help-toc ul:last-child { margin-bottom: 0; }
+
+    .help-toc-group {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin: 6px 0 2px;
+    }
+
+    .help-toc li {
+      font-size: 12px;
+      line-height: 1.8;
+    }
+
+    .help-toc a {
+      color: var(--text-secondary);
+      text-decoration: none;
+    }
+
+    .help-toc a:hover {
+      color: var(--text-primary);
+      text-decoration: underline;
+    }
+
+    /* Lifecycle band header above each group of sections */
+    .help-phase {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin: 34px 0 0;
+    }
+
+    /* Mental-model callout that opens each section */
+    .help-mm {
+      border-left: 3px solid var(--border-light);
+      padding: 2px 0 2px 10px;
+      margin-bottom: 8px;
+    }
+
+    /* "Good end-state" checklist */
+    ul.help-check { list-style: none; padding-left: 2px; }
+    ul.help-check li { padding-left: 2px; }
+    ul.help-check li::before { content: "\2713\00a0"; color: var(--text-muted); font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div id="help-body">
+
+    <!-- ============================================================ -->
+    <!-- INTRODUCTION                                                  -->
+    <!-- ============================================================ -->
+
+    <h2 id="introduction">Transmission</h2>
+
+    <section class="help-section">
+      <p>A macOS desktop app for content audits. It pairs a spreadsheet with an embedded browser so you can review every page on a website and record structured decisions without switching apps.</p>
+      <p><strong>KKE</strong> is the core call on every existing page: <strong>Keep · Kill · Evolve · Consolidate · Exclude</strong>. The input is usually a Screaming Frog crawl export (<code>.xlsx</code>), but any spreadsheet with a URL column works. Every decision is written back into the same file &mdash; your deliverable is one enriched spreadsheet. Changes auto-save 2s after your last edit (or <code>Cmd+S</code>).</p>
+      <p>This help follows the <strong>real lifecycle of an audit</strong>, top to bottom (Set up → Audit → Classify → Review → Architect → Ship → Power features). Each section opens with the one mental model that makes it obvious, the key steps, and a <em>Good end-state</em> checklist. For the full manual and task hand-outs, see the project's <code>docs/</code> folder (<code>docs/USER_GUIDE.md</code> and <code>docs/walkthroughs/</code>).</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- TABLE OF CONTENTS                                             -->
+    <!-- ============================================================ -->
+
+    <nav class="help-toc">
+      <div class="help-toc-group">A · Set up &amp; orient</div>
+      <ul>
+        <li><a href="#getting-started">1. Getting Started</a></li>
+        <li><a href="#project-setup">2. Project Setup</a></li>
+      </ul>
+      <div class="help-toc-group">B · The core audit</div>
+      <ul>
+        <li><a href="#audit-pass">3. Running the Audit Pass</a></li>
+        <li><a href="#finding-work">4. Finding the Work</a></li>
+        <li><a href="#bulk-ops">5. Bulk Operations</a></li>
+        <li><a href="#tagging-glossary">6. Tagging, Grouping &amp; Glossary</a></li>
+      </ul>
+      <div class="help-toc-group">C · Classify for migration</div>
+      <ul>
+        <li><a href="#content-types">7. Content Types &amp; the Crosswalk</a></li>
+        <li><a href="#suggested-kke">8. Suggested_KKE</a></li>
+        <li><a href="#consolidate">9. Consolidate</a></li>
+        <li><a href="#non200">10. Non-200 Triage</a></li>
+      </ul>
+      <div class="help-toc-group">D · Collaborate &amp; review</div>
+      <ul>
+        <li><a href="#sme-review">11. SME Review</a></li>
+        <li><a href="#multi-auditor">12. Multi-auditor Merge</a></li>
+      </ul>
+      <div class="help-toc-group">E · Architect the future site</div>
+      <ul>
+        <li><a href="#navigation-ia">13. Navigation &amp; IA</a></li>
+        <li><a href="#build-direction">14. Build &amp; Direction</a></li>
+      </ul>
+      <div class="help-toc-group">F · Ship it</div>
+      <ul>
+        <li><a href="#redirects">15. Redirects</a></li>
+        <li><a href="#reports">16. Producing the Outputs</a></li>
+        <li><a href="#migration-tracker">17. Migration Tracker</a></li>
+        <li><a href="#preflight">18. Pre-flight &amp; Hand-off</a></li>
+      </ul>
+      <div class="help-toc-group">G · Power features</div>
+      <ul>
+        <li><a href="#templates">19. Templates</a></li>
+        <li><a href="#components">20. Component Inventory</a></li>
+      </ul>
+      <div class="help-toc-group">Reference</div>
+      <ul>
+        <li><a href="#audit-columns-ref">Audit Columns</a></li>
+        <li><a href="#keyboard-shortcuts">Keyboard Shortcuts</a></li>
+        <li><a href="#rubric-dsl">Rubric DSL</a></li>
+        <li><a href="#structural-sheets">Structural Sheets</a></li>
+        <li><a href="#sf-columns">Screaming Frog Columns</a></li>
+        <li><a href="#tips">Tips &amp; Best Practices</a></li>
+      </ul>
+    </nav>
+
+    <!-- ============================================================ -->
+    <!-- A · SET UP & ORIENT                                           -->
+    <!-- ============================================================ -->
+    <div class="help-phase">A · Set up &amp; orient</div>
+
+    <h2 id="getting-started">1. Getting Started</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> the app is a viewer/editor for <em>your spreadsheet</em>; it has no separate database. Your <code>.xlsx</code> is the project. On open it injects audit columns and structural sheets, and everything saves back into that one portable file.</p>
+      <ul>
+        <li><strong>Open:</strong> <code>Cmd+O</code> (or the welcome dialog's <em>Open a file</em>). Formats: <code>.xlsx</code>, <code>.xls</code>, <code>.xlsm</code>, <code>.ods</code>, <code>.csv</code>. <strong>File &rarr; Open Recent</strong> lists the 10 latest.</li>
+        <li><strong>Sheet &amp; URL:</strong> multi-sheet files show a picker (structural sheets hidden); the URL column auto-detects (<code>Address</code>, <code>URL</code>, …) or you pick it.</li>
+        <li><strong>Seed banners:</strong> one-time offers of starter libraries (Content Type Registry, Target Spec Library, Component Library). Seeding stages data &mdash; <strong>save</strong> to commit.</li>
+        <li><strong>Help:</strong> <strong>Help &rarr; Getting Started</strong> (welcome), <strong>Product Tour</strong> (5-step), <strong>Keyboard Shortcuts</strong> (<code>Cmd+/</code> or <code>?</code>).</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Right data sheet selected; URL column detected (rows load a page)</li>
+        <li>Audit columns + structural sheets present; seed banners handled deliberately</li>
+        <li>First <code>Cmd+S</code> succeeds and the file reopens with state intact</li>
+      </ul>
+    </section>
+
+    <h2 id="project-setup">2. Project Setup</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> two tiers. <strong>Project Settings</strong> travels <em>with the file</em> (client-specific: site domain, KKE states, suggestion weights, statuses, assignees, saved filters). <strong>App Settings</strong> is <em>per-user</em> (auto-advance, visible clusters, API key, sidebar columns, column mapping).</p>
+      <ul>
+        <li><strong>Project Settings</strong> (File &rarr; Project Settings) &mdash; five tabs: Identity · KKE States · Suggestions · Migration · Saved Filters.</li>
+        <li><strong>App Settings</strong> (&#9881; button) &mdash; Auto-advance · Show SME fields · Show Migration fields · Show Components cluster · Rubrics folder · Claude API key · Sidebar columns · Column mapping.</li>
+        <li>Turn on only the <strong>Show …</strong> toggles this engagement needs; blank metadata is hidden and every cluster collapses with a click.</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Identity filled (at least <strong>Site domain</strong> &mdash; redirects/paths depend on it)</li>
+        <li>Custom KKE states / migration vocab defined if the engagement needs them</li>
+        <li>App Settings reflect how you work; Project Settings saved into the file</li>
+      </ul>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- B · THE CORE AUDIT                                            -->
+    <!-- ============================================================ -->
+    <div class="help-phase">B · The core audit</div>
+
+    <h2 id="audit-pass">3. Running the Audit Pass</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> one row = one existing page. Selecting it loads the page in the browser and fills the field-bar <strong>clusters</strong> (Decide · Classify · Migrate · Components · CMS). You live in Decide; the loop is keyboard-driven.</p>
+      <ul>
+        <li><strong>Make the call:</strong> <code>1</code> Keep · <code>2</code> Kill · <code>3</code> Evolve · <code>4</code> Consolidate · <code>5</code> Exclude (<code>0</code> clears). Auto-advance carries you on; <code>]</code> jumps to the next <em>unreviewed</em> row.</li>
+        <li><strong>Rationale &amp; flags:</strong> <strong>Notes</strong> (dot when present); <code>F</code> flags/unflags (&#9733;); <strong>Assess</strong> runs the rubric.</li>
+        <li><strong>Classify lightly:</strong> set <strong>Content Type</strong> (drives the crosswalk) &mdash; batch the rest later.</li>
+        <li><strong>Browser:</strong> &larr; &rarr; &#8635;, viewport switcher (Auto / SM / MD / LG / XL), &#9707; compare · &#128247; screenshot · &#8650; extract content · &#128279; check links · &#8599; open externally.</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Every intended page has a KKE call (check with <code>]</code>)</li>
+        <li>Rationale captured where the call isn't obvious; tricky pages flagged (<code>F</code>)</li>
+        <li>Content Type set where it'll drive migration; saved</li>
+      </ul>
+    </section>
+
+    <h2 id="finding-work">4. Finding the Work</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> filters are stackable and AND-ed (text <em>and</em> KKE <em>and</em> group <em>and</em> field filters). The list always reflects the current filter, and the Multi-bar acts on exactly that set.</p>
+      <ul>
+        <li><strong>Search</strong> with a scope selector: All fields / URL / Title.</li>
+        <li><strong>KKE filter</strong> is a checkbox dropdown (multi-select, OR-ed) including special filters: Unreviewed, Flagged, Duplicates, SME conflicts/pending, Consolidate (no/dead target), Shared nav, Needs placement, Suggested disagrees / &ne; your call.</li>
+        <li><strong>Field filters</strong> (<strong>+ Field filter</strong>) on any column: is blank / is not blank / contains / equals / starts with / ends with. <strong>Unclassified</strong> is a shortcut for <code>Content Nature is blank</code>.</li>
+        <li><strong>Save</strong> a combination (text + scope + KKE + group + field filters) and recall it; <strong>Cmd+F</strong> Global Search finds &amp; navigates across all rows.</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Scope matches what you're hunting; multi-check used for "either"</li>
+        <li>Field filters layered for precise slices (e.g. <code>NavID is blank</code>)</li>
+        <li>Recurring slices saved as named filters</li>
+      </ul>
+    </section>
+
+    <h2 id="bulk-ops">5. Bulk Operations</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> the <strong>Multi-bar</strong> acts on a target set: your <em>multi-selection</em> if any, otherwise the <em>filtered rows</em>. The label says which (<em>"Apply to N selected/filtered:"</em>).</p>
+      <ul>
+        <li><strong>Define the target:</strong> filter only, or multi-select (<code>Cmd+click</code> toggle, <code>Shift+click</code> range). Selection wins when both apply.</li>
+        <li><strong>Apply an action:</strong> Set KKE · Set Published Status · Set Content Type · Set Content Theme · Set Group · Set Primary Tag · Add Tag → pick value → Apply. Kill-cleanup prompts fire for pages with nav/redirects.</li>
+        <li><strong>Batch assess:</strong> <strong>Project &rarr; Run Rubric on filtered rows…</strong> scores the set into Suggested_KKE.</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>The bar's label confirms the right target before Apply; filter spot-checked</li>
+        <li>Kill-cleanup handled; batch-assess for scoring, hand-set KKE for judgment</li>
+      </ul>
+    </section>
+
+    <h2 id="tagging-glossary">6. Tagging, Grouping &amp; the Glossary</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> three fields, different jobs: <strong>Group</strong> (one per page, the bucket), <strong>Primary Tag</strong> (one, the headline descriptor), <strong>Tags</strong> (many, finer CSV). The <strong>Glossary</strong> keeps terms consistent with a per-name definition.</p>
+      <ul>
+        <li>Apply in the Classify cluster (Group / Primary are single-select with <strong>+ New…</strong>; Tags is a chip input). Bulk via the Multi-bar.</li>
+        <li><strong>Project &rarr; Edit Glossary…</strong> &mdash; markdown Notes per tag/group (empty entries pruned on save; travels in <code>KKE_Glossary</code>).</li>
+        <li><strong>Export for Word…</strong> writes a styled <code>.html</code> key of every term + definition.</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Every page has a Group; Primary Tag where one descriptor dominates</li>
+        <li>Tags drawn from a deliberate reused set; every active term defined</li>
+      </ul>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- C · CLASSIFY FOR MIGRATION                                    -->
+    <!-- ============================================================ -->
+    <div class="help-phase">C · Classify for migration</div>
+
+    <h2 id="content-types">7. Content Types &amp; the Crosswalk</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> three linked attributes: <strong>Content Type</strong> (what it is — the key), <strong>Renders as</strong> (Page / Fragment (embeddable) / Generated), <strong>Target Content Type</strong> (what it becomes). The <strong>Content Type Registry</strong> is the crosswalk — define once per type, every page inherits it, non-destructively.</p>
+      <ul>
+        <li>Set <strong>Content Type</strong> as you audit (a <code>&rarr;</code> hint shows the mapped target). This is the one classification worth doing on the main pass.</li>
+        <li><strong>Project &rarr; Content Type Registry…</strong> &mdash; per type: Renders as · Target Content Type · &rarr; Target Spec · Migration Track · Notes. <strong>Seed with defaults</strong> stages ~20. The editor also lists content types <strong>in use without a crosswalk</strong> (flagged &ldquo;in use · no crosswalk&rdquo;) so gaps are fillable; a <strong>Show all pick-list types</strong> toggle adds unused global dropdown values. Untouched surfaced rows aren't saved &mdash; only mapped ones persist.</li>
+        <li>Adding a type via the audit bar's <strong>+ New content type…</strong> seeds a blank registry row automatically (skipping anything already covered) &mdash; the global dropdown and the per-project crosswalk stay in sync.</li>
+        <li>Defaults fill <em>blank</em> Renders as / Track / Target only (never overwrite). The Migrate cluster's Track shows a ghost suggestion when blank.</li>
+        <li><strong>Verify:</strong> the <strong>Unclassified</strong> button finds missing Renders-as; <strong>Reports &rarr; Content Type Crosswalk…</strong> flags types with no entry.</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Every keep/evolve page has a Content Type; registry covers every type in use</li>
+        <li>Renders as populated (Unclassified → 0); Target + Target Spec + Track mapped</li>
+      </ul>
+    </section>
+
+    <h2 id="suggested-kke">8. Suggested_KKE</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> a thin orchestrator over up to three sources — <strong>Rubric</strong> (rules), <strong>AI</strong> (Claude), <strong>GA</strong> (analytics composite). It combines them by weighted vote into one suggestion and <em>never touches your human KKE</em>.</p>
+      <ul>
+        <li><strong>Set up</strong> in Project Settings &rarr; Suggestions (GA mapping/weights, rubric folder, source weights).</li>
+        <li><strong>Generate:</strong> <strong>Run Rubric on filtered rows…</strong> · <strong>AI Suggest for Unreviewed…</strong> (blank-KKE rows only, ~1s/row, <code>Esc</code> aborts) · <strong>Refresh GA KKE</strong>. <strong>Recompute Suggested KKE</strong> re-runs the combine.</li>
+        <li><strong>Read:</strong> the Suggested_KKE badge (source prefix, &#9888; on disagreement; click for the breakdown). Sidebar filters <strong>Suggested disagrees</strong> / <strong>Suggested &ne; your call</strong> focus your judgment.</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>At least one source configured; weights reflect trust</li>
+        <li>Disagreements/mismatches reviewed; human KKE confirmed where it counts</li>
+      </ul>
+    </section>
+
+    <h2 id="consolidate">9. Consolidate</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> <strong>Consolidate</strong> merges a page's content <em>into</em> another (recorded in <code>Consolidate_Into</code>); the target survives (usually Evolve). Consolidated pages need no nav placement; the redirect resolver chases the target (cycle-safe). The app warns on a <strong>dead target</strong>.</p>
+      <ul>
+        <li><strong>One page:</strong> press <code>4</code> / click <strong>Consolidate</strong> → pick the target in the picker (sets <code>Consolidate_Into</code> + KKE, clears nav).</li>
+        <li><strong>In bulk:</strong> <strong>Navigation Tree &rarr; Consolidation Candidates…</strong> lists nodes with 2+ pages; pick the target (→ Evolve), the rest become Consolidate.</li>
+        <li><strong>Catch breaks:</strong> sidebar filters <strong>Consolidate (no target)</strong> and <strong>Consolidate &rarr; Kill/Exclude target</strong>.</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Every Consolidate page has a live target (no "no target" / "dead target")</li>
+        <li>Targets survive as Keep/Evolve; redirects resolve to a real URL</li>
+      </ul>
+    </section>
+
+    <h2 id="non200">10. Non-200 Triage</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> a crawl is full of non-200 URLs (3xx/4xx/5xx) — mostly cleanup, not content decisions. Triage groups them <em>by status code</em> and sets a default KKE per group at once.</p>
+      <ul>
+        <li><strong>Project &rarr; Triage Non-200 Pages…</strong> (or the auto-offer on open) &mdash; one row per code with a pre-set KKE dropdown; adjust, leave blank to skip, <strong>Apply</strong>.</li>
+        <li>Sidebar status-code badges (amber 3xx, red 4xx/5xx) help you spot what's left. Triage never hides rows &mdash; a 404 might be a live page behind a wall.</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Each code group given a deliberate action (or intentionally skipped) and applied</li>
+        <li>No unexpected red/amber rows left unreviewed</li>
+      </ul>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- D · COLLABORATE & REVIEW                                      -->
+    <!-- ============================================================ -->
+    <div class="help-phase">D · Collaborate &amp; review</div>
+
+    <h2 id="sme-review">11. SME Review</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> <strong>export → reviewer fills dropdowns → import → resolve</strong>. The SME needs only Excel; their columns (<code>SME_Decision</code>, <code>SME_Notes</code>, <code>Content_Owner</code>) merge alongside your audit — never overwriting your KKE.</p>
+      <ul>
+        <li><strong>SME &rarr; Export for SME Review…</strong> (optionally <strong>split by Content Owner</strong>); embedded dropdowns constrain choices.</li>
+        <li><strong>SME &rarr; Import SME Decisions…</strong> merges by URL. <strong>Compare KKE vs SME…</strong> shows divergence; <strong>Resolve Conflicts…</strong> sets <strong>Final_KKE</strong>.</li>
+        <li>Reconcile inline with <strong>Show SME fields</strong>; sidebar filters <strong>SME conflicts</strong> / <strong>SME pending</strong>.</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Imported; Compare reviewed; Resolve run (every reviewed page has a Final KKE)</li>
+        <li>SME conflicts / pending filters empty</li>
+      </ul>
+    </section>
+
+    <h2 id="multi-auditor">12. Multi-auditor Merge</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> merging reads the <em>other</em> auditor's file, matches rows by URL, and reports agreements vs <strong>conflicts</strong> (different KKE on the same page). You resolve conflicts — never silently overwritten.</p>
+      <ul>
+        <li><strong>File &rarr; Merge Auditor Decisions…</strong> → pick the other file. Empty cells fill automatically; conflicts open a resolution dialog (per-row, or bulk <em>Accept All Theirs</em> / <em>Keep All Mine</em>).</li>
+        <li>Related: <strong>File &rarr; Import/Merge</strong> fills only <em>blank</em> cells and can add new URLs.</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Other file merged; every conflict resolved (0 remaining); saved as canonical</li>
+      </ul>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- E · ARCHITECT THE FUTURE SITE                                 -->
+    <!-- ============================================================ -->
+    <div class="help-phase">E · Architect the future site</div>
+
+    <h2 id="navigation-ia">13. Navigation &amp; IA</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> audit rows answer "what about each <em>existing</em> page?"; the nav tree answers "what is the <em>new</em> site?". You connect them by <strong>placing</strong> Keep/Evolve pages onto nodes. The tree is the source of truth for breadcrumbs and computed URLs — renames cascade.</p>
+      <ul>
+        <li>Open with <code>Cmd+Shift+T</code> (or the <strong>Navigation Tree</strong> tab). Drive <strong>need placement &rarr; 0</strong>: KKE = Keep + Evolve, field filter <code>NavID is blank</code>, then <strong>Nav</strong> &rarr; <strong>Assign</strong> (or multi-select + drag onto a node).</li>
+        <li><strong>Shape:</strong> rename/re-slug inline (cascades), drag to reorder/reparent, <strong>+ Root Node</strong> / row <strong>+</strong>, <strong>&#10697;</strong> clone, <strong>Remediate</strong>. Set <strong>Node type</strong>, <strong>In menu</strong> (bulk <strong>Set Menu &#10003;</strong>), <strong>Reference</strong>, <strong>Phase</strong>.</li>
+        <li><strong>Gaps:</strong> <strong>NEW</strong> = net-new; red <strong>empty leaf</strong> = assign / net-new / phase / delete; <strong>&#9888; duplicate IDs</strong> auto-renumbers. Read the stats line.</li>
+        <li><strong>See/report:</strong> <strong>Sitemap</strong> (box tree), <strong>IA Report</strong>, <strong>Nav Coverage</strong>, <strong>Net New Content Brief</strong>.</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>need placement = 0; no unexplained empty leaves; no duplicate NavID/slug warnings</li>
+        <li>In menu set correctly; phased work marked; net-new intentional</li>
+      </ul>
+    </section>
+
+    <h2 id="build-direction">14. Build &amp; Direction</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> every build node carries direction for three roles — <strong>Builder</strong>, <strong>Writer</strong>, <strong>Migrator</strong>. Direction lives at two levels: type-level defaults on the <strong>Target Spec</strong>, node-level briefs that override. Write the brief once per spec; the rest follow.</p>
+      <ul>
+        <li><strong>Project &rarr; Target Spec Library…</strong> &mdash; each spec is a <strong>Page Template</strong> or <strong>Content Model</strong> (field schema) with three direction defaults: Writer brief · Build guidance · Migration mapping. Matched by exact name; 12 seedable defaults.</li>
+        <li><strong>Annotate nodes</strong> in the editor's Build / Write / Migrate sections (Pattern, Page status, Builder, Build guidance, Writer, Writer brief, Migrator). Applying a Pattern fills blank briefs (a Keep/Append/Replace diff dialog guards populated ones).</li>
+        <li><strong>Vocab:</strong> Project Settings &rarr; Migration (Page Statuses + the shared Builder/Writer/Migrator Assignees pool). Fragments are typed via <strong>Node type</strong>.</li>
+        <li><strong>Worklists:</strong> <strong>Reports &rarr; Migration Direction Brief…</strong> &mdash; Role (Writer / Builder / Migrator) + Person, grouped by spec.</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Every build node has a Pattern (each with a default brief, or one reference page)</li>
+        <li>Builder/Writer/Migrator assigned; status reflects reality; specs carry a migration mapping</li>
+      </ul>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- F · SHIP IT                                                   -->
+    <!-- ============================================================ -->
+    <div class="help-phase">F · Ship it</div>
+
+    <h2 id="redirects">15. Redirects</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> a redirect is needed for any Kill page and any page whose URL is changing. The app resolves destinations by priority (<strong>custom &rarr; nav node path &rarr; project default &rarr; blank</strong>). The literal <code>404</code> means "let it die" (distinct from blank = TBD).</p>
+      <ul>
+        <li>Open with the <strong>Redirects</strong> tab / <code>Cmd+Shift+R</code> (lists Kill + URL-changed pages; fragments excluded).</li>
+        <li><strong>Set efficiently:</strong> <strong>Re-derive from nav</strong>, the per-row nav picker, the <strong>404</strong> toggle, and <strong>Find/Replace</strong> (filters to matches; Replace All). Destinations also resolve on Save.</li>
+        <li><strong>Validate &amp; export:</strong> <strong>Migration &rarr; Redirect Chain Check…</strong>; <strong>Export Redirect Map (CSV)…</strong>; <strong>Reports &rarr; Redirect Map Report…</strong> (Kill / URL-changed / intentional 404s).</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Every Kill/URL-changed page has a destination (or an intentional <code>404</code>)</li>
+        <li>Re-derived after the tree was finalized; chain check clean; map exported</li>
+      </ul>
+    </section>
+
+    <h2 id="reports">16. Producing the Outputs</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> reports are read-only views generated on demand; each exports to <strong>PDF or HTML</strong> (HTML opens cleanly in Word). Three audiences: stakeholder narratives, IA/structure, delivery/engineering.</p>
+      <ul>
+        <li><strong>Stakeholder:</strong> Executive Summary · Content Inventory by Section · SME Review Status.</li>
+        <li><strong>IA &amp; structure:</strong> Navigation IA · Nav Coverage Report · Content Type Crosswalk · Component Inventory.</li>
+        <li><strong>Delivery:</strong> Migration Direction Brief · Migration Checklist · Net New Content Brief · Redirect Map Report.</li>
+        <li>The <strong>Migration</strong> menu holds export/validation <em>tools</em>; the <strong>Progress Dashboard</strong> (<code>Cmd+P</code>) gives live completion stats.</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Executive Summary + Content Inventory for the client; IA reports if the tree is in scope</li>
+        <li>Delivery reports generated for the build team, each in the recipient's format</li>
+      </ul>
+    </section>
+
+    <h2 id="migration-tracker">17. Migration Tracker Hand-off</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> the engineering deliverable: one multi-sheet <code>.xlsx</code> generated from current state, re-exported as the audit evolves. Run the Pre-Handoff Check first.</p>
+      <ul>
+        <li><strong>Migration &rarr; Migration Tracker…</strong> &mdash; toggle sheets/options, then export (<code>{project}-migration-tracker-YYYY-MM-DD.xlsx</code>).</li>
+        <li><strong>Sheets:</strong> <strong>Nav Plan</strong> (build metadata per node) · <strong>Source Pages</strong> (audit rows joined to nodes) · <strong>Redirects</strong> (Kill + URL changes; <code>404</code> as intentional deindex) · <strong>Archive</strong> (Kill rows + notes/tags).</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Pre-Handoff clean before export; toggles set for this hand-off</li>
+        <li>Nav Plan carries the build metadata; Redirects matches the map; dated filename</li>
+      </ul>
+    </section>
+
+    <h2 id="preflight">18. Pre-flight &amp; Hand-off</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> the <strong>Pre-Handoff Check</strong> rolls every validation into one pass/issue report — a gate, not a fix. Fix what it flags, re-run, repeat until clean. The change log is the automatic audit trail.</p>
+      <ul>
+        <li><strong>Migration &rarr; Pre-Handoff Check…</strong> checks: every page has a KKE call · Consolidate targets set &amp; live · no redirect chains · no duplicate nav IDs · no empty nav leaves (nav checks skipped without NavStructure). Work top-down, re-running after each batch.</li>
+        <li><strong>Change log:</strong> KKE / SME / Final changes are appended to the <code>KKE_ChangeLog</code> sheet on save (accumulates across sessions).</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Pre-Handoff reports <strong>Ready for handoff</strong> (0 issues)</li>
+        <li>Final save (change log written); reports + Redirect Map + Tracker generated</li>
+      </ul>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- G · POWER FEATURES                                            -->
+    <!-- ============================================================ -->
+    <div class="help-phase">G · Power features</div>
+
+    <h2 id="templates">19. Templates</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> two unrelated systems. <strong>Audit templates</strong> (<code>.kke-template.json</code>) snapshot your <em>setup</em>; <strong>report templates</strong> (Markdown + Mustache) shape how a report renders (currently the Migration Direction Brief).</p>
+      <ul>
+        <li><strong>File &rarr; Save / Load Audit Template…</strong> &mdash; carries field config, vocabularies, KKE states, column mapping, identity (not page data).</li>
+        <li><strong>Report templates:</strong> in <em>Documents &rarr; Transmission &rarr; templates</em>; <code>FIELDS-*.md</code> document the placeholders; a template declares <code>appliesTo: assignee-brief</code> in frontmatter; pick it in the Direction Brief dialog.</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Reusable audit template saved; new projects bootstrapped via Load</li>
+        <li>Custom report template's placeholders match its <code>FIELDS-*.md</code></li>
+      </ul>
+    </section>
+
+    <h2 id="components">20. Component Inventory</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> a <strong>component</strong> is a UI building block (hero, card grid, accordion), distinct from content type — a page can carry several. Tag pages with the components they use (<code>Design_Patterns</code>); the report turns tags into frequency-and-reuse insight.</p>
+      <ul>
+        <li>Enable <strong>Show Components cluster</strong>; <strong>+ Add component</strong> picks from a categorized library (complexity badges) or creates one inline.</li>
+        <li><strong>Project &rarr; Component Library…</strong> &mdash; curate / <strong>Seed defaults</strong> (57 built-ins).</li>
+        <li><strong>Reports &rarr; Component Inventory…</strong> &mdash; frequency + KKE breakdown, one-off flags (&le;2 pages), top co-occurring pairs (often your real page templates).</li>
+      </ul>
+      <h4>Good end-state</h4>
+      <ul class="help-check">
+        <li>Components tagged from a consistent library; library curated/seeded</li>
+        <li>Report generated/exported; one-offs reviewed</li>
+      </ul>
+      <p style="font-size:12px;color:var(--text-muted);">Tip: pattern auditing is a second-pass activity &mdash; filter to Keep + Evolve first (no value cataloging Kill pages).</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- REFERENCE                                                     -->
+    <!-- ============================================================ -->
+    <div class="help-phase">Reference</div>
+
+    <h2 id="audit-columns-ref">Audit Columns Reference</h2>
+
+    <section class="help-section">
+      <h3>Core audit columns</h3>
+      <table class="help-table">
+        <tr><th>Column</th><th>Type</th><th>Purpose</th></tr>
+        <tr><td><code>KKE_Recommendation</code></td><td>Controlled</td><td>Keep, Kill, Evolve, Consolidate, Exclude, or custom state</td></tr>
+        <tr><td><code>Tags</code></td><td>CSV text</td><td>Freeform labels (e.g., "thin-content, outdated")</td></tr>
+        <tr><td><code>Notes</code></td><td>Free text</td><td>Rationale, next steps, context</td></tr>
+        <tr><td><code>Group</code></td><td>Text</td><td>Page group for categorization</td></tr>
+        <tr><td><code>Primary Tag</code></td><td>Text</td><td>Single primary label</td></tr>
+        <tr><td><code>Consolidate_Into</code></td><td>URL</td><td>Consolidation target page</td></tr>
+        <tr><td><code>Redirect_Destination</code></td><td>URL</td><td>301 redirect target for Kill/moved pages (or <code>404</code>)</td></tr>
+      </table>
+
+      <h3>SME review columns</h3>
+      <table class="help-table">
+        <tr><th>Column</th><th>Type</th><th>Purpose</th></tr>
+        <tr><td><code>SME_Decision</code></td><td>Controlled</td><td>Approve, Change: Keep/Kill/Evolve/Consolidate/Exclude</td></tr>
+        <tr><td><code>SME_Notes</code></td><td>Free text</td><td>Expert's review notes</td></tr>
+        <tr><td><code>Content_Owner</code></td><td>Text</td><td>Assigned content owner</td></tr>
+        <tr><td><code>Final_KKE</code></td><td>Controlled</td><td>Resolved recommendation after SME review</td></tr>
+      </table>
+
+      <h3>Classification, delivery, suggestions, CMS links</h3>
+      <table class="help-table">
+        <tr><th>Column</th><th>Type</th><th>Purpose</th></tr>
+        <tr><td><code>Page_Type</code></td><td>Controlled</td><td><strong>Content Type</strong> (UI label) &mdash; broad page category; key into the registry crosswalk</td></tr>
+        <tr><td><code>Content_Theme</code></td><td>Controlled</td><td>Per-project content theme</td></tr>
+        <tr><td><code>Published_Status</code></td><td>Controlled</td><td>Published / Unpublished / Draft / 404</td></tr>
+        <tr><td><code>Content_Nature</code></td><td>Controlled</td><td><strong>Renders as</strong> (UI label): Page / Content Object (= "Fragment (embeddable)") / Generated</td></tr>
+        <tr><td><code>Target_Content_Type</code></td><td>Text</td><td>New-CMS content type; auto-filled (blanks only) from the registry crosswalk, overridable per row</td></tr>
+        <tr><td><code>Migration_Track</code></td><td>Controlled</td><td>Scripted / Migrate Records / Configure / Manual Rebuild / Merge / Kill/Redirect</td></tr>
+        <tr><td><code>Suggested_KKE</code></td><td>Computed</td><td>Unified suggestion combining GA + Rubric + AI</td></tr>
+        <tr><td><code>Suggested_KKE_Sources</code></td><td>JSON</td><td>Per-source breakdown for the suggestion badge tooltip</td></tr>
+        <tr><td><code>GA_KKE_Recommendation</code> / <code>GA_Score</code></td><td>Computed</td><td>GA-derived recommendation + 0&ndash;1 composite score</td></tr>
+        <tr><td><code>Source_CMS_URL</code> / <code>New_CMS_URL</code></td><td>URL</td><td>Admin/edit URLs &mdash; click &#8599; in the CMS cluster to open</td></tr>
+        <tr><td><code>Design_Patterns</code></td><td>CSV text</td><td>Component names present on the page</td></tr>
+      </table>
+      <p><strong>Redirect_Destination = "404"</strong> &mdash; the literal string <code>404</code> means "let this URL return 404; do not write a redirect rule." Distinct from blank (TBD). Toggle via the <strong>404</strong> button in the Redirect Editor. The Redirect Map Report shows these in their own "Intentional 404s" section.</p>
+
+      <h3>Navigation columns</h3>
+      <table class="help-table">
+        <tr><th>Column</th><th>Type</th><th>Purpose</th></tr>
+        <tr><td><code>NavID</code></td><td>ID</td><td>Assigned nav node identifier</td></tr>
+        <tr><td><code>Nav Destination</code></td><td>Text</td><td>Breadcrumb path (e.g., "About > Team")</td></tr>
+        <tr><td><code>Computed Path</code></td><td>URL path</td><td>Generated URL segment from nav hierarchy</td></tr>
+        <tr><td><code>Nav_SortID</code></td><td>Number</td><td>Sort position within the nav tree</td></tr>
+      </table>
+
+      <h3>Internal/tracking columns</h3>
+      <table class="help-table">
+        <tr><th>Column</th><th>Type</th><th>Purpose</th></tr>
+        <tr><td><code>_Flagged</code></td><td>Boolean</td><td>Bookmark/flag state</td></tr>
+        <tr><td><code>_AssessedAt</code></td><td>Timestamp</td><td>When the page was last assessed</td></tr>
+        <tr><td><code>_AssessmentResult</code></td><td>Text</td><td>Assessment outcome (e.g., "Keep")</td></tr>
+      </table>
+
+      <h3>Column auto-detection</h3>
+      <p>The app detects existing audit columns by name before creating new ones:</p>
+      <table class="help-table">
+        <tr><th>Role</th><th>Detected names (first match wins)</th></tr>
+        <tr><td>KKE</td><td><code>KKE_Recommendation</code>, <code>KKE Rec</code>, <code>KKE</code>, <code>Recommendation</code></td></tr>
+        <tr><td>Tags</td><td><code>Tags</code>, <code>KKE Tags</code>, <code>Audit Tags</code></td></tr>
+        <tr><td>Notes</td><td><code>Notes</code>, <code>Notes/Rationale</code>, <code>Rationale</code></td></tr>
+        <tr><td>Group</td><td><code>Group</code></td></tr>
+        <tr><td>Primary Tag</td><td><code>Primary Tag</code></td></tr>
+      </table>
+      <p>Override these mappings in <strong>App Settings &rarr; Column mapping</strong> (saved per filename).</p>
+    </section>
+
+    <h2 id="keyboard-shortcuts">Keyboard Shortcuts</h2>
+
+    <section class="help-section">
+      <table class="help-table">
+        <tr><th>Shortcut</th><th>Action</th></tr>
+        <tr><td colspan="2" style="font-weight:600; color:var(--text-primary); padding-top:8px;">File</td></tr>
+        <tr><td><code>Cmd+O</code></td><td>Open spreadsheet</td></tr>
+        <tr><td><code>Cmd+S</code></td><td>Save</td></tr>
+        <tr><td><code>Cmd+Shift+E</code></td><td>Open unified Export dialog</td></tr>
+        <tr><td><code>Cmd+,</code></td><td>Open Preferences</td></tr>
+        <tr><td><code>Cmd+F</code></td><td>Global Search</td></tr>
+        <tr><td colspan="2" style="font-weight:600; color:var(--text-primary); padding-top:8px;">Views</td></tr>
+        <tr><td><code>Cmd+1</code></td><td>Audit View (default)</td></tr>
+        <tr><td><code>Cmd+T</code></td><td>Toggle Table View</td></tr>
+        <tr><td><code>Cmd+Shift+T</code></td><td>Navigation Tree</td></tr>
+        <tr><td><code>Cmd+Shift+R</code></td><td>Redirect Editor</td></tr>
+        <tr><td><code>Cmd+P</code></td><td>Audit Progress dashboard</td></tr>
+        <tr><td colspan="2" style="font-weight:600; color:var(--text-primary); padding-top:8px;">Audit</td></tr>
+        <tr><td><code>1</code> / <code>2</code> / <code>3</code> / <code>4</code> / <code>5</code></td><td>Keep / Kill / Evolve / Consolidate / Exclude</td></tr>
+        <tr><td><code>0</code></td><td>Clear KKE recommendation</td></tr>
+        <tr><td><code>]</code></td><td>Jump to next unreviewed row (wraps)</td></tr>
+        <tr><td><code>F</code></td><td>Toggle flag on selected row</td></tr>
+        <tr><td><code>?</code></td><td>Keyboard cheat-sheet</td></tr>
+        <tr><td colspan="2" style="font-weight:600; color:var(--text-primary); padding-top:8px;">Navigation</td></tr>
+        <tr><td><code>&uarr;</code> / <code>&darr;</code></td><td>Navigate rows</td></tr>
+        <tr><td><code>k</code> / <code>j</code></td><td>Navigate rows (vim-style)</td></tr>
+        <tr><td colspan="2" style="font-weight:600; color:var(--text-primary); padding-top:8px;">Edit</td></tr>
+        <tr><td><code>Cmd+Z</code></td><td>Undo last KKE change</td></tr>
+        <tr><td><code>Cmd+Shift+Z</code></td><td>Redo</td></tr>
+      </table>
+      <p>Number keys (<code>0</code>&ndash;<code>5</code>), <code>]</code>, <code>F</code>, and <code>j</code>/<code>k</code> only work when no text input or textarea is focused.</p>
+    </section>
+
+    <h2 id="rubric-dsl">Rubric DSL</h2>
+
+    <section class="help-section">
+      <p>Rubrics are markdown files (one per status) in a configurable folder; each has <code>## Field Rules</code> (auto-evaluated &mdash; the status with the most passing rules wins) and <code>## Content Rules</code> (plain-English checklist for manual / AI review).</p>
+      <pre class="help-code"># Keep
+
+## Field Rules
+- Status Code is 200
+- Indexability Status is Indexable
+- Word Count > 500
+
+## Content Rules
+- Page provides comprehensive coverage of its topic
+- Content is current and regularly maintained</pre>
+      <h3>Field rule operators</h3>
+      <table class="help-table">
+        <tr><th>Operator</th><th>Example</th></tr>
+        <tr><td><code>is</code> / <code>is not</code></td><td><code>Status Code is 200</code></td></tr>
+        <tr><td><code>is empty</code> / <code>is not empty</code></td><td><code>Meta Description 1 is empty</code></td></tr>
+        <tr><td><code>contains</code> / <code>not contains</code></td><td><code>Title 1 contains buy</code></td></tr>
+        <tr><td><code>starts with</code> / <code>ends with</code></td><td><code>Address starts with https://example.com/blog</code></td></tr>
+        <tr><td><code>&gt;</code> <code>&gt;=</code> <code>&lt;</code> <code>&lt;=</code></td><td><code>Word Count &gt; 300</code></td></tr>
+        <tr><td><code>and</code> (compound)</td><td><code>Status Code &gt;= 300 and Status Code &lt; 400</code></td></tr>
+      </table>
+      <p>All comparisons are case-insensitive. Edit rubrics in-app via <strong>App Settings &rarr; Rubrics &rarr; Edit</strong>; bind a folder to a specific file per filename. With a Claude API key set, <strong>AI Assess</strong> / <strong>Batch Assess</strong> evaluate content rules too (results in <code>_AssessedAt</code> / <code>_AssessmentResult</code>).</p>
+    </section>
+
+    <h2 id="structural-sheets">Structural Sheets</h2>
+
+    <section class="help-section">
+      <p>Hidden from the data-sheet picker; they carry project state and travel with the file.</p>
+      <table class="help-table">
+        <tr><th>Sheet</th><th>Purpose</th></tr>
+        <tr><td><code>NavStructure</code></td><td>The nav tree (nodes, paths, build metadata)</td></tr>
+        <tr><td><code>KKE_Settings</code></td><td>Project settings, saved filters, computed-column config (JSON)</td></tr>
+        <tr><td><code>KKE_ChangeLog</code></td><td>Decision-change audit trail</td></tr>
+        <tr><td><code>KKE_Glossary</code></td><td>Tag/group definitions</td></tr>
+        <tr><td><code>ContentTypeRegistry</code></td><td>Current&rarr;target crosswalk</td></tr>
+        <tr><td><code>PatternLibrary</code></td><td>Target Spec Library</td></tr>
+        <tr><td><code>DesignPatternLibrary</code></td><td>Component Library</td></tr>
+      </table>
+      <p><strong>Dark mode</strong> follows your macOS appearance automatically (WCAG-compliant in both themes). <strong>Undo/Redo</strong> (<code>Cmd+Z</code> / <code>Cmd+Shift+Z</code>) covers KKE changes only (100-action stack, cleared on reload).</p>
+    </section>
+
+    <h2 id="sf-columns">Common Screaming Frog Columns</h2>
+
+    <section class="help-section">
+      <table class="help-table">
+        <tr><th>Column</th><th>Type</th><th>Example values</th></tr>
+        <tr><td><code>Address</code></td><td>URL</td><td><code>https://example.com/page</code></td></tr>
+        <tr><td><code>Status Code</code></td><td>Number</td><td><code>200</code>, <code>301</code>, <code>404</code></td></tr>
+        <tr><td><code>Indexability Status</code></td><td>Text</td><td><code>Indexable</code>, <code>Non-Indexable</code></td></tr>
+        <tr><td><code>Title 1</code></td><td>Text</td><td>Page title</td></tr>
+        <tr><td><code>Meta Description 1</code></td><td>Text</td><td>Meta description</td></tr>
+        <tr><td><code>H1-1</code></td><td>Text</td><td>First H1 heading</td></tr>
+        <tr><td><code>Word Count</code></td><td>Number</td><td><code>1523</code></td></tr>
+        <tr><td><code>Redirect URL</code></td><td>URL</td><td>Target of 3xx redirect</td></tr>
+        <tr><td><code>Unique Inlinks</code></td><td>Number</td><td>Internal link count</td></tr>
+      </table>
+      <p>These are commonly used in rubric field rules. <code>Address</code> is the default URL column in Screaming Frog exports.</p>
+    </section>
+
+    <h2 id="tips">Tips &amp; Best Practices</h2>
+
+    <section class="help-section">
+      <h4>Speed up your audit</h4>
+      <ul>
+        <li>Use <code>1</code>&ndash;<code>5</code> for KKE and enable auto-advance to fly through pages; <code>]</code> jumps to the next unreviewed.</li>
+        <li>Set up rubrics early &mdash; even a few field rules per status catch the obvious pages.</li>
+        <li>Use Batch Assess / AI Suggest for Unreviewed to seed Suggested_KKE, then confirm.</li>
+      </ul>
+      <h4>Stay organized</h4>
+      <ul>
+        <li>Assign Groups early; use Primary Tag for the dominant characteristic.</li>
+        <li>Flag pages to revisit with <code>F</code>; save named filter combos for views you return to.</li>
+      </ul>
+      <h4>Work with your team</h4>
+      <ul>
+        <li>Use audit templates for consistent setup; export SME subsets by Group or Owner.</li>
+        <li>Merge parallel auditors' files; the changelog tracks every decision change.</li>
+      </ul>
+      <h4>Navigation, redirects &amp; hand-off</h4>
+      <ul>
+        <li>Place every Keep/Evolve page (need placement &rarr; 0) before deriving redirects.</li>
+        <li>Re-derive redirects from nav after restructuring; run the chain check before export.</li>
+        <li>Run the <strong>Pre-Handoff Check</strong> last &mdash; fix what it flags, then export the Migration Tracker.</li>
+      </ul>
+    </section>
+
+  </div>
+</body>
+</html>

@@ -1,0 +1,19540 @@
+/**
+ * renderer.js
+ * All UI logic. Talks to main process only via window.electronAPI.
+ */
+
+// ─── State ────────────────────────────────────────────────────────────────────
+
+const state = {
+  filePath:      null,
+  headers:       [],
+  rows:          [],        // original from xlsx (never mutated)
+  editedRows:    [],        // working copy
+  urlColumn:     null,
+  selectedIndex: null,      // origIndex into editedRows
+  filteredRows:  [],        // [{ row, origIndex }]
+  filterText:    '',
+  sortOrder:     '',         // '' | 'asc' | 'desc'
+  isDirty:       false,
+
+  // Prefs (loaded from main)
+  visibleFields: [],        // which headers show in field-bar-top
+  tagLibrary:    [],        // full tag vocabulary
+  autoAdvance:   true,      // advance to next row after KKE assignment
+  claudeApiKey:  '',        // optional API key for LLM assessment
+
+  // Field picker state
+  pickerVisible: [],        // working copy during editing
+  pickerSelected: { available: null, visible: null },
+
+  // Multi-select
+  multiSelected: new Set(),  // set of origIndex values
+  lastClickedPos: null,      // position in filteredRows for shift-click range
+
+  // Nav structure
+  navTree:         null,     // array of root nodes (from NavStructure sheet)
+  navNodes:        [],       // flat list of all nav nodes
+  navSelectedNode: null,     // currently selected node in the popover
+  newNavNodes:     [],       // nodes created by the user (to persist on save)
+  navSelectionPath: [],      // current cascading select path
+  navSortIDFormat: { segWidth: 4, maxLevels: 9 },  // derived from existing data
+
+  // Column mapping (audit columns may have non-standard names)
+  columnMap: { kke: 'KKE_Recommendation', tags: 'Tags', notes: 'Notes', group: 'Group', primaryTag: 'Primary Tag',
+               smeDecision: 'SME_Decision', smeNotes: 'SME_Notes', contentOwner: 'Content_Owner', finalKke: 'Final_KKE' },
+
+  // Filters
+  kkeFilter:     [],        // current KKE status filter values (array)
+  fieldFilters:  [],        // per-field ad-hoc filters: [{field, operator, value}]
+  groupFilter:   '',        // current group filter value
+
+  // Group
+  groupLibrary:  [],         // known group names
+  pageTypeLibrary: [],       // known page-type values (global, prefs)
+  contentThemeLibrary: [],   // known content-theme values (per-project, projectSettings)
+  pageStatusLibrary:   [],   // Phase 2, Chunk α — { name, color }[]  (per-project, projectSettings)
+  assigneeLibrary:     [],   // Phase 2, Chunk α — string[] of assignee names (per-project, projectSettings)
+  patternLibrary:      [],   // Phase 2, Chunk β — { patternName, description, buildGuidanceDefault, writerBriefDefault, defaultMigrationTrack, notes }[]
+  designPatternLibrary: [], // Design pattern inventory — { name, category, complexity, description, dsUrl, aliases, notes }[]
+  showDesignPatterns:   false, // whether the patterns cluster is visible (persisted in prefs)
+
+  // Sidebar columns (which cols show in row list besides URL)
+  sidebarColumns: [],        // pref: column headers to show in sidebar row list
+
+  // Custom KKE states (array of { label, color })
+  customKkeStates: [],
+
+  // Nav editor dirty flag
+  navTreeDirty: false,
+
+  // Computed columns (array of { name, formula, order })
+  computedColumns: [],
+
+  // Project settings (persisted in KKE_Settings sheet)
+  projectSettings: {}
+};
+
+// Hoisted variables used across functions
+let _navTreeFilter = null;  // node ID to filter sidebar by nav tree
+let _duplicateSet = new Set(); // origIndex values that are duplicates
+
+// All KKE states (built-in + custom)
+const BUILTIN_KKE = ['Keep', 'Kill', 'Evolve', 'Consolidate', 'Exclude'];
+const _sessionChangeLog = [];
+
+function logChange(origIndex, field, oldValue, newValue) {
+  if (oldValue === newValue) return;
+  const url = state.urlColumn ? (state.editedRows[origIndex]?.[state.urlColumn] || '') : '';
+  _sessionChangeLog.push({
+    timestamp: new Date().toISOString(),
+    row: origIndex + 1,
+    url: String(url).substring(0, 200),
+    field,
+    from: String(oldValue || '').substring(0, 200),
+    to: String(newValue || '').substring(0, 200)
+  });
+}
+function allKkeStates() {
+  return [...BUILTIN_KKE, ...state.customKkeStates.map(s => s.label)];
+}
+
+// Column name helpers — use these instead of hardcoding audit column names
+function kkeCol()   { return state.columnMap.kke; }
+function tagsCol()  { return state.columnMap.tags; }
+function notesCol() { return state.columnMap.notes; }
+function groupCol()        { return state.columnMap.group; }
+function primaryTagCol()   { return state.columnMap.primaryTag; }
+function smeDecisionCol()  { return state.columnMap.smeDecision; }
+function smeNotesCol()     { return state.columnMap.smeNotes; }
+function contentOwnerCol() { return state.columnMap.contentOwner; }
+function finalKkeCol()     { return state.columnMap.finalKke; }
+
+// ─── Status code utilities ────────────────────────────────────────────────────
+
+const STATUS_CODE_LABELS = {
+  301:'Moved Permanently', 302:'Found', 303:'See Other',
+  307:'Temporary Redirect', 308:'Permanent Redirect',
+  400:'Bad Request', 401:'Unauthorized', 403:'Forbidden',
+  404:'Not Found', 405:'Method Not Allowed', 410:'Gone',
+  500:'Internal Server Error', 502:'Bad Gateway',
+  503:'Service Unavailable', 504:'Gateway Timeout'
+};
+
+function statusCodeCategory(code) {
+  const n = parseInt(code, 10);
+  if (n >= 300 && n < 400) return '3xx';
+  if (n >= 400 && n < 500) return '4xx';
+  if (n >= 500 && n < 600) return '5xx';
+  return null;
+}
+
+function defaultTriageAction(code) {
+  const n = parseInt(code, 10);
+  if (n >= 300 && n < 400) return 'kill-redirect';
+  if (n === 404) return 'kill-404';
+  if (n >= 400 && n < 500) return 'kill';
+  if (n >= 500 && n < 600) return 'evolve';
+  return 'skip';
+}
+
+// ─── DOM ──────────────────────────────────────────────────────────────────────
+
+const $ = id => document.getElementById(id);
+
+const els = {
+  fileName:         $('file-name'),
+  saveStatus:       $('save-status'),
+  saveStatusDirty:  $('save-status-dirty'),
+  searchInput:      $('search-input'),
+  rowCount:         $('row-count'),
+  sheetPicker:      $('sheet-picker'),
+  sheetSelect:      $('sheet-select'),
+  urlPicker:        $('url-picker'),
+  urlColSelect:     $('url-column-select'),
+  btnSetUrlCol:     $('btn-set-url-col'),
+  colHeaderStrip:   $('col-header-strip'),
+  rowListWrap:      $('row-list-wrap'),
+  rowList:          $('row-list'),
+  emptyState:       $('empty-state'),
+  noSelection:      $('no-selection'),
+  contentArea:      $('content-area'),
+  // Field bar
+  btnPrev:          $('btn-prev'),
+  btnNext:          $('btn-next'),
+  navPosition:      $('nav-position'),
+  metaFields:       $('meta-fields'),
+  btnFieldPicker:   $('btn-field-picker'),
+  btnToggleBlankMeta: $('btn-toggle-blank-meta'),
+  kkeButtons:       $('kke-buttons'),
+  gaKkeBadge:       $('ga-kke-badge'),
+  consolidateIndicator: $('consolidate-indicator'),
+  tagChips:         $('tag-chips'),
+  btnAddTag:        $('btn-add-tag'),
+  // Design pattern cluster
+  designPatternFieldsWrap: $('design-pattern-fields-wrap'),
+  designPatternChips:      $('design-pattern-chips'),
+  btnAddDesignPattern:     $('btn-add-design-pattern'),
+  dpDropdown:              $('design-pattern-dropdown'),
+  btnNotes:         $('btn-notes'),
+  notesIndicator:   $('notes-indicator'),
+  // CMS link cluster (Phase 1)
+  sourceCmsUrlInput: $('source-cms-url-input'),
+  sourceCmsUrlOpen:  $('source-cms-url-open'),
+  newCmsUrlInput:    $('new-cms-url-input'),
+  newCmsUrlOpen:     $('new-cms-url-open'),
+  // Migration classification (Phase 1, Chunk C)
+  migrationFieldsWrap:   $('migration-fields-wrap'),
+  contentNatureSelect:   $('content-nature-select'),
+  migrationTrackSelect:  $('migration-track-select'),
+  migrationTrackSuggest: $('migration-track-suggestion'),
+  // Webview
+  webview:          $('webview'),
+  webviewLoading:   $('webview-loading'),
+  urlDisplay:       $('url-display'),
+  btnBack:          $('btn-back'),
+  btnForward:       $('btn-forward'),
+  btnReload:        $('btn-reload'),
+  btnOpenExternal:  $('btn-open-external'),
+  // Tag dropdown
+  tagDropdown:      $('tag-dropdown'),
+  tagSearch:        $('tag-search'),
+  tagList:          $('tag-list'),
+  tagCreate:        $('tag-create'),
+  tagCreateLabel:   $('tag-create-label'),
+  btnCreateTag:     $('btn-create-tag'),
+  // Notes popover
+  notesPopover:     $('notes-popover'),
+  notesTextarea:    $('notes-textarea'),
+  btnNotesClose:    $('btn-notes-close'),
+  btnNotesSave:     $('btn-notes-save'),
+  // Field picker modal
+  modalOverlay:     $('modal-overlay'),
+  fieldPickerModal: $('field-picker-modal'),
+  pickerAvailable:  $('picker-available'),
+  pickerVisible:    $('picker-visible'),
+  btnPickerAdd:     $('btn-picker-add'),
+  btnPickerRemove:  $('btn-picker-remove'),
+  btnPickerSave:    $('btn-picker-save'),
+  btnPickerCancel:  $('btn-picker-cancel'),
+  btnPickerClose:   $('btn-picker-close'),
+  // Help
+  btnHelp:          $('btn-help'),
+  // App Settings
+  btnSettings:      $('btn-settings'),
+  settingsPopover:  $('settings-popover'),
+  btnSettingsClose: $('btn-settings-close'),
+  // Project Settings
+  btnProjectSettings:      $('btn-project-settings'),
+  projectSettingsOverlay:  $('project-settings-overlay'),
+  projectSettingsModal:    $('project-settings-modal'),
+  btnProjectSettingsClose: $('btn-project-settings-close'),
+  prefAutoAdvance:  $('pref-auto-advance'),
+  prefRubricDir:    $('pref-rubric-dir'),
+  btnPickRubricDir: $('btn-pick-rubric-dir'),
+  prefApiKey:       $('pref-api-key'),
+  mapKke:           $('map-kke'),
+  mapTags:          $('map-tags'),
+  mapNotes:         $('map-notes'),
+  mapGroup:         $('map-group'),
+  btnApplyColMap:   $('btn-apply-col-map'),
+  // Filters
+  kkeFilterWrap:    $('kke-filter-wrap'),
+  kkeFilterBtn:     $('kke-filter-btn'),
+  kkeFilterDropdown:$('kke-filter-dropdown'),
+  // Group
+  groupSelect:      $('group-select'),
+  groupFilter:      $('group-filter'),
+  primaryTagSelect: $('primary-tag-select'),
+  mapPrimaryTag:    $('map-primary-tag'),
+  // Assessment
+  btnAssess:        $('btn-assess'),
+  assessPopover:    $('assess-popover'),
+  btnAssessClose:   $('btn-assess-close'),
+  assessLoading:    $('assess-loading'),
+  assessResults:    $('assess-results'),
+  assessLlmSection: $('assess-llm-section'),
+  assessLlmResults: $('assess-llm-results'),
+  assessFooter:     $('assess-footer'),
+  btnAssessAccept:  $('btn-assess-accept'),
+  btnAssessLlm:     $('btn-assess-llm'),
+  // Nav assignment
+  btnNav:           $('btn-nav'),
+  navPopover:       $('nav-popover'),
+  btnNavClose:      $('btn-nav-close'),
+  navSelects:       $('nav-selects'),
+  navBreadcrumb:    $('nav-breadcrumb'),
+  navCurrent:       $('nav-current'),
+  navCurrentLabel:  $('nav-current-label'),
+  btnNavAddChild:   $('btn-nav-add-child'),
+  btnNavAssign:     $('btn-nav-assign'),
+  btnNavClear:      $('btn-nav-clear'),
+  btnNavLoad:       $('btn-nav-load'),
+  navNewChild:      $('nav-new-child'),
+  navNewChildParent:$('nav-new-child-parent'),
+  navNewLabel:      $('nav-new-label'),
+  navNewSlug:       $('nav-new-slug'),
+  btnNavCreate:     $('btn-nav-create'),
+  navPageFields:    $('nav-page-fields'),
+  navPageTitleInput:$('nav-page-title-input'),
+  navSlugInput:     $('nav-slug-input'),
+};
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+
+async function init() {
+  // Load prefs first
+  const prefs = await window.electronAPI.getPrefs();
+  state.visibleFields = prefs.visibleFields;
+  state.tagLibrary    = prefs.tagLibrary;
+  state.autoAdvance   = prefs.autoAdvance;
+  state.claudeApiKey  = prefs.claudeApiKey || '';
+  state.groupLibrary    = prefs.groupLibrary || [];
+  // Page Type library — global (app prefs), defaults to a curated list when prefs is empty
+  // NOTE: prefs.pageTypeLibrary is now returned by get-prefs so user additions persist correctly
+  if (Array.isArray(prefs.pageTypeLibrary) && prefs.pageTypeLibrary.length > 0) {
+    state.pageTypeLibrary = prefs.pageTypeLibrary;
+  } else {
+    state.pageTypeLibrary = [
+      'Landing page', 'Product page (PDP)', 'Product listing (PLP)',
+      'Article / blog post', 'Topic / category page', 'About', 'Contact',
+      'Resource / download', 'Form / signup', 'Login / account',
+      'Legal / policy', 'Author / profile', 'Event', 'News / press',
+      'FAQ', 'Documentation', 'Search', '404 / error',
+      'Marketing / campaign', 'Navigation hub', 'Other'
+    ];
+    window.electronAPI.savePrefs({ pageTypeLibrary: state.pageTypeLibrary });
+  }
+
+  // Design Pattern library — global (app prefs), seeded with 57 defaults on first run
+  // Per-project DesignPatternLibrary xlsx sheet is still read/written for backward compat but
+  // the primary source is prefs so the library is available before any file is opened.
+  if (Array.isArray(prefs.designPatternLibrary) && prefs.designPatternLibrary.length > 0) {
+    state.designPatternLibrary = prefs.designPatternLibrary;
+  } else {
+    // Fetch defaults from main process and seed
+    window.electronAPI.getDefaultDesignPatternLibrary().then(defaults => {
+      state.designPatternLibrary = defaults;
+      window.electronAPI.savePrefs({ designPatternLibrary: state.designPatternLibrary });
+    });
+    state.designPatternLibrary = []; // temporary until async resolves (will be populated momentarily)
+  }
+  // Content Theme library is project-specific — loaded from projectSettings on file open
+  state.sortOrder       = prefs.sortOrder || '';
+  state.filterText      = prefs.filterText || '';
+  state.sidebarColumns  = prefs.sidebarColumns || [];
+  state.customKkeStates = prefs.customKkeStates || [];
+  state.tableColumns    = prefs.tableColumns || null;
+  state.extraKkeCols    = prefs.extraKkeCols || [];
+  state.prefsKkeFilter  = prefs.kkeFilter || null;
+  state.noteTemplates       = prefs.noteTemplates       || [];
+  state.showSmeFields       = prefs.showSmeFields       || false;
+  state.showMigrationFields = prefs.showMigrationFields || false;
+  state.showDesignPatterns  = prefs.showDesignPatterns  || false;
+  state.hideBlankMetadata = prefs.hideBlankMetadata !== undefined ? prefs.hideBlankMetadata : true;
+  state.collapsedClusters = prefs.collapsedClusters && typeof prefs.collapsedClusters === 'object'
+    ? { ...prefs.collapsedClusters }
+    : {};
+
+  // Restore sidebar width — clamp in case a previous wonky drag saved an out-of-range value
+  if (prefs.sidebarWidth) {
+    const w = Math.max(220, Math.min(640, Number(prefs.sidebarWidth) || 480));
+    $('sidebar').style.width = w + 'px';
+  }
+
+  // Restore filter text into search input
+  if (state.filterText) {
+    els.searchInput.value = state.filterText;
+  }
+
+  bindStaticEvents();
+  bindIPCListeners();
+  setupResizeHandle();
+  setupWebviewEvents();
+  setupTagDropdown();
+  setupFieldPicker();
+  setupVirtualScroll();
+  setupViewportSwitcher();
+  setupSettings();
+  setupAssessment();
+  setupNav();
+  setupGroup();
+  setupPublishedAndTypeAndTheme();
+  setupCmsLinkHandlers();
+  setupDesignPatternHandlers();
+  setupClusterCollapse();
+  setupClusterQuickToggles();
+  setupViewSwitcher();
+  setupMigrationFieldsHandlers();
+  setupProgress();
+  // setupMultiBar is wired separately near the bulk-bar handler block
+  setupNavTree();
+  setupRedirectEditor();
+  setupTableView();
+  setupSavedFilters();
+  setupFieldFilters();
+  $('btn-add-row').addEventListener('click', addNewRow);
+  setupGlobalSearch();
+  setupShortcutHelp();
+  setupThumbnailPreview();
+  setupRubricEditor();
+  setupComputedColumns();
+  setupUndo();
+
+  updateNoSelectionState();
+
+  // Reload last file
+  const lastFile = await window.electronAPI.getLastFile();
+  if (lastFile) loadData(lastFile);
+
+  // First run: show the welcome / getting-started dialog once.
+  if (!prefs.seenWelcome) {
+    window.electronAPI.savePrefs({ seenWelcome: true });
+    openWelcomeDialog();
+  }
+}
+
+// ─── IPC ──────────────────────────────────────────────────────────────────────
+
+function bindIPCListeners() {
+  window.electronAPI.onFileOpened(data => loadData(data));
+  window.electronAPI.onMenuSave(() => saveFile());
+  window.electronAPI.onSaveSuccess(() => {
+    showToast('Saved ✓', 'success');
+    setDirty(false);
+  });
+  window.electronAPI.onMenuExportFiltered(() => exportFilteredRows());
+  window.electronAPI.onMenuExportAudit(() => exportAuditDecisions());
+  window.electronAPI.onMenuImportMerge(() => importMergeAudit());
+  window.electronAPI.onMenuExportRedirects(() => exportRedirectMap());
+  if (window.electronAPI.onMenuExportMigrationTracker) {
+    window.electronAPI.onMenuExportMigrationTracker(() => openMigrationTrackerExportDialog());
+  }
+  if (window.electronAPI.onMenuExportDialog) {
+    window.electronAPI.onMenuExportDialog(() => openUnifiedExportDialog());
+  }
+  if (window.electronAPI.onMenuPrehandoffCheck) window.electronAPI.onMenuPrehandoffCheck(() => runPreHandoffCheck());
+  if (window.electronAPI.onMenuSuggestUnreviewed) window.electronAPI.onMenuSuggestUnreviewed(() => runSuggestForUnreviewed());
+  if (window.electronAPI.onMenuKkeVsSme) window.electronAPI.onMenuKkeVsSme(() => openKkeVsSmeView());
+  if (window.electronAPI.onMenuAssigneeBrief) window.electronAPI.onMenuAssigneeBrief(() => openAssigneeBriefReport());
+  if (window.electronAPI.onMenuWelcome)   window.electronAPI.onMenuWelcome(() => openWelcomeDialog());
+  if (window.electronAPI.onMenuProductTour) window.electronAPI.onMenuProductTour(() => startProductTour());
+  if (window.electronAPI.onMenuShortcuts) window.electronAPI.onMenuShortcuts(() => openShortcutHelp());
+  window.electronAPI.onMenuSettings(() => toggleSettingsPopover());
+  window.electronAPI.onMenuProjectSettings(() => toggleProjectSettingsPopover());
+  window.electronAPI.onMenuGlossary(() => openGlossaryEditor());
+  window.electronAPI.onMenuContentTypeRegistry(() => openContentTypeRegistryEditor());
+  if (window.electronAPI.onMenuPatternLibrary) {
+    window.electronAPI.onMenuPatternLibrary(() => openPatternLibraryEditor());
+  }
+  if (window.electronAPI.onMenuDesignPatternLibrary) {
+    window.electronAPI.onMenuDesignPatternLibrary(() => openDesignPatternLibraryEditor());
+  }
+  window.electronAPI.onMenuGaKkeSettings(() => openGaKkeConfigDialog());
+  if (window.electronAPI.onMenuSuggestedKkeRecompute) {
+    window.electronAPI.onMenuSuggestedKkeRecompute(() => {
+      const result = computeSuggestedKke();
+      if (result) {
+        const dis = result.disagreements > 0 ? ` · ${result.disagreements} disagreement${result.disagreements !== 1 ? 's' : ''}` : '';
+        showToast(`Suggested_KKE: ${result.computed} computed, ${result.blank} blank${dis}`, 'success');
+      }
+    });
+  }
+  if (window.electronAPI.onMenuSuggestedKkeSettings) {
+    window.electronAPI.onMenuSuggestedKkeSettings(() => openSuggestedKkeSettings());
+  }
+  if (window.electronAPI.onMenuRubricBatch) {
+    window.electronAPI.onMenuRubricBatch(() => runBatchAssessment());
+  }
+  window.electronAPI.onMenuGaKkeRefresh(() => refreshGaKke());
+  window.electronAPI.onMenuProgress(() => openProgressDashboard());
+  window.electronAPI.onMenuAuditView(() => { returnToAuditView(); refreshViewSwitcher(); });
+  window.electronAPI.onMenuTableView(() => { toggleTableView(); refreshViewSwitcher(); });
+  window.electronAPI.onMenuNavTree(() => { toggleNavEditor(); refreshViewSwitcher(); });
+  window.electronAPI.onMenuRedirectEditor(() => { toggleRedirectEditor(); refreshViewSwitcher(); });
+  window.electronAPI.onMenuSmeExport(() => smeExport());
+  window.electronAPI.onMenuSmeImport(() => smeImport());
+  window.electronAPI.onMenuSmeResolve(() => openSmeResolveDialog());
+  window.electronAPI.onMenuRedirectChainCheck(() => checkRedirectChains());
+  window.electronAPI.onMenuNavCoverage(() => showNavCoverageReport());
+  window.electronAPI.onMenuReportExecSummary(() => reportExecutiveSummary());
+  window.electronAPI.onMenuReportContentInv(() => reportContentInventory());
+  window.electronAPI.onMenuReportSmeStatus(() => reportSmeStatus());
+  window.electronAPI.onMenuReportRedirectMap(() => reportRedirectMap());
+  window.electronAPI.onMenuReportNetNew(() => reportNetNewBrief());
+  window.electronAPI.onMenuReportMigration(() => reportMigrationChecklist());
+  window.electronAPI.onMenuReportNavIa(() => reportNavIa());
+  if (window.electronAPI.onMenuReportDesignPatterns) {
+    window.electronAPI.onMenuReportDesignPatterns(() => reportDesignPatterns());
+  }
+  if (window.electronAPI.onMenuReportContentCrosswalk) {
+    window.electronAPI.onMenuReportContentCrosswalk(() => reportContentTypeCrosswalk());
+  }
+  window.electronAPI.onMenuSaveTemplate(() => saveAuditTemplate());
+  window.electronAPI.onMenuLoadTemplate(() => loadAuditTemplate());
+  window.electronAPI.onMenuMergeAuditor(() => mergeAuditorDecisions());
+  if (window.electronAPI.onMenuNon200Triage) {
+    window.electronAPI.onMenuNon200Triage(() => openNon200TriageDialog());
+  }
+}
+
+// ─── Static events ────────────────────────────────────────────────────────────
+
+function bindStaticEvents() {
+  $('btn-open-empty').addEventListener('click', () => window.electronAPI.openFileDialog());
+  $('btn-nosel-open').addEventListener('click', () => window.electronAPI.openFileDialog());
+  $('btn-nosel-getting-started').addEventListener('click', () => openWelcomeDialog());
+
+  // No-selection Tree/Redirects buttons
+  $('btn-nosel-tree').addEventListener('click', () => toggleNavEditor());
+  $('btn-nosel-redirects').addEventListener('click', () => toggleRedirectEditor());
+
+  const _searchScopeEl = $('search-scope');
+  if (_searchScopeEl) {
+    _searchScopeEl.addEventListener('change', () => {
+      const scope = _searchScopeEl.value;
+      const placeholders = { all: 'Filter rows…', url: 'Filter by URL…', title: 'Filter by title…' };
+      els.searchInput.placeholder = placeholders[scope] || 'Filter rows…';
+      if (state.filterText) applyFilter();
+    });
+  }
+
+  els.searchInput.addEventListener('input', e => {
+    state.filterText = e.target.value.toLowerCase();
+    applyFilter();
+    window.electronAPI.savePrefs({ filterText: state.filterText });
+    $('btn-clear-search').classList.toggle('hidden', !e.target.value);
+  });
+
+  $('btn-clear-search').addEventListener('click', () => {
+    els.searchInput.value = '';
+    state.filterText = '';
+    applyFilter();
+    window.electronAPI.savePrefs({ filterText: '' });
+    $('btn-clear-search').classList.add('hidden');
+    els.searchInput.focus();
+  });
+
+  // KKE filter dropdown toggle
+  els.kkeFilterBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    els.kkeFilterDropdown.classList.toggle('hidden');
+  });
+  document.addEventListener('click', e => {
+    if (!els.kkeFilterWrap.contains(e.target)) {
+      els.kkeFilterDropdown.classList.add('hidden');
+    }
+  });
+
+  els.primaryTagSelect.addEventListener('change', () => {
+    if (state.selectedIndex === null) return;
+    state.editedRows[state.selectedIndex][primaryTagCol()] = els.primaryTagSelect.value;
+    setDirty(true);
+    refreshRowInList(state.selectedIndex);
+  });
+
+  // SME decision is now read-only in the audit bar — value is set via SME → Import
+  // SME Decisions and shouldn't be editable here. Display-only.
+
+  $('final-kke-select').addEventListener('change', async () => {
+    if (state.selectedIndex === null) return;
+    const sel = $('final-kke-select');
+    const old = state.editedRows[state.selectedIndex][finalKkeCol()] || '';
+    const newVal = sel.value;
+    if (newVal === 'Kill' && old !== 'Kill') {
+      const ok = await promptKillCleanup(state.selectedIndex);
+      if (!ok) { sel.value = old; return; }
+      renderMetaFields(state.editedRows[state.selectedIndex], state.selectedIndex);
+    }
+    state.editedRows[state.selectedIndex][finalKkeCol()] = newVal;
+    logChange(state.selectedIndex, finalKkeCol(), old, newVal);
+    setDirty(true);
+    refreshRowInList(state.selectedIndex);
+    // If the new value matches KKE, swap back to the ✓ chip display
+    const row = state.editedRows[state.selectedIndex];
+    populateFinalKkeSelect(newVal, row[kkeCol()] || '');
+  });
+
+  // Clicking the "✓ matches KKE" chip reveals the dropdown so the user can override.
+  const finalMatchBtn = $('final-kke-match');
+  if (finalMatchBtn) {
+    finalMatchBtn.addEventListener('click', () => {
+      finalMatchBtn.classList.add('hidden');
+      const sel = $('final-kke-select');
+      sel.classList.remove('hidden');
+      sel.focus();
+    });
+  }
+
+  els.btnSetUrlCol.addEventListener('click', () => {
+    const val = els.urlColSelect.value;
+    if (val) {
+      state.urlColumn = val;
+      els.urlPicker.classList.add('hidden');
+      renderColHeaders();
+      renderRows();
+    }
+  });
+
+  // Sheet switcher
+  els.sheetSelect.addEventListener('change', async () => {
+    if (state.isDirty) {
+      const discard = await confirmDialog({ title: 'Unsaved changes', message: 'You have unsaved changes. Switch sheets and discard changes?', confirmLabel: 'Discard & switch', danger: true });
+      if (!discard) {
+        // Revert the select to current value
+        els.sheetSelect.value = state.filePath ? els.sheetSelect.querySelector('[selected]')?.value : '';
+        return;
+      }
+    }
+    const data = await window.electronAPI.reloadSheet({ sheetName: els.sheetSelect.value });
+    if (data) loadData(data);
+  });
+
+  // Navigation
+  els.btnPrev.addEventListener('click', () => navigateRow(-1));
+  els.btnNext.addEventListener('click', () => navigateRow(+1));
+
+  // Keyboard navigation + KKE hotkeys
+  window.addEventListener('keydown', e => {
+    // Don't hijack when typing in an input
+    if (['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) return;
+
+    // Jump to next unreviewed row (works even with nothing selected)
+    if (e.key === ']') { e.preventDefault(); jumpToNextUnreviewed(); return; }
+
+    if (state.selectedIndex === null) return;
+
+    // Navigation
+    if (e.key === 'ArrowUp'   || e.key === 'k') { navigateRow(-1); return; }
+    if (e.key === 'ArrowDown' || e.key === 'j') { navigateRow(+1); return; }
+
+    // KKE hotkeys: 1=Keep, 2=Kill, 3=Evolve, 4=Consolidate, 5=Exclude, 0=Clear
+    // Delegates to the KKE button click so all cleanup/picker logic runs.
+    const kkeMap = { '1': 'Keep', '2': 'Kill', '3': 'Evolve', '4': 'Consolidate', '5': 'Exclude' };
+    if (kkeMap.hasOwnProperty(e.key)) {
+      const btn = els.kkeButtons.querySelector(`.kke-btn[data-kke="${kkeMap[e.key]}"]`);
+      if (btn) btn.click();
+      return;
+    }
+    if (e.key === '0') {
+      const current = state.editedRows[state.selectedIndex][kkeCol()];
+      if (!current) return;
+      const btn = els.kkeButtons.querySelector(`.kke-btn[data-kke="${current}"]`);
+      if (btn) btn.click(); // toggles off
+      return;
+    }
+
+    // Flag toggle: F key
+    if (e.key === 'f' || e.key === 'F') {
+      toggleFlag(state.selectedIndex);
+      return;
+    }
+  });
+
+  // KKE buttons
+  els.kkeButtons.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.kke-btn');
+    if (!btn || state.selectedIndex === null) return;
+    const val = btn.dataset.kke;
+    const row = state.editedRows[state.selectedIndex];
+    const current = row[kkeCol()];
+    const newVal = (current === val) ? '' : val; // toggle off if same
+
+    // Consolidate is special: clicking it opens the target picker. The state
+    // change only happens after a target is chosen.
+    //   — first-time click: picker opens, picking a target sets KKE=Consolidate
+    //   — clicking while already Consolidate: picker reopens so you can change target
+    //     (use "Clear target" in the picker to remove both target AND state)
+    if (val === 'Consolidate') {
+      openConsolidatePicker(state.selectedIndex);
+      return;
+    }
+
+    // Switching AWAY from Consolidate to another state — offer to clear the target
+    if (current === 'Consolidate' && newVal !== 'Consolidate') {
+      const target = String(row[CONSOLIDATE_COL] || '').trim();
+      if (target) {
+        const clearIt = await confirmDialog({ title: 'Clear Consolidate target?', message: `This page has a Consolidate target:\n  ${target}\n\nClear it along with the KKE change?`, confirmLabel: 'Clear target' });
+        if (clearIt) clearConsolidateTarget(state.selectedIndex);
+      }
+    }
+
+    // When switching to Kill, offer to clear existing nav/redirect assignments
+    if (newVal === 'Kill' && current !== 'Kill') {
+      const ok = await promptKillCleanup(state.selectedIndex);
+      if (!ok) return;
+      renderMetaFields(row, state.selectedIndex);
+    }
+
+    recordKkeChange(state.selectedIndex, current, newVal);
+    row[kkeCol()] = newVal;
+    applyKkeStyle(newVal);
+    setDirty(true);
+    refreshRowInList(state.selectedIndex);
+    // Phase 1, Chunk C: refresh migration ghost suggestion (KKE drives the suggestion)
+    populateMigrationFields(row);
+    if (state.autoAdvance && newVal) navigateRow(+1);
+  });
+
+  setupMultiBar();
+
+  // Notes
+  els.btnNotes.addEventListener('click', e => toggleNotesPopover(e));
+  els.btnNotesClose.addEventListener('click', closeNotesPopover);
+  els.btnNotesSave.addEventListener('click', closeNotesPopover);
+  $('notes-template-select').addEventListener('change', onNoteTemplateSelect);
+  els.notesTextarea.addEventListener('input', () => {
+    if (state.selectedIndex === null) return;
+    const val = els.notesTextarea.value;
+    state.editedRows[state.selectedIndex][notesCol()] = val;
+    els.notesIndicator.classList.toggle('hidden', !val.trim());
+    setDirty(true);
+  });
+
+  // Webview toolbar
+  els.btnBack.addEventListener('click',           () => els.webview.goBack());
+  els.btnForward.addEventListener('click',        () => els.webview.goForward());
+  els.btnReload.addEventListener('click',         () => els.webview.reload());
+  els.btnOpenExternal.addEventListener('click',   () => {
+    const url = els.webview.getURL();
+    if (url) window.electronAPI.openExternal(url);
+  });
+
+  // Side-by-side compare (Phase 5.2)
+  $('btn-compare').addEventListener('click', () => {
+    const compare = $('webview-compare');
+    if (compare.classList.contains('hidden')) {
+      compare.classList.remove('hidden');
+      $('compare-url').focus();
+    } else {
+      compare.classList.add('hidden');
+    }
+  });
+  $('btn-compare-go').addEventListener('click', () => {
+    const url = $('compare-url').value.trim();
+    if (url && isValidUrl(url)) {
+      $('webview-2').src = url;
+    }
+  });
+  $('compare-url').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const url = $('compare-url').value.trim();
+      if (url && isValidUrl(url)) $('webview-2').src = url;
+    }
+  });
+  $('btn-compare-close').addEventListener('click', () => {
+    $('webview-compare').classList.add('hidden');
+  });
+
+  // Screenshot capture (Phase 5.1) — full-page via scroll-and-stitch
+  $('btn-screenshot').addEventListener('click', async () => {
+    const btn = $('btn-screenshot');
+    setButtonLoading(btn, true);
+    try {
+      const url = els.webview.getURL() || 'page';
+      const safeName = url.replace(/[^a-z0-9]/gi, '_').substring(0, 50) + '.png';
+      const wcId = els.webview.getWebContentsId();
+      const result = await window.electronAPI.captureScreenshot({
+        defaultName: safeName,
+        webContentsId: wcId
+      });
+      if (result.success) showToast('Screenshot saved', 'success');
+      else if (result.error) showToast('Screenshot failed: ' + result.error, 'error');
+    } catch (e) {
+      showToast('Screenshot failed: ' + e.message, 'error');
+    } finally {
+      setButtonLoading(btn, false);
+    }
+  });
+
+  // Content extraction (Phase 5.3)
+  $('btn-extract-content').addEventListener('click', extractPageContent);
+
+  // Broken link check (Phase 5.4)
+  $('btn-check-links').addEventListener('click', checkPageLinks);
+
+  // Result copy/export buttons
+  $('btn-result-copy').addEventListener('click', async () => {
+    if (!_lastPopoverText) return;
+    await window.electronAPI.copyToClipboard(_lastPopoverText);
+    showToast('Copied to clipboard', 'success');
+  });
+  $('btn-result-export').addEventListener('click', async () => {
+    if (!_lastPopoverText) return;
+    const title = els.assessPopover.querySelector('.popover-title').textContent || 'results';
+    const safeName = title.replace(/[^a-z0-9]/gi, '-').toLowerCase() + '.txt';
+    const result = await window.electronAPI.saveTextFile({ content: _lastPopoverText, defaultName: safeName });
+    if (result.success) showToast('Saved', 'success');
+    else if (result.error) showToast('Save failed: ' + result.error, 'error');
+  });
+
+  // Help window
+  els.btnHelp.addEventListener('click', () => window.electronAPI.openHelpWindow());
+
+  // Close popovers on outside click
+  document.addEventListener('click', e => {
+    if (!els.tagDropdown.contains(e.target) && e.target !== els.btnAddTag) {
+      closeTagDropdown();
+    }
+    if (!els.notesPopover.contains(e.target) && e.target !== els.btnNotes) {
+      closeNotesPopover();
+    }
+    if (!els.navPopover.contains(e.target) && e.target !== els.btnNav) {
+      closeNavPopover();
+    }
+  });
+}
+
+// ─── Load data ────────────────────────────────────────────────────────────────
+
+function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, sheetName, columnMap, projectSettings, dedupReport }) {
+  state.filePath      = filePath;
+  state.headers       = headers;
+  state.rows          = rows;
+  state.editedRows    = deepClone(rows);
+  state.urlColumn     = urlColumn;
+  state.selectedIndex = null;
+  state.isDirty       = false;
+  _undoStack.length = 0;
+  _redoStack.length = 0;
+  updateNoSelectionState();
+
+  // Phase 1: surface duplicate-column auto-merge report
+  if (dedupReport) {
+    const { names, droppedColumns, valuesMerged, conflicts } = dedupReport;
+    let msg = `Removed ${droppedColumns} duplicate column${droppedColumns !== 1 ? 's' : ''} (${names.join(', ')})`;
+    if (valuesMerged > 0) msg += ` · ${valuesMerged} values merged`;
+    if (conflicts > 0) msg += ` · ⚠ ${conflicts} conflict${conflicts !== 1 ? 's' : ''} kept first occurrence`;
+    msg += ' · save to commit cleanup';
+    showToast(msg, conflicts > 0 ? 'error' : 'success');
+    setDirty(true);
+  }
+
+  // Phase 1: one-time rename of Migration_Track 'Re-implement' → 'Migrate Records'
+  // (track renamed for clarity; "Re-implement" colloquially read as "rebuild from scratch")
+  let trackRenameCount = 0;
+  state.editedRows.forEach(r => {
+    if (String(r['Migration_Track'] || '').trim() === 'Re-implement') {
+      r['Migration_Track'] = 'Migrate Records';
+      trackRenameCount++;
+    }
+  });
+  let regRenameCount = 0;
+  if (projectSettings && Array.isArray(projectSettings.contentTypeRegistry)) {
+    projectSettings.contentTypeRegistry.forEach(e => {
+      if (String(e.defaultMigrationTrack || '').trim() === 'Re-implement') {
+        e.defaultMigrationTrack = 'Migrate Records';
+        regRenameCount++;
+      }
+    });
+  }
+  if (trackRenameCount > 0 || regRenameCount > 0) {
+    const parts = [];
+    if (trackRenameCount > 0) parts.push(`${trackRenameCount} row${trackRenameCount !== 1 ? 's' : ''}`);
+    if (regRenameCount > 0) parts.push(`${regRenameCount} registry entr${regRenameCount !== 1 ? 'ies' : 'y'}`);
+    showToast(`Renamed Migration_Track 'Re-implement' → 'Migrate Records' in ${parts.join(' + ')} · save to commit`, 'success');
+    setDirty(true);
+  }
+
+  // Phase 1, Chunk D: one-time migration of legacy GA_KKE_Recommendation → Suggested_KKE.
+  // If a file has GA recs populated but Suggested_KKE hasn't been computed yet, seed
+  // Suggested_KKE from the GA values so the new badge renders right away. Also pulls
+  // in Rubric results from _AssessmentResult. Idempotent: skips rows that already
+  // have Suggested_KKE populated.
+  let gaSeedCount = 0;
+  state.editedRows.forEach(r => {
+    const ga = String(r[GA_KKE_COL] || '').trim();
+    const rubric = String(r[ASSESSMENT_RESULT_COL] || '').trim();
+    const existing = String(r[SUGGESTED_KKE_COL] || '').trim();
+    if (existing) return; // already migrated
+    if (!ga && !rubric) return; // nothing to migrate
+    const sources = [];
+    if (ga) sources.push({ source: 'GA', rec: ga, detail: r[GA_SCORE_COL] ? `score ${r[GA_SCORE_COL]}` : null });
+    if (rubric) sources.push({ source: 'Rubric', rec: rubric, detail: null });
+    const winner = pickWinner(sources, defaultSourceWeights());
+    if (!winner) return;
+    r[SUGGESTED_KKE_COL] = winner.winningRec;
+    r[SUGGESTED_KKE_SOURCES_COL] = JSON.stringify({
+      winner: winner.winningSource,
+      sources,
+      disagreement: winner.disagreement
+    });
+    gaSeedCount++;
+  });
+  if (gaSeedCount > 0) {
+    showToast(`Seeded Suggested_KKE for ${gaSeedCount} row${gaSeedCount !== 1 ? 's' : ''} from existing GA / Rubric results · save to commit`, 'success');
+    setDirty(true);
+  }
+
+  // Column mapping
+  if (columnMap) {
+    state.columnMap = columnMap;
+  }
+
+  // Project settings (from KKE_Settings sheet)
+  state.projectSettings = projectSettings || {};
+  // Content Theme library is per-project; live in projectSettings.contentThemeLibrary
+  state.contentThemeLibrary = Array.isArray(state.projectSettings.contentThemeLibrary)
+    ? state.projectSettings.contentThemeLibrary
+    : [];
+
+  // Phase 2, Chunk α: Page_Status library (per-project, seeded with defaults)
+  state.pageStatusLibrary = Array.isArray(state.projectSettings.pageStatusLibrary) && state.projectSettings.pageStatusLibrary.length > 0
+    ? state.projectSettings.pageStatusLibrary
+    : DEFAULT_PAGE_STATUSES.map(s => ({ ...s }));
+  // Persist back so the structure exists for later edits
+  state.projectSettings.pageStatusLibrary = state.pageStatusLibrary;
+
+  // Assignee library (per-project, starts empty)
+  state.assigneeLibrary = Array.isArray(state.projectSettings.assigneeLibrary)
+    ? state.projectSettings.assigneeLibrary
+    : [];
+  state.projectSettings.assigneeLibrary = state.assigneeLibrary;
+
+  // Phase 2, Chunk β: Pattern library (per-project, starts empty; opt-in seed)
+  state.patternLibrary = Array.isArray(state.projectSettings.patternLibrary)
+    ? state.projectSettings.patternLibrary
+    : [];
+  state.projectSettings.patternLibrary = state.patternLibrary;
+
+  // Design Pattern library — primary source is app prefs (already in state.designPatternLibrary).
+  // If the project xlsx has a DesignPatternLibrary sheet with custom entries, merge any names
+  // not already present in the prefs library so project-specific entries aren't lost.
+  const projDpl = state.projectSettings.designPatternLibrary;
+  if (Array.isArray(projDpl) && projDpl.length > 0) {
+    const existing = new Set(state.designPatternLibrary.map(e => e.name));
+    projDpl.forEach(e => { if (e.name && !existing.has(e.name)) state.designPatternLibrary.push(e); });
+  }
+  // Keep the projectSettings reference in sync so save writes the full merged list
+  state.projectSettings.designPatternLibrary = state.designPatternLibrary;
+
+  // Nav structure
+  state.newNavNodes = [];
+  state.navTreeDirty = false;
+  if (_navEditorOpen) closeNavEditor();
+  if (_redirectEditorOpen) closeRedirectEditor();
+  if (_tableViewOpen) closeTableView();
+  _tableColumns = [];
+  _tableFilteredRows = [];
+  _tableSort = { col: '', dir: '' };
+  _tableColFilters = {};
+  _tableGlobalFilter = '';
+  if (navTree) {
+    state.navTree  = navTree.roots;
+    state.navNodes = navTree.nodes;
+    state.navSortIDFormat = detectSortIDFormat(navTree.nodes);
+    els.btnNav.disabled = false;
+
+    // One-time auto-cleanup: scrub mojibake from text-bearing nav node fields.
+    // sanitizeText handles the Mac-Roman + UTF-8-as-Latin-1 patterns the user's
+    // sanitizer already catches on paste/blur; this catches existing data that
+    // was loaded from the sheet.
+    const MOJI_FIELDS = ['label', 'path', 'breadcrumb', 'computedPath', 'notes', 'buildGuidance', 'writerBrief'];
+    let mojiNodeCount = 0;
+    state.navNodes.forEach(n => {
+      let nodeChanged = false;
+      MOJI_FIELDS.forEach(f => {
+        const v = n[f];
+        if (typeof v !== 'string' || !v) return;
+        const cleaned = sanitizeText(v);
+        if (cleaned !== v) { n[f] = cleaned; nodeChanged = true; }
+      });
+      if (nodeChanged) mojiNodeCount++;
+    });
+    if (mojiNodeCount > 0) {
+      state.navTreeDirty = true;
+      setDirty(true);
+      showToast(`Cleaned mojibake on ${mojiNodeCount} nav node${mojiNodeCount !== 1 ? 's' : ''} · save to commit`, 'success');
+    }
+  } else {
+    state.navTree  = null;
+    state.navNodes = [];
+    els.btnNav.disabled = true;
+  }
+
+  // Sheet picker — show when file has multiple data sheets
+  if (dataSheets && dataSheets.length > 1) {
+    els.sheetSelect.innerHTML = '';
+    dataSheets.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s;
+      opt.textContent = s;
+      if (s === sheetName) opt.selected = true;
+      els.sheetSelect.appendChild(opt);
+    });
+    els.sheetPicker.classList.remove('hidden');
+  } else {
+    els.sheetPicker.classList.add('hidden');
+  }
+
+  const displayName = filePath.split('/').pop();
+  els.fileName.textContent = (dataSheets && dataSheets.length > 1)
+    ? displayName
+    : displayName;
+  setDirty(false);
+  els.searchInput.disabled = false;
+  els.searchInput.value = state.filterText;
+  $('btn-clear-search').classList.toggle('hidden', !state.filterText);
+  const scopeEl = $('search-scope');
+  if (scopeEl) scopeEl.disabled = false;
+
+  // Don't prune state.visibleFields against this file's headers — renderMetaFields already
+  // skips missing fields, and pruning would permanently forget fields that only exist in
+  // other files the user works with. Only seed defaults if the user has nothing configured.
+  if (state.visibleFields.length === 0) {
+    const defaults = ['Title 1', 'Status Code', 'Indexability Status', 'Redirect URL'];
+    state.visibleFields = defaults.filter(f => headers.includes(f));
+  }
+
+  if (!urlColumn) showUrlPicker(headers);
+  else els.urlPicker.classList.add('hidden');
+
+  renderKkeButtons();
+  renderKkeFilterOptions();
+  els.kkeFilterWrap.classList.remove('hidden');
+  populateGroupFilter();
+  renderSavedFilterSelect();
+  $('btn-add-row').classList.remove('hidden');
+  $('btn-add-field-filter').classList.remove('hidden');
+  const uncBtn = document.getElementById('btn-unclassified-filter');
+  if (uncBtn) uncBtn.classList.remove('hidden');
+  refreshUnclassifiedButton();
+  // Field filters are session-scoped; reset on each file open
+  state.fieldFilters = [];
+  renderFieldFilterChips();
+
+  // Restore KKE filter: file-level (projectSettings) takes priority, then app-level (prefs)
+  const fileKkeFilter = state.projectSettings.kkeFilter;
+  const prefsKkeFilter = state.prefsKkeFilter;
+  const savedKkeFilter = fileKkeFilter || prefsKkeFilter;
+  if (savedKkeFilter) {
+    state.kkeFilter = Array.isArray(savedKkeFilter) ? savedKkeFilter : (savedKkeFilter ? [savedKkeFilter] : []);
+    renderKkeFilterOptions();
+  }
+  if (state.projectSettings.groupFilter) {
+    state.groupFilter = state.projectSettings.groupFilter;
+    els.groupFilter.value = state.groupFilter;
+  }
+
+  // Load computed column definitions from project settings
+  try {
+    state.computedColumns = state.projectSettings.computedColumns
+      ? JSON.parse(state.projectSettings.computedColumns)
+      : [];
+  } catch { state.computedColumns = []; }
+
+  detectDuplicates();
+  applyFilter();
+  renderColHeaders();
+  showNoSelection();
+
+  // Recalculate computed columns if any are defined
+  if (state.computedColumns.length > 0) {
+    recalculateComputedColumns().then(() => setDirty(false));
+  }
+
+  // Offer GA KKE setup if GA4 columns detected and no config yet
+  maybeOfferGaKkeSetup();
+
+  // Phase 1, Chunk B: offer to seed ContentTypeRegistry with curated defaults if empty
+  maybeOfferContentTypeRegistrySeed();
+
+  // Phase 2, Chunk β: offer to seed PatternLibrary if empty (only if nav tree exists)
+  maybeOfferPatternLibrarySeed();
+
+  // Triage Non-200 Pages: toast if there are unhandled non-200 pages
+  maybeOfferNon200Triage();
+
+  // Session resume cue — re-establish momentum when reopening a partly-done audit
+  showSessionResumeCue();
+}
+
+/** On file open, surface where the audit stands so you can pick up where you left off. */
+function showSessionResumeCue() {
+  const total = state.editedRows.length;
+  if (!total) return;
+  const reviewed = state.editedRows.filter(r => String(r[kkeCol()] || '').trim()).length;
+  if (reviewed === 0) return; // fresh audit — nothing to resume
+  const remaining = total - reviewed;
+  const pct = Math.round(reviewed / total * 100);
+  // Delay slightly so this is the cue that lingers (after open-time toasts).
+  setTimeout(() => {
+    if (remaining === 0) {
+      showToast(`All ${total} pages reviewed (100%)`, 'success');
+    } else {
+      showToast(`Resuming: ${reviewed} reviewed, ${remaining} to go (${pct}%) — press ] for the next unreviewed`, 'info');
+    }
+  }, 400);
+}
+
+// ─── Filtering ────────────────────────────────────────────────────────────────
+
+function addNewRow() {
+  if (state.headers.length === 0) { showToast('Open a file first', 'error'); return; }
+
+  // Create a blank row with all headers initialized to empty
+  const newRow = {};
+  state.headers.forEach(h => { newRow[h] = ''; });
+
+  // Prompt for the URL
+  const urlCol = state.urlColumn || 'Address';
+  const urlEditor = document.createElement('div');
+  urlEditor.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 16px 48px rgba(0,0,0,0.3);padding:20px;z-index:700;width:500px;';
+
+  urlEditor.innerHTML = `
+    <div style="font-weight:600;font-size:14px;margin-bottom:12px;">Add New Page</div>
+    <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:4px;">URL</label>
+    <input id="new-row-url" type="text" placeholder="https://example.com/new-page" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;font-family:var(--font-sans);box-sizing:border-box;margin-bottom:8px;">
+    <label style="font-size:12px;font-weight:600;color:var(--text-muted);display:block;margin-bottom:4px;">Title (optional)</label>
+    <input id="new-row-title" type="text" placeholder="Page title" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;font-family:var(--font-sans);box-sizing:border-box;margin-bottom:12px;">
+    <div style="display:flex;justify-content:flex-end;gap:8px;">
+      <button id="new-row-cancel" class="btn btn-sm btn-ghost">Cancel</button>
+      <button id="new-row-add" class="btn btn-sm btn-primary">Add</button>
+    </div>
+  `;
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:600;';
+
+  document.body.appendChild(overlay);
+  document.body.appendChild(urlEditor);
+  $('new-row-url').focus();
+
+  function cleanup() {
+    urlEditor.remove();
+    overlay.remove();
+  }
+
+  $('new-row-cancel').addEventListener('click', cleanup);
+  overlay.addEventListener('click', cleanup);
+
+  $('new-row-add').addEventListener('click', () => {
+    const url = $('new-row-url').value.trim();
+    if (!url) { showToast('Enter a URL', 'error'); return; }
+
+    // Check for duplicate URL
+    const exists = state.editedRows.some(r => String(r[urlCol] || '').trim().toLowerCase() === url.toLowerCase());
+    if (exists) {
+      showToast('This URL already exists in the spreadsheet', 'error');
+      return;
+    }
+
+    newRow[urlCol] = url;
+    const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : '');
+    if (titleCol) newRow[titleCol] = $('new-row-title').value.trim();
+
+    // Add to both rows arrays
+    state.rows.push(newRow);
+    state.editedRows.push(newRow);
+
+    setDirty(true);
+    applyFilter();
+
+    // Select the new row
+    const newIndex = state.editedRows.length - 1;
+    selectRow(newIndex);
+
+    cleanup();
+    showToast('Row added: ' + url, 'success');
+  });
+
+  // Enter to add
+  $('new-row-url').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); $('new-row-add').click(); }
+  });
+  $('new-row-title').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); $('new-row-add').click(); }
+  });
+}
+
+// ─── Global Search (Cmd+F) ────────────────────────────────────────────────────
+
+let _globalSearchMatches = []; // [{origIndex, row}]
+let _globalSearchCurrent = -1;
+
+function setupGlobalSearch() {
+  const bar = $('global-search-bar');
+  const input = $('global-search-input');
+  const countEl = $('global-search-count');
+
+  // Cmd+F opens the search bar
+  document.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+      e.preventDefault();
+      bar.classList.remove('hidden');
+      input.focus();
+      input.select();
+    }
+    if (e.key === 'Escape' && !bar.classList.contains('hidden')) {
+      closeGlobalSearch();
+    }
+  });
+
+  let debounce;
+  input.addEventListener('input', () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(globalSearchUpdate, 150);
+  });
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) globalSearchNavigate(-1);
+      else globalSearchNavigate(1);
+    }
+  });
+
+  $('btn-global-search-next').addEventListener('click', () => globalSearchNavigate(1));
+  $('btn-global-search-prev').addEventListener('click', () => globalSearchNavigate(-1));
+  const gotoBtn = $('btn-global-search-goto');
+  if (gotoBtn) gotoBtn.addEventListener('click', globalSearchGoToRow);
+  $('btn-global-search-close').addEventListener('click', closeGlobalSearch);
+}
+
+function globalSearchUpdate() {
+  const query = $('global-search-input').value.trim().toLowerCase();
+  _globalSearchMatches = [];
+  _globalSearchCurrent = -1;
+
+  if (!query || state.editedRows.length === 0) {
+    $('global-search-count').textContent = '';
+    return;
+  }
+
+  state.editedRows.forEach((row, origIndex) => {
+    const match = Object.values(row).some(v => String(v).toLowerCase().includes(query));
+    if (match) _globalSearchMatches.push({ origIndex, row });
+  });
+
+  if (_globalSearchMatches.length > 0) {
+    _globalSearchCurrent = -1; // so first navigate(1) goes to index 0
+    $('global-search-count').textContent = `${_globalSearchMatches.length} matches`;
+    globalSearchNavigate(1); // go to first match
+  } else {
+    $('global-search-count').textContent = 'No matches';
+  }
+}
+
+function globalSearchNavigate(delta) {
+  if (_globalSearchMatches.length === 0) return;
+  _globalSearchCurrent = (_globalSearchCurrent + delta + _globalSearchMatches.length) % _globalSearchMatches.length;
+  $('global-search-count').textContent = `${_globalSearchCurrent + 1} of ${_globalSearchMatches.length}`;
+
+  const match = _globalSearchMatches[_globalSearchCurrent];
+
+  // If in audit view, select the row directly (without clearing filters)
+  if (!_tableViewOpen && !_navEditorOpen && !_redirectEditorOpen) {
+    // Check if the row is in the current filtered set
+    const inFiltered = state.filteredRows.some(fr => fr.origIndex === match.origIndex);
+    if (!inFiltered) {
+      // Temporarily clear filters to show the row
+      state.filterText = '';
+      els.searchInput.value = '';
+      $('btn-clear-search').classList.add('hidden');
+      state.kkeFilter = [];
+      state.groupFilter = '';
+      if (els.groupFilter) els.groupFilter.value = '';
+      renderKkeFilterOptions();
+      applyFilter();
+    }
+    selectRow(match.origIndex);
+  }
+}
+
+function globalSearchGoToRow() {
+  if (_globalSearchCurrent < 0 || _globalSearchCurrent >= _globalSearchMatches.length) {
+    showToast('No match selected', 'error');
+    return;
+  }
+
+  const match = _globalSearchMatches[_globalSearchCurrent];
+
+  // Switch to audit view if in another view
+  if (_tableViewOpen) closeTableView();
+  if (_navEditorOpen) closeNavEditor();
+  if (_redirectEditorOpen) closeRedirectEditor();
+
+  // Clear sidebar filters so the row is visible
+  state.filterText = '';
+  els.searchInput.value = '';
+  $('btn-clear-search').classList.add('hidden');
+  state.kkeFilter = [];
+  state.groupFilter = '';
+  if (els.groupFilter) els.groupFilter.value = '';
+  renderKkeFilterOptions();
+  applyFilter();
+
+  // Select the row
+  selectRow(match.origIndex);
+  closeGlobalSearch();
+}
+
+function closeGlobalSearch() {
+  $('global-search-bar').classList.add('hidden');
+  _globalSearchMatches = [];
+  _globalSearchCurrent = -1;
+  $('global-search-count').textContent = '';
+}
+
+function applySmeFieldsVisibility() {
+  const wrap = $('sme-fields-wrap');
+  if (wrap) {
+    if (state.showSmeFields) wrap.classList.remove('hidden');
+    else wrap.classList.add('hidden');
+  }
+}
+
+function applyMigrationFieldsVisibility() {
+  const wrap = els.migrationFieldsWrap;
+  if (wrap) {
+    if (state.showMigrationFields) wrap.classList.remove('hidden');
+    else wrap.classList.add('hidden');
+  }
+}
+
+function applyDesignPatternsVisibility() {
+  const wrap = els.designPatternFieldsWrap;
+  if (wrap) {
+    if (state.showDesignPatterns) wrap.classList.remove('hidden');
+    else wrap.classList.add('hidden');
+  }
+}
+
+// ─── Phase 1, Chunk C: Migration_Track suggestion + ContentTypeRegistry lookup ─
+
+/** Look up a row's Page_Type in the project's ContentTypeRegistry.
+ *  Primary: case-insensitive exact match.
+ *  Fallback: when the value contains separators (" / ", ",", " | "), split into tokens
+ *  and try each as an exact match — handles cases like "Article / blog post" matching
+ *  the registry's "Article" or "Blog Post" entry.
+ */
+function lookupContentTypeRegistry(pageType) {
+  if (!pageType) return null;
+  const reg = state.projectSettings && state.projectSettings.contentTypeRegistry;
+  if (!Array.isArray(reg) || reg.length === 0) return null;
+  const target = String(pageType).trim().toLowerCase();
+  if (!target) return null;
+  // Build a lookup map once per call
+  const byName = new Map();
+  reg.forEach(e => {
+    const name = String(e.contentType || '').trim().toLowerCase();
+    if (name) byName.set(name, e);
+  });
+  // Exact match
+  if (byName.has(target)) return byName.get(target);
+  // Fallback: split on common separators and try each token
+  const tokens = target.split(/\s*[\/,|]\s*/).map(t => t.trim()).filter(Boolean);
+  for (const t of tokens) {
+    if (byName.has(t)) return byName.get(t);
+  }
+  return null;
+}
+
+/** Suggest a Migration_Track based on KKE (or Final_KKE if present) + Content_Nature.
+ *  Falls back to the ContentTypeRegistry's defaultMigrationTrack when Content_Nature
+ *  is blank. Returns '' when no confident suggestion can be made.
+ */
+function deriveMigrationTrackSuggestion(row) {
+  if (!row) return '';
+  const finalKke = String(row['Final_KKE'] || '').trim();
+  const baseKke  = String(row[kkeCol()] || '').trim();
+  const kke      = (finalKke || baseKke).toLowerCase();
+  const nature   = String(row['Content_Nature'] || '').trim();
+  const pageType = String(row['Page_Type'] || '').trim();
+  const registryEntry = lookupContentTypeRegistry(pageType);
+
+  // KKE drives the broad track; nature refines for Keep
+  if (kke === 'kill')        return 'Kill/Redirect';
+  if (kke === 'consolidate') return 'Merge';
+  if (kke === 'evolve')      return 'Manual Rebuild';
+  if (kke === 'exclude')     return ''; // out of scope — no track
+  if (kke === 'keep') {
+    const effectiveNature = nature || (registryEntry ? registryEntry.defaultContentNature : '');
+    if (effectiveNature === 'Page')           return 'Scripted';
+    if (effectiveNature === 'Content Object') return 'Migrate Records';
+    if (effectiveNature === 'Generated')      return 'Configure';
+    // Keep with no nature info — fall back to registry's track if it has one
+    if (registryEntry && registryEntry.defaultMigrationTrack) return registryEntry.defaultMigrationTrack;
+    return '';
+  }
+  // No KKE yet — defer to registry default if available
+  if (registryEntry && registryEntry.defaultMigrationTrack) return registryEntry.defaultMigrationTrack;
+  return '';
+}
+
+/** Apply ContentTypeRegistry defaults to a row. Only fills blank Content_Nature
+ *  and blank Migration_Track — never overwrites human-set values. Logs changes
+ *  and marks dirty when something is filled. forUI=true refreshes the audit bar.
+ */
+function applyContentTypeRegistryDefaults(origIndex, forUI) {
+  const row = state.editedRows[origIndex];
+  if (!row) return;
+  const entry = lookupContentTypeRegistry(row['Page_Type']);
+  if (!entry) {
+    if (forUI) populateMigrationFields(row);
+    return;
+  }
+  let touched = false;
+  const curNature = String(row['Content_Nature'] || '').trim();
+  if (!curNature && entry.defaultContentNature) {
+    row['Content_Nature'] = entry.defaultContentNature;
+    logChange(origIndex, 'Content_Nature', '', entry.defaultContentNature);
+    touched = true;
+  }
+  const curTrack = String(row['Migration_Track'] || '').trim();
+  if (!curTrack && entry.defaultMigrationTrack) {
+    row['Migration_Track'] = entry.defaultMigrationTrack;
+    logChange(origIndex, 'Migration_Track', '', entry.defaultMigrationTrack);
+    touched = true;
+  }
+  // Crosswalk: fill the target (new-CMS) content type from the registry when blank.
+  const curTarget = String(row['Target_Content_Type'] || '').trim();
+  if (!curTarget && entry.targetContentType) {
+    row['Target_Content_Type'] = entry.targetContentType;
+    logChange(origIndex, 'Target_Content_Type', '', entry.targetContentType);
+    touched = true;
+  }
+  if (touched) setDirty(true);
+  if (forUI) { populateMigrationFields(row); updateTargetContentTypeHint(row); }
+}
+
+/** Show the target (new-CMS) content type beside the Content Type field. */
+function updateTargetContentTypeHint(row) {
+  const el = $('target-ct-hint');
+  if (!el) return;
+  const t = row ? String(row['Target_Content_Type'] || '').trim() : '';
+  el.textContent = t ? '→ ' + t : '';
+}
+
+/** Populate the Content_Nature + Migration_Track dropdowns for the selected row,
+ *  including the ghost-suggestion span when Migration_Track is blank.
+ */
+function populateMigrationFields(row) {
+  if (!els.contentNatureSelect || !els.migrationTrackSelect) return;
+  const nature = String(row['Content_Nature'] || '');
+  const track  = String(row['Migration_Track'] || '');
+  els.contentNatureSelect.value  = nature;
+  els.migrationTrackSelect.value = track;
+
+  // Ghost suggestion: show only when track is blank and we can derive one
+  const sugEl = els.migrationTrackSuggest;
+  if (sugEl) {
+    if (!track) {
+      const suggestion = deriveMigrationTrackSuggestion(row);
+      if (suggestion) {
+        sugEl.textContent = `→ ${suggestion}`;
+        sugEl.title = `Suggested track based on KKE + Content Nature${row['Page_Type'] ? ` + Page Type "${row['Page_Type']}"` : ''}. Click to accept.`;
+        sugEl.classList.remove('hidden');
+        sugEl.dataset.value = suggestion;
+      } else {
+        sugEl.classList.add('hidden');
+        sugEl.dataset.value = '';
+      }
+    } else {
+      sugEl.classList.add('hidden');
+      sugEl.dataset.value = '';
+    }
+  }
+}
+
+function setupMigrationFieldsHandlers() {
+  if (!els.contentNatureSelect || !els.migrationTrackSelect) return;
+
+  els.contentNatureSelect.addEventListener('change', () => {
+    if (state.selectedIndex == null) return;
+    const row = state.editedRows[state.selectedIndex];
+    const old = String(row['Content_Nature'] || '');
+    const next = els.contentNatureSelect.value;
+    if (old === next) return;
+    row['Content_Nature'] = next;
+    logChange(state.selectedIndex, 'Content_Nature', old, next);
+    setDirty(true);
+    populateMigrationFields(row);
+    refreshRowInList(state.selectedIndex);
+  });
+
+  els.migrationTrackSelect.addEventListener('change', () => {
+    if (state.selectedIndex == null) return;
+    const row = state.editedRows[state.selectedIndex];
+    const old = String(row['Migration_Track'] || '');
+    const next = els.migrationTrackSelect.value;
+    if (old === next) return;
+    row['Migration_Track'] = next;
+    logChange(state.selectedIndex, 'Migration_Track', old, next);
+    setDirty(true);
+    populateMigrationFields(row);
+    refreshRowInList(state.selectedIndex);
+  });
+
+  // Click ghost suggestion to accept it
+  if (els.migrationTrackSuggest) {
+    els.migrationTrackSuggest.addEventListener('click', () => {
+      if (state.selectedIndex == null) return;
+      const v = els.migrationTrackSuggest.dataset.value || '';
+      if (!v) return;
+      const row = state.editedRows[state.selectedIndex];
+      const old = String(row['Migration_Track'] || '');
+      if (old === v) return;
+      row['Migration_Track'] = v;
+      els.migrationTrackSelect.value = v;
+      logChange(state.selectedIndex, 'Migration_Track', old, v);
+      setDirty(true);
+      populateMigrationFields(row);
+      refreshRowInList(state.selectedIndex);
+    });
+  }
+}
+
+// ─── Unified dialog system ────────────────────────────────────────────────────
+// One factory for every modal: centered, draggable, Esc-closes, backdrop-closes,
+// focus-trapped to a single z-index stack. Built on the existing .modal-overlay /
+// .modal-dialog / .modal-header CSS so it inherits the app's visual language.
+// Replaces the old per-modal inline-styled divs and native confirm()/alert().
+
+const _modalStack = [];
+let _modalKeyWired = false;
+
+// Drop stack entries whose overlay has been detached (e.g. an editor that closes
+// via its own button without popping the stack). Keeps Esc targeting the real top.
+function _pruneModalStack() {
+  for (let i = _modalStack.length - 1; i >= 0; i--) {
+    const ov = _modalStack[i].overlay;
+    if (ov && !document.body.contains(ov)) _modalStack.splice(i, 1);
+  }
+}
+
+function _ensureModalKeyHandler() {
+  if (_modalKeyWired) return;
+  _modalKeyWired = true;
+  document.addEventListener('keydown', (e) => {
+    _pruneModalStack();
+    if (!_modalStack.length) return;
+    const top = _modalStack[_modalStack.length - 1];
+    if (e.key === 'Escape') {
+      if (!top.dismissable) return;
+      e.preventDefault();
+      e.stopPropagation();
+      top.close(top.escapeValue);
+    } else if (e.key === 'Enter') {
+      // Don't hijack Enter inside multi-line inputs.
+      const tag = (e.target && e.target.tagName || '').toLowerCase();
+      if (tag === 'textarea') return;
+      if (top.primaryBtn && !e.shiftKey) {
+        e.preventDefault();
+        top.primaryBtn.click();
+      }
+    }
+  }, true);
+}
+
+/**
+ * Open a modal dialog.
+ * @param {object} opts
+ *   title        {string}  header text
+ *   body         {string|Node}  innerHTML string or a DOM node for the body
+ *   buttons      {Array<{label,variant,value,primary,onClick,closeOnClick}>}
+ *                  variant: 'primary' | 'danger' | 'ghost' (default ghost)
+ *                  onClick(api) may return a value used as the close result
+ *   width        {number|string}  px number or CSS width (default 440)
+ *   draggable    {boolean}  default true
+ *   dismissable  {boolean}  Esc / backdrop / ✕ close (default true)
+ *   escapeValue  {*}        value passed to onClose on Esc/backdrop/✕ (default null)
+ *   className    {string}   extra class on the dialog
+ *   onClose      {function} called once with the close result
+ * @returns {{ close, overlay, dialog, body, footer, setPrimary }}
+ */
+function openModal(opts = {}) {
+  const {
+    title = '', body = '', buttons = [], width = 440,
+    draggable = true, dismissable = true, escapeValue = null,
+    className = '', onClose = null,
+  } = opts;
+
+  _ensureModalKeyHandler();
+  _pruneModalStack();
+  const z = 1000 + _modalStack.length * 10;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay app-modal-overlay';
+  overlay.style.zIndex = z;
+
+  const dialog = document.createElement('div');
+  dialog.className = 'modal-dialog app-modal' + (className ? ' ' + className : '');
+  dialog.style.zIndex = z + 1;
+  dialog.style.width = typeof width === 'number' ? width + 'px' : width;
+
+  // Header
+  const header = document.createElement('div');
+  header.className = 'modal-header';
+  const titleEl = document.createElement('div');
+  titleEl.className = 'modal-title';
+  titleEl.textContent = title;
+  header.appendChild(titleEl);
+  if (dismissable) {
+    const x = document.createElement('button');
+    x.className = 'modal-close-btn';
+    x.setAttribute('aria-label', 'Close');
+    x.setAttribute('title', 'Close');
+    x.textContent = '×';
+    x.addEventListener('click', () => close(escapeValue));
+    header.appendChild(x);
+  }
+  dialog.appendChild(header);
+
+  // Body
+  const bodyEl = document.createElement('div');
+  bodyEl.className = 'modal-body app-modal-body';
+  if (typeof body === 'string') bodyEl.innerHTML = body;
+  else if (body instanceof Node) bodyEl.appendChild(body);
+  dialog.appendChild(bodyEl);
+
+  // Footer
+  let footerEl = null;
+  let primaryBtn = null;
+  if (buttons.length) {
+    footerEl = document.createElement('div');
+    footerEl.className = 'modal-footer app-modal-footer';
+    buttons.forEach(b => {
+      const btn = document.createElement('button');
+      const variantClass = b.variant === 'primary' ? 'btn-primary'
+        : b.variant === 'danger' ? 'btn-primary btn-danger'
+        : 'btn-ghost';
+      btn.className = 'btn btn-sm ' + variantClass;
+      btn.textContent = b.label;
+      btn.addEventListener('click', () => {
+        let v = b.value;
+        if (b.onClick) { const r = b.onClick(api); if (r !== undefined) v = r; }
+        if (b.closeOnClick !== false) close(v);
+      });
+      footerEl.appendChild(btn);
+      if (b.primary) primaryBtn = btn;
+    });
+    dialog.appendChild(footerEl);
+  }
+
+  // Backdrop click
+  if (dismissable) {
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(escapeValue); });
+  }
+
+  // Dialog must be a CHILD of the overlay: the overlay is position:fixed and
+  // .modal-dialog is not positioned, so a sibling dialog would paint *under* the
+  // dim mask. As a child it's flex-centered by the overlay and paints above it.
+  document.body.appendChild(overlay);
+  overlay.appendChild(dialog);
+
+  if (draggable) makeModalDraggable(dialog);
+
+  let closed = false;
+  function close(result) {
+    if (closed) return;
+    closed = true;
+    const idx = _modalStack.indexOf(stackEntry);
+    if (idx !== -1) _modalStack.splice(idx, 1);
+    dialog.remove();
+    overlay.remove();
+    if (onClose) onClose(result);
+  }
+
+  const stackEntry = { overlay, close, dismissable, escapeValue, get primaryBtn() { return primaryBtn; } };
+  _modalStack.push(stackEntry);
+
+  const api = {
+    close, overlay, dialog, body: bodyEl, footer: footerEl,
+    setPrimary(btnOrFn) { /* reserved */ },
+  };
+
+  // Focus the primary button, or the first focusable in the body.
+  const firstField = bodyEl.querySelector('input, select, textarea');
+  if (firstField) { firstField.focus(); if (firstField.select) firstField.select(); }
+  else if (primaryBtn) primaryBtn.focus();
+
+  return api;
+}
+
+/** Promise-based confirm. Resolves true (confirmed) / false (cancelled/dismissed). */
+function confirmDialog(opts = {}) {
+  const {
+    title = 'Confirm', message = '', confirmLabel = 'OK',
+    cancelLabel = 'Cancel', danger = false, width = 440,
+  } = opts;
+  return new Promise(resolve => {
+    let settled = false;
+    const html = '<div class="modal-message">' +
+      escapeHtml(message).replace(/\n/g, '<br>') + '</div>';
+    openModal({
+      title, width, body: html, escapeValue: false,
+      buttons: [
+        { label: cancelLabel, variant: 'ghost', value: false },
+        { label: confirmLabel, variant: danger ? 'danger' : 'primary', primary: true, value: true },
+      ],
+      onClose: (val) => { if (!settled) { settled = true; resolve(val === true); } },
+    });
+  });
+}
+
+/** Promise-based alert. Resolves when dismissed. */
+function alertDialog(opts = {}) {
+  const { title = 'Notice', message = '', okLabel = 'OK', width = 440 } = opts;
+  return new Promise(resolve => {
+    let settled = false;
+    const html = '<div class="modal-message">' +
+      escapeHtml(message).replace(/\n/g, '<br>') + '</div>';
+    openModal({
+      title, width, body: html, escapeValue: true,
+      buttons: [{ label: okLabel, variant: 'primary', primary: true, value: true }],
+      onClose: () => { if (!settled) { settled = true; resolve(); } },
+    });
+  });
+}
+
+/**
+ * Retrofit an existing (hand-built) modal so it inherits the shared dialog
+ * behaviors without rewriting its body: Esc-to-close + a coordinated z-index
+ * stack. The editor keeps its own backdrop/button close paths; the self-healing
+ * stack prunes the entry once its overlay is detached. Returns a close fn that
+ * pops the stack and runs `rawClose` (used for the Esc path).
+ * @param {HTMLElement} overlay   the backdrop element
+ * @param {HTMLElement} dialog    the dialog element (may equal/contain-be-contained-by overlay)
+ * @param {function} rawClose     tears down the modal's DOM
+ * @param {{dismissable?:boolean}} [opts]
+ */
+function registerModalDismiss(overlay, dialog, rawClose, opts = {}) {
+  const { dismissable = true } = opts;
+  _ensureModalKeyHandler();
+  _pruneModalStack();
+  const z = 1000 + _modalStack.length * 10;
+  overlay.style.zIndex = z;
+  if (dialog && dialog !== overlay) dialog.style.zIndex = z + 1;
+  let done = false;
+  const entry = {
+    overlay, dismissable, escapeValue: undefined,
+    get primaryBtn() { return null; },
+    close() {
+      if (done) return;
+      done = true;
+      const i = _modalStack.indexOf(entry);
+      if (i !== -1) _modalStack.splice(i, 1);
+      try { rawClose(); } catch (e) { /* DOM already gone */ }
+    },
+  };
+  _modalStack.push(entry);
+  return entry.close;
+}
+
+// ─── Custom prompt (Electron blocks window.prompt) ────────────────────────────
+
+function showPrompt(title, placeholder, defaultValue) {
+  return new Promise(resolve => {
+    let settled = false;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'modal-prompt-input';
+    input.placeholder = placeholder || '';
+    input.value = defaultValue || '';
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-message';
+    wrap.appendChild(input);
+    openModal({
+      title, width: 400, body: wrap, escapeValue: null,
+      buttons: [
+        { label: 'Cancel', variant: 'ghost', value: null },
+        { label: 'OK', variant: 'primary', primary: true, onClick: () => input.value },
+      ],
+      onClose: (val) => { if (!settled) { settled = true; resolve(val); } },
+    });
+  });
+}
+
+// ─── Onboarding: shortcut cheat-sheet + welcome / getting-started ──────────────
+
+const SHORTCUT_GROUPS = [
+  { title: 'Files & views', items: [
+    ['⌘O', 'Open spreadsheet'],
+    ['⌘S', 'Save now (auto-saves after 2s)'],
+    ['⌘1', 'Audit view'],
+    ['⌘T', 'Table view'],
+    ['⌘⇧T', 'Navigation tree'],
+    ['⌘⇧R', 'Redirect editor'],
+    ['⌘⇧E', 'Export…'],
+    ['⌘P', 'Audit progress'],
+    ['⌘,', 'Preferences'],
+  ]},
+  { title: 'Auditing a row', items: [
+    ['1', 'Keep'],
+    ['2', 'Kill'],
+    ['3', 'Evolve'],
+    ['4', 'Consolidate'],
+    ['5', 'Exclude'],
+    ['0', 'Clear KKE'],
+    ['F', 'Flag / unflag row'],
+  ]},
+  { title: 'Navigating', items: [
+    ['↑ / k', 'Previous row'],
+    ['↓ / j', 'Next row'],
+    [']', 'Next unreviewed row'],
+    ['⌘F', 'Global search'],
+    ['?', 'This cheat-sheet'],
+    ['Esc', 'Close popover or dialog'],
+  ]},
+];
+
+function openShortcutHelp() {
+  const wrap = document.createElement('div');
+  wrap.className = 'shortcut-help';
+  SHORTCUT_GROUPS.forEach(g => {
+    const col = document.createElement('div');
+    col.className = 'shortcut-group';
+    const h = document.createElement('div');
+    h.className = 'shortcut-group-title';
+    h.textContent = g.title;
+    col.appendChild(h);
+    g.items.forEach(([key, desc]) => {
+      const row = document.createElement('div');
+      row.className = 'shortcut-row';
+      row.innerHTML = `<kbd class="shortcut-key">${escapeHtml(key)}</kbd>` +
+        `<span class="shortcut-desc">${escapeHtml(desc)}</span>`;
+      col.appendChild(row);
+    });
+    wrap.appendChild(col);
+  });
+  openModal({
+    title: 'Keyboard shortcuts',
+    body: wrap,
+    width: 620,
+    buttons: [{ label: 'Done', variant: 'primary', primary: true }],
+  });
+}
+
+function setupShortcutHelp() {
+  document.addEventListener('keydown', (e) => {
+    const tag = (document.activeElement && document.activeElement.tagName || '').toLowerCase();
+    if (['input', 'textarea', 'select'].includes(tag)) return;
+    // "?" opens the cheat-sheet from anywhere. (⌘/ is handled by the Help menu accelerator.)
+    if (e.key === '?') {
+      e.preventDefault();
+      openShortcutHelp();
+    }
+  });
+}
+
+function openWelcomeDialog() {
+  const body = document.createElement('div');
+  body.className = 'welcome-body';
+  body.innerHTML = `
+    <p class="welcome-lead">A desktop workspace for website content audits — load a crawl export,
+    review each page in a built-in browser, and record <b>Keep · Kill · Evolve · Consolidate · Exclude</b>
+    decisions that save straight back to your spreadsheet.</p>
+    <div class="welcome-steps">
+      <div class="welcome-step"><span class="welcome-num">1</span>
+        <div><b>Open a file</b><br>A Screaming Frog <code>.xlsx</code> export, or any spreadsheet with a URL column.</div></div>
+      <div class="welcome-step"><span class="welcome-num">2</span>
+        <div><b>Make the call</b><br>Select a row, then press <kbd>1</kbd>–<kbd>5</kbd> to set KKE. Auto-advance moves you to the next page.</div></div>
+      <div class="welcome-step"><span class="welcome-num">3</span>
+        <div><b>Filter & batch</b><br>Use the sidebar filters and the bottom action bar to decide many pages at once.</div></div>
+      <div class="welcome-step"><span class="welcome-num">4</span>
+        <div><b>Plan the move</b><br>Assign pages to a nav tree, map redirects, then export the migration tracker.</div></div>
+    </div>
+    <p class="welcome-tip">Tip: press <kbd>?</kbd> anytime for the full keyboard cheat-sheet.</p>
+  `;
+  openModal({
+    title: 'Welcome to Transmission',
+    body,
+    width: 560,
+    buttons: [
+      { label: 'Keyboard shortcuts', variant: 'ghost', onClick: () => { openShortcutHelp(); }, closeOnClick: true },
+      { label: 'Take a quick tour', variant: 'ghost', onClick: () => { startProductTour(); }, closeOnClick: true },
+      { label: 'Open a file', variant: 'primary', primary: true, onClick: () => { window.electronAPI.openFileDialog(); } },
+    ],
+  });
+}
+
+// ─── First-run product tour (5 steps) ─────────────────────────────────────────
+// A spotlight walkthrough. Each step anchors to a real UI element when it's
+// visible; otherwise the card centers. Works whether or not a file is open.
+
+const TOUR_STEPS = [
+  {
+    target: '#btn-open-empty',
+    title: '1. Open a crawl export',
+    body: 'Start with a Screaming Frog <code>.xlsx</code> (or any spreadsheet with a URL column) via <kbd>⌘O</kbd> or this button. The app adds its audit columns automatically.',
+  },
+  {
+    target: '#view-switcher',
+    title: '2. Four views, one click',
+    body: 'Switch between <b>Audit</b>, <b>Table</b>, <b>Navigation Tree</b>, and <b>Redirects</b> here anytime — or <kbd>⌘1</kbd>/<kbd>⌘T</kbd>/<kbd>⌘⇧T</kbd>/<kbd>⌘⇧R</kbd>.',
+  },
+  {
+    target: '#field-bar-audit',
+    fallbackTarget: '#row-list-wrap',
+    title: '3. Decide each page',
+    body: 'Select a row to load it in the browser, then press <kbd>1</kbd>–<kbd>5</kbd> for Keep / Kill / Evolve / Consolidate / Exclude. Auto-advance moves you on; <kbd>]</kbd> jumps to the next unreviewed page.',
+  },
+  {
+    target: '#toolbar',
+    title: '4. Filter &amp; batch',
+    body: 'Search, the KKE filter, and field filters narrow the list. Select rows (or just filter) and the action bar at the bottom of the sidebar applies a change to many pages at once.',
+  },
+  {
+    target: '#view-switcher',
+    title: '5. Plan &amp; hand off',
+    body: 'Assign pages to a nav tree, map redirects, then run <b>Migration → Pre-Handoff Check</b> and <b>Export</b> (<kbd>⌘⇧E</kbd>). Press <kbd>?</kbd> anytime for all shortcuts.',
+  },
+];
+
+let _tourIdx = 0;
+let _tourEls = null;
+let _tourKeyHandler = null;
+
+function ensureTourEls() {
+  if (_tourEls) return _tourEls;
+  const backdrop = document.createElement('div'); backdrop.id = 'tour-backdrop'; backdrop.className = 'hidden';
+  const ring = document.createElement('div'); ring.id = 'tour-ring'; ring.className = 'hidden';
+  const card = document.createElement('div'); card.id = 'tour-card'; card.className = 'hidden';
+  document.body.append(backdrop, ring, card);
+  backdrop.addEventListener('click', endProductTour); // click outside = skip
+  _tourEls = { backdrop, ring, card };
+  return _tourEls;
+}
+
+function startProductTour() {
+  ensureTourEls();
+  _tourIdx = 0;
+  if (!_tourKeyHandler) {
+    _tourKeyHandler = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); endProductTour(); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); tourNext(1); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); tourNext(-1); }
+    };
+    document.addEventListener('keydown', _tourKeyHandler, true);
+  }
+  renderTourStep();
+}
+
+function endProductTour() {
+  if (!_tourEls) return;
+  _tourEls.backdrop.classList.add('hidden');
+  _tourEls.ring.classList.add('hidden');
+  _tourEls.card.classList.add('hidden');
+  if (_tourKeyHandler) { document.removeEventListener('keydown', _tourKeyHandler, true); _tourKeyHandler = null; }
+}
+
+function tourNext(delta) {
+  const n = _tourIdx + delta;
+  if (n < 0) return;
+  if (n >= TOUR_STEPS.length) { endProductTour(); return; }
+  _tourIdx = n;
+  renderTourStep();
+}
+
+function _tourVisibleRect(sel) {
+  if (!sel) return null;
+  const el = document.querySelector(sel);
+  if (!el || el.offsetParent === null) return null; // missing or hidden
+  const r = el.getBoundingClientRect();
+  if (r.width === 0 || r.height === 0) return null;
+  return r;
+}
+
+function renderTourStep() {
+  const { backdrop, ring, card } = ensureTourEls();
+  const step = TOUR_STEPS[_tourIdx];
+  const rect = _tourVisibleRect(step.target) || _tourVisibleRect(step.fallbackTarget);
+
+  const isLast = _tourIdx === TOUR_STEPS.length - 1;
+  const dots = TOUR_STEPS.map((_, i) =>
+    `<span class="tour-dot${i === _tourIdx ? ' active' : ''}"></span>`).join('');
+  card.innerHTML = `
+    <div class="tour-title">${step.title}</div>
+    <div class="tour-body">${step.body}</div>
+    <div class="tour-controls">
+      <div class="tour-dots">${dots}</div>
+      <span style="flex:1"></span>
+      <button class="btn btn-sm btn-ghost" id="_tour-skip">Skip</button>
+      ${_tourIdx > 0 ? '<button class="btn btn-sm btn-ghost" id="_tour-back">Back</button>' : ''}
+      <button class="btn btn-sm btn-primary" id="_tour-next">${isLast ? 'Done' : 'Next'}</button>
+    </div>`;
+  card.classList.remove('hidden');
+  card.querySelector('#_tour-skip').addEventListener('click', endProductTour);
+  card.querySelector('#_tour-next').addEventListener('click', () => tourNext(1));
+  const backBtn = card.querySelector('#_tour-back');
+  if (backBtn) backBtn.addEventListener('click', () => tourNext(-1));
+
+  const PAD = 6;
+  if (rect) {
+    // Spotlight: the ring's huge box-shadow dims everything except its rect.
+    backdrop.classList.add('hidden');
+    ring.classList.remove('hidden');
+    ring.style.left   = (rect.left - PAD) + 'px';
+    ring.style.top    = (rect.top - PAD) + 'px';
+    ring.style.width  = (rect.width + PAD * 2) + 'px';
+    ring.style.height = (rect.height + PAD * 2) + 'px';
+  } else {
+    ring.classList.add('hidden');
+    backdrop.classList.remove('hidden');
+  }
+
+  // Position the card: below the target if room, else above, else centered.
+  card.style.visibility = 'hidden';
+  card.classList.remove('hidden');
+  const cw = card.offsetWidth, ch = card.offsetHeight;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let left, top;
+  if (rect) {
+    left = Math.min(Math.max(8, rect.left), vw - cw - 8);
+    if (rect.bottom + 12 + ch <= vh - 8) top = rect.bottom + 12;
+    else if (rect.top - 12 - ch >= 8) top = rect.top - 12 - ch;
+    else top = Math.max(8, (vh - ch) / 2);
+  } else {
+    left = (vw - cw) / 2;
+    top = (vh - ch) / 2;
+  }
+  card.style.left = left + 'px';
+  card.style.top = top + 'px';
+  card.style.visibility = 'visible';
+}
+
+/** Make the main-panel placeholder a real front door when no file is open. */
+function updateNoSelectionState() {
+  const hasFile = !!(state.filePath || (state.rows && state.rows.length));
+  const welcome = $('no-sel-welcome');
+  const text = $('no-sel-text');
+  const icon = $('no-sel-icon');
+  if (!welcome || !text) return;
+  if (hasFile) {
+    welcome.classList.add('hidden');
+    text.textContent = 'Select a row to load its URL';
+    if (icon) icon.textContent = '↑';
+  } else {
+    welcome.classList.remove('hidden');
+    text.textContent = 'No file open yet';
+    if (icon) icon.textContent = '⌘';
+  }
+}
+
+function clearNavAssignment(row, origIndex) {
+  ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'].forEach(c => {
+    const old = row[c];
+    if (old) logChange(origIndex, c, old, '');
+    row[c] = '';
+  });
+  // Refresh the Nav button badge if this is the currently-selected row
+  if (state.selectedIndex === origIndex) updateNavBadge(row);
+  // Invalidate the page-count cache so nav tree counts are up to date
+  invalidateNavPageCountsCache();
+  // Re-render the nav editor if it's open so the counts update immediately
+  if (_navEditorOpen) renderNavEditor();
+}
+
+function clearRedirectDestination(row, origIndex) {
+  const old = row['Redirect_Destination'];
+  if (old) logChange(origIndex, 'Redirect_Destination', old, '');
+  row['Redirect_Destination'] = '';
+}
+
+async function promptKillCleanup(origIndex, targetStateLabel = 'Kill') {
+  const row = state.editedRows[origIndex];
+  const hasNav = String(row['NavID'] || '').trim();
+  const hasRedirect = String(row['Redirect_Destination'] || '').trim();
+  if (!hasNav && !hasRedirect) return true;
+  const result = await showKillCleanupModal(row, targetStateLabel);
+  if (result === null) return false;
+  if (result.clearNav) clearNavAssignment(row, origIndex);
+  if (result.clearRedirect) clearRedirectDestination(row, origIndex);
+  return true;
+}
+
+async function promptBulkKillCleanup(origIndexes) {
+  let navCount = 0, redirectCount = 0;
+  origIndexes.forEach(i => {
+    const r = state.editedRows[i];
+    if (String(r['NavID'] || '').trim()) navCount++;
+    if (String(r['Redirect_Destination'] || '').trim()) redirectCount++;
+  });
+  if (navCount === 0 && redirectCount === 0) return true;
+  const result = await showBulkKillCleanupModal({ total: origIndexes.length, navCount, redirectCount });
+  if (result === null) return false;
+  if (result.clearNav) {
+    origIndexes.forEach(i => {
+      if (String(state.editedRows[i]['NavID'] || '').trim()) clearNavAssignment(state.editedRows[i], i);
+    });
+  }
+  if (result.clearRedirect) {
+    origIndexes.forEach(i => {
+      if (String(state.editedRows[i]['Redirect_Destination'] || '').trim()) clearRedirectDestination(state.editedRows[i], i);
+    });
+  }
+  return true;
+}
+
+function showBulkKillCleanupModal({ total, navCount, redirectCount }) {
+  return new Promise(resolve => {
+    let settled = false;
+    const navChoice = navCount > 0 ? `
+      <label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;cursor:pointer;">
+        <input type="checkbox" id="_bulk-kill-clear-nav" checked style="margin-top:3px;flex-shrink:0;">
+        <div><div style="font-weight:500;">Clear nav assignment</div>
+          <div style="font-size:12px;color:var(--text-muted);">${navCount} of ${total} selected rows</div></div>
+      </label>` : '';
+    const redirChoice = redirectCount > 0 ? `
+      <label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;cursor:pointer;">
+        <input type="checkbox" id="_bulk-kill-clear-redirect" checked style="margin-top:3px;flex-shrink:0;">
+        <div><div style="font-weight:500;">Clear redirect destination</div>
+          <div style="font-size:12px;color:var(--text-muted);">${redirectCount} of ${total} selected rows</div></div>
+      </label>` : '';
+
+    const body = document.createElement('div');
+    body.innerHTML = `
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Some selected rows have existing assignments. Clear them?</div>
+      ${navChoice}${redirChoice}`;
+
+    openModal({
+      title: `Change ${total} rows to Kill`,
+      width: 460,
+      body,
+      escapeValue: null,
+      buttons: [
+        { label: 'Cancel', variant: 'ghost', value: null },
+        { label: 'Apply', variant: 'primary', primary: true, onClick: () => ({
+            clearNav: navCount > 0 ? body.querySelector('#_bulk-kill-clear-nav').checked : false,
+            clearRedirect: redirectCount > 0 ? body.querySelector('#_bulk-kill-clear-redirect').checked : false,
+          }) },
+      ],
+      onClose: (val) => { if (!settled) { settled = true; resolve(val); } },
+    });
+  });
+}
+
+function showKillCleanupModal(row, targetStateLabel = 'Kill') {
+  return new Promise(resolve => {
+    let settled = false;
+    const hasNav = String(row['NavID'] || '').trim();
+    const navLabel = String(row['Nav Destination'] || row['Computed Path'] || hasNav || '').trim();
+    const hasRedirect = String(row['Redirect_Destination'] || '').trim();
+
+    const navChoice = hasNav ? `
+      <label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;cursor:pointer;">
+        <input type="checkbox" id="_kill-clear-nav" checked style="margin-top:3px;flex-shrink:0;">
+        <div style="min-width:0;">
+          <div style="font-weight:500;">Clear nav assignment</div>
+          <div style="font-size:12px;color:var(--text-muted);word-break:break-word;">${escapeHtml(navLabel)}</div>
+        </div>
+      </label>` : '';
+    const redirChoice = hasRedirect ? `
+      <label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;cursor:pointer;">
+        <input type="checkbox" id="_kill-clear-redirect" checked style="margin-top:3px;flex-shrink:0;">
+        <div style="min-width:0;">
+          <div style="font-weight:500;">Clear redirect destination</div>
+          <div style="font-size:12px;color:var(--text-muted);word-break:break-all;">${escapeHtml(hasRedirect)}</div>
+        </div>
+      </label>` : '';
+
+    const body = document.createElement('div');
+    body.innerHTML = `
+      <div style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">This page has existing assignments. Clear them?</div>
+      ${navChoice}${redirChoice}`;
+
+    openModal({
+      title: `Change to ${targetStateLabel}`,
+      width: 460,
+      body,
+      escapeValue: null,
+      buttons: [
+        { label: 'Cancel', variant: 'ghost', value: null },
+        { label: 'Apply', variant: 'primary', primary: true, onClick: () => ({
+            clearNav: hasNav ? body.querySelector('#_kill-clear-nav').checked : false,
+            clearRedirect: hasRedirect ? body.querySelector('#_kill-clear-redirect').checked : false,
+          }) },
+      ],
+      onClose: (val) => { if (!settled) { settled = true; resolve(val); } },
+    });
+  });
+}
+
+function returnToAuditView() {
+  if (_tableViewOpen) closeTableView();
+  if (_navEditorOpen) closeNavEditor();
+  if (_redirectEditorOpen) closeRedirectEditor();
+  refreshViewSwitcher();
+}
+
+// ─── Saved Filters ────────────────────────────────────────────────────────────
+
+function setupSavedFilters() {
+  const sel = $('saved-filter-select');
+  const btn = $('btn-save-filter');
+
+  sel.addEventListener('change', async () => {
+    const name = sel.value;
+    if (!name) return;
+
+    // "Save current filter" option
+    if (name === '__save__') {
+      sel.value = ''; // reset dropdown
+      const filterName = await showPrompt('Save Filter', 'Filter name');
+      if (!filterName || !filterName.trim()) return;
+      if (!state.projectSettings.savedFilters) state.projectSettings.savedFilters = [];
+      state.projectSettings.savedFilters = state.projectSettings.savedFilters.filter(f => f.name !== filterName.trim());
+      state.projectSettings.savedFilters.push({
+        name: filterName.trim(),
+        filterText: state.filterText || '',
+        kkeFilter: state.kkeFilter || [],
+        groupFilter: state.groupFilter || '',
+        fieldFilters: Array.isArray(state.fieldFilters) ? state.fieldFilters.map(f => ({...f})) : []
+      });
+      setDirty(true);
+      renderSavedFilterSelect();
+      showToast(`Filter "${filterName.trim()}" saved`);
+      return;
+    }
+
+    const saved = (state.projectSettings.savedFilters || []).find(f => f.name === name);
+    if (!saved) return;
+    // Restore filter state
+    state.filterText = saved.filterText || '';
+    els.searchInput.value = state.filterText;
+    $('btn-clear-search').classList.toggle('hidden', !state.filterText);
+    const savedKke = saved.kkeFilter;
+    state.kkeFilter = Array.isArray(savedKke) ? savedKke : (savedKke ? [savedKke] : []);
+    renderKkeFilterOptions();
+    state.groupFilter = saved.groupFilter || '';
+    if (els.groupFilter) els.groupFilter.value = state.groupFilter;
+    state.fieldFilters = Array.isArray(saved.fieldFilters) ? saved.fieldFilters.map(f => ({...f})) : [];
+    renderFieldFilterChips();
+    applyFilter();
+  });
+
+  btn.addEventListener('click', async () => {
+    const name = await showPrompt('Save Filter', 'Filter name');
+    if (!name || !name.trim()) return;
+    if (!state.projectSettings.savedFilters) state.projectSettings.savedFilters = [];
+    // Remove existing with same name
+    state.projectSettings.savedFilters = state.projectSettings.savedFilters.filter(f => f.name !== name.trim());
+    state.projectSettings.savedFilters.push({
+      name: name.trim(),
+      filterText: state.filterText || '',
+      kkeFilter: state.kkeFilter || [],
+      groupFilter: state.groupFilter || ''
+    });
+    setDirty(true);
+    renderSavedFilterSelect();
+    showToast(`Filter "${name.trim()}" saved`);
+  });
+}
+
+function renderSavedFilterSelect() {
+  const sel = $('saved-filter-select');
+  const btn = $('btn-save-filter');
+  if (!state.headers.length) {
+    sel.classList.add('hidden');
+    btn.classList.add('hidden');
+    return;
+  }
+  sel.classList.remove('hidden');
+  btn.classList.add('hidden'); // hide the "+" button, use dropdown option instead
+  sel.innerHTML = '<option value="">Saved filters…</option>';
+  const filters = state.projectSettings.savedFilters || [];
+  filters.forEach(f => {
+    const opt = document.createElement('option');
+    opt.value = f.name;
+    opt.textContent = f.name;
+    sel.appendChild(opt);
+  });
+  // "Save current…" option at the bottom
+  const saveOpt = document.createElement('option');
+  saveOpt.value = '__save__';
+  saveOpt.textContent = '+ Save current filter…';
+  sel.appendChild(saveOpt);
+}
+
+// ─── Field filters (arbitrary field + operator + value) ───────────────────────
+
+const FIELD_FILTER_OPERATORS = [
+  { value: 'is-not-blank',  label: 'is not blank',     needsValue: false },
+  { value: 'is-blank',      label: 'is blank',         needsValue: false },
+  { value: 'contains',      label: 'contains',         needsValue: true  },
+  { value: 'not-contains',  label: "doesn't contain",  needsValue: true  },
+  { value: 'equals',        label: 'equals',           needsValue: true  },
+  { value: 'not-equals',    label: "doesn't equal",    needsValue: true  },
+  { value: 'starts-with',   label: 'starts with',      needsValue: true  },
+  { value: 'ends-with',     label: 'ends with',        needsValue: true  },
+];
+
+function fieldFilterMatches(row, ff) {
+  const raw = String(row[ff.field] ?? '');
+  const v = raw.trim();
+  const isBlank = v === '';
+  const needle = String(ff.value || '').trim().toLowerCase();
+  const hay = v.toLowerCase();
+  switch (ff.operator) {
+    case 'is-blank':     return isBlank;
+    case 'is-not-blank': return !isBlank;
+    case 'contains':     return hay.includes(needle);
+    case 'not-contains': return !hay.includes(needle);
+    case 'equals':       return hay === needle;
+    case 'not-equals':   return hay !== needle;
+    case 'starts-with':  return hay.startsWith(needle);
+    case 'ends-with':    return hay.endsWith(needle);
+    default:             return true;
+  }
+}
+
+function renderFieldFilterChips() {
+  const wrap = document.getElementById('field-filter-chips');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  (state.fieldFilters || []).forEach((ff, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'field-filter-chip';
+    const opLabel = (FIELD_FILTER_OPERATORS.find(o => o.value === ff.operator) || {}).label || ff.operator;
+    const needsValue = (FIELD_FILTER_OPERATORS.find(o => o.value === ff.operator) || {}).needsValue;
+    chip.title = `${ff.field} ${opLabel}${needsValue ? ' "' + ff.value + '"' : ''}`;
+    chip.innerHTML = `
+      <span class="ff-chip-field">${escapeHtml(ff.field)}</span>
+      <span class="ff-chip-op">${escapeHtml(opLabel)}</span>
+      ${needsValue ? `<span class="ff-chip-value">${escapeHtml(ff.value || '')}</span>` : ''}
+      <button type="button" title="Remove">×</button>
+    `;
+    chip.querySelector('button').addEventListener('click', () => {
+      state.fieldFilters.splice(i, 1);
+      renderFieldFilterChips();
+      refreshUnclassifiedButton();
+      applyFilter();
+    });
+    wrap.appendChild(chip);
+  });
+  refreshUnclassifiedButton();
+}
+
+function setupFieldFilters() {
+  const btn = document.getElementById('btn-add-field-filter');
+  if (!btn) return;
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openFieldFilterPopup(btn);
+  });
+
+  // Phase 1, Chunk C: one-click "Unclassified" filter — toggles a Content_Nature is-blank
+  // field filter. Users can stack a KKE filter to scope further.
+  const uncBtn = document.getElementById('btn-unclassified-filter');
+  if (uncBtn) {
+    uncBtn.addEventListener('click', () => {
+      if (!Array.isArray(state.fieldFilters)) state.fieldFilters = [];
+      const idx = state.fieldFilters.findIndex(f => f.field === 'Content_Nature' && f.operator === 'is-blank');
+      if (idx >= 0) {
+        state.fieldFilters.splice(idx, 1);
+        uncBtn.classList.remove('active');
+      } else {
+        state.fieldFilters.push({ field: 'Content_Nature', operator: 'is-blank', value: '' });
+        uncBtn.classList.add('active');
+      }
+      renderFieldFilterChips();
+      applyFilter();
+    });
+  }
+}
+
+/** Reflect current Unclassified-filter state in the toolbar button — call after any
+ *  external change to state.fieldFilters (saved-filter restore, chip removal, etc.). */
+function refreshUnclassifiedButton() {
+  const btn = document.getElementById('btn-unclassified-filter');
+  if (!btn) return;
+  const isOn = (state.fieldFilters || []).some(f => f.field === 'Content_Nature' && f.operator === 'is-blank');
+  btn.classList.toggle('active', isOn);
+}
+
+function openFieldFilterPopup(anchorEl) {
+  // Close any existing popup
+  const existing = document.getElementById('field-filter-popup');
+  if (existing) { existing.remove(); return; }
+
+  const popup = document.createElement('div');
+  popup.id = 'field-filter-popup';
+
+  // Build field options — every header except internal ones, sorted alphabetically
+  const fieldOptions = state.headers
+    .filter(h => h && !h.startsWith('_') && h !== '_rowIndex')
+    .slice()
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+    .map(h => `<option value="${escapeHtml(h)}">${escapeHtml(h)}</option>`)
+    .join('');
+
+  const opOptions = FIELD_FILTER_OPERATORS
+    .map(o => `<option value="${o.value}" data-needs-value="${o.needsValue ? '1' : '0'}">${o.label}</option>`)
+    .join('');
+
+  popup.innerHTML = `
+    <div class="ff-row">
+      <label>Field</label>
+      <select id="ff-field">${fieldOptions}</select>
+    </div>
+    <div class="ff-row">
+      <label>Operator</label>
+      <select id="ff-op">${opOptions}</select>
+    </div>
+    <div class="ff-row" id="ff-value-row">
+      <label>Value</label>
+      <input id="ff-value" type="text" placeholder="">
+    </div>
+    <div class="ff-actions">
+      <button type="button" id="ff-cancel" class="btn btn-sm btn-ghost">Cancel</button>
+      <button type="button" id="ff-apply" class="btn btn-sm btn-primary">Apply</button>
+    </div>
+  `;
+  document.body.appendChild(popup);
+
+  // Position below the anchor button
+  const rect = anchorEl.getBoundingClientRect();
+  popup.style.top = (rect.bottom + 4) + 'px';
+  popup.style.left = Math.max(8, Math.min(window.innerWidth - 328, rect.left)) + 'px';
+
+  const fieldSel = popup.querySelector('#ff-field');
+  const opSel = popup.querySelector('#ff-op');
+  const valueRow = popup.querySelector('#ff-value-row');
+  const valueInp = popup.querySelector('#ff-value');
+
+  function syncValueVisibility() {
+    const opt = opSel.options[opSel.selectedIndex];
+    const needsValue = opt && opt.dataset.needsValue === '1';
+    valueRow.style.display = needsValue ? '' : 'none';
+    if (needsValue) setTimeout(() => valueInp.focus(), 0);
+  }
+  opSel.addEventListener('change', syncValueVisibility);
+  syncValueVisibility();
+
+  function close() { popup.remove(); document.removeEventListener('click', onDocClick); }
+  function onDocClick(e) {
+    if (!popup.contains(e.target) && e.target !== anchorEl) close();
+  }
+  // Defer the document listener so this click doesn't immediately close it
+  setTimeout(() => document.addEventListener('click', onDocClick), 0);
+
+  popup.querySelector('#ff-cancel').addEventListener('click', close);
+  popup.querySelector('#ff-apply').addEventListener('click', () => {
+    const field = fieldSel.value;
+    const operator = opSel.value;
+    const opMeta = FIELD_FILTER_OPERATORS.find(o => o.value === operator);
+    const needsValue = opMeta && opMeta.needsValue;
+    const value = needsValue ? valueInp.value : '';
+    if (!field || !operator) return;
+    if (needsValue && !value.trim()) {
+      valueInp.focus();
+      return;
+    }
+    if (!Array.isArray(state.fieldFilters)) state.fieldFilters = [];
+    state.fieldFilters.push({ field, operator, value });
+    close();
+    renderFieldFilterChips();
+    applyFilter();
+  });
+
+  // Enter key on inputs = apply
+  popup.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); popup.querySelector('#ff-apply').click(); }
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+  });
+}
+
+function applyFilter() {
+  const q = state.filterText;
+  const gf = state.groupFilter;
+  const kf = state.kkeFilter;
+  const ffs = Array.isArray(state.fieldFilters) ? state.fieldFilters : [];
+  let rows = state.editedRows.map((row, i) => ({ row, origIndex: i }));
+
+  if (q) {
+    const scopeEl = $('search-scope');
+    const scope = scopeEl ? scopeEl.value : 'all';
+    if (scope === 'url') {
+      const urlCol = state.urlColumn || 'Address';
+      rows = rows.filter(({ row }) => String(row[urlCol] || '').toLowerCase().includes(q));
+    } else if (scope === 'title') {
+      const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
+      if (titleCol) {
+        rows = rows.filter(({ row }) => String(row[titleCol] || '').toLowerCase().includes(q));
+      } else {
+        rows = rows.filter(({ row }) => Object.values(row).some(v => String(v).toLowerCase().includes(q)));
+      }
+    } else {
+      rows = rows.filter(({ row }) =>
+        Object.values(row).some(v => String(v).toLowerCase().includes(q))
+      );
+    }
+  }
+
+  if (ffs.length > 0) {
+    rows = rows.filter(({ row }) => ffs.every(ff => fieldFilterMatches(row, ff)));
+  }
+
+  if (kf && kf.length > 0) {
+    // Separate status values from special filters
+    const specialFilters = new Set(['_unreviewed', '_flagged', '_duplicates', '_sme-conflicts', '_sme-pending', '_consolidate-no-target', '_consolidate-dead-target', '_shared-nav', '_needs-placement', '_suggested-disagree', '_suggested-mismatch']);
+    const statusValues = kf.filter(v => !specialFilters.has(v));
+    const specials = kf.filter(v => specialFilters.has(v));
+
+    // Precompute shared NavIDs (NavIDs assigned to 2+ rows) if needed
+    let sharedNavIds = null;
+    if (specials.includes('_shared-nav')) {
+      const counts = new Map();
+      state.editedRows.forEach(r => {
+        const id = String(r['NavID'] || '').trim();
+        if (id) counts.set(id, (counts.get(id) || 0) + 1);
+      });
+      sharedNavIds = new Set();
+      counts.forEach((n, id) => { if (n > 1) sharedNavIds.add(id); });
+    }
+
+    rows = rows.filter(({ row, origIndex }) => {
+      const kke = String(row[kkeCol()] || '').trim();
+
+      // Check status values (OR)
+      if (statusValues.length > 0 && statusValues.includes(kke)) return true;
+
+      // Check special filters (OR)
+      for (const s of specials) {
+        if (s === '_unreviewed' && !kke) return true;
+        if (s === '_flagged' && String(row['_Flagged'] || '').trim() === '1') return true;
+        if (s === '_duplicates' && _duplicateSet.has(origIndex)) return true;
+        if (s === '_sme-conflicts') {
+          const sme = String(row[smeDecisionCol()] || '').trim();
+          if (sme && sme.startsWith('Change:')) return true;
+        }
+        if (s === '_sme-pending') {
+          const final_ = String(row[finalKkeCol()] || '').trim();
+          if (kke && !final_) return true;
+        }
+        if (s === '_consolidate-no-target' && rowConsolidateNeedsTarget(row)) return true;
+        if (s === '_consolidate-dead-target' && rowConsolidateHasDeadTarget(row)) return true;
+        if (s === '_needs-placement') {
+          // Keep/Evolve pages not yet assigned to a nav node (matches the nav-tree "need placement" count).
+          // Fragments are excluded — they have no nav home by design.
+          if (!String(row['NavID'] || '').trim() && !isFragmentRow(row)) {
+            const eff = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
+            if (eff === 'Keep' || eff === 'Evolve') return true;
+          }
+        }
+        if (s === '_shared-nav' && sharedNavIds) {
+          const id = String(row['NavID'] || '').trim();
+          if (id && sharedNavIds.has(id)) return true;
+        }
+        if (s === '_suggested-disagree') {
+          // Sources internally disagreed on this row (winner.disagreement === true)
+          try {
+            const payload = JSON.parse(row[SUGGESTED_KKE_SOURCES_COL] || '');
+            if (payload && payload.disagreement) return true;
+          } catch (_) { /* ignore */ }
+        }
+        if (s === '_suggested-mismatch') {
+          // Suggested_KKE is populated AND differs from the user's KKE call.
+          // Useful for "show me rows where I disagreed with the suggestion engine."
+          const sug = String(row[SUGGESTED_KKE_COL] || '').trim();
+          if (sug && kke && sug !== kke) return true;
+        }
+      }
+
+      return false;
+    });
+  }
+
+  if (gf) {
+    rows = rows.filter(({ row }) => {
+      const val = String(row[groupCol()] || '').trim();
+      return val === gf;
+    });
+  }
+
+  // Nav tree filter
+  if (_navTreeFilter) {
+    rows = rows.filter(({ row }) => String(row['NavID'] || '').trim() === _navTreeFilter);
+  }
+
+  state.filteredRows = rows;
+  state.multiSelected.clear();
+  state.lastClickedPos = null;
+  updateBulkBar();
+  updateBatchBar();
+  applySort();
+  renderRows();
+  updateStatsBar();
+}
+
+function applySort() {
+  if (!state.sortOrder || !state.urlColumn) return;
+  const col = state.urlColumn;
+  const dir = state.sortOrder === 'asc' ? 1 : -1;
+  state.filteredRows.sort((a, b) => {
+    const va = String(a.row[col] ?? '').toLowerCase();
+    const vb = String(b.row[col] ?? '').toLowerCase();
+    return va < vb ? -dir : va > vb ? dir : 0;
+  });
+}
+
+// ─── Column header strip ──────────────────────────────────────────────────────
+
+function renderColHeaders() {
+  els.colHeaderStrip.innerHTML = '';
+
+  const numCell = document.createElement('div');
+  numCell.className = 'col-header-cell';
+  numCell.style.cssText = 'width:36px;flex:none;';
+  numCell.textContent = '#';
+  els.colHeaderStrip.appendChild(numCell);
+
+  // URL column (clickable to sort)
+  if (state.urlColumn) {
+    const cell = document.createElement('div');
+    cell.className = 'col-header-cell url-col sortable';
+    const arrow = state.sortOrder === 'asc' ? ' ▲' : state.sortOrder === 'desc' ? ' ▼' : '';
+    cell.textContent = state.urlColumn + arrow;
+    cell.title = 'Click to sort';
+    cell.addEventListener('click', () => {
+      state.sortOrder = state.sortOrder === '' ? 'asc' : state.sortOrder === 'asc' ? 'desc' : '';
+      applyFilter();
+      renderColHeaders();
+      window.electronAPI.savePrefs({ sortOrder: state.sortOrder });
+    });
+    els.colHeaderStrip.appendChild(cell);
+  }
+
+  // Additional sidebar columns
+  if (state.sidebarColumns.length > 0) {
+    state.sidebarColumns.forEach(col => {
+      if (!state.headers.includes(col)) return;
+      const cell = document.createElement('div');
+      cell.className = 'col-header-cell';
+      cell.textContent = col;
+      els.colHeaderStrip.appendChild(cell);
+    });
+  }
+
+  // Flag column header
+  const flagCell = document.createElement('div');
+  flagCell.className = 'col-header-cell';
+  flagCell.style.cssText = 'width:28px;flex:none;text-align:center;';
+  flagCell.textContent = '★';
+  flagCell.title = 'Flagged';
+  els.colHeaderStrip.appendChild(flagCell);
+
+  // KKE column header with column mapping link
+  const kkeCell = document.createElement('div');
+  kkeCell.className = 'col-header-cell';
+  kkeCell.style.cssText = 'width:60px;flex:none;color:var(--text-muted);display:flex;align-items:center;gap:4px;';
+  kkeCell.textContent = 'KKE';
+  const mapBtn = document.createElement('span');
+  mapBtn.textContent = '⚙';
+  mapBtn.title = 'Column mapping (App Settings)';
+  mapBtn.style.cssText = 'cursor:pointer;font-size:12px;opacity:0.5;line-height:1;';
+  mapBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    toggleSettingsPopover();
+  });
+  kkeCell.appendChild(mapBtn);
+  els.colHeaderStrip.appendChild(kkeCell);
+
+  // Extra KKE columns (SME Decision, Final KKE, etc.)
+  (state.extraKkeCols || []).forEach(col => {
+    if (!state.headers.includes(col)) return;
+    const cell = document.createElement('div');
+    cell.className = 'col-header-cell extra-kke-hdr';
+    cell.style.cssText = 'width:54px;flex:none;color:var(--text-muted);font-size:10px;display:flex;align-items:center;gap:2px;cursor:default;overflow:hidden;';
+    // Abbreviate label
+    const abbr = col.replace('KKE_Recommendation', 'KKE')
+                     .replace('SME_Decision', 'SME')
+                     .replace('Final_KKE', 'Final')
+                     .replace('Content_Owner', 'Owner')
+                     .replace(/_/g, ' ');
+    const label = document.createElement('span');
+    label.textContent = abbr;
+    label.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;';
+    label.title = col;
+    cell.appendChild(label);
+    const removeBtn = document.createElement('span');
+    removeBtn.textContent = '✕';
+    removeBtn.title = 'Remove column';
+    removeBtn.style.cssText = 'cursor:pointer;font-size:9px;opacity:0.5;flex-shrink:0;';
+    removeBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      state.extraKkeCols = (state.extraKkeCols || []).filter(c => c !== col);
+      window.electronAPI.savePrefs({ extraKkeCols: state.extraKkeCols });
+      renderColHeaders();
+      renderVisibleRows();
+    });
+    cell.appendChild(removeBtn);
+    els.colHeaderStrip.appendChild(cell);
+  });
+
+  // "+" button to add extra KKE column
+  const addBtn = document.createElement('div');
+  addBtn.className = 'col-header-cell';
+  addBtn.style.cssText = 'width:20px;flex:none;cursor:pointer;color:var(--text-muted);text-align:center;font-size:14px;';
+  addBtn.textContent = '+';
+  addBtn.title = 'Add comparison column';
+  addBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    showExtraKkeColPicker(addBtn);
+  });
+  els.colHeaderStrip.appendChild(addBtn);
+}
+
+function showExtraKkeColPicker(anchor) {
+  // Remove existing picker
+  const old = document.querySelector('.extra-kke-picker');
+  if (old) { old.remove(); return; }
+
+  const kkeTypeCols = [kkeCol(), smeDecisionCol(), finalKkeCol(), contentOwnerCol(), smeNotesCol(), groupCol(), primaryTagCol()];
+  const already = new Set(state.extraKkeCols || []);
+  const available = kkeTypeCols.filter(c => state.headers.includes(c) && !already.has(c));
+
+  if (available.length === 0) {
+    showToast('No more columns to add', 'info');
+    return;
+  }
+
+  const picker = document.createElement('div');
+  picker.className = 'extra-kke-picker';
+  const rect = anchor.getBoundingClientRect();
+  picker.style.cssText = `position:fixed;top:${rect.bottom + 2}px;left:${rect.left}px;background:var(--bg-surface);border:1px solid var(--border);border-radius:4px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:200;padding:4px 0;min-width:160px;`;
+
+  available.forEach(col => {
+    const item = document.createElement('div');
+    item.style.cssText = 'padding:5px 12px;font-size:12px;cursor:pointer;';
+    item.textContent = col;
+    item.addEventListener('mouseenter', () => item.style.background = 'var(--bg-hover)');
+    item.addEventListener('mouseleave', () => item.style.background = '');
+    item.addEventListener('click', () => {
+      if (!state.extraKkeCols) state.extraKkeCols = [];
+      state.extraKkeCols.push(col);
+      window.electronAPI.savePrefs({ extraKkeCols: state.extraKkeCols });
+      picker.remove();
+      renderColHeaders();
+      renderVisibleRows();
+    });
+    picker.appendChild(item);
+  });
+
+  document.body.appendChild(picker);
+  setTimeout(() => {
+    const close = e => {
+      if (!picker.contains(e.target)) { picker.remove(); document.removeEventListener('click', close); }
+    };
+    document.addEventListener('click', close);
+  }, 0);
+}
+
+// ─── Row list (virtual scrolling) ─────────────────────────────────────────────
+
+const ROW_HEIGHT = 34; // px — must match .row-item height in CSS
+const OVERSCAN   = 10; // extra rows rendered above/below viewport
+
+// Cached display columns (recomputed on renderRows)
+let _displayCols = [];
+
+function renderRows() {
+  const { filteredRows, headers } = state;
+  els.rowList.innerHTML = '';
+
+  if (filteredRows.length === 0 && state.rows.length === 0) return; // not loaded
+
+  els.rowCount.textContent = `${filteredRows.length} row${filteredRows.length !== 1 ? 's' : ''}`;
+
+  if (filteredRows.length === 0) {
+    const msg = document.createElement('div');
+    msg.style.cssText = 'padding:24px;text-align:center;color:var(--text-muted);font-size:12px;';
+    msg.textContent = 'No rows match your filter.';
+    els.rowList.appendChild(msg);
+    return;
+  }
+
+  // Sidebar columns: URL + any user-chosen columns
+  _displayCols = state.urlColumn ? [state.urlColumn] : [];
+  if (state.sidebarColumns.length > 0) {
+    state.sidebarColumns.forEach(c => {
+      if (state.headers.includes(c) && !_displayCols.includes(c)) _displayCols.push(c);
+    });
+  }
+
+  // Set total height so the scrollbar reflects real row count
+  els.rowList.style.position = 'relative';
+  els.rowList.style.height = (filteredRows.length * ROW_HEIGHT) + 'px';
+
+  renderVisibleRows();
+}
+
+function renderVisibleRows() {
+  const { filteredRows, urlColumn, selectedIndex } = state;
+  if (filteredRows.length === 0) return;
+
+  const scrollTop    = els.rowListWrap.scrollTop;
+  const viewHeight   = els.rowListWrap.clientHeight;
+  const startIdx     = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const endIdx       = Math.min(filteredRows.length, Math.ceil((scrollTop + viewHeight) / ROW_HEIGHT) + OVERSCAN);
+
+  // Remove existing row items (keep non-element children like text nodes)
+  const existing = els.rowList.querySelectorAll('.row-item,.virtual-empty-msg');
+  existing.forEach(el => el.remove());
+
+  for (let i = startIdx; i < endIdx; i++) {
+    const { row, origIndex } = filteredRows[i];
+
+    const item = document.createElement('div');
+    const isSelected = selectedIndex === origIndex;
+    const isMulti = state.multiSelected.has(origIndex);
+    const kkeVal = String(row[kkeCol()] || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '-');
+    item.className = 'row-item' + (isSelected ? ' selected' : '') + (isMulti ? ' multi-selected' : '') + (kkeVal ? ' row-kke-' + kkeVal : '');
+    item.dataset.origIndex = origIndex;
+    item.style.position = 'absolute';
+    item.style.top  = (i * ROW_HEIGHT) + 'px';
+    item.style.left = '0';
+    item.style.right = '0';
+
+    const numCell = document.createElement('div');
+    numCell.className = 'row-num';
+    numCell.textContent = origIndex + 1;
+    item.appendChild(numCell);
+
+    _displayCols.forEach((h, idx) => {
+      const cell = document.createElement('div');
+      cell.className = idx === 0 ? 'row-cell url-cell' : 'row-cell';
+      cell.textContent = row[h] ?? '';
+      // The URL cell is horizontally scrollable on hover, so skip the redundant
+      // native title tooltip there; keep it for the other (truncated) columns.
+      if (idx !== 0) cell.title = row[h] ?? '';
+      item.appendChild(cell);
+    });
+
+    // Flag indicator
+    const flagCell = document.createElement('div');
+    flagCell.style.cssText = 'width:28px;flex:none;padding:7px 2px;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+    const isFlagged = String(row['_Flagged'] || '').trim() === '1';
+    flagCell.textContent = isFlagged ? '★' : '';
+    flagCell.className = 'row-flag-cell';
+    if (isFlagged) flagCell.style.color = 'var(--warning)';
+    flagCell.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFlag(origIndex);
+    });
+    item.appendChild(flagCell);
+
+    // Nav + Redirect indicators
+    const indicators = document.createElement('div');
+    indicators.className = 'row-indicators';
+    const hasNav = String(row['NavID'] || '').trim();
+    const explicitRedirect = String(row[REDIRECT_DEST_COL] || '').trim();
+    // Implicit redirect: computed path differs from current URL path
+    const computedPath = String(row['Computed Path'] || '').trim();
+    let implicitRedirect = false;
+    if (computedPath) {
+      const srcUrl = String(row[state.urlColumn || 'Address'] || '').trim();
+      let srcPath = '';
+      try { srcPath = new URL(srcUrl).pathname.replace(/\/+$/, ''); } catch (_) { srcPath = srcUrl.replace(/\/+$/, ''); }
+      const destPath = '/' + computedPath.replace(/^\//, '').replace(/\/+$/, '');
+      if (srcPath !== destPath) implicitRedirect = true;
+    }
+    const hasRedirect = explicitRedirect || implicitRedirect;
+    if (hasNav) {
+      const n = document.createElement('span');
+      n.className = 'row-ind row-ind-nav';
+      n.textContent = 'N';
+      n.title = 'Assigned to nav: ' + (row['Nav Destination'] || row['Computed Path'] || hasNav);
+      indicators.appendChild(n);
+    }
+    if (hasRedirect) {
+      const r = document.createElement('span');
+      r.className = 'row-ind row-ind-redirect';
+      r.textContent = 'R';
+      r.title = explicitRedirect
+        ? 'Redirect: ' + explicitRedirect
+        : 'Redirect (nav): ' + computedPath;
+      indicators.appendChild(r);
+    }
+    const consolidateTarget = String(row[CONSOLIDATE_COL] || '').trim();
+    const needsTarget = rowConsolidateNeedsTarget(row);
+    if (consolidateTarget) {
+      const c = document.createElement('span');
+      c.className = 'row-ind row-ind-consolidate';
+      c.textContent = 'C';
+      c.title = 'Consolidate into: ' + consolidateTarget;
+      indicators.appendChild(c);
+    } else if (needsTarget) {
+      const c = document.createElement('span');
+      c.className = 'row-ind row-ind-consolidate-missing';
+      c.textContent = 'C?';
+      c.title = 'Consolidate marked but no target set — click the Consolidate button to pick one';
+      indicators.appendChild(c);
+    }
+    // CMS link indicators (Phase 1) — small dots when source/new CMS URLs are populated
+    const hasSrcCms = isProbablyUrl(row['Source_CMS_URL']);
+    const hasNewCms = isProbablyUrl(row['New_CMS_URL']);
+    if (hasSrcCms || hasNewCms) {
+      const cms = document.createElement('span');
+      cms.className = 'row-ind row-ind-cms';
+      cms.textContent = (hasSrcCms && hasNewCms) ? '⊜' : (hasSrcCms ? '◐' : '◑');
+      cms.title = (hasSrcCms ? 'Source CMS: ' + row['Source_CMS_URL'] + '\n' : '') +
+                  (hasNewCms ? 'New CMS: ' + row['New_CMS_URL'] : '');
+      indicators.appendChild(cms);
+    }
+    item.appendChild(indicators);
+
+    // Status code badge — shown for non-200 pages
+    {
+      const scColName = state.headers.find(h => h.toLowerCase() === 'status code');
+      const sc = scColName ? parseInt(row[scColName] || '', 10) : NaN;
+      if (!isNaN(sc) && sc !== 200) {
+        const cat = statusCodeCategory(sc);
+        if (cat) {
+          const scBadge = document.createElement('span');
+          scBadge.className = `row-sc-badge row-sc-${cat}`;
+          scBadge.textContent = sc;
+          scBadge.title = STATUS_CODE_LABELS[sc] || `HTTP ${sc}`;
+          item.appendChild(scBadge);
+        }
+      }
+    }
+
+    // KKE badge
+    const kke = row[kkeCol()] || '';
+    const badge = document.createElement('div');
+    badge.style.cssText = 'width:54px;flex:none;padding:7px 4px;display:flex;align-items:center;';
+    if (kke) {
+      const span = document.createElement('span');
+      span.className = `kke-badge ${kke.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+      span.textContent = kke;
+      badge.appendChild(span);
+    }
+    item.appendChild(badge);
+
+    // Extra KKE column badges
+    (state.extraKkeCols || []).forEach(col => {
+      const val = String(row[col] || '').trim();
+      const extraBadge = document.createElement('div');
+      extraBadge.style.cssText = 'width:54px;flex:none;padding:7px 2px;display:flex;align-items:center;';
+      if (val) {
+        const span = document.createElement('span');
+        // For KKE-type values, use kke-badge styling; for text values, plain
+        const normalized = val.toLowerCase().replace(/[^a-z0-9]/g, '-');
+        const isKkeValue = ['keep','kill','evolve','exclude'].includes(val.toLowerCase()) ||
+                           val.startsWith('Change:') || val === 'Approve';
+        if (isKkeValue) {
+          span.className = 'kke-badge ' + normalized;
+        } else {
+          span.style.cssText = 'font-size:9px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:50px;';
+        }
+        span.textContent = val.replace('Change: ', 'C:');
+        span.title = col + ': ' + val;
+        extraBadge.appendChild(span);
+      }
+      item.appendChild(extraBadge);
+    });
+
+    // Drag support for nav assignment (carries multi-selection if active)
+    item.draggable = true;
+    item.addEventListener('dragstart', (e) => {
+      let indices;
+      if (state.multiSelected.size > 0 && state.multiSelected.has(origIndex)) {
+        indices = [...state.multiSelected];
+      } else {
+        indices = [origIndex];
+      }
+      e.dataTransfer.setData('text/plain', JSON.stringify(indices));
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    item.addEventListener('click', (e) => handleRowClick(e, origIndex, i));
+    els.rowList.appendChild(item);
+  }
+}
+
+function setupVirtualScroll() {
+  let ticking = false;
+  els.rowListWrap.addEventListener('scroll', () => {
+    if (!ticking) {
+      requestAnimationFrame(() => {
+        renderVisibleRows();
+        ticking = false;
+      });
+      ticking = true;
+    }
+  });
+}
+
+// ─── Row selection ────────────────────────────────────────────────────────────
+
+function selectRow(origIndex) {
+  state.selectedIndex = origIndex;
+
+  // Scroll selected row into view within the virtual list
+  const pos = state.filteredRows.findIndex(fr => fr.origIndex === origIndex);
+  if (pos !== -1) {
+    const rowTop    = pos * ROW_HEIGHT;
+    const rowBottom = rowTop + ROW_HEIGHT;
+    const scrollTop = els.rowListWrap.scrollTop;
+    const viewH     = els.rowListWrap.clientHeight;
+
+    if (rowTop < scrollTop) {
+      els.rowListWrap.scrollTop = rowTop;
+    } else if (rowBottom > scrollTop + viewH) {
+      els.rowListWrap.scrollTop = rowBottom - viewH;
+    }
+  }
+
+  // Re-render visible rows to update selection highlight
+  renderVisibleRows();
+
+  const row = state.editedRows[origIndex];
+
+  // Show content area
+  els.noSelection.classList.add('hidden');
+  els.contentArea.classList.remove('hidden');
+
+  // Update nav controls
+  updateNavControls();
+
+  // Populate field bar
+  renderMetaFields(row, origIndex);
+  populateAuditFields(row, origIndex);
+
+  // Load URL in webview
+  const url = state.urlColumn ? row[state.urlColumn] : null;
+  if (url && isValidUrl(url)) {
+    loadUrl(url);
+  } else {
+    els.urlDisplay.textContent = url || '(no URL)';
+    els.webviewLoading.classList.add('hidden');
+  }
+}
+
+function handleRowClick(e, origIndex, posInFiltered) {
+  const isMeta = e.metaKey || e.ctrlKey;
+  const isShift = e.shiftKey;
+
+  if (isMeta) {
+    // Toggle this row in multi-selection
+    if (state.multiSelected.has(origIndex)) {
+      state.multiSelected.delete(origIndex);
+    } else {
+      state.multiSelected.add(origIndex);
+    }
+    state.lastClickedPos = posInFiltered;
+    renderVisibleRows();
+    updateBulkBar();
+    return;
+  }
+
+  if (isShift && state.lastClickedPos !== null) {
+    // Range select from last clicked to this one
+    const start = Math.min(state.lastClickedPos, posInFiltered);
+    const end = Math.max(state.lastClickedPos, posInFiltered);
+    for (let i = start; i <= end; i++) {
+      state.multiSelected.add(state.filteredRows[i].origIndex);
+    }
+    renderVisibleRows();
+    updateBulkBar();
+    return;
+  }
+
+  // Normal click — clear multi-selection and select single row
+  state.multiSelected.clear();
+  state.lastClickedPos = posInFiltered;
+  updateBulkBar();
+  selectRow(origIndex);
+}
+
+function bulkAssignPublishedStatus(val) {
+  if (state.multiSelected.size === 0) {
+    showToast('Select rows first (Cmd-click or Shift-click in the sidebar)', 'error');
+    return;
+  }
+  const indexes = Array.from(state.multiSelected);
+  let touched = 0;
+  indexes.forEach(origIndex => {
+    const row = state.editedRows[origIndex];
+    const old = String(row['Published_Status'] || '');
+    if (old === val) return;
+    row['Published_Status'] = val;
+    logChange(origIndex, 'Published_Status', old, val);
+    touched++;
+  });
+  setDirty(true);
+  state.multiSelected.clear();
+  updateBulkBar();
+  renderVisibleRows();
+  if (state.selectedIndex !== null) {
+    populatePublishedStatusSelect(state.editedRows[state.selectedIndex]['Published_Status'] || '');
+  }
+  showToast(`Set Published Status on ${touched} row${touched !== 1 ? 's' : ''}${val === '' ? ' (cleared)' : ' → ' + val}`, 'success');
+}
+
+async function bulkAssignKke(val) {
+  if (state.multiSelected.size === 0) return;
+  const indexes = Array.from(state.multiSelected);
+
+  if (val === 'Kill') {
+    const toAsk = indexes.filter(i => state.editedRows[i][kkeCol()] !== 'Kill');
+    const ok = await promptBulkKillCleanup(toAsk);
+    if (!ok) return;
+  }
+
+  indexes.forEach(origIndex => {
+    const old = state.editedRows[origIndex][kkeCol()];
+    state.editedRows[origIndex][kkeCol()] = val;
+    if (old !== val) logChange(origIndex, kkeCol(), old, val);
+  });
+  setDirty(true);
+  state.multiSelected.clear();
+  updateBulkBar();
+  renderVisibleRows();
+  if (state.selectedIndex !== null) {
+    populateAuditFields(state.editedRows[state.selectedIndex]);
+    renderMetaFields(state.editedRows[state.selectedIndex], state.selectedIndex);
+  }
+}
+
+// updateBulkBar / updateBatchBar are shimmed to updateMultiBar below — see the
+// "Unified multi-row action bar" section.
+
+function updateStatsBar() {
+  const bar = $('stats-bar');
+  if (!bar) return;
+  const total = state.editedRows.length;
+  if (total === 0) { bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  const reviewed = state.editedRows.filter(r => String(r[kkeCol()] || '').trim()).length;
+  const pct = Math.round((reviewed / total) * 100);
+  $('stats-bar-text').textContent = `${reviewed}/${total} reviewed (${pct}%)`;
+  $('stats-bar-progress').style.setProperty('--pct', pct + '%');
+}
+
+function navigateRow(delta) {
+  if (state.selectedIndex === null) return;
+
+  // Find current position in filteredRows
+  const currentPos = state.filteredRows.findIndex(
+    fr => fr.origIndex === state.selectedIndex
+  );
+  if (currentPos === -1) return;
+
+  const newPos = currentPos + delta;
+  if (newPos < 0 || newPos >= state.filteredRows.length) return;
+
+  selectRow(state.filteredRows[newPos].origIndex);
+}
+
+/** Select the next row in the filtered list whose KKE is blank (wraps around). */
+function jumpToNextUnreviewed() {
+  const rows = state.filteredRows;
+  if (!rows.length) return;
+  const startPos = state.selectedIndex === null
+    ? -1
+    : rows.findIndex(fr => fr.origIndex === state.selectedIndex);
+  const n = rows.length;
+  for (let step = 1; step <= n; step++) {
+    const pos = ((startPos + step) % n + n) % n;
+    const origIndex = rows[pos].origIndex;
+    if (!String(state.editedRows[origIndex][kkeCol()] || '').trim()) {
+      selectRow(origIndex);
+      return;
+    }
+  }
+  showToast('No unreviewed rows in the current list', 'info');
+}
+
+function updateNavControls() {
+  if (state.selectedIndex === null) return;
+  const total      = state.filteredRows.length;
+  const currentPos = state.filteredRows.findIndex(fr => fr.origIndex === state.selectedIndex);
+  const display    = currentPos === -1 ? '—' : currentPos + 1;
+
+  els.navPosition.textContent = `${display} of ${total}`;
+  els.btnPrev.disabled = currentPos <= 0;
+  els.btnNext.disabled = currentPos >= total - 1 || currentPos === -1;
+}
+
+function showNoSelection() {
+  els.noSelection.classList.remove('hidden');
+  els.contentArea.classList.add('hidden');
+  // Show Tree/Redirects buttons if a file is loaded
+  const actions = $('no-sel-actions');
+  if (state.headers.length > 0) {
+    actions.classList.remove('hidden');
+  } else {
+    actions.classList.add('hidden');
+  }
+}
+
+// ─── Field bar — meta fields ──────────────────────────────────────────────────
+
+function renderMetaFields(row, origIndex) {
+  els.metaFields.innerHTML = '';
+
+  // Fields that are editable (content-y fields)
+  const editableFields = new Set([
+    'Title 1', 'Meta Description 1', 'H1-1', 'H1-2', 'H2-1', 'H2-2',
+    'Title', 'Meta Description'
+  ]);
+
+  // Title always appears first — find the best title column
+  const titleCandidates = ['Title 1', 'Title'];
+  const titleField = titleCandidates.find(t => state.headers.includes(t));
+
+  // Build ordered field list: title first, then user-selected fields (excluding title to avoid dupes)
+  const fieldsToRender = [];
+  if (titleField) {
+    fieldsToRender.push(titleField);
+  }
+  state.visibleFields.forEach(h => {
+    if (h === titleField) return; // already added
+    if (!state.headers.includes(h)) return;
+    fieldsToRender.push(h);
+  });
+
+  // Fields whose values are always short — collapse to fit
+  const compactFields = new Set([
+    'Status Code', 'Indexability Status', 'Indexability',
+    'Word Count', 'Unique Inlinks', 'Unique Outlinks',
+    'Crawl Depth', 'Response Time'
+  ]);
+
+  // Fields that always get their own row
+  const fullWidthFields = new Set(['Nav Destination', 'Computed Path']);
+
+  // Content-adaptive sizing
+  function sizeClass(header, value) {
+    const len = String(value).length;
+    // Title always gets full width
+    if (header === titleField) return 'meta-full';
+    // Path/nav fields always full width
+    if (fullWidthFields.has(header)) return 'meta-full';
+    // Known short-value fields — always compact
+    if (compactFields.has(header)) return 'meta-compact';
+    // Long content: paths, breadcrumbs, descriptions
+    if (len > 100) return 'meta-full';
+    if (len > 40)  return 'meta-wide';
+    if (len <= 15) return 'meta-narrow';
+    return '';     // default flex: 1
+  }
+
+  fieldsToRender.forEach(h => {
+    const value = row[h] ?? '';
+    const isEditable = editableFields.has(h);
+
+    // Hide blank read-only fields when the toggle is on; always keep the title
+    // and editable inputs so the user can still type into them.
+    if (state.hideBlankMetadata && !isEditable && h !== titleField && String(value).trim() === '') {
+      return;
+    }
+
+    const group = document.createElement('div');
+    group.className = 'meta-field';
+    const cls = sizeClass(h, value);
+    if (cls) group.classList.add(cls);
+
+    const label = document.createElement('div');
+    label.className = 'meta-label';
+    label.textContent = h;
+    group.appendChild(label);
+
+    if (isEditable) {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'meta-input';
+      input.value = value;
+      input.dataset.field = h;
+      input.addEventListener('input', () => {
+        state.editedRows[origIndex][h] = input.value;
+        setDirty(true);
+        refreshRowInList(origIndex);
+      });
+      group.appendChild(input);
+    } else {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'meta-input readonly';
+      input.value = value;
+      input.readOnly = true;
+
+      // Color status codes
+      if (h.toLowerCase() === 'status code') {
+        const code = parseInt(value);
+        if (code >= 200 && code < 300) input.classList.add('status-2xx');
+        else if (code >= 300 && code < 400) input.classList.add('status-3xx');
+        else if (code >= 400) input.classList.add('status-4xx');
+      }
+
+      group.appendChild(input);
+    }
+
+    els.metaFields.appendChild(group);
+  });
+}
+
+// ─── Field bar — audit fields ─────────────────────────────────────────────────
+
+function populateAuditFields(row) {
+  // KKE
+  const kke = row[kkeCol()] || '';
+  applyKkeStyle(kke);
+  updateGaKkeBadge(row);
+  updateSuggestedKkeBadge(row);
+  updateConsolidateIndicator(row);
+
+  // Tags
+  const tagsRaw = row[tagsCol()] || '';
+  const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
+  renderTagChips(tags);
+
+  // Notes indicator
+  const notes = row[notesCol()] || '';
+  els.notesTextarea.value = notes;
+  els.notesIndicator.classList.toggle('hidden', !notes.trim());
+
+  // Primary Tag
+  populatePrimaryTagSelect(row[primaryTagCol()] || '');
+
+  // Group
+  populateGroupSelect(row[groupCol()] || '');
+
+  // Published Status / Page Type / Content Theme
+  populatePublishedStatusSelect(row['Published_Status'] || '');
+  populatePageTypeSelect(row['Page_Type'] || '');
+  updateTargetContentTypeHint(row);
+  populateContentThemeSelect(row['Content_Theme'] || '');
+
+  // SME Decision
+  populateSmeDecisionSelect(row[smeDecisionCol()] || '');
+
+  // Final KKE — collapses to a ✓ chip when it matches the KKE call
+  populateFinalKkeSelect(row[finalKkeCol()] || '', row[kkeCol()] || '');
+
+  // Migration classification (Phase 1, Chunk C)
+  populateMigrationFields(row);
+
+  // Design patterns
+  populateDesignPatterns(row);
+
+  // CMS links (Phase 1)
+  populateCmsLinks(row);
+
+  // Cluster summaries (collapsed-state readouts)
+  refreshClusterSummaries(row);
+
+  // Nav badge
+  updateNavBadge(row);
+}
+
+// ─── CMS link cluster (Phase 1) ──────────────────────────────────────────────
+
+function populateCmsLinks(row) {
+  const src = String(row['Source_CMS_URL'] || '').trim();
+  const dst = String(row['New_CMS_URL'] || '').trim();
+  if (els.sourceCmsUrlInput) {
+    els.sourceCmsUrlInput.value = src;
+    if (els.sourceCmsUrlOpen) els.sourceCmsUrlOpen.disabled = !isProbablyUrl(src);
+  }
+  if (els.newCmsUrlInput) {
+    els.newCmsUrlInput.value = dst;
+    if (els.newCmsUrlOpen) els.newCmsUrlOpen.disabled = !isProbablyUrl(dst);
+  }
+}
+
+function isProbablyUrl(s) {
+  if (!s) return false;
+  return /^https?:\/\//i.test(s.trim());
+}
+
+function setupCmsLinkHandlers() {
+  if (!els.sourceCmsUrlInput || !els.newCmsUrlInput) return;
+
+  const wireField = (input, openBtn, fieldName) => {
+    if (!input) return;
+    input.addEventListener('input', () => {
+      if (state.selectedIndex === null) return;
+      const row = state.editedRows[state.selectedIndex];
+      const old = String(row[fieldName] || '');
+      const next = input.value;
+      if (old === next) return;
+      row[fieldName] = next;
+      logChange(state.selectedIndex, fieldName, old, next);
+      setDirty(true);
+      if (openBtn) openBtn.disabled = !isProbablyUrl(next);
+      // Refresh sidebar indicator
+      refreshRowInList(state.selectedIndex);
+    });
+    if (openBtn) {
+      openBtn.addEventListener('click', () => {
+        const v = (input.value || '').trim();
+        if (isProbablyUrl(v)) window.electronAPI.openExternal(v);
+      });
+    }
+  };
+
+  wireField(els.sourceCmsUrlInput, els.sourceCmsUrlOpen, 'Source_CMS_URL');
+  wireField(els.newCmsUrlInput, els.newCmsUrlOpen, 'New_CMS_URL');
+}
+
+// ─── Cluster quick-toggle chips (Phase 1, space-saving UX pass) ─────────────
+// Two small chips in the field-bar-top let the user enable/disable SME and
+// Migration field visibility without digging into App Settings. The chips
+// mirror the App Settings checkboxes (same prefs, same handlers).
+
+function setupClusterQuickToggles() {
+  const smeChip = document.getElementById('qt-sme');
+  const migChip = document.getElementById('qt-migrate');
+  const dpChip  = document.getElementById('qt-patterns');
+
+  function refresh() {
+    if (smeChip) {
+      smeChip.classList.toggle('active', !!state.showSmeFields);
+      smeChip.setAttribute('aria-pressed', state.showSmeFields ? 'true' : 'false');
+    }
+    if (migChip) {
+      migChip.classList.toggle('active', !!state.showMigrationFields);
+      migChip.setAttribute('aria-pressed', state.showMigrationFields ? 'true' : 'false');
+    }
+    if (dpChip) {
+      dpChip.classList.toggle('active', !!state.showDesignPatterns);
+      dpChip.setAttribute('aria-pressed', state.showDesignPatterns ? 'true' : 'false');
+    }
+  }
+  refresh();
+
+  if (smeChip) {
+    smeChip.addEventListener('click', () => {
+      state.showSmeFields = !state.showSmeFields;
+      window.electronAPI.savePrefs({ showSmeFields: state.showSmeFields });
+      applySmeFieldsVisibility();
+      // Keep the App Settings checkbox in sync if the modal is open
+      const settingsCb = document.getElementById('pref-show-sme-fields');
+      if (settingsCb) settingsCb.checked = state.showSmeFields;
+      refresh();
+      // Refresh the Decide cluster summary (SME readout may now be visible/hidden)
+      if (state.selectedIndex !== null) refreshClusterSummaries(state.editedRows[state.selectedIndex]);
+    });
+  }
+  if (migChip) {
+    migChip.addEventListener('click', () => {
+      state.showMigrationFields = !state.showMigrationFields;
+      window.electronAPI.savePrefs({ showMigrationFields: state.showMigrationFields });
+      applyMigrationFieldsVisibility();
+      const settingsCb = document.getElementById('pref-show-migration-fields');
+      if (settingsCb) settingsCb.checked = state.showMigrationFields;
+      refresh();
+    });
+  }
+
+  if (dpChip) {
+    dpChip.addEventListener('click', () => {
+      state.showDesignPatterns = !state.showDesignPatterns;
+      window.electronAPI.savePrefs({ showDesignPatterns: state.showDesignPatterns });
+      applyDesignPatternsVisibility();
+      const settingsCb = document.getElementById('pref-show-design-patterns');
+      if (settingsCb) settingsCb.checked = state.showDesignPatterns;
+      refresh();
+    });
+  }
+
+  // Expose so other places (App Settings checkbox handlers) can update chip state
+  window._refreshClusterQuickToggles = refresh;
+}
+
+// ─── Cluster collapse system (Phase 1, space-saving UX pass) ────────────────
+// Each .audit-cluster has a clickable .cluster-pill. Click toggles a `.collapsed`
+// class; collapsed clusters hide all children except the pill + .cluster-summary
+// (a short inline readout of populated values). State persists in app prefs.
+
+// ─── View switcher tab strip (Chunk ii) ──────────────────────────────────────
+// Persistent horizontal control at the top of the window. Mirrors the View
+// menu items and stays in sync with which view is currently open.
+
+function setupViewSwitcher() {
+  const strip = document.getElementById('view-switcher');
+  if (!strip) return;
+  strip.querySelectorAll('.view-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const view = btn.dataset.view;
+      switch (view) {
+        case 'audit':     returnToAuditView(); break;
+        case 'table':     if (!_tableViewOpen) toggleTableView(); break;
+        case 'nav-tree':  if (!_navEditorOpen) toggleNavEditor(); break;
+        case 'redirects': if (!_redirectEditorOpen) toggleRedirectEditor(); break;
+      }
+      refreshViewSwitcher();
+    });
+  });
+  refreshViewSwitcher();
+}
+
+/** Update the active tab to reflect the currently-open view. Called from
+ *  toggleTableView, closeTableView, toggleNavEditor, closeNavEditor,
+ *  toggleRedirectEditor, closeRedirectEditor, returnToAuditView.
+ */
+function refreshViewSwitcher() {
+  const strip = document.getElementById('view-switcher');
+  if (!strip) return;
+  let active = 'audit';
+  if (_tableViewOpen)         active = 'table';
+  else if (_navEditorOpen)    active = 'nav-tree';
+  else if (_redirectEditorOpen) active = 'redirects';
+  strip.querySelectorAll('.view-tab').forEach(btn => {
+    const isActive = btn.dataset.view === active;
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+}
+
+function setupClusterCollapse() {
+  const clusters = document.querySelectorAll('.audit-cluster[data-cluster]');
+  clusters.forEach(c => {
+    const key = c.dataset.cluster;
+    // Apply persisted state
+    if (state.collapsedClusters[key]) c.classList.add('collapsed');
+    const pill = c.querySelector('.cluster-pill');
+    if (!pill) return;
+    pill.addEventListener('click', () => {
+      const nowCollapsed = !c.classList.contains('collapsed');
+      c.classList.toggle('collapsed', nowCollapsed);
+      state.collapsedClusters = { ...state.collapsedClusters, [key]: nowCollapsed };
+      window.electronAPI.savePrefs({ collapsedClusters: state.collapsedClusters });
+      // Refresh the summary so it's accurate when collapsed
+      if (state.selectedIndex !== null) refreshClusterSummaries(state.editedRows[state.selectedIndex]);
+    });
+  });
+}
+
+/** Refresh the inline summary text for each collapsed cluster from the current row. */
+function refreshClusterSummaries(row) {
+  if (!row) return;
+  const summaries = {
+    decide:   summarizeDecide(row),
+    classify: summarizeClassify(row),
+    patterns: summarizePatterns(row),
+    migrate:  summarizeMigrate(row),
+    cms:      summarizeCms(row)
+  };
+  Object.keys(summaries).forEach(key => {
+    const cluster = document.querySelector(`.audit-cluster[data-cluster="${key}"]`);
+    if (!cluster) return;
+    const span = cluster.querySelector('.cluster-summary');
+    if (!span) return;
+    span.textContent = summaries[key] || '';
+    span.classList.toggle('cluster-summary-empty', !summaries[key]);
+  });
+}
+
+function summarizeDecide(row) {
+  const kke = String(row[kkeCol()] || '').trim();
+  const parts = [];
+  if (kke) parts.push(kke);
+  const notes = String(row[notesCol()] || '').trim();
+  if (notes) parts.push('note');
+  // Include SME / Final readout when SME fields are visible
+  if (state.showSmeFields) {
+    const sme = String(row[smeDecisionCol()] || '').trim();
+    const final = String(row[finalKkeCol()] || '').trim();
+    if (sme) parts.push(`SME: ${sme}`);
+    if (final) parts.push(`Final: ${final}`);
+  }
+  return parts.join(' · ') || '—';
+}
+function summarizeClassify(row) {
+  // Now absorbs Tag fields — Page Type / Theme / Published / Group / Primary / Tags
+  const pieces = [
+    row['Page_Type'],
+    row['Content_Theme'],
+    row['Published_Status'],
+    row[groupCol()],
+    row[primaryTagCol()]
+  ].map(v => String(v || '').trim()).filter(Boolean);
+  const tagsRaw = String(row[tagsCol()] || '').trim();
+  const tagCount = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean).length : 0;
+  if (tagCount) pieces.push(`${tagCount} tag${tagCount !== 1 ? 's' : ''}`);
+  return pieces.join(' · ') || '—';
+}
+function summarizeMigrate(row) {
+  const parts = [row['Content_Nature'], row['Migration_Track']]
+    .map(v => String(v || '').trim()).filter(Boolean);
+  return parts.join(' · ') || '—';
+}
+function summarizeCms(row) {
+  const src = isProbablyUrl(row['Source_CMS_URL']);
+  const dst = isProbablyUrl(row['New_CMS_URL']);
+  if (src && dst) return 'source · new';
+  if (src) return 'source';
+  if (dst) return 'new';
+  return '—';
+}
+
+function summarizePatterns(row) {
+  const raw = String(row[DESIGN_PATTERN_COL] || '').trim();
+  if (!raw) return '';
+  const ps = raw.split(',').map(s => s.trim()).filter(Boolean);
+  if (ps.length === 0) return '';
+  if (ps.length <= 2) return ps.join(' · ');
+  return ps.slice(0, 2).join(' · ') + ` +${ps.length - 2}`;
+}
+
+function applyKkeStyle(val) {
+  els.kkeButtons.querySelectorAll('.kke-btn').forEach(btn => {
+    // Remove all active classes
+    const classes = [...btn.classList].filter(c => c.startsWith('kke-active-'));
+    classes.forEach(c => btn.classList.remove(c));
+    if (btn.dataset.kke === val && val) {
+      btn.classList.add(`kke-active-${val.toLowerCase().replace(/[^a-z0-9]/g, '-')}`);
+    }
+  });
+}
+
+// ─── Tags ─────────────────────────────────────────────────────────────────────
+
+function getRowTags() {
+  if (state.selectedIndex === null) return [];
+  const raw = state.editedRows[state.selectedIndex][tagsCol()] || '';
+  return raw ? raw.split(',').map(t => t.trim()).filter(Boolean) : [];
+}
+
+function setRowTags(tags) {
+  if (state.selectedIndex === null) return;
+  state.editedRows[state.selectedIndex][tagsCol()] = tags.join(', ');
+  setDirty(true);
+  refreshRowInList(state.selectedIndex);
+}
+
+function renderTagChips(tags) {
+  els.tagChips.innerHTML = '';
+  tags.forEach(tag => {
+    const chip = document.createElement('div');
+    chip.className = 'tag-chip';
+    chip.textContent = tag;
+    const note = glossaryTooltip('tag', tag);
+    if (note) chip.title = note;
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'tag-remove';
+    removeBtn.textContent = '×';
+    removeBtn.title = `Remove "${tag}"`;
+    removeBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      const newTags = getRowTags().filter(t => t !== tag);
+      setRowTags(newTags);
+      renderTagChips(newTags);
+    });
+
+    chip.appendChild(removeBtn);
+    els.tagChips.appendChild(chip);
+  });
+}
+
+// ─── Primary Tag ──────────────────────────────────────────────────────────────
+
+function populatePrimaryTagSelect(currentValue) {
+  els.primaryTagSelect.innerHTML = '<option value="">—</option>';
+  state.tagLibrary.forEach(tag => {
+    const opt = document.createElement('option');
+    opt.value = tag;
+    opt.textContent = tag;
+    if (tag === currentValue) opt.selected = true;
+    els.primaryTagSelect.appendChild(opt);
+  });
+  // If current value isn't in the library, add it so it shows
+  if (currentValue && !state.tagLibrary.includes(currentValue)) {
+    const opt = document.createElement('option');
+    opt.value = currentValue;
+    opt.textContent = currentValue;
+    opt.selected = true;
+    els.primaryTagSelect.appendChild(opt);
+  }
+}
+
+// SME decision is now displayed read-only (was a dropdown; SME values come from
+// the SME → Import workflow and shouldn't be edited inline).
+function populateSmeDecisionSelect(currentValue) {
+  const el = $('sme-decision-display');
+  if (!el) return;
+  const v = String(currentValue || '').trim();
+  el.textContent = v || '—';
+  el.classList.toggle('sme-decision-display-empty', !v);
+  // Tint the readout based on the SME's actual call
+  el.classList.remove('sme-approve', 'sme-change');
+  if (v === 'Approve') el.classList.add('sme-approve');
+  else if (v.startsWith('Change:')) el.classList.add('sme-change');
+}
+
+function populateFinalKkeSelect(currentValue, kkeValue) {
+  const sel = $('final-kke-select');
+  const matchBtn = $('final-kke-match');
+  const matchVal = $('final-kke-match-value');
+
+  // Populate the underlying select regardless (for when user wants to override)
+  sel.innerHTML = '';
+  const options = ['', ...allKkeStates()];
+  options.forEach(v => {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = v || '—';
+    if (v === currentValue) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  if (currentValue && !options.includes(currentValue)) {
+    const opt = document.createElement('option');
+    opt.value = currentValue;
+    opt.textContent = currentValue;
+    opt.selected = true;
+    sel.appendChild(opt);
+  }
+
+  // Collapse to checkmark chip when Final matches KKE (and both are non-empty).
+  // Click the chip to reveal the dropdown for overriding.
+  const finalVal = String(currentValue || '').trim();
+  const kke = String(kkeValue || '').trim();
+  const matches = finalVal && kke && finalVal === kke;
+  if (matchBtn && matchVal) {
+    if (matches) {
+      matchVal.textContent = finalVal;
+      matchBtn.classList.remove('hidden');
+      sel.classList.add('hidden');
+    } else {
+      matchBtn.classList.add('hidden');
+      sel.classList.remove('hidden');
+    }
+  }
+}
+
+// ─── Tag dropdown ─────────────────────────────────────────────────────────────
+
+function setupTagDropdown() {
+  els.btnAddTag.addEventListener('click', e => {
+    e.stopPropagation();
+    openTagDropdown();
+  });
+
+  els.tagSearch.addEventListener('input', () => renderTagList(els.tagSearch.value));
+
+  els.btnCreateTag.addEventListener('click', () => {
+    const newTag = els.tagSearch.value.trim().toLowerCase().replace(/\s+/g, '-');
+    if (!newTag) return;
+    if (!state.tagLibrary.includes(newTag)) {
+      state.tagLibrary.push(newTag);
+      state.tagLibrary.sort();
+      // Persist updated library
+      window.electronAPI.savePrefs({ tagLibrary: state.tagLibrary });
+    }
+    addTagToRow(newTag);
+    closeTagDropdown();
+  });
+}
+
+function openTagDropdown() {
+  const rect = els.btnAddTag.getBoundingClientRect();
+  els.tagDropdown.style.left = rect.left + 'px';
+  els.tagDropdown.style.top  = (rect.bottom + 4) + 'px';
+  els.tagDropdown.classList.remove('hidden');
+  els.tagSearch.value = '';
+  renderTagList('');
+  els.tagSearch.focus();
+}
+
+function closeTagDropdown() {
+  els.tagDropdown.classList.add('hidden');
+}
+
+function renderTagList(filter) {
+  const currentTags = new Set(getRowTags());
+  const filtered = filter
+    ? state.tagLibrary.filter(t => t.includes(filter.toLowerCase()))
+    : state.tagLibrary;
+
+  els.tagList.innerHTML = '';
+  filtered.forEach(tag => {
+    const opt = document.createElement('div');
+    opt.className = 'tag-option' + (currentTags.has(tag) ? ' selected' : '');
+    opt.textContent = tag;
+    opt.addEventListener('click', () => {
+      if (currentTags.has(tag)) {
+        // Remove
+        const newTags = getRowTags().filter(t => t !== tag);
+        setRowTags(newTags);
+        renderTagChips(newTags);
+      } else {
+        addTagToRow(tag);
+      }
+      renderTagList(els.tagSearch.value);
+    });
+    els.tagList.appendChild(opt);
+  });
+
+  // Show "create" option if search text doesn't match an existing tag
+  const trimmed = filter.trim().toLowerCase().replace(/\s+/g, '-');
+  const canCreate = trimmed && !state.tagLibrary.includes(trimmed);
+  els.tagCreate.classList.toggle('hidden', !canCreate);
+  if (canCreate) els.tagCreateLabel.textContent = trimmed;
+}
+
+function addTagToRow(tag) {
+  const current = getRowTags();
+  if (current.includes(tag)) return;
+  const newTags = [...current, tag];
+  setRowTags(newTags);
+  renderTagChips(newTags);
+}
+
+// ─── Design Pattern chip input ────────────────────────────────────────────────
+
+const DESIGN_PATTERN_COL = 'Design_Patterns';
+
+function getRowDesignPatterns() {
+  if (state.selectedIndex === null) return [];
+  const raw = String(state.editedRows[state.selectedIndex][DESIGN_PATTERN_COL] || '');
+  return raw.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function setRowDesignPatterns(patterns) {
+  if (state.selectedIndex === null) return;
+  state.editedRows[state.selectedIndex][DESIGN_PATTERN_COL] = patterns.join(', ');
+  setDirty(true);
+  refreshRowInList(state.selectedIndex);
+}
+
+function renderDesignPatternChips(patterns) {
+  if (!els.designPatternChips) return;
+  els.designPatternChips.innerHTML = '';
+  patterns.forEach(name => {
+    const chip = document.createElement('div');
+    chip.className = 'tag-chip';
+    chip.style.cssText = 'background:#ede9fe;color:#5b21b6;border-color:#c4b5fd;';
+    // Show description as tooltip if available
+    const entry = state.designPatternLibrary.find(e => e.name === name);
+    if (entry && entry.description) chip.title = entry.description;
+    chip.textContent = name;
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'tag-remove';
+    removeBtn.textContent = '×';
+    removeBtn.title = `Remove "${name}"`;
+    removeBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      const updated = getRowDesignPatterns().filter(p => p !== name);
+      setRowDesignPatterns(updated);
+      renderDesignPatternChips(updated);
+    });
+    chip.appendChild(removeBtn);
+    els.designPatternChips.appendChild(chip);
+  });
+}
+
+function openDesignPatternDropdown() {
+  renderDesignPatternList('');
+  const rect = els.btnAddDesignPattern.getBoundingClientRect();
+  els.dpDropdown.style.left = rect.left + 'px';
+  els.dpDropdown.style.top  = (rect.bottom + 4) + 'px';
+  els.dpDropdown.classList.remove('hidden');
+  $('dp-search').value = '';
+  $('dp-search').focus();
+}
+
+function closeDesignPatternDropdown() {
+  if (els.dpDropdown) els.dpDropdown.classList.add('hidden');
+}
+
+function renderDesignPatternList(filter) {
+  const currentSet = new Set(getRowDesignPatterns());
+  const q = filter.toLowerCase();
+
+  // Build filtered list, preserving category grouping
+  const byCategory = {};
+  state.designPatternLibrary.forEach(e => {
+    if (q && !e.name.toLowerCase().includes(q) && !(e.description || '').toLowerCase().includes(q) && !(e.aliases || '').toLowerCase().includes(q)) return;
+    const cat = e.category || 'Other';
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push(e);
+  });
+
+  // Also surface any ad-hoc patterns already on the row that aren't in the library
+  const adHoc = currentSet.size > 0
+    ? [...currentSet].filter(p => !state.designPatternLibrary.some(e => e.name === p))
+    : [];
+
+  const listEl = $('dp-list');
+  listEl.innerHTML = '';
+
+  // Show categories
+  Object.keys(byCategory).sort().forEach(cat => {
+    const header = document.createElement('div');
+    header.className = 'dp-category-header';
+    header.textContent = cat;
+    listEl.appendChild(header);
+
+    byCategory[cat].forEach(entry => {
+      const opt = document.createElement('div');
+      opt.className = 'dp-option' + (currentSet.has(entry.name) ? ' selected' : '');
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'dp-option-name';
+      nameSpan.textContent = entry.name;
+      opt.appendChild(nameSpan);
+      if (entry.complexity) {
+        const badge = document.createElement('span');
+        badge.className = 'dp-option-complexity ' + (entry.complexity || '').toLowerCase();
+        badge.textContent = entry.complexity;
+        opt.appendChild(badge);
+      }
+      if (entry.description) opt.title = entry.description;
+      opt.addEventListener('click', () => {
+        const current = getRowDesignPatterns();
+        let updated;
+        if (current.includes(entry.name)) {
+          updated = current.filter(p => p !== entry.name);
+        } else {
+          updated = [...current, entry.name];
+        }
+        setRowDesignPatterns(updated);
+        renderDesignPatternChips(updated);
+        renderDesignPatternList(filter);
+      });
+      listEl.appendChild(opt);
+    });
+  });
+
+  // Ad-hoc patterns already on the row (not in library)
+  if (adHoc.length > 0) {
+    const header = document.createElement('div');
+    header.className = 'dp-category-header';
+    header.textContent = 'Custom (on this page)';
+    listEl.appendChild(header);
+    adHoc.forEach(name => {
+      const opt = document.createElement('div');
+      opt.className = 'dp-option selected';
+      opt.textContent = name;
+      opt.addEventListener('click', () => {
+        const updated = getRowDesignPatterns().filter(p => p !== name);
+        setRowDesignPatterns(updated);
+        renderDesignPatternChips(updated);
+        renderDesignPatternList(filter);
+      });
+      listEl.appendChild(opt);
+    });
+  }
+
+  // Create new option
+  const createEl = $('dp-create');
+  const trimmed = filter.trim();
+  const canCreate = trimmed && !state.designPatternLibrary.some(e => e.name.toLowerCase() === trimmed.toLowerCase());
+  createEl.classList.toggle('hidden', !canCreate);
+  if (canCreate) {
+    $('dp-create-label').textContent = trimmed;
+  }
+}
+
+function setupDesignPatternHandlers() {
+  if (!els.btnAddDesignPattern) return;
+
+  els.btnAddDesignPattern.addEventListener('click', e => {
+    e.stopPropagation();
+    if (!els.dpDropdown.classList.contains('hidden')) {
+      closeDesignPatternDropdown();
+    } else {
+      openDesignPatternDropdown();
+    }
+  });
+
+  $('dp-search').addEventListener('input', () => {
+    renderDesignPatternList($('dp-search').value);
+  });
+
+  $('btn-create-dp')?.addEventListener('click', () => {
+    const name = $('dp-search').value.trim();
+    if (!name) return;
+    // Add to library as a custom entry — persisted to app prefs (global)
+    if (!state.designPatternLibrary.some(e => e.name === name)) {
+      state.designPatternLibrary.push({ name, category: 'Custom', complexity: '', description: '', dsUrl: '', aliases: '', notes: '' });
+      state.projectSettings.designPatternLibrary = state.designPatternLibrary;
+      window.electronAPI.savePrefs({ designPatternLibrary: state.designPatternLibrary });
+      setDirty(true);
+    }
+    const updated = [...getRowDesignPatterns(), name];
+    setRowDesignPatterns(updated);
+    renderDesignPatternChips(updated);
+    closeDesignPatternDropdown();
+  });
+
+  document.addEventListener('click', e => {
+    if (!els.dpDropdown.classList.contains('hidden') &&
+        !els.dpDropdown.contains(e.target) &&
+        e.target !== els.btnAddDesignPattern) {
+      closeDesignPatternDropdown();
+    }
+  });
+}
+
+function populateDesignPatterns(row) {
+  if (!els.designPatternChips) return;
+  const raw = String(row[DESIGN_PATTERN_COL] || '');
+  const patterns = raw.split(',').map(s => s.trim()).filter(Boolean);
+  renderDesignPatternChips(patterns);
+}
+
+// ─── Design Pattern Library editor ────────────────────────────────────────────
+
+function openDesignPatternLibraryEditor() {
+  document.getElementById('_dpl-modal')?.remove();
+  document.getElementById('_dpl-overlay')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = '_dpl-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.style.zIndex = '900';
+
+  const modal = document.createElement('div');
+  modal.id = '_dpl-modal';
+  modal.className = 'modal-dialog pl-modal'; // reuse PatternLibrary modal styles
+  modal.style.maxWidth = '820px';
+  modal.addEventListener('click', e => e.stopPropagation());
+
+  const working = (state.designPatternLibrary || []).map(e => ({ ...e }));
+  let _selectedIdx = working.length > 0 ? 0 : -1;
+
+  const CATEGORIES = ['Hero', 'Card', 'Collection', 'Navigation', 'People', 'Content', 'Social Proof', 'Stats', 'CTA', 'Form', 'Media', 'Feed', 'Structural', 'Custom'];
+  const COMPLEXITIES = ['', 'Low', 'Medium', 'High'];
+  const catOpts = (val) => CATEGORIES.map(c => `<option value="${c}"${c === val ? ' selected' : ''}>${c}</option>`).join('');
+  const cmpOpts = (val) => COMPLEXITIES.map(c => `<option value="${c}"${c === val ? ' selected' : ''}>${c || '—'}</option>`).join('');
+
+  function buildBody() {
+    const listItems = working.map((e, i) => `
+      <li data-idx="${i}" class="pl-list-item${i === _selectedIdx ? ' selected' : ''}">
+        <span class="pl-list-name">${escapeHtml(e.name || '(unnamed)')}</span>
+        <span class="pl-list-desc" style="font-size:10px;color:#888;">${escapeHtml(e.category || '')}</span>
+      </li>
+    `).join('');
+
+    const detail = _selectedIdx >= 0 && working[_selectedIdx]
+      ? renderDplDetail(working[_selectedIdx], _selectedIdx)
+      : '<div class="pl-empty-detail">Select a pattern to view or edit · or click + Add</div>';
+
+    return `
+      <div class="modal-header">
+        <h2 style="margin:0;">Component Library</h2>
+        <button class="modal-close" id="_dpl-close" title="Close">×</button>
+      </div>
+      <div class="pl-body">
+        <div class="pl-list-pane">
+          <div class="pl-list-toolbar">
+            <button id="_dpl-add" class="btn btn-sm btn-primary">+ Add</button>
+            <button id="_dpl-seed" class="btn btn-sm" title="Add the 57 built-in default components (skips any that already exist by name)">Seed defaults</button>
+          </div>
+          <ul class="pl-list">${listItems || '<li class="pl-list-empty">No components yet.</li>'}</ul>
+        </div>
+        <div class="pl-detail-pane" id="_dpl-detail">${detail}</div>
+      </div>
+      <div class="modal-footer">
+        <span style="flex:1;color:var(--text-muted);font-size:12px;">${working.length} component${working.length !== 1 ? 's' : ''}</span>
+        <button id="_dpl-cancel" class="btn btn-sm btn-ghost">Cancel</button>
+        <button id="_dpl-save" class="btn btn-sm btn-primary">Save</button>
+      </div>
+    `;
+  }
+
+  function renderDplDetail(e, idx) {
+    return `
+      <div class="pl-detail" data-idx="${idx}">
+        <div class="pl-detail-row">
+          <label>Name</label>
+          <input type="text" id="_dpl-d-name" value="${escapeHtml(e.name || '')}">
+        </div>
+        <div class="pl-detail-row">
+          <label>Category</label>
+          <select id="_dpl-d-cat">${catOpts(e.category || '')}</select>
+        </div>
+        <div class="pl-detail-row">
+          <label>Complexity</label>
+          <select id="_dpl-d-cmp">${cmpOpts(e.complexity || '')}</select>
+        </div>
+        <div class="pl-detail-row pl-detail-row-block">
+          <label>Description <span class="pl-hint">What this pattern is; shown as tooltip in chip dropdown.</span></label>
+          <textarea id="_dpl-d-desc" rows="2">${escapeHtml(e.description || '')}</textarea>
+        </div>
+        <div class="pl-detail-row">
+          <label>Design System URL</label>
+          <input type="url" id="_dpl-d-ds" value="${escapeHtml(e.dsUrl || '')}" placeholder="https://…">
+        </div>
+        <div class="pl-detail-row">
+          <label>Aliases <span class="pl-hint">Other names for this pattern (comma-separated).</span></label>
+          <input type="text" id="_dpl-d-aliases" value="${escapeHtml(e.aliases || '')}" placeholder="e.g. Hero Banner, Masthead">
+        </div>
+        <div class="pl-detail-row pl-detail-row-block">
+          <label>Notes</label>
+          <textarea id="_dpl-d-notes" rows="2">${escapeHtml(e.notes || '')}</textarea>
+        </div>
+        <div class="pl-detail-row" style="justify-content:flex-end;">
+          <button id="_dpl-d-delete" class="btn btn-sm btn-ghost" style="color:var(--kke-kill);">Delete</button>
+        </div>
+      </div>
+    `;
+  }
+
+  modal.innerHTML = buildBody();
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  registerModalDismiss(overlay, modal, () => overlay.remove());
+  makeModalDraggable(modal);
+
+  function syncFromDom() {
+    if (_selectedIdx < 0 || !working[_selectedIdx]) return;
+    const e = working[_selectedIdx];
+    e.name        = ($('_dpl-d-name')?.value || '').trim();
+    e.category    = $('_dpl-d-cat')?.value || '';
+    e.complexity  = $('_dpl-d-cmp')?.value || '';
+    e.description = $('_dpl-d-desc')?.value || '';
+    e.dsUrl       = $('_dpl-d-ds')?.value || '';
+    e.aliases     = $('_dpl-d-aliases')?.value || '';
+    e.notes       = $('_dpl-d-notes')?.value || '';
+  }
+
+  function selectItem(idx) {
+    syncFromDom();
+    _selectedIdx = idx;
+    modal.innerHTML = buildBody();
+    wireEvents();
+  }
+
+  function wireEvents() {
+    modal.querySelector('#_dpl-close')?.addEventListener('click', () => overlay.remove());
+    modal.querySelector('#_dpl-cancel')?.addEventListener('click', () => overlay.remove());
+    modal.querySelector('#_dpl-save')?.addEventListener('click', () => {
+      syncFromDom();
+      const saved = working.filter(e => String(e.name || '').trim());
+      state.designPatternLibrary = saved;
+      state.projectSettings.designPatternLibrary = saved;
+      // Persist to app prefs so the library is available across all projects
+      window.electronAPI.savePrefs({ designPatternLibrary: saved });
+      setDirty(true);
+      overlay.remove();
+      showToast('Component Library saved');
+    });
+    modal.querySelector('#_dpl-add')?.addEventListener('click', () => {
+      syncFromDom();
+      working.push({ name: 'New Pattern', category: 'Custom', complexity: '', description: '', dsUrl: '', aliases: '', notes: '' });
+      selectItem(working.length - 1);
+    });
+    modal.querySelector('#_dpl-seed')?.addEventListener('click', async () => {
+      syncFromDom();
+      const defaults = await window.electronAPI.getDefaultDesignPatternLibrary();
+      let added = 0;
+      defaults.forEach(d => {
+        if (!working.some(e => e.name.toLowerCase() === d.name.toLowerCase())) {
+          working.push({ ...d });
+          added++;
+        }
+      });
+      showToast(`Added ${added} default component${added !== 1 ? 's' : ''} (${working.length - added} already present)`);
+      selectItem(_selectedIdx >= 0 ? _selectedIdx : 0);
+    });
+    modal.querySelector('#_dpl-d-delete')?.addEventListener('click', () => {
+      if (_selectedIdx < 0) return;
+      working.splice(_selectedIdx, 1);
+      selectItem(Math.min(_selectedIdx, working.length - 1));
+    });
+    modal.querySelectorAll('.pl-list-item').forEach(li => {
+      li.addEventListener('click', () => selectItem(parseInt(li.dataset.idx)));
+    });
+    // Live preview of name in list
+    modal.querySelector('#_dpl-d-name')?.addEventListener('input', e => {
+      if (_selectedIdx >= 0) working[_selectedIdx].name = e.target.value;
+      const li = modal.querySelector(`.pl-list-item[data-idx="${_selectedIdx}"] .pl-list-name`);
+      if (li) li.textContent = e.target.value || '(unnamed)';
+    });
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  }
+
+  wireEvents();
+}
+
+// ─── Design Pattern reports ───────────────────────────────────────────────────
+
+function reportDesignPatterns() {
+  const rows = state.editedRows;
+  const urlCol = state.urlColumn || 'Address';
+  const kkeColName = kkeCol();
+
+  // 1. Count pages per pattern
+  const patternCounts = {}; // name → { count, pages: [{url, kke, pageType}] }
+  rows.forEach(row => {
+    const raw = String(row[DESIGN_PATTERN_COL] || '').trim();
+    if (!raw) return;
+    raw.split(',').map(s => s.trim()).filter(Boolean).forEach(p => {
+      if (!patternCounts[p]) patternCounts[p] = { count: 0, pages: [] };
+      patternCounts[p].count++;
+      patternCounts[p].pages.push({
+        url: row[urlCol] || '',
+        kke: row[kkeColName] || '',
+        pageType: row['Page_Type'] || '',
+      });
+    });
+  });
+
+  const totalPages = rows.length;
+  const coveredPages = rows.filter(r => String(r[DESIGN_PATTERN_COL] || '').trim()).length;
+  const allPatternNames = Object.keys(patternCounts).sort((a, b) => patternCounts[b].count - patternCounts[a].count);
+
+  // 2. Co-occurrence (top 10 pairs)
+  const coOccurrence = {};
+  rows.forEach(row => {
+    const raw = String(row[DESIGN_PATTERN_COL] || '').trim();
+    if (!raw) return;
+    const ps = raw.split(',').map(s => s.trim()).filter(Boolean);
+    for (let i = 0; i < ps.length; i++) {
+      for (let j = i + 1; j < ps.length; j++) {
+        const key = [ps[i], ps[j]].sort().join(' + ');
+        coOccurrence[key] = (coOccurrence[key] || 0) + 1;
+      }
+    }
+  });
+  const topPairs = Object.entries(coOccurrence).sort((a, b) => b[1] - a[1]).slice(0, 15);
+
+  // 3. Complexity distribution
+  const complexityCount = { Low: 0, Medium: 0, High: 0, Unknown: 0 };
+  allPatternNames.forEach(name => {
+    const entry = state.designPatternLibrary.find(e => e.name === name);
+    const cmp = entry?.complexity || 'Unknown';
+    complexityCount[cmp in complexityCount ? cmp : 'Unknown'] += patternCounts[name].count;
+  });
+
+  // Build HTML
+  const ps = state.projectSettings;
+  const projectLabel = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
+
+  function kkeClass(v) {
+    const m = { Keep: 'kke-keep', Kill: 'kke-kill', Evolve: 'kke-evolve', Exclude: 'kke-exclude', Consolidate: 'kke-consolidate' };
+    return m[v] || '';
+  }
+  function kkeStyle(v) {
+    const colors = { Keep: '#16a34a', Kill: '#dc2626', Evolve: '#d97706', Exclude: '#6b7280', Consolidate: '#7c3aed' };
+    return colors[v] ? `color:${colors[v]};font-weight:600;` : '';
+  }
+
+  const inventoryRows = allPatternNames.map(name => {
+    const { count, pages } = patternCounts[name];
+    const pct = ((count / totalPages) * 100).toFixed(1);
+    const entry = state.designPatternLibrary.find(e => e.name === name);
+    const cat = entry?.category || '—';
+    const cmp = entry?.complexity || '—';
+    const isOrphan = count <= 2;
+    const kkeBreakdown = {};
+    pages.forEach(p => { const k = p.kke || '(blank)'; kkeBreakdown[k] = (kkeBreakdown[k] || 0) + 1; });
+    const kkeHtml = Object.entries(kkeBreakdown).sort((a,b) => b[1]-a[1])
+      .map(([k,n]) => `<span style="${kkeStyle(k)}">${escapeHtml(k)}</span>×${n}`).join(' · ');
+    return `<tr${isOrphan ? ' style="opacity:0.65;"' : ''}>
+      <td>${escapeHtml(name)}${isOrphan ? ' <span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:3px;">one-off</span>' : ''}</td>
+      <td>${escapeHtml(cat)}</td>
+      <td>${escapeHtml(cmp)}</td>
+      <td><strong>${count}</strong> <span style="color:#888;font-size:11px;">(${pct}%)</span></td>
+      <td style="font-size:11px;">${kkeHtml}</td>
+    </tr>`;
+  }).join('');
+
+  const coRows = topPairs.map(([pair, n]) =>
+    `<tr><td>${escapeHtml(pair)}</td><td><strong>${n}</strong></td></tr>`
+  ).join('');
+
+  const body = `
+    <h1 style="font-size:18px;margin:0 0 4px;">Component Inventory</h1>
+    ${projectLabel ? `<p style="font-size:13px;color:#666;margin:0 0 16px;">${escapeHtml(projectLabel)}</p>` : ''}
+    <div style="display:flex;gap:20px;margin-bottom:20px;flex-wrap:wrap;">
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:140px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Pages audited</div>
+        <div style="font-size:28px;font-weight:700;">${coveredPages} <span style="font-size:14px;color:#888;">/ ${totalPages}</span></div>
+      </div>
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:140px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Distinct patterns</div>
+        <div style="font-size:28px;font-weight:700;">${allPatternNames.length}</div>
+      </div>
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:160px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">One-off patterns (≤2 pages)</div>
+        <div style="font-size:28px;font-weight:700;">${allPatternNames.filter(n => patternCounts[n].count <= 2).length}</div>
+      </div>
+    </div>
+
+    <h2 style="font-size:14px;margin:0 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">Pattern Inventory</h2>
+    <p style="font-size:12px;color:#666;margin:0 0 8px;">Sorted by frequency. One-off patterns (≤ 2 pages) are dimmed — these are candidates for custom builds or consolidation.</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead>
+        <tr style="text-align:left;border-bottom:2px solid #ddd;">
+          <th style="padding:6px 8px;">Pattern</th>
+          <th style="padding:6px 8px;">Category</th>
+          <th style="padding:6px 8px;">Complexity</th>
+          <th style="padding:6px 8px;">Pages</th>
+          <th style="padding:6px 8px;">KKE breakdown</th>
+        </tr>
+      </thead>
+      <tbody>${inventoryRows || '<tr><td colspan="5" style="padding:12px;color:#888;">No design patterns recorded yet.</td></tr>'}</tbody>
+    </table>
+
+    ${topPairs.length > 0 ? `
+    <h2 style="font-size:14px;margin:24px 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">Top Co-occurring Patterns</h2>
+    <p style="font-size:12px;color:#666;margin:0 0 8px;">Pattern pairs that frequently appear on the same page — these often indicate natural page templates.</p>
+    <table style="width:50%;border-collapse:collapse;font-size:12px;">
+      <thead>
+        <tr style="text-align:left;border-bottom:2px solid #ddd;">
+          <th style="padding:6px 8px;">Pattern pair</th>
+          <th style="padding:6px 8px;">Co-occurrences</th>
+        </tr>
+      </thead>
+      <tbody>${coRows}</tbody>
+    </table>` : ''}
+  `;
+
+  showReport('Component Inventory', body, async (format) => {
+    await exportReport('Component Inventory', body, reportDefaultName('Component Inventory'), format);
+  });
+}
+
+// ─── Content Type Crosswalk report ────────────────────────────────────────────
+// For the CMS architect: every current content type, how it renders, the target
+// (new-CMS) content type it maps to, its target spec + migration track, and the
+// page volume / KKE mix behind each. Flags current types with no crosswalk entry.
+
+function reportContentTypeCrosswalk() {
+  const rows = state.editedRows || [];
+  const NATURE_LABEL = { '': '—', 'Page': 'Page', 'Content Object': 'Fragment', 'Generated': 'Generated' };
+  const registry = (state.projectSettings && Array.isArray(state.projectSettings.contentTypeRegistry))
+    ? state.projectSettings.contentTypeRegistry : [];
+
+  function kkeStyle(v) {
+    const colors = { Keep: '#16a34a', Kill: '#dc2626', Evolve: '#d97706', Exclude: '#6b7280', Consolidate: '#7c3aed' };
+    return colors[v] ? `color:${colors[v]};font-weight:600;` : '';
+  }
+
+  // Group rows by current content type (Page_Type). Untyped rows bucket under '(untyped)'.
+  const groups = new Map(); // type → { count, kke:{}, natures:{}, targets:Set, rendersFromRows:Set }
+  rows.forEach(r => {
+    const t = String(r['Page_Type'] || '').trim() || '(untyped)';
+    if (!groups.has(t)) groups.set(t, { count: 0, kke: {}, natures: {}, targets: new Set() });
+    const g = groups.get(t);
+    g.count++;
+    const k = String(r[finalKkeCol()] || r[kkeCol()] || '').trim() || '(blank)';
+    g.kke[k] = (g.kke[k] || 0) + 1;
+    const nat = String(r['Content_Nature'] || '').trim();
+    g.natures[nat] = (g.natures[nat] || 0) + 1;
+    const tgt = String(r['Target_Content_Type'] || '').trim();
+    if (tgt) g.targets.add(tgt);
+  });
+
+  // Include registry types that have no pages yet (defined but unused).
+  registry.forEach(e => {
+    const name = String(e.contentType || '').trim();
+    if (name && !groups.has(name)) groups.set(name, { count: 0, kke: {}, natures: {}, targets: new Set() });
+  });
+
+  const typeNames = [...groups.keys()].sort((a, b) => {
+    const ca = groups.get(a).count, cb = groups.get(b).count;
+    if (cb !== ca) return cb - ca;
+    return a.localeCompare(b);
+  });
+
+  let mapped = 0, unmapped = 0;
+  const bodyRows = typeNames.map(name => {
+    const g = groups.get(name);
+    const entry = name === '(untyped)' ? null : lookupContentTypeRegistry(name);
+    const hasMap = !!(entry && (String(entry.targetContentType || '').trim() || String(entry.targetSpec || '').trim()));
+    if (name !== '(untyped)') { if (hasMap) mapped++; else unmapped++; }
+
+    // Renders as — registry default, with row-observed natures noted if they diverge.
+    const regNature = entry ? String(entry.defaultContentNature || '').trim() : '';
+    const rowNatures = Object.keys(g.natures).filter(n => n);
+    const rendersAs = regNature
+      ? NATURE_LABEL[regNature] || regNature
+      : (rowNatures.length === 1 ? (NATURE_LABEL[rowNatures[0]] || rowNatures[0]) : (rowNatures.length ? 'mixed' : '—'));
+
+    // Target type — registry first, then any distinct row-level values.
+    const regTarget = entry ? String(entry.targetContentType || '').trim() : '';
+    const rowTargets = [...g.targets].filter(t => t && t !== regTarget);
+    const targetHtml = regTarget
+      ? escapeHtml(regTarget) + (rowTargets.length ? ` <span style="color:#b45309;" title="Row overrides">+${rowTargets.length} override${rowTargets.length !== 1 ? 's' : ''}</span>` : '')
+      : (rowTargets.length ? escapeHtml(rowTargets.join(', ')) : '<span style="color:#dc2626;">unmapped</span>');
+
+    const spec = entry ? String(entry.targetSpec || '').trim() : '';
+    const track = entry ? String(entry.defaultMigrationTrack || '').trim() : '';
+
+    const kkeHtml = Object.entries(g.kke).sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => `<span style="${kkeStyle(k)}">${escapeHtml(k)}</span>×${n}`).join(' · ') || '—';
+
+    const dim = g.count === 0 ? ' style="opacity:0.6;"' : '';
+    return `<tr${dim}>
+      <td>${escapeHtml(name)}${name !== '(untyped)' && !hasMap ? ' <span style="font-size:10px;background:#fee2e2;color:#991b1b;padding:1px 5px;border-radius:3px;">no crosswalk</span>' : ''}</td>
+      <td>${escapeHtml(rendersAs)}</td>
+      <td>${targetHtml}</td>
+      <td>${spec ? escapeHtml(spec) : '<span style="color:#888;">—</span>'}</td>
+      <td>${track ? escapeHtml(track) : '<span style="color:#888;">—</span>'}</td>
+      <td><strong>${g.count}</strong></td>
+      <td style="font-size:11px;">${kkeHtml}</td>
+    </tr>`;
+  }).join('');
+
+  const totalTypes = typeNames.filter(n => n !== '(untyped)').length;
+  const pagesWithTarget = rows.filter(r => String(r['Target_Content_Type'] || '').trim()).length;
+
+  const body = `
+    <h1 style="font-size:18px;margin:0 0 12px;">Content Type Crosswalk</h1>
+    <p style="font-size:12px;color:#666;margin:0 0 16px;">How each current content type maps to its new-CMS target type, how it renders, and the spec + migration track that delivers it.</p>
+    <div style="display:flex;gap:20px;margin-bottom:20px;flex-wrap:wrap;">
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:120px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Content types</div>
+        <div style="font-size:28px;font-weight:700;">${totalTypes}</div>
+      </div>
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:120px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Mapped</div>
+        <div style="font-size:28px;font-weight:700;color:#16a34a;">${mapped}</div>
+      </div>
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:120px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">No crosswalk</div>
+        <div style="font-size:28px;font-weight:700;color:${unmapped ? '#dc2626' : '#16a34a'};">${unmapped}</div>
+      </div>
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Pages w/ target type</div>
+        <div style="font-size:28px;font-weight:700;">${pagesWithTarget} <span style="font-size:14px;color:#888;">/ ${rows.length}</span></div>
+      </div>
+    </div>
+    <p style="font-size:12px;color:#666;margin:0 0 8px;">Define mappings in <strong>Project → Content Type Registry</strong>; specs live in <strong>Project → Target Spec Library</strong>. Types flagged <span style="font-size:10px;background:#fee2e2;color:#991b1b;padding:1px 5px;border-radius:3px;">no crosswalk</span> need a registry entry.</p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead>
+        <tr style="text-align:left;border-bottom:2px solid #ddd;">
+          <th style="padding:6px 8px;">Current content type</th>
+          <th style="padding:6px 8px;">Renders as</th>
+          <th style="padding:6px 8px;">Target content type</th>
+          <th style="padding:6px 8px;">Target spec</th>
+          <th style="padding:6px 8px;">Migration track</th>
+          <th style="padding:6px 8px;">Pages</th>
+          <th style="padding:6px 8px;">KKE breakdown</th>
+        </tr>
+      </thead>
+      <tbody>${bodyRows || '<tr><td colspan="7" style="padding:12px;color:#888;">No content types found.</td></tr>'}</tbody>
+    </table>`;
+
+  showReport('Content Type Crosswalk', body, async (format) => {
+    await exportReport('Content Type Crosswalk', body, reportDefaultName('Content Type Crosswalk'), format);
+  });
+}
+
+// ─── Notes popover ────────────────────────────────────────────────────────────
+
+function toggleNotesPopover(e) {
+  if (!els.notesPopover.classList.contains('hidden')) {
+    closeNotesPopover();
+    return;
+  }
+  e.stopPropagation();
+  renderNoteTemplateSelect();
+  const rect = els.btnNotes.getBoundingClientRect();
+  els.notesPopover.classList.remove('hidden');
+  const popH = els.notesPopover.offsetHeight;
+  const popW = 340;
+  // Position below the button; if it overflows the bottom, flip above
+  let top = rect.bottom + 4;
+  if (top + popH > window.innerHeight - 8) {
+    top = rect.top - popH - 4;
+  }
+  els.notesPopover.style.left = Math.max(8, Math.min(rect.right - popW, window.innerWidth - popW - 8)) + 'px';
+  els.notesPopover.style.top  = Math.max(8, top) + 'px';
+  els.notesTextarea.focus();
+}
+
+function closeNotesPopover() {
+  els.notesPopover.classList.add('hidden');
+}
+
+// ─── Note snippets (reusable rationale text) ──────────────────────────────────
+
+function renderNoteTemplateSelect() {
+  const sel = $('notes-template-select');
+  if (!sel) return;
+  const templates = state.noteTemplates || [];
+  let html = '<option value="">Snippets…</option>';
+  if (templates.length) {
+    html += '<optgroup label="Insert">';
+    templates.forEach((t, i) => {
+      const label = t.length > 40 ? t.slice(0, 40) + '…' : t;
+      html += `<option value="i:${i}">${escapeHtml(label)}</option>`;
+    });
+    html += '</optgroup>';
+  }
+  html += '<optgroup label="Manage">';
+  html += '<option value="__save">＋ Save current note as snippet</option>';
+  if (templates.length) html += '<option value="__manage">✎ Manage snippets…</option>';
+  html += '</optgroup>';
+  sel.innerHTML = html;
+  sel.value = '';
+}
+
+function onNoteTemplateSelect(e) {
+  const v = e.target.value;
+  e.target.value = '';
+  if (!v) return;
+  if (v === '__save') {
+    const text = (els.notesTextarea.value || '').trim();
+    if (!text) { showToast('Write a note first, then save it as a snippet', 'info'); return; }
+    if ((state.noteTemplates || []).includes(text)) { showToast('That snippet already exists', 'info'); return; }
+    state.noteTemplates = [...(state.noteTemplates || []), text];
+    window.electronAPI.savePrefs({ noteTemplates: state.noteTemplates });
+    showToast('Snippet saved', 'success');
+    renderNoteTemplateSelect();
+    return;
+  }
+  if (v === '__manage') { openNoteTemplateManager(); return; }
+  if (v.startsWith('i:')) {
+    const idx = parseInt(v.slice(2), 10);
+    insertNoteSnippet(state.noteTemplates[idx]);
+  }
+}
+
+/** Insert snippet text at the cursor (or append on a new line), then persist via the input handler. */
+function insertNoteSnippet(text) {
+  if (state.selectedIndex === null || text == null) return;
+  const ta = els.notesTextarea;
+  const start = ta.selectionStart ?? ta.value.length;
+  const end   = ta.selectionEnd ?? ta.value.length;
+  const before = ta.value.slice(0, start);
+  const after  = ta.value.slice(end);
+  // Add a separating newline when inserting into existing, non-empty content.
+  const sep = (before && !before.endsWith('\n')) ? '\n' : '';
+  const insertion = sep + text;
+  ta.value = before + insertion + after;
+  const caret = before.length + insertion.length;
+  ta.dispatchEvent(new Event('input')); // reuse the existing save path
+  ta.focus();
+  ta.setSelectionRange(caret, caret);
+}
+
+function openNoteTemplateManager() {
+  const body = document.createElement('div');
+  const render = () => {
+    const templates = state.noteTemplates || [];
+    if (!templates.length) {
+      body.innerHTML = `<div class="modal-message">No snippets yet. In the Notes popover, write a note and choose <b>Save current note as snippet</b>.</div>`;
+      return;
+    }
+    body.innerHTML = '';
+    templates.forEach((t, i) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border);';
+      const txt = document.createElement('div');
+      txt.style.cssText = 'flex:1;font-size:12px;white-space:pre-wrap;word-break:break-word;';
+      txt.textContent = t;
+      const del = document.createElement('button');
+      del.className = 'btn btn-sm btn-ghost';
+      del.style.color = 'var(--kke-kill)';
+      del.textContent = 'Delete';
+      del.addEventListener('click', () => {
+        state.noteTemplates = state.noteTemplates.filter((_, j) => j !== i);
+        window.electronAPI.savePrefs({ noteTemplates: state.noteTemplates });
+        render();
+        renderNoteTemplateSelect();
+      });
+      row.appendChild(txt);
+      row.appendChild(del);
+      body.appendChild(row);
+    });
+  };
+  render();
+  openModal({
+    title: 'Manage note snippets',
+    body,
+    width: 480,
+    buttons: [{ label: 'Done', variant: 'primary', primary: true }],
+  });
+}
+
+// ─── Field picker modal ───────────────────────────────────────────────────────
+
+function setupFieldPicker() {
+  els.btnFieldPicker.addEventListener('click', openFieldPicker);
+
+  // Blank-metadata toggle in field-bar-top
+  function refreshBlankMetaButton() {
+    if (!els.btnToggleBlankMeta) return;
+    const hiding = !!state.hideBlankMetadata;
+    els.btnToggleBlankMeta.textContent = hiding ? '⊘' : '◉';
+    els.btnToggleBlankMeta.setAttribute('aria-pressed', hiding ? 'true' : 'false');
+    els.btnToggleBlankMeta.title = hiding
+      ? 'Showing only populated metadata fields — click to show all'
+      : 'Showing all metadata fields — click to hide blanks';
+    els.btnToggleBlankMeta.classList.toggle('active', !hiding);
+  }
+  refreshBlankMetaButton();
+  if (els.btnToggleBlankMeta) {
+    els.btnToggleBlankMeta.addEventListener('click', () => {
+      state.hideBlankMetadata = !state.hideBlankMetadata;
+      window.electronAPI.savePrefs({ hideBlankMetadata: state.hideBlankMetadata });
+      refreshBlankMetaButton();
+      if (state.selectedIndex !== null) {
+        renderMetaFields(state.editedRows[state.selectedIndex], state.selectedIndex);
+      }
+    });
+  }
+  els.modalOverlay.addEventListener('click', closeFieldPicker);
+  els.btnPickerClose.addEventListener('click', closeFieldPicker);
+  els.btnPickerCancel.addEventListener('click', closeFieldPicker);
+  els.btnPickerSave.addEventListener('click', saveFieldPicker);
+
+  els.btnPickerAdd.addEventListener('click', () => {
+    const sel = state.pickerSelected.available;
+    if (!sel) return;
+    if (!state.pickerVisible.includes(sel)) state.pickerVisible.push(sel);
+    state.pickerSelected.available = null;
+    renderPickerLists();
+  });
+
+  els.btnPickerRemove.addEventListener('click', () => {
+    const sel = state.pickerSelected.visible;
+    if (!sel) return;
+    state.pickerVisible = state.pickerVisible.filter(f => f !== sel);
+    state.pickerSelected.visible = null;
+    renderPickerLists();
+  });
+}
+
+// Filter + sort state for the field picker (per-list)
+const _pickerView = {
+  available: { filter: '', sort: 'order' }, // sort: 'order' | 'asc'
+  visible:   { filter: '', sort: 'order' },
+};
+
+function openFieldPicker() {
+  if (!state.headers.length) return;
+  state.pickerVisible = [...state.visibleFields];
+  state.pickerSelected = { available: null, visible: null };
+  // Reset filter+sort each time the dialog opens
+  _pickerView.available = { filter: '', sort: 'order' };
+  _pickerView.visible   = { filter: '', sort: 'order' };
+  renderPickerLists();
+  // Wire filter inputs and sort toggles (idempotent — checked via dataset flag)
+  ['available', 'visible'].forEach(side => {
+    const input = $('picker-filter-' + side);
+    const btn = $('picker-sort-' + side);
+    if (input) {
+      input.value = '';
+      if (!input.dataset.wired) {
+        input.dataset.wired = '1';
+        input.addEventListener('input', () => {
+          _pickerView[side].filter = input.value.trim().toLowerCase();
+          renderPickerLists();
+        });
+      }
+    }
+    if (btn) {
+      btn.classList.remove('active');
+      btn.dataset.sort = 'order';
+      btn.textContent = 'A–Z';
+      if (!btn.dataset.wired) {
+        btn.dataset.wired = '1';
+        btn.addEventListener('click', () => {
+          const next = _pickerView[side].sort === 'order' ? 'asc' : 'order';
+          _pickerView[side].sort = next;
+          btn.classList.toggle('active', next === 'asc');
+          btn.textContent = next === 'asc' ? 'Order' : 'A–Z';
+          renderPickerLists();
+        });
+      }
+    }
+  });
+  els.modalOverlay.classList.remove('hidden');
+  els.fieldPickerModal.classList.remove('hidden');
+}
+
+function closeFieldPicker() {
+  els.modalOverlay.classList.add('hidden');
+  els.fieldPickerModal.classList.add('hidden');
+}
+
+function saveFieldPicker() {
+  state.visibleFields = [...state.pickerVisible];
+  window.electronAPI.savePrefs({ visibleFields: state.visibleFields });
+  closeFieldPicker();
+  // Re-render field bar for current row
+  if (state.selectedIndex !== null) {
+    renderMetaFields(state.editedRows[state.selectedIndex], state.selectedIndex);
+  }
+  showToast('Field layout saved');
+}
+
+function renderPickerLists() {
+  const auditCols = new Set([kkeCol(), tagsCol(), notesCol(), '_rowIndex']);
+  let available = state.headers.filter(
+    h => !auditCols.has(h) && !state.pickerVisible.includes(h)
+  );
+
+  // Apply filter/sort to AVAILABLE list
+  const aView = _pickerView.available;
+  if (aView.filter) {
+    const q = aView.filter;
+    available = available.filter(h => h.toLowerCase().includes(q));
+  }
+  if (aView.sort === 'asc') {
+    available = [...available].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  }
+
+  // Available list
+  els.pickerAvailable.innerHTML = '';
+  available.forEach(h => {
+    const item = createPickerItem(h, false);
+    item.addEventListener('click', () => {
+      state.pickerSelected.available = h;
+      state.pickerSelected.visible   = null;
+      renderPickerLists();
+    });
+    if (state.pickerSelected.available === h) item.classList.add('selected');
+    els.pickerAvailable.appendChild(item);
+  });
+
+  // Apply filter/sort to VISIBLE list — when sort or filter is active, drag is disabled
+  const vView = _pickerView.visible;
+  const dragEnabled = vView.sort === 'order' && !vView.filter;
+  let visibleList = state.pickerVisible.map((h, idx) => ({ h, idx }));
+  if (vView.filter) {
+    const q = vView.filter;
+    visibleList = visibleList.filter(({ h }) => h.toLowerCase().includes(q));
+  }
+  if (vView.sort === 'asc') {
+    visibleList = [...visibleList].sort((a, b) => a.h.localeCompare(b.h, undefined, { sensitivity: 'base' }));
+  }
+
+  // Visible list (draggable when sort=order and no filter)
+  els.pickerVisible.innerHTML = '';
+  if (!dragEnabled && state.pickerVisible.length > 0) {
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:11px;color:var(--text-muted);padding:4px 10px;font-style:italic;';
+    hint.textContent = 'Reorder disabled while filtering or sorting A–Z. Clear filter / sort to drag.';
+    els.pickerVisible.appendChild(hint);
+  }
+  visibleList.forEach(({ h, idx: i }) => {
+    const item = createPickerItem(h, dragEnabled);
+    item.draggable = dragEnabled;
+    item.dataset.index = i;
+
+    item.addEventListener('click', () => {
+      state.pickerSelected.visible   = h;
+      state.pickerSelected.available = null;
+      renderPickerLists();
+    });
+    if (state.pickerSelected.visible === h) item.classList.add('selected');
+
+    // Drag to reorder
+    item.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', i);
+      item.style.opacity = '0.4';
+    });
+    item.addEventListener('dragend', () => { item.style.opacity = ''; });
+    item.addEventListener('dragover', e => {
+      e.preventDefault();
+      document.querySelectorAll('#picker-visible .picker-item').forEach(
+        el => el.classList.remove('drag-over')
+      );
+      item.classList.add('drag-over');
+    });
+    item.addEventListener('drop', e => {
+      e.preventDefault();
+      item.classList.remove('drag-over');
+      const fromIndex = parseInt(e.dataTransfer.getData('text/plain'));
+      const toIndex   = i;
+      if (fromIndex === toIndex) return;
+      const moved = state.pickerVisible.splice(fromIndex, 1)[0];
+      state.pickerVisible.splice(toIndex, 0, moved);
+      renderPickerLists();
+    });
+
+    els.pickerVisible.appendChild(item);
+  });
+}
+
+function createPickerItem(label, showHandle) {
+  const item = document.createElement('div');
+  item.className = 'picker-item';
+
+  if (showHandle) {
+    const handle = document.createElement('span');
+    handle.className = 'picker-drag-handle';
+    handle.textContent = '⠿';
+    item.appendChild(handle);
+  }
+
+  const text = document.createElement('span');
+  text.textContent = label;
+  item.appendChild(text);
+
+  return item;
+}
+
+// ─── Viewport switcher ────────────────────────────────────────────────────────
+
+const VIEWPORTS = {
+  responsive: { width: null, height: null, label: 'Responsive' },
+  mobile:     { width: 390,  height: 844,  label: 'Mobile (390×844)' },
+  tablet:     { width: 768,  height: 1024, label: 'Tablet (768×1024)' },
+  desktop:    { width: 1280, height: 800,  label: 'Desktop (1280×800)' },
+  wide:       { width: 1920, height: 1080, label: 'Wide (1920×1080)' },
+};
+
+function setupViewportSwitcher() {
+  document.querySelectorAll('.viewport-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.viewport;
+      document.querySelectorAll('.viewport-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      applyViewport(mode);
+    });
+  });
+}
+
+function applyViewport(mode) {
+  const vp = VIEWPORTS[mode];
+  const wrap = $('webview-wrap');
+  const wv = els.webview;
+
+  // Always reset inline styles
+  wv.style.width = '';
+  wv.style.height = '';
+  wv.style.transform = '';
+  wv.style.transformOrigin = '';
+
+  if (!vp.width) {
+    // Responsive — fill container
+    wrap.classList.remove('viewport-constrained');
+    wv.style.width = '100%';
+    wv.style.height = '100%';
+  } else {
+    wrap.classList.add('viewport-constrained');
+    wv.style.width = vp.width + 'px';
+    wv.style.height = vp.height + 'px';
+  }
+}
+
+// ─── URL loading ──────────────────────────────────────────────────────────────
+
+let _loadUrlTimer = null;
+function loadUrl(url) {
+  els.urlDisplay.textContent = url;
+  els.webviewLoading.classList.remove('hidden');
+  clearTimeout(_loadUrlTimer);
+  _loadUrlTimer = setTimeout(() => {
+    els.webview.src = url;
+  }, 400);
+}
+
+function isValidUrl(str) {
+  try { new URL(str); return true; } catch { return false; }
+}
+
+// ─── Webview events ───────────────────────────────────────────────────────────
+
+// ─── Page thumbnails (lazy capture-on-visit, in-memory only) ──────────────────
+// We never eagerly screenshot every row (impractical) or persist images (would
+// bloat the file). Instead we capture the page you're currently viewing, cache a
+// small thumbnail in memory keyed by URL, and show it on sidebar-row hover.
+const _thumbCache = new Map(); // url -> dataURL (insertion order = simple LRU)
+const THUMB_MAX = 250;
+let _thumbTimer = null;
+
+function scheduleThumbCapture() {
+  clearTimeout(_thumbTimer);
+  _thumbTimer = setTimeout(captureThumb, 700); // let the page paint first
+}
+
+async function captureThumb() {
+  const wv = els.webview;
+  let url;
+  try { url = wv.getURL(); } catch (e) { return; }
+  if (!url || url === 'about:blank' || _thumbCache.has(url)) return;
+  try {
+    const img = await wv.capturePage();
+    if (!img || (img.isEmpty && img.isEmpty())) return;
+    const dataUrl = img.resize({ width: 320 }).toDataURL();
+    if (!dataUrl || !dataUrl.startsWith('data:image/') || dataUrl.length < 256) return;
+    _thumbCache.set(url, dataUrl);
+    if (_thumbCache.size > THUMB_MAX) _thumbCache.delete(_thumbCache.keys().next().value);
+  } catch (e) { /* capturePage unavailable or frame disposed — degrade silently */ }
+}
+
+function setupThumbnailPreview() {
+  const preview = document.createElement('div');
+  preview.id = 'thumb-preview';
+  preview.className = 'hidden';
+  const img = document.createElement('img');
+  img.addEventListener('error', () => preview.classList.add('hidden')); // never show a broken-image box
+  preview.appendChild(img);
+  document.body.appendChild(preview);
+  let hideTimer = null;
+
+  els.rowList.addEventListener('mouseover', (e) => {
+    const item = e.target.closest('.row-item');
+    if (!item) { preview.classList.add('hidden'); return; }
+    const oi = parseInt(item.dataset.origIndex, 10);
+    const row = state.editedRows[oi];
+    const data = row && _thumbCache.get(String(row[state.urlColumn || 'Address'] || ''));
+    if (!data) { preview.classList.add('hidden'); return; }
+    clearTimeout(hideTimer);
+    img.src = data;
+    const rect = item.getBoundingClientRect();
+    const sidebar = document.getElementById('sidebar').getBoundingClientRect();
+    preview.style.left = (sidebar.right + 8) + 'px';
+    preview.style.top = Math.max(8, Math.min(rect.top, window.innerHeight - 230)) + 'px';
+    preview.classList.remove('hidden');
+  });
+  els.rowList.addEventListener('mouseleave', () => {
+    hideTimer = setTimeout(() => preview.classList.add('hidden'), 80);
+  });
+}
+
+function setupWebviewEvents() {
+  const wv = els.webview;
+
+  wv.addEventListener('did-start-loading', () => {
+    els.webviewLoading.classList.remove('hidden');
+  });
+
+  wv.addEventListener('did-stop-loading', () => {
+    els.webviewLoading.classList.add('hidden');
+    try {
+      els.urlDisplay.textContent = wv.getURL();
+      els.btnBack.disabled    = !wv.canGoBack();
+      els.btnForward.disabled = !wv.canGoForward();
+    } catch (e) { /* frame disposed — row changed before load finished */ }
+    scheduleThumbCapture();
+  });
+
+  wv.addEventListener('did-fail-load', e => {
+    els.webviewLoading.classList.add('hidden');
+    if (e.errorCode !== -3 && e.errorCode !== -2) showToast(`Page load failed (${e.errorDescription})`, 'error');
+  });
+
+  wv.addEventListener('new-window', e => {
+    window.electronAPI.openExternal(e.url);
+  });
+}
+
+// ─── Save / dirty ─────────────────────────────────────────────────────────────
+
+let autosaveTimer = null;
+const AUTOSAVE_DELAY = 2000; // ms after last edit
+
+async function saveFile() {
+  if (!state.filePath) return;
+  showSavingStatus();
+
+  // Update Consolidate_Into values to use the target's new computed URL where possible.
+  // This catches rows set up before a target had a nav assignment.
+  resolveConsolidateIntoUrls();
+
+  // Resolve redirect destinations before saving so the Excel file is complete
+  resolveRedirectDestinations();
+
+  const payload = {
+    headers: state.headers,
+    rows: state.editedRows.map(({ _rowIndex, ...rest }) => rest),
+    newNavNodes: state.newNavNodes.length > 0 ? state.newNavNodes : undefined
+  };
+
+  // If nav tree was edited, send all nodes for full sheet rewrite
+  if (state.navTreeDirty && state.navNodes.length > 0) {
+    // Write rows in tree (DFS pre-order) order, NOT flat-array order — parseNavSheet
+    // rebuilds sibling order from row order, so persisting the visual/tree order is
+    // what makes a manual drag-reorder survive a reload.
+    payload.allNavNodes = flattenNavTreeForSave().map(n => ({
+      number: n.number,
+      label: n.label,
+      path: n.path || '',
+      sortID: n.sortID || '',
+      parentNumber: n.parentNumber || '',
+      breadcrumb: n.breadcrumb || '',
+      computedPath: n.computedPath || '',
+      id: n.id,
+      refNodeId: n.refNodeId || '',
+      inMenu: n.inMenu || '',
+      url: n.url || '',
+      notes: n.notes || '',
+      phase: n.phase || '',
+      // Phase 2, Chunk α — preserve reserved + build/write metadata
+      nodeType: n.nodeType || '',
+      navLayer: n.navLayer || '',
+      buildPattern: n.buildPattern || '',
+      buildGuidance: n.buildGuidance || '',
+      writerBrief: n.writerBrief || '',
+      pageStatus: n.pageStatus || '',
+      buildAssignee: n.buildAssignee || '',
+      writeAssignee: n.writeAssignee || '',
+      migrateAssignee: n.migrateAssignee || ''
+    }));
+  }
+
+  // Collect project settings (already maintained in state.projectSettings)
+  const ps = { ...state.projectSettings };
+  if (Object.keys(ps).length > 0) {
+    payload.projectSettings = ps;
+  }
+
+  // Append session change log
+  if (_sessionChangeLog.length > 0) {
+    payload.changeLog = _sessionChangeLog.splice(0); // drain the log
+  }
+
+  const result = await window.electronAPI.saveFile(payload);
+  if (result.success) {
+    if (state.newNavNodes.length > 0) state.newNavNodes = [];
+    state.navTreeDirty = false;
+    state.projectSettings = ps;
+  }
+  if (!result.success) {
+    showToast(`Save failed: ${result.error}`, 'error');
+    setDirty(true); // restore the "unsaved" indicator so the saving spinner doesn't stick
+  }
+}
+
+function scheduleAutosave() {
+  if (!state.filePath) return;
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    if (state.isDirty) saveFile();
+  }, AUTOSAVE_DELAY);
+}
+
+function setDirty(dirty) {
+  state.isDirty = dirty;
+  els.saveStatus.classList.toggle('hidden', dirty);
+  els.saveStatusDirty.classList.toggle('hidden', !dirty);
+  if (dirty) {
+    scheduleAutosave();
+    updateStatsBar();
+  } else {
+    // Reset the persistent label to the resting "saved" state.
+    els.saveStatus.textContent = '✓ All changes saved';
+  }
+}
+
+/** Transient titlebar state shown while a save is in flight. */
+function showSavingStatus() {
+  if (!state.filePath) return;
+  els.saveStatusDirty.classList.add('hidden');
+  els.saveStatus.classList.remove('hidden');
+  els.saveStatus.textContent = '⟳ Saving…';
+}
+
+// ─── Row list helpers ─────────────────────────────────────────────────────────
+
+function refreshRowInList(origIndex) {
+  // With virtual scrolling, just re-render visible rows —
+  // the row may or may not be in the DOM currently
+  renderVisibleRows();
+}
+
+// ─── URL column picker ────────────────────────────────────────────────────────
+
+function showUrlPicker(headers) {
+  els.urlColSelect.innerHTML = '<option value="">— select —</option>';
+  headers.forEach(h => {
+    const opt = document.createElement('option');
+    opt.value = h;
+    opt.textContent = h;
+    els.urlColSelect.appendChild(opt);
+  });
+  els.urlPicker.classList.remove('hidden');
+}
+
+// ─── Resize handle ────────────────────────────────────────────────────────────
+
+function setupResizeHandle() {
+  const handle  = $('resize-handle');
+  const sidebar = $('sidebar');
+
+  handle.addEventListener('mousedown', e => {
+    e.preventDefault(); // stop native text-selection drag from stealing mouse events
+    const startX = e.clientX;
+    const startW = sidebar.offsetWidth;
+
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    // Electron <webview>s (and iframes) eat mouse events — a fast drag into
+    // the webview loses mouseup. Disable pointer events on them during drag.
+    document.body.classList.add('resizing-sidebar');
+
+    function onMove(ev) {
+      sidebar.style.width = Math.max(220, Math.min(640, startW + ev.clientX - startX)) + 'px';
+    }
+    let released = false;
+    function onUp() {
+      if (released) return;
+      released = true;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('mouseleave', onUp);
+      window.removeEventListener('blur', onUp);
+      handle.classList.remove('dragging');
+      document.body.classList.remove('resizing-sidebar');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      // Clamp before saving so we never persist an out-of-range width
+      const finalW = Math.max(220, Math.min(640, sidebar.offsetWidth));
+      if (finalW !== sidebar.offsetWidth) sidebar.style.width = finalW + 'px';
+      window.electronAPI.savePrefs({ sidebarWidth: finalW });
+      // Kick the webview into re-laying out its internal viewport
+      window.dispatchEvent(new Event('resize'));
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('mouseleave', onUp); // cursor left the app window
+    window.addEventListener('blur', onUp);         // recover if the window loses focus mid-drag
+  });
+
+  handle.addEventListener('dblclick', () => {
+    sidebar.style.width = '480px';
+    window.electronAPI.savePrefs({ sidebarWidth: 480 });
+  });
+}
+
+// ─── Assessment ───────────────────────────────────────────────────────────────
+
+let _lastAssessment = null;
+
+function setupAssessment() {
+  els.btnAssess.addEventListener('click', e => {
+    e.stopPropagation();
+    runAssessment();
+  });
+  els.btnAssessClose.addEventListener('click', closeAssessPopover);
+  els.btnAssessAccept.addEventListener('click', acceptSuggestion);
+  els.btnAssessLlm.addEventListener('click', runLLMAssessment);
+  $('btn-assess-batch').addEventListener('click', runBatchAssessment);
+
+  document.addEventListener('click', e => {
+    if (!els.assessPopover.contains(e.target) && e.target !== els.btnAssess) {
+      closeAssessPopover();
+    }
+  });
+}
+
+async function runAssessment() {
+  if (state.selectedIndex === null) return;
+  const row = state.editedRows[state.selectedIndex];
+
+  // Position popover — align right edge to 20px from window edge
+  const rect = els.btnAssess.getBoundingClientRect();
+  els.assessPopover.style.top = (rect.bottom + 4) + 'px';
+  els.assessPopover.style.right = '20px';
+  els.assessPopover.style.left = 'auto';
+  els.assessPopover.classList.remove('hidden');
+
+  // Hide copy/export buttons for rubric assessment
+  $('btn-result-copy').classList.add('hidden');
+  $('btn-result-export').classList.add('hidden');
+
+  els.assessLoading.classList.remove('hidden');
+  els.assessResults.innerHTML = '';
+  els.assessLlmSection.classList.add('hidden');
+  els.btnAssessAccept.classList.add('hidden');
+  els.btnAssessLlm.classList.add('hidden');
+
+  const result = await window.electronAPI.assessRow({ row });
+  els.assessLoading.classList.add('hidden');
+
+  if (result.error) {
+    els.assessResults.textContent = result.error;
+    return;
+  }
+
+  _lastAssessment = result;
+
+  // Record assessment timestamp
+  if (state.selectedIndex !== null) {
+    state.editedRows[state.selectedIndex]['_AssessedAt'] = new Date().toISOString();
+  }
+
+  renderAssessResults(result);
+}
+
+function renderAssessResults(result) {
+  els.assessResults.innerHTML = '';
+  const statusLabels = { keep: 'Keep', kill: 'Kill', evolve: 'Evolve', exclude: 'Exclude' };
+
+  for (const [status, data] of Object.entries(result.results)) {
+    const group = document.createElement('div');
+    group.className = 'assess-status-group';
+
+    const label = document.createElement('div');
+    label.className = 'assess-status-label';
+    const scoreText = data.fieldResults.length > 0
+      ? ` ${data.fieldResults.filter(r => r.pass).length}/${data.fieldResults.length}`
+      : '';
+    label.innerHTML = `<span class="kke-badge ${status}">${statusLabels[status]}</span>`;
+    if (scoreText) {
+      const score = document.createElement('span');
+      score.className = 'assess-score';
+      score.textContent = scoreText + ' field rules pass';
+      label.appendChild(score);
+    }
+    if (result.suggestion === status) {
+      const badge = document.createElement('span');
+      badge.className = 'assess-suggestion-badge';
+      badge.textContent = 'suggested';
+      label.appendChild(badge);
+    }
+    group.appendChild(label);
+
+    // Field rules
+    data.fieldResults.forEach(fr => {
+      const rule = document.createElement('div');
+      rule.className = 'assess-rule ' + (fr.pass ? 'assess-rule-pass' : 'assess-rule-fail');
+      rule.innerHTML = `<span class="assess-rule-icon">${fr.pass ? '✓' : '✗'}</span> ${escapeHtml(fr.rule)}`;
+      group.appendChild(rule);
+    });
+
+    // Content rules (shown as manual checklist)
+    data.contentRules.forEach(cr => {
+      const rule = document.createElement('div');
+      rule.className = 'assess-content-rule';
+      rule.textContent = '• ' + cr;
+      group.appendChild(rule);
+    });
+
+    els.assessResults.appendChild(group);
+  }
+
+  // Show accept button if there's a suggestion
+  if (result.suggestion) {
+    els.btnAssessAccept.textContent = `Accept: ${statusLabels[result.suggestion]}`;
+    els.btnAssessAccept.classList.remove('hidden');
+  }
+
+  // Show AI assess button if API key is configured
+  if (state.claudeApiKey) {
+    els.btnAssessLlm.classList.remove('hidden');
+    $('btn-assess-batch').classList.remove('hidden');
+  }
+}
+
+async function runLLMAssessment() {
+  if (state.selectedIndex === null || !state.claudeApiKey) return;
+  const row = state.editedRows[state.selectedIndex];
+
+  els.btnAssessLlm.disabled = true;
+  els.btnAssessLlm.textContent = 'Assessing…';
+  els.assessLlmSection.classList.remove('hidden');
+  els.assessLlmResults.innerHTML = '<span style="color:var(--text-muted)">Waiting for AI…</span>';
+
+  const { rubrics } = await window.electronAPI.loadRubrics();
+  const result = await window.electronAPI.assessRowLLM({
+    row, rubrics, apiKey: state.claudeApiKey
+  });
+
+  els.btnAssessLlm.disabled = false;
+  els.btnAssessLlm.textContent = 'AI Assess';
+
+  if (result.error) {
+    els.assessLlmResults.innerHTML = `<span style="color:var(--danger)">${escapeHtml(result.error)}</span>`;
+    return;
+  }
+
+  els.assessLlmResults.innerHTML = '';
+  if (result.recommendation) {
+    const rec = document.createElement('div');
+    rec.className = 'assess-llm-rec';
+    rec.innerHTML = `Recommendation: <span class="kke-badge ${result.recommendation.toLowerCase()}">${result.recommendation}</span>`;
+    els.assessLlmResults.appendChild(rec);
+
+    // Update accept button to use LLM recommendation
+    _lastAssessment = { ...(_lastAssessment || {}), suggestion: result.recommendation.toLowerCase() };
+    els.btnAssessAccept.textContent = `Accept: ${result.recommendation}`;
+    els.btnAssessAccept.classList.remove('hidden');
+  }
+  if (result.confidence) {
+    const conf = document.createElement('div');
+    conf.className = 'assess-llm-confidence';
+    conf.textContent = `Confidence: ${result.confidence}`;
+    els.assessLlmResults.appendChild(conf);
+  }
+  if (result.reasoning) {
+    const reason = document.createElement('div');
+    reason.className = 'assess-llm-reasoning';
+    reason.textContent = result.reasoning;
+    els.assessLlmResults.appendChild(reason);
+  }
+}
+
+function acceptSuggestion() {
+  if (!_lastAssessment?.suggestion || state.selectedIndex === null) return;
+  const statusMap = { keep: 'Keep', kill: 'Kill', evolve: 'Evolve', exclude: 'Exclude' };
+  const val = statusMap[_lastAssessment.suggestion] || _lastAssessment.suggestion;
+  if (!val) return;
+
+  const row = state.editedRows[state.selectedIndex];
+  row[kkeCol()] = val;
+  // Assessment history
+  row['_AssessedAt'] = new Date().toISOString();
+  row['_AssessmentResult'] = val;
+
+  applyKkeStyle(val);
+  setDirty(true);
+  refreshRowInList(state.selectedIndex);
+  closeAssessPopover();
+
+  if (state.autoAdvance) navigateRow(+1);
+}
+
+let _batchAssessAbort = false;
+
+async function runBatchAssessment() {
+  if (!state.claudeApiKey) { showToast('API key required for batch assessment', 'error'); return; }
+  const rows = state.filteredRows;
+  if (rows.length === 0) return;
+  if (!(await confirmDialog({ title: 'Batch AI Assessment', message: `Assess ${rows.length} rows via AI? This may take a while and use API credits.`, confirmLabel: 'Assess' }))) return;
+
+  _batchAssessAbort = false;
+  closeAssessPopover();
+
+  // Show progress in toast
+  const { rubrics } = await window.electronAPI.loadRubrics();
+  let done = 0;
+  let errors = 0;
+
+  for (const { origIndex, row } of rows) {
+    if (_batchAssessAbort) break;
+    done++;
+    showToast(`Assessing ${done}/${rows.length}…`);
+
+    try {
+      // Field-rule assessment first
+      const fieldResult = await window.electronAPI.assessRow({ row });
+      row['_AssessedAt'] = new Date().toISOString();
+
+      // If API key, also do LLM assessment
+      const llmResult = await window.electronAPI.assessRowLLM({
+        row, rubrics, apiKey: state.claudeApiKey
+      });
+
+      if (llmResult.recommendation) {
+        row[kkeCol()] = llmResult.recommendation;
+        row['_AssessmentResult'] = llmResult.recommendation;
+      } else if (fieldResult.suggestion) {
+        const statusMap = { keep: 'Keep', kill: 'Kill', evolve: 'Evolve', exclude: 'Exclude' };
+        row[kkeCol()] = statusMap[fieldResult.suggestion] || '';
+        row['_AssessmentResult'] = row[kkeCol()];
+      }
+    } catch (e) {
+      errors++;
+    }
+
+    // Rate limiting: ~1 request per second
+    if (done < rows.length) await new Promise(r => setTimeout(r, 1000));
+  }
+
+  setDirty(true);
+  // Phase 1, Chunk D: roll rubric results into the unified Suggested_KKE
+  computeSuggestedKke();
+  renderVisibleRows();
+  if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+  showToast(`Batch assessment complete: ${done} rows${errors ? `, ${errors} errors` : ''}`, 'success');
+}
+
+/**
+ * Proactive AI triage: generate a Suggested_KKE for every UNREVIEWED row (blank
+ * KKE) without ever touching the human KKE column. Writes the rubric/LLM outcome
+ * to _AssessmentResult, then lets computeSuggestedKke() roll it (+ GA) into
+ * Suggested_KKE. The auditor confirms or overrides via the normal flow.
+ */
+async function runSuggestForUnreviewed() {
+  if (!state.editedRows.length) { showToast('Open a file first', 'error'); return; }
+  if (!state.claudeApiKey) {
+    showToast('Add a Claude API key in App Settings to use AI triage', 'error');
+    return;
+  }
+  const targets = state.editedRows
+    .map((row, origIndex) => ({ row, origIndex }))
+    .filter(t => !String(t.row[kkeCol()] || '').trim());
+  if (!targets.length) { showToast('No unreviewed rows — every page already has a KKE', 'info'); return; }
+
+  const ok = await confirmDialog({
+    title: 'AI Suggest for unreviewed',
+    message: `Generate a Suggested KKE for ${targets.length} unreviewed row${targets.length !== 1 ? 's' : ''} via AI?\n\nThis uses your Claude API key and spends credits, and may take a while (~1s/row). Your human KKE column is NOT changed — only Suggested_KKE is filled, for you to confirm or override.`,
+    confirmLabel: 'Suggest',
+  });
+  if (!ok) return;
+
+  _batchAssessAbort = false;
+  const onAbort = (e) => { if (e.key === 'Escape') _batchAssessAbort = true; };
+  document.addEventListener('keydown', onAbort);
+
+  const { rubrics } = await window.electronAPI.loadRubrics();
+  const statusMap = { keep: 'Keep', kill: 'Kill', evolve: 'Evolve', exclude: 'Exclude' };
+  let done = 0, errors = 0;
+  try {
+    for (const { row } of targets) {
+      if (_batchAssessAbort) break;
+      done++;
+      showToast(`Suggesting ${done}/${targets.length}…  (Esc to cancel)`);
+      try {
+        const fieldResult = await window.electronAPI.assessRow({ row });
+        row['_AssessedAt'] = new Date().toISOString();
+        const llmResult = await window.electronAPI.assessRowLLM({ row, rubrics, apiKey: state.claudeApiKey });
+        const rec = llmResult.recommendation
+          || (fieldResult.suggestion ? statusMap[fieldResult.suggestion] : '');
+        if (rec) row['_AssessmentResult'] = rec; // feeds the Rubric source — never touches KKE
+      } catch (e) { errors++; }
+      if (done < targets.length && !_batchAssessAbort) await new Promise(r => setTimeout(r, 1000));
+    }
+  } finally {
+    document.removeEventListener('keydown', onAbort);
+  }
+
+  setDirty(true);
+  computeSuggestedKke(); // rolls _AssessmentResult (+ GA) into Suggested_KKE
+  applyFilter();
+  if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+  const verb = _batchAssessAbort ? 'Cancelled after' : 'Suggested KKE for';
+  showToast(`${verb} ${done} row${done !== 1 ? 's' : ''}${errors ? `, ${errors} errors` : ''} — review & confirm`, _batchAssessAbort ? 'info' : 'success');
+}
+
+function closeAssessPopover() {
+  els.assessPopover.classList.add('hidden');
+}
+
+
+/** Build an inline-add select inside `wrapEl`.
+ *  Renders a <select> populated from `options`, plus a `+ New …` option that
+ *  triggers showPrompt() and calls `onNewValue(val)` to add to the library;
+ *  the returned value (or trimmed input) becomes the select's new value.
+ *  Optional `decorator(value)` returns an element to prepend to the wrap
+ *  (e.g., a color swatch for Page_Status).
+ *
+ *  Phase 2, Chunk α — used by openNavNodeEditor for Page Status + Assignees.
+ */
+function buildInlineAddSelect({ wrapEl, selectId, options, currentValue, placeholder, newPromptTitle, onNewValue, decorator }) {
+  if (!wrapEl) return null;
+  wrapEl.innerHTML = '';
+
+  const decoSlot = document.createElement('span');
+  decoSlot.className = 'inline-add-deco';
+  wrapEl.appendChild(decoSlot);
+
+  const sel = document.createElement('select');
+  sel.id = selectId;
+  sel.style.cssText = 'padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;flex:1;min-width:0;';
+
+  function render() {
+    sel.innerHTML = '';
+    const blankOpt = document.createElement('option');
+    blankOpt.value = '';
+    blankOpt.textContent = placeholder || '—';
+    sel.appendChild(blankOpt);
+    (options || []).forEach(v => {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = v;
+      sel.appendChild(o);
+    });
+    // If the current value isn't in options (e.g., legacy data), add it
+    if (currentValue && !(options || []).includes(currentValue)) {
+      const o = document.createElement('option');
+      o.value = currentValue;
+      o.textContent = currentValue;
+      sel.appendChild(o);
+    }
+    const newOpt = document.createElement('option');
+    newOpt.value = '__new__';
+    newOpt.textContent = '+ New…';
+    sel.appendChild(newOpt);
+    sel.value = currentValue || '';
+    refreshDeco();
+  }
+
+  function refreshDeco() {
+    decoSlot.innerHTML = '';
+    if (decorator) {
+      const el = decorator(sel.value);
+      if (el) decoSlot.appendChild(el);
+    }
+  }
+
+  sel.addEventListener('change', async () => {
+    if (sel.value === '__new__') {
+      const v = await showPrompt(newPromptTitle || 'New value', '', '');
+      if (v && onNewValue) {
+        const added = onNewValue(v);
+        if (added) {
+          currentValue = added;
+          if (!(options || []).includes(added)) options.push(added);
+          render();
+        } else {
+          sel.value = currentValue || '';
+        }
+      } else {
+        sel.value = currentValue || '';
+      }
+    } else {
+      currentValue = sel.value;
+      refreshDeco();
+    }
+  });
+
+  wrapEl.appendChild(sel);
+  render();
+  return sel;
+}
+
+/** Attach a markdown toolbar above a textarea. Buttons insert markdown around
+ *  the current selection (or at the cursor if there's no selection). Designed
+ *  for the node editor's three markdown fields. Returns the toolbar element.
+ */
+function attachMarkdownToolbar(textareaEl) {
+  if (!textareaEl || textareaEl._mdToolbarAttached) return null;
+  textareaEl._mdToolbarAttached = true;
+
+  const bar = document.createElement('div');
+  bar.className = 'md-toolbar';
+
+  const actions = [
+    { key: 'h2',    label: 'H',    title: 'Heading',     wrap: ['## ', ''], block: true },
+    { key: 'bold',  label: '𝐁',   title: 'Bold (Cmd+B)',     wrap: ['**', '**'] },
+    { key: 'italic',label: '𝐼',   title: 'Italic (Cmd+I)',   wrap: ['*', '*'] },
+    { key: 'code',  label: '<>',  title: 'Inline code', wrap: ['`', '`'] },
+    { key: 'link',  label: '🔗',  title: 'Link',        link: true },
+    { key: 'ul',    label: '•',   title: 'Bulleted list', wrap: ['- ', ''], block: true },
+    { key: 'ol',    label: '1.',  title: 'Numbered list', wrap: ['1. ', ''], block: true },
+    { key: 'quote', label: '❝',   title: 'Block quote',  wrap: ['> ', ''], block: true }
+  ];
+
+  actions.forEach(a => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'md-btn';
+    btn.title = a.title;
+    btn.textContent = a.label;
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      applyMarkdownAction(textareaEl, a);
+      textareaEl.focus();
+    });
+    bar.appendChild(btn);
+  });
+
+  // Keyboard shortcuts on the textarea: Cmd/Ctrl + B / I
+  textareaEl.addEventListener('keydown', (e) => {
+    if (!(e.metaKey || e.ctrlKey)) return;
+    if (e.key === 'b' || e.key === 'B') { e.preventDefault(); applyMarkdownAction(textareaEl, actions.find(x => x.key === 'bold')); }
+    if (e.key === 'i' || e.key === 'I') { e.preventDefault(); applyMarkdownAction(textareaEl, actions.find(x => x.key === 'italic')); }
+  });
+
+  textareaEl.parentNode.insertBefore(bar, textareaEl);
+  return bar;
+}
+
+function applyMarkdownAction(ta, action) {
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  const value = ta.value;
+  const selected = value.slice(start, end);
+
+  if (action.link) {
+    const url = selected.match(/^https?:\/\//) ? selected : 'https://';
+    const label = selected.match(/^https?:\/\//) ? 'link text' : (selected || 'link text');
+    const insert = `[${label}](${url})`;
+    ta.value = value.slice(0, start) + insert + value.slice(end);
+    // Place cursor inside the label
+    ta.selectionStart = start + 1;
+    ta.selectionEnd = start + 1 + label.length;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    return;
+  }
+
+  const [pre, post] = action.wrap;
+
+  if (action.block) {
+    // Apply prefix to each line in the selection (or the line containing the cursor)
+    // Find line boundaries
+    const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+    const lineEndRaw = value.indexOf('\n', end);
+    const lineEnd = lineEndRaw < 0 ? value.length : lineEndRaw;
+    const block = value.slice(lineStart, lineEnd);
+    const lines = block.split('\n');
+    const transformed = lines.map((l, i) => {
+      // For numbered lists, re-number
+      if (action.key === 'ol') return (i + 1) + '. ' + l.replace(/^\d+\.\s*/, '');
+      // If line already starts with the prefix, strip it (toggle)
+      if (l.startsWith(pre)) return l.slice(pre.length);
+      return pre + l;
+    }).join('\n');
+    ta.value = value.slice(0, lineStart) + transformed + value.slice(lineEnd);
+    ta.selectionStart = lineStart;
+    ta.selectionEnd = lineStart + transformed.length;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    return;
+  }
+
+  // Inline wrap (bold, italic, code)
+  // Toggle off if already wrapped
+  const before = value.slice(Math.max(0, start - pre.length), start);
+  const after = value.slice(end, end + post.length);
+  if (before === pre && after === post) {
+    ta.value = value.slice(0, start - pre.length) + selected + value.slice(end + post.length);
+    ta.selectionStart = start - pre.length;
+    ta.selectionEnd = end - pre.length;
+  } else {
+    const insert = pre + (selected || 'text') + post;
+    ta.value = value.slice(0, start) + insert + value.slice(end);
+    if (selected) {
+      ta.selectionStart = start + pre.length;
+      ta.selectionEnd = end + pre.length;
+    } else {
+      ta.selectionStart = start + pre.length;
+      ta.selectionEnd = start + pre.length + 4; // "text"
+    }
+  }
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/** Make a modal dialog draggable by its header.
+ *  Skips drag when clicking on a button or input inside the header.
+ *  Modal starts centered via the overlay's flex layout; first drag switches it
+ *  to absolute positioning and the user can move it freely within the viewport.
+ *  Drag state resets on close (next open returns to center).
+ *
+ *  Usage: makeModalDraggable(modalEl)  — assumes a `.modal-header` child handle.
+ */
+function makeModalDraggable(modalEl, opts = {}) {
+  if (!modalEl || modalEl._dragWired) return;
+  const handle = modalEl.querySelector(opts.handleSelector || '.modal-header');
+  if (!handle) return;
+  modalEl._dragWired = true;
+  handle.classList.add('modal-drag-handle');
+
+  handle.addEventListener('mousedown', (e) => {
+    // Don't drag from interactive children (close button, input, etc.)
+    if (e.target.closest('button, input, select, textarea, a')) return;
+    e.preventDefault();
+
+    const rect = modalEl.getBoundingClientRect();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startLeft = rect.left;
+    const startTop  = rect.top;
+
+    // Switch from flex-centered to absolute positioning so we can move freely.
+    // Also clear any transform (some dialogs center via translateX(-50%)).
+    modalEl.style.position = 'absolute';
+    modalEl.style.margin = '0';
+    modalEl.style.transform = 'none';
+    modalEl.style.left = startLeft + 'px';
+    modalEl.style.top  = startTop  + 'px';
+
+    modalEl.classList.add('modal-dragging');
+    document.body.classList.add('dragging-modal');
+    document.body.style.userSelect = 'none';
+
+    let released = false;
+    function onMove(ev) {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      const w = modalEl.offsetWidth;
+      // Clamp so at least 80px of the header stays on-screen on every edge
+      const newLeft = Math.max(-w + 80, Math.min(window.innerWidth - 80, startLeft + dx));
+      const newTop  = Math.max(0, Math.min(window.innerHeight - 40, startTop + dy));
+      modalEl.style.left = newLeft + 'px';
+      modalEl.style.top  = newTop  + 'px';
+    }
+    function onUp() {
+      if (released) return;
+      released = true;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      window.removeEventListener('blur', onUp);
+      modalEl.classList.remove('modal-dragging');
+      document.body.classList.remove('dragging-modal');
+      document.body.style.userSelect = '';
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    window.addEventListener('blur', onUp);
+  });
+}
+
+/** Reset a modal's position back to centered (for reopen). */
+function resetModalPosition(modalEl) {
+  if (!modalEl) return;
+  modalEl.style.position = '';
+  modalEl.style.left = '';
+  modalEl.style.top  = '';
+  modalEl.style.margin = '';
+  modalEl.style.transform = '';
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ─── Settings ─────────────────────────────────────────────────────────────────
+
+function setupSettings() {
+  els.prefAutoAdvance.checked = state.autoAdvance;
+  els.prefApiKey.value = state.claudeApiKey;
+
+  // Load rubric dir display
+  window.electronAPI.getRubricDir().then(dir => {
+    els.prefRubricDir.value = dir || '';
+  });
+
+  if (els.btnSettings) els.btnSettings.addEventListener('click', e => {
+    e.stopPropagation();
+    toggleSettingsPopover();
+  });
+  els.btnSettingsClose.addEventListener('click', closeSettingsPopover);
+
+  els.prefAutoAdvance.addEventListener('change', () => {
+    state.autoAdvance = els.prefAutoAdvance.checked;
+    window.electronAPI.savePrefs({ autoAdvance: state.autoAdvance });
+  });
+
+  // Show SME fields toggle
+  const smeToggle = $('pref-show-sme-fields');
+  smeToggle.checked = state.showSmeFields;
+  applySmeFieldsVisibility();
+  smeToggle.addEventListener('change', () => {
+    state.showSmeFields = smeToggle.checked;
+    window.electronAPI.savePrefs({ showSmeFields: state.showSmeFields });
+    applySmeFieldsVisibility();
+    if (window._refreshClusterQuickToggles) window._refreshClusterQuickToggles();
+  });
+
+  // Show Migration fields toggle (Phase 1, Chunk C)
+  const migToggle = $('pref-show-migration-fields');
+  if (migToggle) {
+    migToggle.checked = state.showMigrationFields;
+    applyMigrationFieldsVisibility();
+    migToggle.addEventListener('change', () => {
+      state.showMigrationFields = migToggle.checked;
+      window.electronAPI.savePrefs({ showMigrationFields: state.showMigrationFields });
+      applyMigrationFieldsVisibility();
+      if (window._refreshClusterQuickToggles) window._refreshClusterQuickToggles();
+    });
+  }
+
+  // Show Design Patterns cluster toggle
+  const dpToggle = $('pref-show-design-patterns');
+  if (dpToggle) {
+    dpToggle.checked = state.showDesignPatterns;
+    applyDesignPatternsVisibility();
+    dpToggle.addEventListener('change', () => {
+      state.showDesignPatterns = dpToggle.checked;
+      window.electronAPI.savePrefs({ showDesignPatterns: state.showDesignPatterns });
+      applyDesignPatternsVisibility();
+      if (window._refreshClusterQuickToggles) window._refreshClusterQuickToggles();
+    });
+  }
+
+  els.btnPickRubricDir.addEventListener('click', async () => {
+    const dir = await window.electronAPI.pickRubricDir();
+    if (dir) els.prefRubricDir.value = dir;
+  });
+
+  els.prefApiKey.addEventListener('change', () => {
+    state.claudeApiKey = els.prefApiKey.value.trim();
+    window.electronAPI.savePrefs({ claudeApiKey: state.claudeApiKey });
+  });
+
+  // Sidebar columns
+  $('sidebar-col-add').addEventListener('change', () => {
+    const sel = $('sidebar-col-add');
+    const val = sel.value;
+    if (!val) return;
+    if (!state.sidebarColumns.includes(val)) {
+      state.sidebarColumns.push(val);
+      window.electronAPI.savePrefs({ sidebarColumns: state.sidebarColumns });
+      renderColHeaders();
+      renderRows();
+      renderSidebarColList();
+    }
+    sel.value = '';
+  });
+  $('btn-sidebar-col-remove').addEventListener('click', () => {
+    if (state.sidebarColumns.length > 0) {
+      state.sidebarColumns.pop();
+      window.electronAPI.savePrefs({ sidebarColumns: state.sidebarColumns });
+      renderColHeaders();
+      renderRows();
+      renderSidebarColList();
+    }
+  });
+
+  // Column mapping: apply button
+  els.btnApplyColMap.addEventListener('click', async () => {
+    const newMap = {
+      kke:   els.mapKke.value,
+      tags:  els.mapTags.value,
+      notes: els.mapNotes.value,
+      group:      els.mapGroup.value,
+      primaryTag: els.mapPrimaryTag.value
+    };
+    state.columnMap = newMap;
+    await window.electronAPI.saveColumnMap({ columnMap: newMap });
+
+    // Reload the file with the new mapping
+    const data = await window.electronAPI.reloadSheet({ sheetName: els.sheetSelect?.value || null });
+    if (data) {
+      closeSettingsPopover();
+      loadData(data);
+      showToast('Column mapping applied', 'success');
+    }
+  });
+
+  document.addEventListener('click', e => {
+    if (!els.settingsPopover.contains(e.target) && e.target !== els.btnSettings) {
+      closeSettingsPopover();
+    }
+    // Project Settings popover is draggable/floating now — don't close on click-outside.
+    // Use the X button or File → Project Settings to toggle.
+  });
+
+  // Make the Project Settings popover draggable via its header
+  setupProjectSettingsDrag();
+
+  // ── Project Settings ──
+  if (els.btnProjectSettings) els.btnProjectSettings.addEventListener('click', e => {
+    e.stopPropagation();
+    toggleProjectSettingsPopover();
+  });
+  els.btnProjectSettingsClose.addEventListener('click', closeProjectSettingsPopover);
+
+  // Project fields → state.projectSettings + dirty
+  $('ps-client-name').addEventListener('input', () => {
+    state.projectSettings.clientName = $('ps-client-name').value.trim();
+    setDirty(true);
+  });
+  $('ps-project-name').addEventListener('input', () => {
+    state.projectSettings.projectName = $('ps-project-name').value.trim();
+    setDirty(true);
+  });
+  $('ps-site-domain').addEventListener('input', () => {
+    const val = $('ps-site-domain').value.trim().replace(/\/+$/, '');
+    state.projectSettings.siteDomain = val || '';
+    if (!val) delete state.projectSettings.siteDomain;
+    setDirty(true);
+    // Re-evaluate redirects if the editor is open
+    if (_redirectEditorOpen) onSiteDomainChange();
+  });
+  let _defaultRedirectDebounce;
+  $('ps-default-redirect').addEventListener('input', () => {
+    clearTimeout(_defaultRedirectDebounce);
+    _defaultRedirectDebounce = setTimeout(async () => {
+      const newVal = $('ps-default-redirect').value.trim();
+      const oldVal = (state.projectSettings.defaultRedirectUrl || '').trim();
+      if (newVal === oldVal) return;
+
+      state.projectSettings.defaultRedirectUrl = newVal || '';
+      if (!newVal) delete state.projectSettings.defaultRedirectUrl;
+      setDirty(true);
+
+      // Offer to update existing redirect destinations that match the old value
+      if (oldVal) {
+        const destCol = 'Redirect_Destination';
+        const matching = state.editedRows.filter(r => String(r[destCol] || '').trim() === oldVal);
+        if (matching.length > 0) {
+          const action = await confirmDialog({ title: 'Update existing redirects?', message: `${matching.length} page${matching.length !== 1 ? 's' : ''} currently redirect to "${oldVal}".\n\nUpdate them to "${newVal || '(blank)'}"?`, confirmLabel: 'Update' });
+          if (action) {
+            matching.forEach(r => { r[destCol] = newVal; });
+            showToast(`Updated ${matching.length} redirect destinations`, 'success');
+          }
+        }
+      }
+
+      if (_redirectEditorOpen) renderRedirectEditor();
+    }, 600);
+  });
+
+  // Custom KKE states (project-level)
+  $('btn-add-custom-kke').addEventListener('click', () => {
+    const label = $('custom-kke-label').value.trim();
+    const color = $('custom-kke-color').value;
+    if (!label) return;
+    if (allKkeStates().some(s => s.toLowerCase() === label.toLowerCase())) {
+      showToast('State already exists', 'error'); return;
+    }
+    state.customKkeStates.push({ label, color });
+    window.electronAPI.savePrefs({ customKkeStates: state.customKkeStates });
+    $('custom-kke-label').value = '';
+    renderCustomKkeList();
+    renderRogueKkeList();
+    renderKkeButtons();
+    renderKkeFilterOptions();
+  });
+}
+
+function populateColumnMapSelects() {
+  const excluded = new Set(['_rowIndex']);
+  const cols = state.headers.filter(h => !excluded.has(h));
+
+  [
+    { el: els.mapKke,   current: state.columnMap.kke },
+    { el: els.mapTags,  current: state.columnMap.tags },
+    { el: els.mapNotes, current: state.columnMap.notes },
+    { el: els.mapGroup,      current: state.columnMap.group },
+    { el: els.mapPrimaryTag, current: state.columnMap.primaryTag }
+  ].forEach(({ el, current }) => {
+    el.innerHTML = '';
+    cols.forEach(h => {
+      const opt = document.createElement('option');
+      opt.value = h;
+      opt.textContent = h;
+      if (h === current) opt.selected = true;
+      el.appendChild(opt);
+    });
+  });
+}
+
+function renderCustomKkeList() {
+  const list = $('custom-kke-list');
+  list.innerHTML = '';
+  state.customKkeStates.forEach((s, i) => {
+    const div = document.createElement('div');
+    div.style.cssText = 'display:flex;align-items:center;gap:6px;padding:3px 0;';
+    div.innerHTML = `<span style="width:12px;height:12px;border-radius:50%;background:${s.color};flex-shrink:0;"></span>
+      <span style="flex:1;font-size:12px;color:var(--text-primary);">${escapeHtml(s.label)}</span>`;
+
+    // Show row count using this state
+    const usageCount = countRowsWithKke(s.label);
+    if (usageCount > 0) {
+      const usage = document.createElement('span');
+      usage.style.cssText = 'font-size:11px;color:var(--text-muted);';
+      usage.textContent = `${usageCount} row${usageCount !== 1 ? 's' : ''}`;
+      div.appendChild(usage);
+    }
+
+    const mergeBtn = document.createElement('button');
+    mergeBtn.className = 'btn btn-sm btn-ghost';
+    mergeBtn.textContent = 'Merge…';
+    mergeBtn.title = `Merge "${s.label}" into another state — all rows using it will be reassigned`;
+    mergeBtn.style.cssText = 'padding:2px 6px;font-size:11px;';
+    mergeBtn.addEventListener('click', () => openCustomKkeMergeDialog(s.label));
+    div.appendChild(mergeBtn);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'btn btn-sm btn-ghost';
+    removeBtn.textContent = '×';
+    removeBtn.title = 'Delete this custom state (rows using it keep the literal value)';
+    removeBtn.style.cssText = 'padding:2px 6px;min-width:auto;';
+    removeBtn.addEventListener('click', () => {
+      state.customKkeStates.splice(i, 1);
+      window.electronAPI.savePrefs({ customKkeStates: state.customKkeStates });
+      // Also update per-project copy if present so it persists with the file
+      if (state.projectSettings && Array.isArray(state.projectSettings.customKkeStates)) {
+        state.projectSettings.customKkeStates = [...state.customKkeStates];
+        setDirty(true);
+      }
+      renderCustomKkeList();
+      renderRogueKkeList();
+      renderKkeButtons();
+      renderKkeFilterOptions();
+    });
+    div.appendChild(removeBtn);
+    list.appendChild(div);
+  });
+}
+
+function countRowsWithKke(label) {
+  let count = 0;
+  state.editedRows.forEach(r => {
+    if (String(r[kkeCol()] || '').trim() === label) count++;
+    else if (String(r[finalKkeCol()] || '').trim() === label) count++;
+  });
+  return count;
+}
+
+function renderRogueKkeList() {
+  const section = $('rogue-kke-section');
+  const list = $('rogue-kke-list');
+  if (!section || !list) return;
+
+  // Defined values are matched case-sensitively but trimmed on both sides — guards against
+  // accidental trailing whitespace in either the custom-state label or the row value.
+  const definedSet = new Set([
+    ...BUILTIN_KKE.map(s => String(s).trim()),
+    ...state.customKkeStates.map(s => String(s.label || '').trim()),
+  ]);
+  const rogueCounts = new Map(); // label → count (using the row's literal trimmed value as the key)
+  state.editedRows.forEach(r => {
+    const k = String(r[kkeCol()] || '').trim();
+    if (k && !definedSet.has(k)) rogueCounts.set(k, (rogueCounts.get(k) || 0) + 1);
+    const f = String(r[finalKkeCol()] || '').trim();
+    if (f && !definedSet.has(f) && f !== k) rogueCounts.set(f, (rogueCounts.get(f) || 0) + 1);
+  });
+
+  list.innerHTML = '';
+  if (rogueCounts.size === 0) {
+    section.classList.add('hidden');
+    return;
+  }
+  section.classList.remove('hidden');
+  Array.from(rogueCounts.entries()).sort().forEach(([label, count]) => {
+    const div = document.createElement('div');
+    div.style.cssText = 'display:flex;align-items:center;gap:6px;padding:3px 0;';
+    div.innerHTML = `
+      <span style="width:12px;height:12px;border-radius:2px;background:var(--kke-kill-bg);border:1px solid var(--kke-kill);flex-shrink:0;"></span>
+      <span style="flex:1;font-size:12px;color:var(--text-primary);font-family:var(--font-mono);">${escapeHtml(label)}</span>
+      <span style="font-size:11px;color:var(--text-muted);">${count} row${count !== 1 ? 's' : ''}</span>
+    `;
+    const mergeBtn = document.createElement('button');
+    mergeBtn.className = 'btn btn-sm btn-ghost';
+    mergeBtn.textContent = 'Merge…';
+    mergeBtn.title = `Reassign every row using "${label}" to a defined state`;
+    mergeBtn.style.cssText = 'padding:2px 6px;font-size:11px;';
+    mergeBtn.addEventListener('click', () => openCustomKkeMergeDialog(label));
+    div.appendChild(mergeBtn);
+    list.appendChild(div);
+  });
+}
+
+function openCustomKkeMergeDialog(sourceLabel) {
+  const existing = document.getElementById('_kkemerge-modal');
+  if (existing) { existing.remove(); document.getElementById('_kkemerge-overlay')?.remove(); return; }
+
+  // Build target options: built-ins + other custom states (not the source)
+  const customLabels = state.customKkeStates.map(s => s.label).filter(l => l !== sourceLabel);
+  const allTargets = [...BUILTIN_KKE, ...customLabels];
+
+  // Also collect any "rogue" KKE values in row data that aren't in any defined list — they're valid merge targets too
+  const seen = new Set();
+  state.editedRows.forEach(r => {
+    const v = String(r[kkeCol()] || '').trim();
+    if (v) seen.add(v);
+    const f = String(r[finalKkeCol()] || '').trim();
+    if (f) seen.add(f);
+  });
+  seen.delete(sourceLabel);
+  BUILTIN_KKE.forEach(b => seen.delete(b));
+  customLabels.forEach(c => seen.delete(c));
+  const rogueTargets = Array.from(seen).sort();
+
+  // Count rows to be migrated
+  let kkeMatches = 0, finalMatches = 0, smeMatches = 0;
+  state.editedRows.forEach(r => {
+    if (String(r[kkeCol()] || '').trim() === sourceLabel) kkeMatches++;
+    if (String(r[finalKkeCol()] || '').trim() === sourceLabel) finalMatches++;
+    const sme = String(r[smeDecisionCol()] || '').trim();
+    if (sme === `Change: ${sourceLabel}`) smeMatches++;
+  });
+
+  const overlay = document.createElement('div');
+  overlay.id = '_kkemerge-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:920;';
+  const dialog = document.createElement('div');
+  dialog.id = '_kkemerge-modal';
+  dialog.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;z-index:930;width:min(520px,94vw);box-shadow:0 16px 48px rgba(0,0,0,0.3);';
+
+  const optgroup = (label, items) => items.length === 0 ? '' :
+    `<optgroup label="${escapeHtml(label)}">${items.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}</optgroup>`;
+
+  dialog.innerHTML = `
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border);">
+      <div style="font-weight:600;font-size:15px;">Merge custom KKE state</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">All rows using <code>${escapeHtml(sourceLabel)}</code> will be reassigned. The custom state itself is then removed.</div>
+    </div>
+    <div style="padding:16px 20px;">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Source (will be removed)</div>
+      <div style="font-family:var(--font-mono);font-size:13px;background:var(--bg-field-bar);padding:6px 10px;border-radius:4px;margin-bottom:14px;">${escapeHtml(sourceLabel)}</div>
+
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Merge into (target)</div>
+      <select id="_kkemerge-target" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:13px;">
+        <option value="">— pick a target —</option>
+        ${optgroup('Built-in KKE states', BUILTIN_KKE)}
+        ${optgroup('Other custom states', customLabels)}
+        ${optgroup('Other values present in data (typo cleanup)', rogueTargets)}
+      </select>
+
+      <div style="margin-top:14px;font-size:12px;color:var(--text-muted);">
+        Will affect:
+        <ul style="margin:4px 0 0 18px;padding:0;">
+          <li><strong>${kkeMatches}</strong> KKE_Recommendation cell${kkeMatches !== 1 ? 's' : ''}</li>
+          <li><strong>${finalMatches}</strong> Final_KKE cell${finalMatches !== 1 ? 's' : ''}</li>
+          <li><strong>${smeMatches}</strong> SME_Decision cell${smeMatches !== 1 ? 's' : ''} (rewriting <code>Change: ${escapeHtml(sourceLabel)}</code>)</li>
+        </ul>
+      </div>
+    </div>
+    <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;">
+      <button id="_kkemerge-cancel" class="btn btn-sm btn-ghost">Cancel</button>
+      <button id="_kkemerge-apply" class="btn btn-sm btn-primary" disabled>Merge</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.body.appendChild(dialog);
+  registerModalDismiss(overlay, dialog, () => close());
+
+  const targetSel = dialog.querySelector('#_kkemerge-target');
+  const applyBtn = dialog.querySelector('#_kkemerge-apply');
+  targetSel.addEventListener('change', () => {
+    applyBtn.disabled = !targetSel.value;
+  });
+
+  function close() { dialog.remove(); overlay.remove(); }
+  dialog.querySelector('#_kkemerge-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', close);
+  applyBtn.addEventListener('click', () => {
+    const target = targetSel.value;
+    if (!target) return;
+    const result = applyCustomKkeMerge(sourceLabel, target);
+    close();
+    showToast(`Merged "${sourceLabel}" → "${target}". ${result.rowsTouched} row${result.rowsTouched !== 1 ? 's' : ''} updated.`, 'success');
+  });
+}
+
+function applyCustomKkeMerge(sourceLabel, targetLabel) {
+  let rowsTouched = 0;
+  const kCol = kkeCol(), fCol = finalKkeCol(), sCol = smeDecisionCol();
+  const oldChange = `Change: ${sourceLabel}`;
+  const newChange = `Change: ${targetLabel}`;
+
+  state.editedRows.forEach((row, origIndex) => {
+    let touched = false;
+    if (String(row[kCol] || '').trim() === sourceLabel) {
+      logChange(origIndex, kCol, sourceLabel, targetLabel);
+      row[kCol] = targetLabel;
+      touched = true;
+    }
+    if (String(row[fCol] || '').trim() === sourceLabel) {
+      logChange(origIndex, fCol, sourceLabel, targetLabel);
+      row[fCol] = targetLabel;
+      touched = true;
+    }
+    if (sCol && String(row[sCol] || '').trim() === oldChange) {
+      logChange(origIndex, sCol, oldChange, newChange);
+      row[sCol] = newChange;
+      touched = true;
+    }
+    if (touched) rowsTouched++;
+  });
+
+  // Remove source from custom states (both global prefs and per-project)
+  const idx = state.customKkeStates.findIndex(s => s.label === sourceLabel);
+  if (idx >= 0) {
+    state.customKkeStates.splice(idx, 1);
+    window.electronAPI.savePrefs({ customKkeStates: state.customKkeStates });
+  }
+  if (state.projectSettings && Array.isArray(state.projectSettings.customKkeStates)) {
+    state.projectSettings.customKkeStates = state.projectSettings.customKkeStates.filter(s => s.label !== sourceLabel);
+  }
+
+  setDirty(true);
+  // Refresh UI
+  renderCustomKkeList();
+  renderRogueKkeList();
+  renderKkeButtons();
+  renderKkeFilterOptions();
+  applyFilter();
+  if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+
+  return { rowsTouched };
+}
+
+function renderSidebarColList() {
+  const list = $('sidebar-col-list');
+  list.innerHTML = '';
+  state.sidebarColumns.forEach(col => {
+    const div = document.createElement('div');
+    div.style.cssText = 'font-size:12px;padding:3px 0;color:var(--text-primary);';
+    div.textContent = col;
+    list.appendChild(div);
+  });
+  // Populate add select
+  const sel = $('sidebar-col-add');
+  sel.innerHTML = '<option value="">+ Add column…</option>';
+  const excluded = new Set([...state.sidebarColumns, '_rowIndex', '_Flagged', kkeCol(), tagsCol(), notesCol()]);
+  state.headers.filter(h => !excluded.has(h)).forEach(h => {
+    const opt = document.createElement('option');
+    opt.value = h;
+    opt.textContent = h;
+    sel.appendChild(opt);
+  });
+}
+
+function toggleSettingsPopover() {
+  if (!els.settingsPopover.classList.contains('hidden')) {
+    closeSettingsPopover();
+    return;
+  }
+  // Populate column mapping dropdowns with current headers
+  if (state.headers.length > 0) {
+    populateColumnMapSelects();
+    renderSidebarColList();
+  }
+  const btn = els.btnSettings;
+  if (btn) {
+    const rect = btn.getBoundingClientRect();
+    els.settingsPopover.style.top  = (rect.bottom + 4) + 'px';
+    els.settingsPopover.style.right = (window.innerWidth - rect.right) + 'px';
+  } else {
+    els.settingsPopover.style.top  = '40px';
+    els.settingsPopover.style.right = '12px';
+  }
+  els.settingsPopover.style.left = 'auto';
+  els.settingsPopover.classList.remove('hidden');
+}
+
+function closeSettingsPopover() {
+  els.settingsPopover.classList.add('hidden');
+}
+
+// Last-known floating position (session memory; resets on app restart)
+let _projectSettingsPos = null; // { top, left } in pixels
+
+function toggleProjectSettingsPopover() {
+  if (!els.projectSettingsOverlay.classList.contains('hidden')) {
+    closeProjectSettingsPopover();
+    return;
+  }
+  // Populate Identity tab
+  const ps = state.projectSettings;
+  $('ps-client-name').value = ps.clientName || '';
+  $('ps-project-name').value = ps.projectName || '';
+  $('ps-site-domain').value = ps.siteDomain || '';
+  $('ps-default-redirect').value = ps.defaultRedirectUrl || '';
+  // KKE States tab
+  renderCustomKkeList();
+  renderRogueKkeList();
+  // Suggestions tab
+  refreshSuggestionsTab();
+  // Migration tab (Phase 2, Chunk γ)
+  renderMigrationTab();
+  // Saved Filters tab
+  renderSavedFiltersList();
+
+  els.projectSettingsOverlay.classList.remove('hidden');
+}
+
+function setupProjectSettingsDrag() {
+  // Wire tab switching, close handlers, and make the modal draggable from its header.
+  const overlay = els.projectSettingsOverlay;
+  const modal = els.projectSettingsModal;
+  if (!overlay || !modal) return;
+
+  makeModalDraggable(modal);
+
+  // Tab switching
+  modal.querySelectorAll('.ps-tab').forEach(btn => {
+    btn.addEventListener('click', () => switchProjectSettingsTab(btn.dataset.tab));
+  });
+
+  // Close handlers
+  $('btn-project-settings-close')?.addEventListener('click', closeProjectSettingsPopover);
+  $('btn-project-settings-done')?.addEventListener('click', closeProjectSettingsPopover);
+
+  // Click outside the modal to close
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeProjectSettingsPopover();
+  });
+  // Esc to close
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !overlay.classList.contains('hidden')) closeProjectSettingsPopover();
+  });
+
+  // Suggestions tab actions
+  $('ps-btn-configure-ga')?.addEventListener('click', () => {
+    closeProjectSettingsPopover();
+    openGaKkeConfigDialog();
+  });
+  $('ps-btn-refresh-ga')?.addEventListener('click', () => {
+    const result = computeGaKke();
+    if (result) showToast(`GA KKE: ${result.computed} computed · ${result.skipped} skipped`, 'success');
+    refreshSuggestionsTab();
+  });
+  $('ps-btn-run-rubric')?.addEventListener('click', () => {
+    closeProjectSettingsPopover();
+    runBatchAssessment();
+  });
+  $('ps-btn-recompute-suggested')?.addEventListener('click', () => {
+    const ga = parseFloat($('ps-weight-ga').value);
+    const rubric = parseFloat($('ps-weight-rubric').value);
+    const cfg = suggestedKkeConfig();
+    cfg.weights = {
+      ga: isFinite(ga) && ga >= 0 ? ga : 1.0,
+      rubric: isFinite(rubric) && rubric >= 0 ? rubric : 1.0
+    };
+    state.projectSettings.suggestedKkeConfig = cfg;
+    setDirty(true);
+    const result = computeSuggestedKke();
+    if (result) {
+      const dis = result.disagreements > 0 ? ` · ${result.disagreements} disagreement${result.disagreements !== 1 ? 's' : ''}` : '';
+      showToast(`Suggested_KKE recomputed: ${result.computed} · ${result.blank} blank${dis}`, 'success');
+    }
+    refreshSuggestionsTab();
+  });
+}
+
+function switchProjectSettingsTab(tab) {
+  const modal = els.projectSettingsModal;
+  if (!modal) return;
+  modal.querySelectorAll('.ps-tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  modal.querySelectorAll('.ps-tab-content').forEach(c => {
+    c.classList.toggle('hidden', c.dataset.tab !== tab);
+  });
+}
+
+/** Populate the Suggestions tab with current state + last-run stats. */
+function refreshSuggestionsTab() {
+  const gaCfg = state.projectSettings.gaKkeConfig;
+  const gaSummary = $('ps-ga-summary');
+  if (gaSummary) {
+    if (!gaCfg || gaCfg.dismissed) {
+      gaSummary.textContent = 'Not configured. Click below to map GA4 columns and set weights.';
+    } else {
+      const mapped = Object.values(gaCfg.columnMap || {}).filter(Boolean).length;
+      const last = gaCfg.lastRun
+        ? `last run ${gaCfg.lastRun.computed} computed / ${gaCfg.lastRun.skipped} skipped`
+        : 'never run';
+      gaSummary.textContent = `${mapped} GA column${mapped !== 1 ? 's' : ''} mapped · ${last}`;
+    }
+  }
+
+  // Suggested weights
+  const sCfg = suggestedKkeConfig();
+  const w = { ...defaultSourceWeights(), ...(sCfg.weights || {}) };
+  if ($('ps-weight-ga'))     $('ps-weight-ga').value = w.ga;
+  if ($('ps-weight-rubric')) $('ps-weight-rubric').value = w.rubric;
+  const lastRun = $('ps-suggested-last-run');
+  if (lastRun) {
+    if (sCfg.lastRun) {
+      const r = sCfg.lastRun;
+      lastRun.textContent = `Last Suggested_KKE run: ${r.computed} computed · ${r.blank} blank · ${r.disagreements} disagreement${r.disagreements !== 1 ? 's' : ''} of ${r.total} total`;
+    } else {
+      lastRun.textContent = 'Suggested_KKE has not been run yet.';
+    }
+  }
+}
+
+/** Render the Saved Filters tab list with delete actions. */
+// ─── Phase 2, Chunk γ: Migration tab (Page Statuses + Assignees) ────────────
+
+function renderMigrationTab() {
+  renderPageStatusList();
+  renderAssigneeList();
+
+  const addStatusBtn = document.getElementById('ps-mig-add-status');
+  if (addStatusBtn && !addStatusBtn._wired) {
+    addStatusBtn._wired = true;
+    addStatusBtn.addEventListener('click', async () => {
+      const name = await showPrompt('New page status', 'Status name', '');
+      if (!name) return;
+      const trimmed = sanitizeText(name).trim();
+      if (!trimmed) return;
+      if (state.pageStatusLibrary.find(s => s.name.toLowerCase() === trimmed.toLowerCase())) {
+        showToast('That status already exists', 'error');
+        return;
+      }
+      state.pageStatusLibrary.push({ name: trimmed, color: nextPageStatusColor() });
+      state.projectSettings.pageStatusLibrary = state.pageStatusLibrary;
+      setDirty(true);
+      renderPageStatusList();
+    });
+  }
+
+  const addAssigneeBtn = document.getElementById('ps-mig-add-assignee');
+  if (addAssigneeBtn && !addAssigneeBtn._wired) {
+    addAssigneeBtn._wired = true;
+    addAssigneeBtn.addEventListener('click', async () => {
+      const name = await showPrompt('New assignee', 'Person name', '');
+      if (!name) return;
+      const trimmed = sanitizeText(name).trim();
+      if (!trimmed) return;
+      if (state.assigneeLibrary.find(n => n.toLowerCase() === trimmed.toLowerCase())) {
+        showToast('That assignee already exists', 'error');
+        return;
+      }
+      state.assigneeLibrary.push(trimmed);
+      state.assigneeLibrary.sort((a, b) => a.localeCompare(b));
+      state.projectSettings.assigneeLibrary = state.assigneeLibrary;
+      setDirty(true);
+      renderAssigneeList();
+    });
+  }
+}
+
+function renderPageStatusList() {
+  const list = document.getElementById('ps-mig-status-list');
+  if (!list) return;
+  const lib = state.pageStatusLibrary || [];
+  list.innerHTML = '';
+  if (lib.length === 0) {
+    list.innerHTML = '<div class="ps-mig-empty">No page statuses defined.</div>';
+    return;
+  }
+  lib.forEach((s, idx) => {
+    const row = document.createElement('div');
+    row.className = 'ps-mig-row';
+    row.innerHTML = `
+      <input type="color" value="${s.color || '#94a3b8'}" data-idx="${idx}" class="ps-mig-color" title="Status color">
+      <span class="ps-mig-name" data-idx="${idx}">${escapeHtml(s.name)}</span>
+      <span class="ps-mig-count" data-idx="${idx}"></span>
+      <span style="flex:1;"></span>
+      <button class="ps-mig-up icon-btn" data-idx="${idx}" title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
+      <button class="ps-mig-down icon-btn" data-idx="${idx}" title="Move down" ${idx === lib.length - 1 ? 'disabled' : ''}>↓</button>
+      <button class="ps-mig-rename btn btn-sm btn-ghost" data-idx="${idx}" title="Rename">Rename</button>
+      <button class="ps-mig-delete btn btn-sm btn-ghost" data-idx="${idx}" title="Delete" style="color:var(--kke-kill);">Delete</button>
+    `;
+    list.appendChild(row);
+  });
+
+  // Populate per-status usage counts
+  const usage = computePageStatusUsage();
+  list.querySelectorAll('.ps-mig-count').forEach(el => {
+    const i = +el.dataset.idx;
+    const n = usage.get(lib[i].name) || 0;
+    el.textContent = n > 0 ? `${n} node${n !== 1 ? 's' : ''}` : '';
+  });
+
+  // Wire actions
+  list.querySelectorAll('.ps-mig-color').forEach(inp => {
+    inp.addEventListener('change', () => {
+      const i = +inp.dataset.idx;
+      state.pageStatusLibrary[i].color = inp.value;
+      state.projectSettings.pageStatusLibrary = state.pageStatusLibrary;
+      setDirty(true);
+    });
+  });
+  list.querySelectorAll('.ps-mig-up').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = +btn.dataset.idx;
+      if (i === 0) return;
+      const lib = state.pageStatusLibrary;
+      [lib[i - 1], lib[i]] = [lib[i], lib[i - 1]];
+      state.projectSettings.pageStatusLibrary = lib;
+      setDirty(true);
+      renderPageStatusList();
+    });
+  });
+  list.querySelectorAll('.ps-mig-down').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = +btn.dataset.idx;
+      const lib = state.pageStatusLibrary;
+      if (i >= lib.length - 1) return;
+      [lib[i], lib[i + 1]] = [lib[i + 1], lib[i]];
+      state.projectSettings.pageStatusLibrary = lib;
+      setDirty(true);
+      renderPageStatusList();
+    });
+  });
+  list.querySelectorAll('.ps-mig-rename').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = +btn.dataset.idx;
+      const old = state.pageStatusLibrary[i].name;
+      const v = await showPrompt('Rename page status', 'New name', old);
+      if (!v) return;
+      const trimmed = sanitizeText(v).trim();
+      if (!trimmed || trimmed === old) return;
+      if (state.pageStatusLibrary.find(s => s.name.toLowerCase() === trimmed.toLowerCase())) {
+        showToast('That name is already in use', 'error');
+        return;
+      }
+      // Cascade rename across nav nodes
+      let cascaded = 0;
+      state.navNodes.forEach(n => {
+        if (n.pageStatus === old) { n.pageStatus = trimmed; cascaded++; }
+      });
+      state.pageStatusLibrary[i].name = trimmed;
+      state.projectSettings.pageStatusLibrary = state.pageStatusLibrary;
+      if (cascaded > 0) state.navTreeDirty = true;
+      setDirty(true);
+      renderPageStatusList();
+      showToast(cascaded > 0
+        ? `Renamed status · ${cascaded} node${cascaded !== 1 ? 's' : ''} updated`
+        : 'Renamed status', 'success');
+    });
+  });
+  list.querySelectorAll('.ps-mig-delete').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = +btn.dataset.idx;
+      const target = state.pageStatusLibrary[i];
+      const used = usage.get(target.name) || 0;
+      const confirmMsg = used > 0
+        ? `Delete status "${target.name}"? ${used} node${used !== 1 ? 's' : ''} currently use${used === 1 ? 's' : ''} this status — their Page Status will be cleared.`
+        : `Delete status "${target.name}"?`;
+      if (!(await confirmDialog({ title: 'Delete page status', message: confirmMsg, confirmLabel: 'Delete', danger: true }))) return;
+      // Cascade clear
+      let cleared = 0;
+      state.navNodes.forEach(n => {
+        if (n.pageStatus === target.name) { n.pageStatus = ''; cleared++; }
+      });
+      state.pageStatusLibrary.splice(i, 1);
+      state.projectSettings.pageStatusLibrary = state.pageStatusLibrary;
+      if (cleared > 0) state.navTreeDirty = true;
+      setDirty(true);
+      renderPageStatusList();
+      showToast(cleared > 0
+        ? `Deleted status · cleared from ${cleared} node${cleared !== 1 ? 's' : ''}`
+        : 'Deleted status', 'success');
+    });
+  });
+}
+
+function renderAssigneeList() {
+  const list = document.getElementById('ps-mig-assignee-list');
+  if (!list) return;
+  const lib = state.assigneeLibrary || [];
+  list.innerHTML = '';
+  if (lib.length === 0) {
+    list.innerHTML = '<div class="ps-mig-empty">No assignees yet. Add names here or inline from the node editor.</div>';
+    return;
+  }
+  const usage = computeAssigneeUsage();
+  lib.forEach((name, idx) => {
+    const counts = usage.get(name) || { build: 0, write: 0, migrate: 0 };
+    const total = counts.build + counts.write + counts.migrate;
+    const parts = [];
+    if (counts.build > 0)   parts.push(`${counts.build} build`);
+    if (counts.write > 0)   parts.push(`${counts.write} write`);
+    if (counts.migrate > 0) parts.push(`${counts.migrate} migrate`);
+    const usageText = parts.join(' · ');
+    const row = document.createElement('div');
+    row.className = 'ps-mig-row';
+    row.innerHTML = `
+      <span class="ps-mig-name" data-idx="${idx}">${escapeHtml(name)}</span>
+      <span class="ps-mig-count" data-idx="${idx}">${escapeHtml(usageText)}</span>
+      <span style="flex:1;"></span>
+      <button class="ps-mig-rename-assignee btn btn-sm btn-ghost" data-idx="${idx}" title="Rename">Rename</button>
+      <button class="ps-mig-delete-assignee btn btn-sm btn-ghost" data-idx="${idx}" title="Delete" style="color:var(--kke-kill);">Delete</button>
+    `;
+    list.appendChild(row);
+  });
+
+  list.querySelectorAll('.ps-mig-rename-assignee').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = +btn.dataset.idx;
+      const old = state.assigneeLibrary[i];
+      const v = await showPrompt('Rename assignee', 'New name', old);
+      if (!v) return;
+      const trimmed = sanitizeText(v).trim();
+      if (!trimmed || trimmed === old) return;
+      if (state.assigneeLibrary.find(n => n.toLowerCase() === trimmed.toLowerCase())) {
+        showToast('That name is already in use', 'error');
+        return;
+      }
+      // Cascade rename
+      let cascaded = 0;
+      state.navNodes.forEach(n => {
+        if (n.buildAssignee === old) { n.buildAssignee = trimmed; cascaded++; }
+        if (n.writeAssignee === old) { n.writeAssignee = trimmed; cascaded++; }
+        if (n.migrateAssignee === old) { n.migrateAssignee = trimmed; cascaded++; }
+      });
+      state.assigneeLibrary[i] = trimmed;
+      state.assigneeLibrary.sort((a, b) => a.localeCompare(b));
+      state.projectSettings.assigneeLibrary = state.assigneeLibrary;
+      if (cascaded > 0) state.navTreeDirty = true;
+      setDirty(true);
+      renderAssigneeList();
+      showToast(cascaded > 0
+        ? `Renamed · ${cascaded} reference${cascaded !== 1 ? 's' : ''} updated`
+        : 'Renamed', 'success');
+    });
+  });
+  list.querySelectorAll('.ps-mig-delete-assignee').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = +btn.dataset.idx;
+      const name = state.assigneeLibrary[i];
+      const counts = usage.get(name) || { build: 0, write: 0, migrate: 0 };
+      const total = counts.build + counts.write + counts.migrate;
+      const confirmMsg = total > 0
+        ? `Delete "${name}"? ${total} reference${total !== 1 ? 's' : ''} across nav nodes will be cleared.`
+        : `Delete "${name}"?`;
+      if (!(await confirmDialog({ title: 'Delete assignee', message: confirmMsg, confirmLabel: 'Delete', danger: true }))) return;
+      let cleared = 0;
+      state.navNodes.forEach(n => {
+        if (n.buildAssignee === name) { n.buildAssignee = ''; cleared++; }
+        if (n.writeAssignee === name) { n.writeAssignee = ''; cleared++; }
+        if (n.migrateAssignee === name) { n.migrateAssignee = ''; cleared++; }
+      });
+      state.assigneeLibrary.splice(i, 1);
+      state.projectSettings.assigneeLibrary = state.assigneeLibrary;
+      if (cleared > 0) state.navTreeDirty = true;
+      setDirty(true);
+      renderAssigneeList();
+      showToast(cleared > 0
+        ? `Deleted · cleared ${cleared} reference${cleared !== 1 ? 's' : ''}`
+        : 'Deleted', 'success');
+    });
+  });
+}
+
+/** Map<statusName, number-of-nodes-using-it> */
+function computePageStatusUsage() {
+  const m = new Map();
+  (state.navNodes || []).forEach(n => {
+    const s = String(n.pageStatus || '').trim();
+    if (s) m.set(s, (m.get(s) || 0) + 1);
+  });
+  return m;
+}
+
+/** Map<assigneeName, {build, write}> */
+function computeAssigneeUsage() {
+  const m = new Map();
+  (state.navNodes || []).forEach(n => {
+    const b = String(n.buildAssignee || '').trim();
+    const w = String(n.writeAssignee || '').trim();
+    const mig = String(n.migrateAssignee || '').trim();
+    if (b) {
+      const c = m.get(b) || { build: 0, write: 0, migrate: 0 };
+      c.build++;
+      m.set(b, c);
+    }
+    if (w) {
+      const c = m.get(w) || { build: 0, write: 0, migrate: 0 };
+      c.write++;
+      m.set(w, c);
+    }
+    if (mig) {
+      const c = m.get(mig) || { build: 0, write: 0, migrate: 0 };
+      c.migrate++;
+      m.set(mig, c);
+    }
+  });
+  return m;
+}
+
+function renderSavedFiltersList() {
+  const list = $('ps-saved-filters-list');
+  const empty = $('ps-saved-filters-empty');
+  if (!list) return;
+  const filters = state.projectSettings.savedFilters || [];
+  list.innerHTML = '';
+  if (filters.length === 0) {
+    empty?.classList.remove('hidden');
+    return;
+  }
+  empty?.classList.add('hidden');
+  filters.forEach((f, idx) => {
+    const row = document.createElement('div');
+    row.className = 'setting-row-inline';
+    row.style.cssText = 'padding:6px 0;border-bottom:1px solid var(--border-light, #eee);align-items:center;';
+    row.innerHTML = `
+      <div style="flex:1;">
+        <div style="font-weight:600;font-size:13px;">${escapeHtml(f.name)}</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
+          ${f.filterText ? `text: <code>${escapeHtml(f.filterText)}</code> · ` : ''}
+          ${Array.isArray(f.kkeFilter) && f.kkeFilter.length ? `KKE: ${f.kkeFilter.length} · ` : ''}
+          ${f.groupFilter ? `group: ${escapeHtml(f.groupFilter)} · ` : ''}
+          ${Array.isArray(f.fieldFilters) && f.fieldFilters.length ? `${f.fieldFilters.length} field filter${f.fieldFilters.length !== 1 ? 's' : ''}` : ''}
+        </div>
+      </div>
+      <button class="btn btn-sm btn-ghost" data-idx="${idx}" data-action="apply">Apply</button>
+      <button class="btn btn-sm btn-ghost" data-idx="${idx}" data-action="delete" style="color:var(--kke-kill);">Delete</button>
+    `;
+    list.appendChild(row);
+  });
+  list.querySelectorAll('button[data-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = +btn.dataset.idx;
+      const action = btn.dataset.action;
+      const f = (state.projectSettings.savedFilters || [])[idx];
+      if (!f) return;
+      if (action === 'apply') {
+        // Restore the filter into the sidebar
+        state.filterText = f.filterText || '';
+        state.kkeFilter = Array.isArray(f.kkeFilter) ? [...f.kkeFilter] : [];
+        state.projectSettings.kkeFilter = state.kkeFilter;
+        state.fieldFilters = Array.isArray(f.fieldFilters) ? f.fieldFilters.map(x => ({ ...x })) : [];
+        els.searchInput.value = state.filterText;
+        // Group filter
+        const gSel = $('group-filter-select');
+        if (gSel) gSel.value = f.groupFilter || '';
+        applyFilter();
+        if (typeof renderKkeFilterOptions === 'function') renderKkeFilterOptions();
+        showToast(`Applied filter: ${f.name}`, 'success');
+        closeProjectSettingsPopover();
+      } else if (action === 'delete') {
+        state.projectSettings.savedFilters.splice(idx, 1);
+        setDirty(true);
+        renderSavedFiltersList();
+        showToast(`Deleted filter: ${f.name}`, 'success');
+      }
+    });
+  });
+}
+
+function closeProjectSettingsPopover() {
+  els.projectSettingsOverlay.classList.add('hidden');
+  resetModalPosition(els.projectSettingsModal);
+}
+
+// ─── Glossary (tag + group notes) ──────────────────────────────────────────────
+
+function renderMarkdownLite(src) {
+  if (!src) return '';
+  let html = String(src)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  const lines = html.split('\n');
+  const out = [];
+  let inList = false;
+  for (const line of lines) {
+    const m = /^- (.+)$/.exec(line);
+    if (m) {
+      if (!inList) { out.push('<ul>'); inList = true; }
+      out.push('<li>' + m[1] + '</li>');
+    } else {
+      if (inList) { out.push('</ul>'); inList = false; }
+      out.push(line);
+    }
+  }
+  if (inList) out.push('</ul>');
+  html = out.join('\n');
+  html = html.split(/\n{2,}/).map(p => {
+    if (/^\s*<(ul|ol)>/.test(p)) return p;
+    return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
+  }).join('');
+  return html;
+}
+
+function getGlossary() {
+  if (!state.projectSettings.glossary) state.projectSettings.glossary = { tags: {}, groups: {} };
+  if (!state.projectSettings.glossary.tags) state.projectSettings.glossary.tags = {};
+  if (!state.projectSettings.glossary.groups) state.projectSettings.glossary.groups = {};
+  return state.projectSettings.glossary;
+}
+
+function collectAllKnownNames(kind) {
+  const set = new Set();
+  const g = getGlossary();
+  Object.keys(kind === 'tag' ? g.tags : g.groups).forEach(n => set.add(n));
+  if (kind === 'tag') {
+    (state.tagLibrary || []).forEach(n => set.add(n));
+    state.editedRows.forEach(r => {
+      String(r[tagsCol()] || '').split(',').forEach(t => {
+        const tr = t.trim();
+        if (tr) set.add(tr);
+      });
+    });
+  } else {
+    (state.groupLibrary || []).forEach(n => set.add(n));
+    state.editedRows.forEach(r => {
+      const v = String(r[groupCol()] || '').trim();
+      if (v) set.add(v);
+    });
+  }
+  return Array.from(set).sort();
+}
+
+function openGlossaryEditor() {
+  const existing = document.getElementById('_glossary-modal');
+  if (existing) { existing.remove(); document.getElementById('_glossary-overlay')?.remove(); return; }
+
+  const overlay = document.createElement('div');
+  overlay.id = '_glossary-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:800;';
+
+  const dialog = document.createElement('div');
+  dialog.id = '_glossary-modal';
+  dialog.style.cssText = 'position:fixed;top:40px;left:50%;transform:translateX(-50%);background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;z-index:900;width:min(760px,92vw);max-height:calc(100vh - 80px);box-shadow:0 16px 48px rgba(0,0,0,0.3);display:flex;flex-direction:column;';
+
+  dialog.innerHTML = `
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+      <div style="font-weight:600;font-size:15px;">Glossary</div>
+      <button id="_gloss-close" class="modal-close" title="Close">×</button>
+    </div>
+    <div style="padding:8px 20px 0;display:flex;gap:4px;align-items:center;border-bottom:1px solid var(--border);">
+      <button id="_gloss-tab-tags" class="btn btn-sm" style="border-radius:4px 4px 0 0;">Tags</button>
+      <button id="_gloss-tab-groups" class="btn btn-sm btn-ghost" style="border-radius:4px 4px 0 0;">Groups</button>
+      <button id="_gloss-add" class="btn btn-sm btn-ghost" style="margin-left:auto;margin-bottom:4px;">+ Add entry</button>
+    </div>
+    <div id="_gloss-body" style="flex:1;overflow:auto;padding:12px 20px;"></div>
+    <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <div style="display:flex;gap:8px;">
+        <button id="_gloss-export" class="btn btn-sm btn-ghost">Export for Word…</button>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button id="_gloss-cancel" class="btn btn-sm btn-ghost">Cancel</button>
+        <button id="_gloss-save" class="btn btn-sm btn-primary">Save</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.body.appendChild(dialog);
+  registerModalDismiss(overlay, dialog, () => close());
+  // Make Glossary editor draggable (first child div is its header row)
+  makeModalDraggable(dialog, { handleSelector: ':scope > div:first-child' });
+
+  // Working copy of glossary — commit on Save
+  const g = getGlossary();
+  const working = {
+    tags: Object.assign({}, g.tags),
+    groups: Object.assign({}, g.groups),
+  };
+  let activeTab = 'tags'; // 'tags' | 'groups'
+
+  function bucket() { return activeTab === 'tags' ? working.tags : working.groups; }
+  function kind()   { return activeTab === 'tags' ? 'tag' : 'group'; }
+
+  function renderList() {
+    const body = dialog.querySelector('#_gloss-body');
+    body.innerHTML = '';
+    const names = Array.from(new Set([
+      ...collectAllKnownNames(kind()),
+      ...Object.keys(bucket()),
+    ])).sort();
+
+    if (names.length === 0) {
+      body.innerHTML = `<div style="color:var(--text-muted);font-size:13px;padding:16px 0;">No ${activeTab} yet. Click “+ Add entry” to create one.</div>`;
+      return;
+    }
+
+    names.forEach(name => {
+      const notes = bucket()[name] || '';
+      const entry = document.createElement('div');
+      entry.style.cssText = 'border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:10px;';
+      entry.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <div style="font-weight:600;font-size:13px;">${escapeHtml(name)}</div>
+          <div style="display:flex;gap:4px;">
+            <button class="btn btn-sm btn-ghost _gloss-preview-toggle" data-name="${escapeHtml(name)}">Preview</button>
+          </div>
+        </div>
+        <div class="_gloss-toolbar" style="display:flex;gap:4px;margin-bottom:4px;">
+          <button class="btn btn-sm btn-ghost _gloss-md" data-md="bold"  title="Bold"><b>B</b></button>
+          <button class="btn btn-sm btn-ghost _gloss-md" data-md="italic" title="Italic"><i>I</i></button>
+          <button class="btn btn-sm btn-ghost _gloss-md" data-md="list" title="List">•</button>
+          <button class="btn btn-sm btn-ghost _gloss-md" data-md="link" title="Link">↗</button>
+          <button class="btn btn-sm btn-ghost _gloss-md" data-md="code" title="Code">&lt;/&gt;</button>
+        </div>
+        <textarea class="_gloss-textarea" data-name="${escapeHtml(name)}" rows="3" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-family:var(--font-mono);font-size:12px;box-sizing:border-box;resize:vertical;">${escapeHtml(notes)}</textarea>
+        <div class="_gloss-preview hidden" data-name="${escapeHtml(name)}" style="margin-top:6px;padding:8px 10px;background:var(--bg-field-bar);border-radius:4px;font-size:13px;"></div>
+      `;
+      body.appendChild(entry);
+    });
+
+    // Wire textareas → update working bucket
+    body.querySelectorAll('._gloss-textarea').forEach(ta => {
+      ta.addEventListener('input', () => {
+        bucket()[ta.dataset.name] = ta.value;
+      });
+    });
+
+    // Toolbar buttons (markdown insertion)
+    body.querySelectorAll('._gloss-md').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.preventDefault();
+        const ta = btn.closest('div').nextElementSibling;
+        if (!ta || !ta.matches('textarea')) return;
+        const start = ta.selectionStart, end = ta.selectionEnd;
+        const before = ta.value.slice(0, start);
+        const sel = ta.value.slice(start, end);
+        const after = ta.value.slice(end);
+        let inserted = sel, cursor = start + sel.length;
+        switch (btn.dataset.md) {
+          case 'bold':   inserted = `**${sel || 'bold'}**`; cursor = start + 2 + (sel || 'bold').length; break;
+          case 'italic': inserted = `*${sel || 'italic'}*`; cursor = start + 1 + (sel || 'italic').length; break;
+          case 'list':   inserted = (sel ? sel.split('\n').map(l => '- ' + l).join('\n') : '- '); cursor = start + inserted.length; break;
+          case 'link':   inserted = `[${sel || 'text'}](https://)`; cursor = start + inserted.length - 1; break;
+          case 'code':   inserted = `\`${sel || 'code'}\``; cursor = start + 1 + (sel || 'code').length; break;
+        }
+        ta.value = before + inserted + after;
+        ta.dispatchEvent(new Event('input'));
+        ta.focus();
+        ta.setSelectionRange(cursor, cursor);
+      });
+    });
+
+    // Preview toggle
+    body.querySelectorAll('._gloss-preview-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const nm = btn.dataset.name;
+        const preview = body.querySelector(`._gloss-preview[data-name="${CSS.escape(nm)}"]`);
+        if (!preview) return;
+        if (preview.classList.contains('hidden')) {
+          preview.innerHTML = renderMarkdownLite(bucket()[nm] || '');
+          preview.classList.remove('hidden');
+          btn.textContent = 'Hide preview';
+        } else {
+          preview.classList.add('hidden');
+          btn.textContent = 'Preview';
+        }
+      });
+    });
+  }
+
+  function setTab(tab) {
+    activeTab = tab;
+    dialog.querySelector('#_gloss-tab-tags').classList.toggle('btn-ghost', tab !== 'tags');
+    dialog.querySelector('#_gloss-tab-groups').classList.toggle('btn-ghost', tab !== 'groups');
+    renderList();
+  }
+
+  dialog.querySelector('#_gloss-tab-tags').addEventListener('click', () => setTab('tags'));
+  dialog.querySelector('#_gloss-tab-groups').addEventListener('click', () => setTab('groups'));
+  dialog.querySelector('#_gloss-add').addEventListener('click', async () => {
+    const name = await showPrompt(`Add ${activeTab === 'tags' ? 'tag' : 'group'}`, 'Name');
+    if (!name) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (!(trimmed in bucket())) bucket()[trimmed] = '';
+    renderList();
+  });
+
+  function close() {
+    dialog.remove();
+    overlay.remove();
+  }
+  dialog.querySelector('#_gloss-cancel').addEventListener('click', close);
+  dialog.querySelector('#_gloss-close').addEventListener('click', close);
+  overlay.addEventListener('click', close);
+  dialog.querySelector('#_gloss-export').addEventListener('click', () => exportGlossary(working));
+  dialog.querySelector('#_gloss-save').addEventListener('click', () => {
+    // Prune empty entries before committing
+    const prune = obj => {
+      Object.keys(obj).forEach(k => { if (!String(obj[k] || '').trim()) delete obj[k]; });
+    };
+    prune(working.tags); prune(working.groups);
+    state.projectSettings.glossary = working;
+    setDirty(true);
+    close();
+    // Refresh tooltips on currently shown row
+    if (state.selectedIndex !== null) {
+      populateAuditFields(state.editedRows[state.selectedIndex]);
+    }
+    showToast('Glossary saved', 'success');
+  });
+
+  setTab('tags');
+}
+
+function glossaryTooltip(type, name) {
+  const g = state.projectSettings.glossary;
+  if (!g) return '';
+  const src = (type === 'tag' ? g.tags : g.groups)?.[name];
+  return src || '';
+}
+
+async function exportGlossary(source) {
+  // If called from save flow, source may be live working copy; otherwise read from state
+  const g = source || state.projectSettings.glossary || { tags: {}, groups: {} };
+  const tags = g.tags || {};
+  const groups = g.groups || {};
+  const tagKeys = Object.keys(tags).filter(k => String(tags[k] || '').trim()).sort();
+  const groupKeys = Object.keys(groups).filter(k => String(groups[k] || '').trim()).sort();
+
+  if (tagKeys.length === 0 && groupKeys.length === 0) {
+    showToast('No glossary entries to export', 'error');
+    return;
+  }
+
+  const ps = state.projectSettings || {};
+  const client = String(ps.clientName || '').trim();
+  const project = String(ps.projectName || '').trim();
+  const headerLine = [client, project].filter(Boolean).join(' — ') || 'Content Audit';
+  const dateStr = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+
+  const section = (heading, keys, bucket) => {
+    if (keys.length === 0) return '';
+    const items = keys.map(k => `
+      <div style="margin-bottom:18px;page-break-inside:avoid;">
+        <h3 style="font-family:Calibri,Arial,sans-serif;font-size:14pt;margin:0 0 6px;">${escapeHtml(k)}</h3>
+        <div style="font-family:Calibri,Arial,sans-serif;font-size:11pt;">${renderMarkdownLite(bucket[k])}</div>
+      </div>
+    `).join('\n');
+    return `<h2 style="font-family:Calibri,Arial,sans-serif;font-size:16pt;margin:24px 0 12px;border-bottom:1px solid #ccc;padding-bottom:4px;">${escapeHtml(heading)}</h2>\n${items}`;
+  };
+
+  const body = `
+    <div style="font-family:Calibri,Arial,sans-serif;max-width:780px;margin:0 auto;">
+      <div style="margin-bottom:20px;">
+        <div style="font-size:10pt;color:#666;letter-spacing:0.5px;text-transform:uppercase;">${escapeHtml(headerLine)}</div>
+        <h1 style="font-size:22pt;margin:4px 0 0;">Content Glossary</h1>
+        <div style="font-size:10pt;color:#666;margin-top:4px;">${escapeHtml(dateStr)}</div>
+      </div>
+      ${section('Content Tags', tagKeys, tags)}
+      ${section('Content Groups', groupKeys, groups)}
+    </div>
+  `;
+
+  const defaultName = [client, project, 'glossary'].filter(Boolean).join('-').replace(/\s+/g, '-') || 'glossary';
+  const html = buildReportShell('Content Glossary', body);
+  const result = await window.electronAPI.exportReportHtml({ html, defaultName: defaultName + '.html' });
+  if (result.success) {
+    showToast('Glossary exported — open the .html in Word', 'success');
+  } else if (result.error !== 'Cancelled') {
+    showToast('Export failed: ' + result.error, 'error');
+  }
+}
+
+// ─── GA KKE (GA4-derived recommendation) ───────────────────────────────────────
+
+const GA_KKE_COL = 'GA_KKE_Recommendation';
+const GA_SCORE_COL = 'GA_Score';
+
+const GA_KKE_PRESETS = {
+  default:         { sessions: 0.35, engagementRate: 0.25, avgSessionDuration: 0.25, viewsPerSession: 0.15 },
+  contentHeavy:    { sessions: 0.25, engagementRate: 0.25, avgSessionDuration: 0.35, viewsPerSession: 0.15 },
+  navigationHeavy: { sessions: 0.30, engagementRate: 0.20, avgSessionDuration: 0.20, viewsPerSession: 0.30 },
+};
+const GA_KKE_PRESET_LABELS = {
+  default: 'Default (traffic-first)',
+  contentHeavy: 'Content-heavy',
+  navigationHeavy: 'Navigation-heavy',
+  custom: 'Custom',
+};
+
+function defaultGaKkeConfig() {
+  return {
+    columnMap: { sessions: '', engagementRate: '', avgSessionDuration: '', viewsPerSession: '' },
+    weights: { ...GA_KKE_PRESETS.default },
+    thresholds: { keep: 0.6, evolve: 0.3 },
+    missingPolicy: 'skip',
+    computedAt: null,
+  };
+}
+
+function detectGa4Columns(headers) {
+  const norm = h => String(h || '').toLowerCase().replace(/^ga4\s+/i, '').replace(/\s+/g, ' ').trim();
+  const find = pred => headers.find(h => pred(norm(h))) || '';
+  return {
+    sessions:           find(s => s === 'sessions'),
+    engagementRate:     find(s => s === 'engagement rate'),
+    avgSessionDuration: find(s => s === 'average session duration' || s === 'avg session duration' || s === 'session duration'),
+    viewsPerSession:    find(s => s === 'views per session' || s === 'pageviews per session' || s === 'screen page views per session' || s === 'screenpageviews per session'),
+  };
+}
+
+function parseGaDuration(val) {
+  if (val === '' || val == null) return null;
+  if (typeof val === 'number' && isFinite(val)) {
+    // Excel stores times as fraction-of-day; if value < 2, treat as days → seconds. Otherwise raw seconds.
+    return val < 2 ? val * 86400 : val;
+  }
+  const s = String(val).trim();
+  const hms = /^(\d+):(\d{1,2}):(\d{1,2})(?:\.\d+)?$/.exec(s);
+  if (hms) return +hms[1] * 3600 + +hms[2] * 60 + +hms[3];
+  const ms = /^(\d+):(\d{1,2})$/.exec(s);
+  if (ms) return +ms[1] * 60 + +ms[2];
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
+}
+
+function parseGaNumber(val) {
+  if (val === '' || val == null) return null;
+  if (typeof val === 'number') return isFinite(val) ? val : null;
+  const n = parseFloat(String(val).replace(/,/g, ''));
+  return isNaN(n) ? null : n;
+}
+
+function buildPercentRanker(values) {
+  const clean = values.filter(v => typeof v === 'number' && isFinite(v));
+  const sorted = [...clean].sort((a, b) => a - b);
+  const n = sorted.length;
+  return (x) => {
+    if (x == null || !isFinite(x)) return null;
+    if (n <= 1) return 0;
+    let lo = 0, hi = n;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (sorted[mid] < x) lo = mid + 1; else hi = mid;
+    }
+    return lo / (n - 1);
+  };
+}
+
+function normalizeWeights(w) {
+  const total = Object.values(w).reduce((a, b) => a + (Number(b) || 0), 0);
+  if (total === 0) return { ...GA_KKE_PRESETS.default };
+  const out = {};
+  Object.keys(w).forEach(k => { out[k] = (Number(w[k]) || 0) / total; });
+  return out;
+}
+
+function ensureGaKkeColumns() {
+  const headers = state.headers;
+  const addCol = (name, afterIdx) => {
+    if (headers.includes(name)) return;
+    const idx = Math.min(Math.max(afterIdx, 0), headers.length - 1) + 1;
+    headers.splice(idx, 0, name);
+    state.editedRows.forEach(r => { if (!(name in r)) r[name] = ''; });
+    state.rows.forEach(r => { if (!(name in r)) r[name] = ''; });
+  };
+  // Insert after last mapped GA4 column, or at end
+  const cfg = state.projectSettings.gaKkeConfig || defaultGaKkeConfig();
+  const mapped = Object.values(cfg.columnMap).filter(Boolean);
+  const anchor = mapped.length
+    ? Math.max(...mapped.map(c => headers.indexOf(c)))
+    : headers.length - 1;
+  addCol(GA_KKE_COL, anchor);
+  addCol(GA_SCORE_COL, headers.indexOf(GA_KKE_COL));
+}
+
+function computeGaKke() {
+  const cfg = state.projectSettings.gaKkeConfig;
+  if (!cfg || cfg.dismissed || !cfg.columnMap) {
+    showToast('GA KKE not configured', 'error');
+    return null;
+  }
+  const { columnMap, missingPolicy } = cfg;
+  const weights = normalizeWeights(cfg.weights);
+  const thresholds = cfg.thresholds;
+
+  const metricKeys = ['sessions', 'engagementRate', 'avgSessionDuration', 'viewsPerSession'];
+  const parseFor = {
+    sessions: parseGaNumber,
+    engagementRate: parseGaNumber,
+    avgSessionDuration: parseGaDuration,
+    viewsPerSession: parseGaNumber,
+  };
+
+  // Gather per-row parsed values + per-metric arrays for ranking
+  const allValues = { sessions: [], engagementRate: [], avgSessionDuration: [], viewsPerSession: [] };
+  const rowValues = new Array(state.editedRows.length);
+  for (let i = 0; i < state.editedRows.length; i++) {
+    const row = state.editedRows[i];
+    const vals = {};
+    metricKeys.forEach(k => {
+      const col = columnMap[k];
+      vals[k] = col ? parseFor[k](row[col]) : null;
+      if (vals[k] != null) allValues[k].push(vals[k]);
+    });
+    rowValues[i] = vals;
+  }
+
+  const rankers = {};
+  metricKeys.forEach(k => { rankers[k] = buildPercentRanker(allValues[k]); });
+
+  ensureGaKkeColumns();
+
+  let computed = 0, skipped = 0;
+  for (let i = 0; i < state.editedRows.length; i++) {
+    const row = state.editedRows[i];
+    const vals = rowValues[i];
+    const anyPresent = metricKeys.some(k => vals[k] != null);
+
+    if (!anyPresent && missingPolicy === 'skip') {
+      row[GA_KKE_COL] = '';
+      row[GA_SCORE_COL] = '';
+      skipped++;
+      continue;
+    }
+
+    let score = 0, totalWeight = 0;
+    metricKeys.forEach(k => {
+      let v = vals[k];
+      if (v == null) {
+        if (missingPolicy === 'zero') v = 0;
+        else return;
+      }
+      // If a metric column is unmapped, its weight shouldn't count
+      if (!columnMap[k]) return;
+      const norm = rankers[k](v);
+      if (norm == null) return;
+      score += norm * weights[k];
+      totalWeight += weights[k];
+    });
+
+    if (totalWeight === 0) {
+      row[GA_KKE_COL] = '';
+      row[GA_SCORE_COL] = '';
+      skipped++;
+      continue;
+    }
+
+    const finalScore = score / totalWeight;
+    let rec;
+    if (finalScore >= thresholds.keep) rec = 'Keep';
+    else if (finalScore >= thresholds.evolve) rec = 'Evolve';
+    else rec = 'Kill';
+    row[GA_KKE_COL] = rec;
+    row[GA_SCORE_COL] = finalScore.toFixed(3);
+    computed++;
+  }
+
+  cfg.computedAt = new Date().toISOString();
+  cfg.lastRun = { computed, skipped, total: state.editedRows.length };
+  state.projectSettings.gaKkeConfig = cfg;
+  setDirty(true);
+
+  // Phase 1, Chunk D: roll GA results into the unified Suggested_KKE
+  computeSuggestedKke();
+
+  applyFilter();
+  if (state.selectedIndex !== null) {
+    updateGaKkeBadge(state.editedRows[state.selectedIndex]);
+    updateSuggestedKkeBadge(state.editedRows[state.selectedIndex]);
+  }
+  return { computed, skipped, total: state.editedRows.length };
+}
+
+function updateGaKkeBadge(row) {
+  const badge = els.gaKkeBadge;
+  if (!badge) return;
+  const cfg = state.projectSettings.gaKkeConfig;
+  if (!cfg || cfg.dismissed) { badge.classList.add('hidden'); return; }
+  // Phase 1, Chunk D: when Suggested_KKE is populated, prefer that badge — hide GA
+  // since Suggested already surfaces GA's contribution under its source prefix.
+  if (row && String(row[SUGGESTED_KKE_COL] || '').trim()) { badge.classList.add('hidden'); return; }
+  const rec = row ? String(row[GA_KKE_COL] || '').trim() : '';
+  if (!rec) { badge.classList.add('hidden'); return; }
+  badge.classList.remove('hidden');
+  badge.classList.remove('ga-kke-keep', 'ga-kke-kill', 'ga-kke-evolve');
+  const cls = rec.toLowerCase();
+  if (['keep', 'kill', 'evolve'].includes(cls)) badge.classList.add('ga-kke-' + cls);
+  badge.textContent = rec;
+  const score = row[GA_SCORE_COL] ? ` (score ${row[GA_SCORE_COL]})` : '';
+  const computed = cfg.computedAt ? new Date(cfg.computedAt).toLocaleString() : '';
+  badge.title = `GA KKE: ${rec}${score}\nComputed: ${computed}`;
+}
+
+// ─── Phase 1, Chunk D: Suggested_KKE unified badge ──────────────────────────
+// Suggested_KKE = derived value combining all configured suggestion sources
+// (GA + Rubric for now; CMS / URL patterns in future phases).
+// - `Suggested_KKE` column = the strongest single source's recommendation
+// - `Suggested_KKE_Sources` column = JSON array of {source, rec, weight} for the tooltip
+// - Badge in audit bar shows "GA: Kill" or "Rubric: Evolve" with ⚠ on disagreement
+//
+// This is a thin orchestrator over existing GA + Rubric pipelines; it does not
+// refactor those. computeSuggestedKke runs *after* a GA or Rubric compute pass
+// and consolidates their per-row outputs.
+
+// Phase 2, Chunk α: default Page_Status values seeded into new projects.
+// Each entry: { name, color }. Stored per-project in projectSettings.pageStatusLibrary;
+// extensible inline via "+ New status…" or via Project Settings → Migration tab.
+const DEFAULT_PAGE_STATUSES = [
+  { name: 'Not Started', color: '#94a3b8' },
+  { name: 'In Progress', color: '#f59e0b' },
+  { name: 'Built',       color: '#3b82f6' },
+  { name: 'In Review',   color: '#a855f7' },
+  { name: 'Published',   color: '#10b981' },
+  { name: 'Blocked',     color: '#ef4444' }
+];
+
+// Auto-cycle palette for inline-added Page_Status values (when user adds via "+ New status…")
+const PAGE_STATUS_AUTO_COLORS = ['#0891b2', '#84cc16', '#ec4899', '#8b5cf6', '#f97316', '#06b6d4', '#65a30d'];
+
+function nextPageStatusColor() {
+  const lib = state.pageStatusLibrary || [];
+  return PAGE_STATUS_AUTO_COLORS[lib.length % PAGE_STATUS_AUTO_COLORS.length];
+}
+
+const SUGGESTED_KKE_COL = 'Suggested_KKE';
+const SUGGESTED_KKE_SOURCES_COL = 'Suggested_KKE_Sources';
+const ASSESSMENT_RESULT_COL = '_AssessmentResult';
+
+/** Default source weights — higher = preferred when sources disagree. */
+function defaultSourceWeights() {
+  return { ga: 1.0, rubric: 1.0 };
+}
+
+function suggestedKkeConfig() {
+  const ps = state.projectSettings || {};
+  if (!ps.suggestedKkeConfig) ps.suggestedKkeConfig = { weights: defaultSourceWeights(), computedAt: null };
+  if (!ps.suggestedKkeConfig.weights) ps.suggestedKkeConfig.weights = defaultSourceWeights();
+  return ps.suggestedKkeConfig;
+}
+
+/** Inspect a single row and produce a per-source breakdown.
+ *  Returns: [{source: 'GA'|'Rubric', rec: 'Keep'|'Kill'|..., detail: extra info}]
+ */
+function gatherRowSources(row) {
+  const out = [];
+  // GA source
+  const gaRec = String(row[GA_KKE_COL] || '').trim();
+  if (gaRec) {
+    const score = String(row[GA_SCORE_COL] || '').trim();
+    out.push({ source: 'GA', rec: gaRec, detail: score ? `score ${score}` : null });
+  }
+  // Rubric source — the rubric pipeline stores its outcome in _AssessmentResult
+  const rubricRec = String(row[ASSESSMENT_RESULT_COL] || '').trim();
+  if (rubricRec) {
+    out.push({ source: 'Rubric', rec: rubricRec, detail: null });
+  }
+  return out;
+}
+
+/** Pick the winning recommendation given sources + weights.
+ *  Strategy: weighted vote. Each source's rec gets its weight added to that rec's tally.
+ *  Tallies tied → first source wins (deterministic).
+ *  Returns: { winningSource, winningRec, disagreement: bool }
+ */
+function pickWinner(sources, weights) {
+  if (sources.length === 0) return null;
+  if (sources.length === 1) return { winningSource: sources[0].source, winningRec: sources[0].rec, disagreement: false };
+
+  // Weighted tally per rec
+  const tally = {}; // rec → total weight
+  for (const s of sources) {
+    const w = weights[s.source.toLowerCase()] || 1.0;
+    tally[s.rec] = (tally[s.rec] || 0) + w;
+  }
+  // Find the rec with max tally
+  let best = null;
+  let bestVal = -Infinity;
+  for (const rec in tally) {
+    if (tally[rec] > bestVal) { bestVal = tally[rec]; best = rec; }
+  }
+  // Find the source that produced the winning rec
+  const winningSource = sources.find(s => s.rec === best)?.source || sources[0].source;
+  // Disagreement: more than one distinct rec present
+  const distinctRecs = new Set(sources.map(s => s.rec));
+  return { winningSource, winningRec: best, disagreement: distinctRecs.size > 1 };
+}
+
+/** Ensure the two computed columns exist, inserted near the GA columns if possible. */
+function ensureSuggestedKkeColumns() {
+  const headers = state.headers;
+  const addCol = (name, afterIdx) => {
+    if (headers.includes(name)) return;
+    const idx = Math.min(Math.max(afterIdx, 0), headers.length - 1) + 1;
+    headers.splice(idx, 0, name);
+    state.editedRows.forEach(r => { if (!(name in r)) r[name] = ''; });
+    state.rows.forEach(r => { if (!(name in r)) r[name] = ''; });
+  };
+  // Insert after GA_KKE / GA_Score if present, otherwise near KKE_Recommendation
+  let anchor = headers.indexOf(GA_SCORE_COL);
+  if (anchor < 0) anchor = headers.indexOf(GA_KKE_COL);
+  if (anchor < 0) anchor = headers.indexOf(kkeCol());
+  if (anchor < 0) anchor = headers.length - 1;
+  addCol(SUGGESTED_KKE_COL, anchor);
+  addCol(SUGGESTED_KKE_SOURCES_COL, headers.indexOf(SUGGESTED_KKE_COL));
+}
+
+/** Recompute Suggested_KKE + Suggested_KKE_Sources for every row.
+ *  Reads from GA_KKE_Recommendation, GA_Score, and _AssessmentResult.
+ *  Does not invoke GA or Rubric computes — those are run separately.
+ *  Returns a summary: { computed, blank, disagreements, total }.
+ */
+function computeSuggestedKke() {
+  ensureSuggestedKkeColumns();
+  const cfg = suggestedKkeConfig();
+  const weights = cfg.weights || defaultSourceWeights();
+
+  let computed = 0, blank = 0, disagreements = 0;
+  for (let i = 0; i < state.editedRows.length; i++) {
+    const row = state.editedRows[i];
+    const sources = gatherRowSources(row);
+    if (sources.length === 0) {
+      row[SUGGESTED_KKE_COL] = '';
+      row[SUGGESTED_KKE_SOURCES_COL] = '';
+      blank++;
+      continue;
+    }
+    const winner = pickWinner(sources, weights);
+    row[SUGGESTED_KKE_COL] = winner.winningRec;
+    row[SUGGESTED_KKE_SOURCES_COL] = JSON.stringify({
+      winner: winner.winningSource,
+      sources,
+      disagreement: winner.disagreement
+    });
+    computed++;
+    if (winner.disagreement) disagreements++;
+  }
+
+  cfg.computedAt = new Date().toISOString();
+  cfg.lastRun = { computed, blank, disagreements, total: state.editedRows.length };
+  state.projectSettings.suggestedKkeConfig = cfg;
+  setDirty(true);
+  applyFilter();
+  if (state.selectedIndex !== null) {
+    updateSuggestedKkeBadge(state.editedRows[state.selectedIndex]);
+  }
+  return cfg.lastRun;
+}
+
+/** Render the Suggested_KKE badge in the Decide cluster.
+ *  Display: "GA: Kill" or "Rubric: Evolve" with ⚠ when sources disagree.
+ *  Click → popover showing per-source breakdown.
+ */
+function updateSuggestedKkeBadge(row) {
+  const badge = $('suggested-kke-badge');
+  if (!badge) return;
+  if (!row) { badge.classList.add('hidden'); return; }
+
+  const winningRec = String(row[SUGGESTED_KKE_COL] || '').trim();
+  if (!winningRec) {
+    // Fall back to legacy GA badge for backward compat if Suggested isn't populated yet
+    badge.classList.add('hidden');
+    return;
+  }
+
+  let payload = null;
+  try { payload = JSON.parse(row[SUGGESTED_KKE_SOURCES_COL] || ''); } catch (_) { /* ignore */ }
+  const winningSource = payload?.winner || 'Suggest';
+  const disagreement = !!payload?.disagreement;
+
+  badge.classList.remove('hidden');
+  badge.classList.remove('ga-kke-keep', 'ga-kke-kill', 'ga-kke-evolve');
+  const cls = winningRec.toLowerCase();
+  if (['keep', 'kill', 'evolve'].includes(cls)) badge.classList.add('ga-kke-' + cls);
+  badge.classList.toggle('suggested-kke-disagree', disagreement);
+
+  // Display text: source prefix + recommendation; ⚠ glyph for disagreement
+  const warn = disagreement ? '⚠ ' : '';
+  badge.textContent = `${warn}${winningSource}: ${winningRec}`;
+
+  // Build tooltip with all sources
+  const sources = payload?.sources || [];
+  const lines = sources.map(s => `  ${s.source}: ${s.rec}${s.detail ? ' (' + s.detail + ')' : ''}`).join('\n');
+  badge.title = (disagreement ? '⚠ Sources disagree\n' : '') + 'Suggested KKE breakdown:\n' + lines;
+
+  // Click to show popover (simple: alert-style modal)
+  badge.onclick = () => showSuggestedKkePopover(badge, payload);
+}
+
+/** Settings dialog for tuning per-source weights used by computeSuggestedKke. */
+function openSuggestedKkeSettings() {
+  document.getElementById('_skp-settings-overlay')?.remove();
+  const cfg = suggestedKkeConfig();
+  const weights = { ...defaultSourceWeights(), ...(cfg.weights || {}) };
+
+  const overlay = document.createElement('div');
+  overlay.id = '_skp-settings-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.style.zIndex = '900';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-dialog skp-settings-modal';
+  modal.addEventListener('click', e => e.stopPropagation());
+  modal.style.width = 'min(680px, 62vw)';
+  modal.style.maxHeight = '80vh';
+
+  const lastRun = cfg.lastRun
+    ? `<div class="skp-foot">Last run: ${cfg.lastRun.computed} computed · ${cfg.lastRun.blank} blank · ${cfg.lastRun.disagreements} disagreement${cfg.lastRun.disagreements !== 1 ? 's' : ''} of ${cfg.lastRun.total} total</div>`
+    : '';
+
+  modal.innerHTML = `
+    <div class="modal-header">
+      <h2 style="margin:0;">Suggested KKE Settings</h2>
+      <button class="modal-close" id="_skp-close" title="Close">×</button>
+    </div>
+    <div class="modal-body" style="padding:16px;">
+      <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px;">
+        Source weights tune which signal wins when sources disagree. Higher weight = preferred. Equal weights = first-source-wins tiebreak.
+      </p>
+      <div class="skp-row" style="padding:8px 0;">
+        <span class="skp-src" style="min-width:64px;">GA</span>
+        <input type="number" id="_skp-weight-ga" min="0" max="5" step="0.1" value="${weights.ga}" style="width:80px;height:26px;padding:0 6px;border:1px solid var(--border);border-radius:4px;" />
+        <span class="skp-detail">Analytics-driven (sessions, engagement, dwell, depth)</span>
+      </div>
+      <div class="skp-row" style="padding:8px 0;">
+        <span class="skp-src" style="min-width:64px;">Rubric</span>
+        <input type="number" id="_skp-weight-rubric" min="0" max="5" step="0.1" value="${weights.rubric}" style="width:80px;height:26px;padding:0 6px;border:1px solid var(--border);border-radius:4px;" />
+        <span class="skp-detail">Field-rule + LLM assessment</span>
+      </div>
+      ${lastRun}
+    </div>
+    <div class="modal-footer" style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);">
+      <button id="_skp-recompute" class="btn btn-sm btn-ghost">Save &amp; Recompute</button>
+      <span style="flex:1;"></span>
+      <button id="_skp-cancel" class="btn btn-sm btn-ghost">Cancel</button>
+      <button id="_skp-save" class="btn btn-sm btn-primary">Save</button>
+    </div>
+  `;
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  makeModalDraggable(modal);
+
+  const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  modal.querySelector('#_skp-close').addEventListener('click', close);
+  modal.querySelector('#_skp-cancel').addEventListener('click', close);
+
+  function commit() {
+    const ga = parseFloat(modal.querySelector('#_skp-weight-ga').value);
+    const rubric = parseFloat(modal.querySelector('#_skp-weight-rubric').value);
+    cfg.weights = {
+      ga: isFinite(ga) && ga >= 0 ? ga : 1.0,
+      rubric: isFinite(rubric) && rubric >= 0 ? rubric : 1.0
+    };
+    state.projectSettings.suggestedKkeConfig = cfg;
+    setDirty(true);
+  }
+  modal.querySelector('#_skp-save').addEventListener('click', () => {
+    commit();
+    showToast('Suggested KKE weights saved', 'success');
+    close();
+  });
+  modal.querySelector('#_skp-recompute').addEventListener('click', () => {
+    commit();
+    close();
+    const result = computeSuggestedKke();
+    if (result) {
+      const dis = result.disagreements > 0 ? ` · ${result.disagreements} disagreement${result.disagreements !== 1 ? 's' : ''}` : '';
+      showToast(`Suggested_KKE recomputed: ${result.computed} · ${result.blank} blank${dis}`, 'success');
+    }
+  });
+}
+
+function showSuggestedKkePopover(anchor, payload) {
+  document.getElementById('_suggested-kke-pop')?.remove();
+  if (!payload) return;
+  const pop = document.createElement('div');
+  pop.id = '_suggested-kke-pop';
+  pop.className = 'suggested-kke-popover';
+  const rect = anchor.getBoundingClientRect();
+  pop.style.top = (rect.bottom + 6) + 'px';
+  pop.style.left = rect.left + 'px';
+
+  const dis = payload.disagreement
+    ? `<div class="skp-disagree">⚠ Sources disagree on this row</div>`
+    : '';
+  const rows = (payload.sources || []).map(s => {
+    const isWinner = s.source === payload.winner;
+    return `<div class="skp-row ${isWinner ? 'skp-winner' : ''}">
+      <span class="skp-src">${escapeHtml(s.source)}</span>
+      <span class="skp-rec rec-${s.rec.toLowerCase()}">${escapeHtml(s.rec)}</span>
+      <span class="skp-detail">${escapeHtml(s.detail || '')}</span>
+    </div>`;
+  }).join('');
+  pop.innerHTML = `
+    <div class="skp-head">Suggested KKE — source breakdown</div>
+    ${dis}
+    ${rows}
+    <div class="skp-foot">Winner: <strong>${escapeHtml(payload.winner)}</strong></div>
+  `;
+  document.body.appendChild(pop);
+  // Dismiss on outside click / Esc
+  const dismiss = (e) => {
+    if (e.type === 'keydown' && e.key !== 'Escape') return;
+    if (e.type === 'click' && pop.contains(e.target)) return;
+    pop.remove();
+    document.removeEventListener('click', dismiss, true);
+    document.removeEventListener('keydown', dismiss, true);
+  };
+  setTimeout(() => {
+    document.addEventListener('click', dismiss, true);
+    document.addEventListener('keydown', dismiss, true);
+  }, 0);
+}
+
+// ─── Phase 1, Chunk B: ContentTypeRegistry banner + editor ──────────────────
+
+function maybeOfferContentTypeRegistrySeed() {
+  const existing = document.getElementById('ctr-seed-banner');
+  if (existing) existing.remove();
+  const ps = state.projectSettings || {};
+  // Already populated, or user opted out
+  if (Array.isArray(ps.contentTypeRegistry) && ps.contentTypeRegistry.length > 0) return;
+  if (ps.contentTypeRegistrySeedDismissed) return;
+
+  const banner = document.createElement('div');
+  banner.id = 'ctr-seed-banner';
+  banner.className = 'ga-kke-banner'; // reuse banner styling
+  banner.innerHTML = `
+    <div style="flex:1;">
+      <div style="font-weight:600;margin-bottom:2px;">Content Type Registry is empty</div>
+      <div style="color:var(--text-muted);font-size:12px;">Seed it with ~20 common content types and their default classifications? You can edit afterward.</div>
+    </div>
+    <button id="ctr-seed-yes" class="btn btn-sm btn-primary">Seed defaults</button>
+    <button id="ctr-seed-edit" class="btn btn-sm">Open editor…</button>
+    <button id="ctr-seed-dismiss" class="btn btn-sm btn-ghost">Don't ask again</button>
+  `;
+  document.body.appendChild(banner);
+
+  banner.querySelector('#ctr-seed-yes').addEventListener('click', async () => {
+    const defaults = await window.electronAPI.getDefaultContentTypeRegistry();
+    state.projectSettings.contentTypeRegistry = defaults;
+    setDirty(true);
+    banner.remove();
+    showToast(`Seeded ${defaults.length} content types — save to commit`, 'success');
+  });
+  banner.querySelector('#ctr-seed-edit').addEventListener('click', () => {
+    banner.remove();
+    openContentTypeRegistryEditor();
+  });
+  banner.querySelector('#ctr-seed-dismiss').addEventListener('click', () => {
+    state.projectSettings.contentTypeRegistrySeedDismissed = true;
+    setDirty(true);
+    banner.remove();
+  });
+}
+
+function openContentTypeRegistryEditor() {
+  // Remove any existing instance
+  document.getElementById('_ctr-modal')?.remove();
+  document.getElementById('_ctr-overlay')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = '_ctr-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.style.zIndex = '900'; // above any banner / other UI
+
+  const modal = document.createElement('div');
+  modal.id = '_ctr-modal';
+  modal.className = 'modal-dialog ctr-modal';
+  // Stop overlay click-to-close when clicking inside the modal
+  modal.addEventListener('click', (e) => e.stopPropagation());
+
+  // Working copy. Each row carries a non-persisted `_origin`:
+  //   'registry'  — a real saved crosswalk entry (always kept on save)
+  //   'inuse'     — a content type present in the data but with no crosswalk yet
+  //   'picklist'  — a global dropdown value not used in this project (toggle only)
+  // 'inuse'/'picklist' rows are surfaced so gaps are visible & mappable, but are
+  // only persisted if the user actually maps them (see the save handler).
+  const ps = state.projectSettings || {};
+  const working = (Array.isArray(ps.contentTypeRegistry) ? ps.contentTypeRegistry : [])
+    .map(e => ({ ...e, _origin: 'registry' }));
+
+  // Usage from the current data — drives the "in use" badges and which stubs show.
+  const usageCount = {};
+  (state.editedRows || []).forEach(r => {
+    const t = String(r['Page_Type'] || '').trim();
+    if (t) usageCount[t] = (usageCount[t] || 0) + 1;
+  });
+
+  let showPickList = false; // toggled by "Show all pick-list types"
+
+  const _nameInWorking = (name) => {
+    const n = String(name).trim().toLowerCase();
+    return working.some(w => String(w.contentType || '').trim().toLowerCase() === n);
+  };
+  // Append stub rows for names that aren't already a row and aren't covered by an
+  // existing crosswalk entry (split-aware, mirroring lookupContentTypeRegistry).
+  const _addStubs = (names, origin) => {
+    names.forEach(nm => {
+      const name = String(nm || '').trim();
+      if (!name || _nameInWorking(name) || lookupContentTypeRegistry(name)) return;
+      working.push({ contentType: name, defaultContentNature: '', targetContentType: '', targetSpec: '', defaultMigrationTrack: '', notes: '', _origin: origin });
+    });
+  };
+  _addStubs(Object.keys(usageCount), 'inuse');
+
+  const NATURE_OPTIONS = ['', 'Page', 'Content Object', 'Generated'];
+  // Display labels (values stay as stored — "Content Object" reads as "Fragment").
+  const NATURE_LABEL = { '': '—', 'Page': 'Page', 'Content Object': 'Fragment (embeddable)', 'Generated': 'Generated' };
+  const TRACK_OPTIONS  = ['', 'Scripted', 'Migrate Records', 'Configure', 'Manual Rebuild', 'Merge', 'Kill/Redirect'];
+
+  const selectHtml = (opts, val, labels) => opts.map(o =>
+    `<option value="${escapeHtml(o)}"${o === val ? ' selected' : ''}>${escapeHtml((labels && labels[o] !== undefined) ? labels[o] : (o || '—'))}</option>`
+  ).join('');
+
+  // Target Spec options come from the Target Spec Library (state.patternLibrary).
+  const specEntries = (state.patternLibrary || []).filter(s => String(s.patternName || '').trim());
+  const specSelectHtml = (val) => '<option value="">—</option>' + specEntries.map(s => {
+    const k = (s.kind || 'Page Template') === 'Content Model' ? 'Model' : 'Page';
+    return `<option value="${escapeHtml(s.patternName)}"${s.patternName === val ? ' selected' : ''}>${escapeHtml(s.patternName)} (${k})</option>`;
+  }).join('');
+
+  function buildBody() {
+    const rows = working.map((e, i) => {
+      const origin = e._origin || 'registry';
+      const cnt = usageCount[String(e.contentType || '').trim()] || 0;
+      let tag = '';
+      if (origin === 'inuse') {
+        tag = `<div class="ctr-rowtag" style="font-size:10px;color:#991b1b;margin-bottom:3px;">● in use${cnt ? ` · ${cnt} page${cnt !== 1 ? 's' : ''}` : ''} · no crosswalk</div>`;
+      } else if (origin === 'picklist') {
+        tag = `<div class="ctr-rowtag" style="font-size:10px;color:var(--text-muted);margin-bottom:3px;">○ pick-list type (unused here)</div>`;
+      } else if (cnt) {
+        tag = `<div class="ctr-rowtag" style="font-size:10px;color:var(--text-muted);margin-bottom:3px;">${cnt} page${cnt !== 1 ? 's' : ''}</div>`;
+      }
+      return `
+      <tr data-idx="${i}">
+        <td>${tag}<input type="text" class="ctr-ct" value="${escapeHtml(e.contentType || '')}" placeholder="Current content type" /></td>
+        <td><select class="ctr-nature">${selectHtml(NATURE_OPTIONS, e.defaultContentNature || '', NATURE_LABEL)}</select></td>
+        <td><input type="text" class="ctr-target" value="${escapeHtml(e.targetContentType || '')}" placeholder="New-CMS content type" /></td>
+        <td><select class="ctr-spec">${specSelectHtml(e.targetSpec || '')}</select></td>
+        <td><select class="ctr-track">${selectHtml(TRACK_OPTIONS, e.defaultMigrationTrack || '')}</select></td>
+        <td><input type="text" class="ctr-notes" value="${escapeHtml(e.notes || '')}" placeholder="Optional notes" /></td>
+        <td><button class="ctr-del" title="Remove">×</button></td>
+      </tr>
+    `;
+    }).join('');
+    return `
+      <div class="modal-header">
+        <h2 style="margin:0;">Content Type Registry</h2>
+        <button class="modal-close" id="_ctr-close" title="Close">×</button>
+      </div>
+      <div class="ctr-modal-body">
+        <p style="color:var(--text-muted);font-size:12px;margin:0 0 8px;flex-shrink:0;">
+          The crosswalk from each <strong>current Content Type</strong> to how it <strong>renders</strong>, its <strong>target (new-CMS) content type</strong>, and its migration track.
+          Defaults flow into a row only when the row's field is blank — never overwriting human-set values. Matching is case-insensitive; compound names like “Article / blog post” also match an <em>Article</em> or <em>Blog Post</em> entry. Content types <strong>in use</strong> without a crosswalk are listed below so you can map them.
+        </p>
+        <div style="display:flex;gap:8px;margin-bottom:8px;flex-shrink:0;align-items:center;">
+          <button id="_ctr-add" class="btn btn-sm btn-primary">+ Add row</button>
+          <button id="_ctr-seed" class="btn btn-sm">Seed with defaults</button>
+          <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:5px;margin-left:auto;cursor:pointer;" title="Also list the global Content Type dropdown values that aren't used in this project">
+            <input type="checkbox" id="_ctr-show-picklist"${showPickList ? ' checked' : ''}> Show all pick-list types
+          </label>
+        </div>
+        <div class="ctr-table-wrap">
+          <table class="ctr-table">
+            <thead>
+              <tr>
+                <th style="width:17%;">Content Type <span style="font-weight:400;color:var(--text-muted);">(current)</span></th>
+                <th style="width:13%;">Renders as</th>
+                <th style="width:18%;">Target Content Type <span style="font-weight:400;color:var(--text-muted);">(new CMS)</span></th>
+                <th style="width:16%;">→ Target Spec</th>
+                <th style="width:14%;">Migration Track</th>
+                <th>Notes</th>
+                <th style="width:36px;"></th>
+              </tr>
+            </thead>
+            <tbody id="_ctr-tbody">${rows || ''}</tbody>
+          </table>
+          ${working.length === 0 ? '<p style="color:var(--text-muted);text-align:center;padding:24px;">No entries yet — click <strong>+ Add row</strong> or <strong>Seed with defaults</strong>.</p>' : ''}
+        </div>
+      </div>
+      <div class="modal-footer">
+        <span style="flex:1;color:var(--text-muted);font-size:12px;" id="_ctr-stats">${(() => {
+          const named = working.filter(e => String(e.contentType || '').trim());
+          const mapped = named.filter(e => String(e.targetContentType || '').trim() || String(e.targetSpec || '').trim()).length;
+          return `${named.length} type${named.length !== 1 ? 's' : ''} · ${mapped} mapped · ${named.length - mapped} need crosswalk`;
+        })()}</span>
+        <button id="_ctr-cancel" class="btn btn-sm btn-ghost">Cancel</button>
+        <button id="_ctr-save" class="btn btn-sm btn-primary">Save</button>
+      </div>
+    `;
+  }
+
+  modal.innerHTML = buildBody();
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  function rebuild() {
+    modal.innerHTML = buildBody();
+    wireRows();
+  }
+
+  function syncFromDom() {
+    const tbody = modal.querySelector('#_ctr-tbody');
+    if (!tbody) return;
+    const trs = [...tbody.querySelectorAll('tr')];
+    trs.forEach(tr => {
+      const idx = +tr.dataset.idx;
+      if (Number.isNaN(idx)) return;
+      working[idx] = {
+        ...working[idx], // preserve fields with no DOM input yet (e.g. targetSpec, added in 1b)
+        contentType: tr.querySelector('.ctr-ct').value,
+        defaultContentNature: tr.querySelector('.ctr-nature').value,
+        targetContentType: tr.querySelector('.ctr-target').value.trim(),
+        targetSpec: tr.querySelector('.ctr-spec')?.value || '',
+        defaultMigrationTrack: tr.querySelector('.ctr-track').value,
+        notes: tr.querySelector('.ctr-notes').value
+      };
+    });
+  }
+
+  function wireRows() {
+    modal.querySelector('#_ctr-close')?.addEventListener('click', close);
+    modal.querySelector('#_ctr-cancel')?.addEventListener('click', close);
+    modal.querySelector('#_ctr-save')?.addEventListener('click', () => {
+      syncFromDom();
+      // Keep: real registry rows (named), plus any surfaced in-use/pick-list stub
+      // the user actually mapped. Untouched stubs are dropped so just browsing
+      // (or toggling the pick-list on) never bloats the registry. Strip _origin.
+      const isMapped = e => ['defaultContentNature', 'targetContentType', 'targetSpec', 'defaultMigrationTrack', 'notes']
+        .some(k => String(e[k] || '').trim());
+      const cleaned = working
+        .filter(e => String(e.contentType || '').trim() && (e._origin === 'registry' || isMapped(e)))
+        .map(({ _origin, ...rest }) => rest);
+      state.projectSettings.contentTypeRegistry = cleaned;
+      setDirty(true);
+      showToast(`Saved ${cleaned.length} content type${cleaned.length !== 1 ? 's' : ''}`, 'success');
+      close();
+    });
+    modal.querySelector('#_ctr-add')?.addEventListener('click', () => {
+      syncFromDom();
+      working.push({ contentType: '', defaultContentNature: '', defaultMigrationTrack: '', notes: '', _origin: 'registry' });
+      rebuild();
+      // Focus the new row's content type input
+      const newIdx = working.length - 1;
+      modal.querySelector(`tr[data-idx="${newIdx}"] .ctr-ct`)?.focus();
+    });
+    modal.querySelector('#_ctr-seed')?.addEventListener('click', async () => {
+      const defaults = await window.electronAPI.getDefaultContentTypeRegistry();
+      syncFromDom();
+      const existingNames = new Set(working.map(e => String(e.contentType || '').trim().toLowerCase()).filter(Boolean));
+      let added = 0;
+      defaults.forEach(d => {
+        if (!existingNames.has(d.contentType.toLowerCase())) {
+          working.push({ ...d, _origin: 'registry' });
+          added++;
+        }
+      });
+      rebuild();
+      showToast(added > 0 ? `Added ${added} default${added !== 1 ? 's' : ''} (existing entries preserved)` : 'All defaults already present', 'success');
+    });
+    modal.querySelector('#_ctr-show-picklist')?.addEventListener('change', (e) => {
+      syncFromDom();
+      showPickList = e.target.checked;
+      // Drop existing pick-list stubs; re-add the uncovered ones when toggled on.
+      for (let i = working.length - 1; i >= 0; i--) {
+        if (working[i]._origin === 'picklist') working.splice(i, 1);
+      }
+      if (showPickList) _addStubs(state.pageTypeLibrary || [], 'picklist');
+      rebuild();
+    });
+    modal.querySelectorAll('.ctr-del').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const tr = btn.closest('tr');
+        const idx = +tr.dataset.idx;
+        syncFromDom();
+        working.splice(idx, 1);
+        rebuild();
+      });
+    });
+  }
+
+  function close() {
+    overlay.remove();
+    modal.remove();
+    document.removeEventListener('keydown', onKey);
+  }
+
+  function onKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+  }
+  document.addEventListener('keydown', onKey);
+  overlay.addEventListener('click', (e) => {
+    // Only close when the overlay backdrop itself is clicked (not bubbling from modal)
+    if (e.target === overlay) close();
+  });
+
+  wireRows();
+  makeModalDraggable(modal);
+  // Focus first input
+  modal.querySelector('.ctr-ct')?.focus();
+}
+
+// ─── Phase 2, Chunk β: PatternLibrary banner + editor ────────────────────────
+
+function maybeOfferPatternLibrarySeed() {
+  const existing = document.getElementById('pl-seed-banner');
+  if (existing) existing.remove();
+  const ps = state.projectSettings || {};
+  if (Array.isArray(ps.patternLibrary) && ps.patternLibrary.length > 0) return;
+  if (ps.patternLibrarySeedDismissed) return;
+  // Don't show on every file open — only show when a nav tree exists (otherwise patterns are premature)
+  if (!state.navNodes || state.navNodes.length === 0) return;
+
+  const banner = document.createElement('div');
+  banner.id = 'pl-seed-banner';
+  banner.className = 'ga-kke-banner';
+  banner.style.maxWidth = '620px';
+  banner.style.flexWrap = 'wrap';
+  banner.innerHTML = `
+    <div style="flex:1;min-width:240px;">
+      <div style="font-weight:600;margin-bottom:2px;">Pattern Library is empty</div>
+      <div style="color:var(--text-muted);font-size:12px;">Seed with ~12 common page patterns (Hub Landing, Article, Faculty Profile, Form Page, etc.). Each has a Build Guidance and Writer Brief template that drops in when you assign it to a nav node.</div>
+    </div>
+    <button id="pl-seed-yes" class="btn btn-sm btn-primary" style="white-space:nowrap;">Seed defaults</button>
+    <button id="pl-seed-edit" class="btn btn-sm" style="white-space:nowrap;">Open editor…</button>
+    <button id="pl-seed-dismiss" class="btn btn-sm btn-ghost" style="white-space:nowrap;">Don't ask again</button>
+  `;
+  document.body.appendChild(banner);
+
+  banner.querySelector('#pl-seed-yes').addEventListener('click', async () => {
+    const defaults = await window.electronAPI.getDefaultPatternLibrary();
+    state.patternLibrary = defaults;
+    state.projectSettings.patternLibrary = state.patternLibrary;
+    setDirty(true);
+    banner.remove();
+    showToast(`Seeded ${defaults.length} templates — save to commit`, 'success');
+  });
+  banner.querySelector('#pl-seed-edit').addEventListener('click', () => {
+    banner.remove();
+    openPatternLibraryEditor();
+  });
+  banner.querySelector('#pl-seed-dismiss').addEventListener('click', () => {
+    state.projectSettings.patternLibrarySeedDismissed = true;
+    setDirty(true);
+    banner.remove();
+  });
+}
+
+function openPatternLibraryEditor() {
+  document.getElementById('_pl-modal')?.remove();
+  document.getElementById('_pl-overlay')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = '_pl-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.style.zIndex = '900';
+
+  const modal = document.createElement('div');
+  modal.id = '_pl-modal';
+  modal.className = 'modal-dialog pl-modal';
+  modal.addEventListener('click', e => e.stopPropagation());
+
+  const working = Array.isArray(state.patternLibrary)
+    ? state.patternLibrary.map(e => ({ ...e }))
+    : [];
+
+  const TRACK_OPTIONS = ['', 'Scripted', 'Migrate Records', 'Configure', 'Manual Rebuild', 'Merge', 'Kill/Redirect'];
+  const trackOpts = (val) => TRACK_OPTIONS.map(o =>
+    `<option value="${o}"${o === val ? ' selected' : ''}>${o || '—'}</option>`
+  ).join('');
+  const KIND_OPTIONS = ['Page Template', 'Content Model'];
+  const kindOpts = (val) => KIND_OPTIONS.map(o =>
+    `<option value="${o}"${o === (val || 'Page Template') ? ' selected' : ''}>${o}</option>`
+  ).join('');
+
+  let _selectedIdx = working.length > 0 ? 0 : -1;
+
+  function buildBody() {
+    const listItems = working.map((e, i) => {
+      const kindShort = (e.kind || 'Page Template') === 'Content Model' ? 'Model' : 'Page';
+      return `
+      <li data-idx="${i}" class="pl-list-item${i === _selectedIdx ? ' selected' : ''}">
+        <span class="pl-list-name">${escapeHtml(e.patternName || '(unnamed)')} <span class="pl-kind-badge">${kindShort}</span></span>
+        <span class="pl-list-desc">${escapeHtml(e.description || '')}</span>
+      </li>`;
+    }).join('');
+
+    const detail = _selectedIdx >= 0 && working[_selectedIdx]
+      ? renderDetail(working[_selectedIdx], _selectedIdx)
+      : '<div class="pl-empty-detail">Select a template to view or edit · or click + Add template</div>';
+
+    return `
+      <div class="modal-header">
+        <h2 style="margin:0;">Target Spec Library</h2>
+        <button class="modal-close" id="_pl-close" title="Close">×</button>
+      </div>
+      <div class="pl-body">
+        <div class="pl-list-pane">
+          <div class="pl-list-toolbar">
+            <button id="_pl-add" class="btn btn-sm btn-primary">+ Add spec</button>
+            <button id="_pl-seed" class="btn btn-sm" title="Add curated page-template defaults (skips existing names)">Seed defaults</button>
+          </div>
+          <ul class="pl-list">${listItems || '<li class="pl-list-empty">No specs yet. Click <strong>+ Add spec</strong> or <strong>Seed defaults</strong>.</li>'}</ul>
+        </div>
+        <div class="pl-detail-pane" id="_pl-detail">${detail}</div>
+      </div>
+      <div class="modal-footer">
+        <span style="flex:1;color:var(--text-muted);font-size:12px;">${working.length} spec${working.length !== 1 ? 's' : ''}</span>
+        <button id="_pl-cancel" class="btn btn-sm btn-ghost">Cancel</button>
+        <button id="_pl-save" class="btn btn-sm btn-primary">Save</button>
+      </div>
+    `;
+  }
+
+  function renderDetail(e, idx) {
+    const isModel = (e.kind || 'Page Template') === 'Content Model';
+    return `
+      <div class="pl-detail" data-idx="${idx}">
+        <div class="pl-detail-row">
+          <label>Name</label>
+          <input type="text" id="_pl-d-name" value="${escapeHtml(e.patternName || '')}">
+        </div>
+        <div class="pl-detail-row">
+          <label>Kind <span class="pl-hint">A Page Template (full page layout) or a Content Model (embeddable fragment / data shape).</span></label>
+          <select id="_pl-d-kind">${kindOpts(e.kind)}</select>
+        </div>
+        <div class="pl-detail-row">
+          <label>Description</label>
+          <input type="text" id="_pl-d-desc" value="${escapeHtml(e.description || '')}" placeholder="One-line summary">
+        </div>
+        <div class="pl-detail-row">
+          <label>Default Migration Track</label>
+          <select id="_pl-d-track">${trackOpts(e.defaultMigrationTrack || '')}</select>
+        </div>
+        <div class="pl-detail-row pl-detail-row-block">
+          <label>Build Guidance default <span class="pl-hint">Markdown. Drops into a node's Build Guidance when this spec is assigned and the field is blank.</span></label>
+          <textarea id="_pl-d-build" rows="5">${escapeHtml(e.buildGuidanceDefault || '')}</textarea>
+        </div>
+        <div class="pl-detail-row pl-detail-row-block">
+          <label>Writer Brief default <span class="pl-hint">Markdown. Drops into a node's Writer Brief when this spec is assigned and the field is blank.</span></label>
+          <textarea id="_pl-d-write" rows="4">${escapeHtml(e.writerBriefDefault || '')}</textarea>
+        </div>
+        <div class="pl-detail-row pl-detail-row-block">
+          <label>Migration Mapping default <span class="pl-hint">Markdown. Source → target field map &amp; migration gotchas — for the engineer/staffer (applies even to scripted content).</span></label>
+          <textarea id="_pl-d-migmap" rows="4">${escapeHtml(e.migrationMappingDefault || '')}</textarea>
+        </div>
+        <div class="pl-detail-row pl-detail-row-block" id="_pl-d-fields-row" style="${isModel ? '' : 'display:none;'}">
+          <label>Field schema <span class="pl-hint">Content-model fields (one per line, e.g. <code>title — short text</code>). The build deliverable in place of a page layout.</span></label>
+          <textarea id="_pl-d-fields" rows="5">${escapeHtml(e.fields || '')}</textarea>
+        </div>
+        <div class="pl-detail-row pl-detail-row-block">
+          <label>Notes <span class="pl-hint">When to use this spec · edge cases. Internal to the team.</span></label>
+          <textarea id="_pl-d-notes" rows="2">${escapeHtml(e.notes || '')}</textarea>
+        </div>
+        <div class="pl-detail-row" style="justify-content:flex-end;">
+          <button id="_pl-d-delete" class="btn btn-sm btn-ghost" style="color:var(--kke-kill);">Delete spec</button>
+        </div>
+      </div>
+    `;
+  }
+
+  modal.innerHTML = buildBody();
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  makeModalDraggable(modal);
+
+  function syncFromDom() {
+    if (_selectedIdx < 0 || !working[_selectedIdx]) return;
+    const r = working[_selectedIdx];
+    const get = id => modal.querySelector(id);
+    if (get('#_pl-d-name'))  r.patternName = sanitizeText(get('#_pl-d-name').value).trim();
+    if (get('#_pl-d-kind'))  r.kind = get('#_pl-d-kind').value;
+    if (get('#_pl-d-desc'))  r.description = sanitizeText(get('#_pl-d-desc').value);
+    if (get('#_pl-d-track')) r.defaultMigrationTrack = get('#_pl-d-track').value;
+    if (get('#_pl-d-build')) r.buildGuidanceDefault = sanitizeText(get('#_pl-d-build').value);
+    if (get('#_pl-d-write')) r.writerBriefDefault = sanitizeText(get('#_pl-d-write').value);
+    if (get('#_pl-d-migmap')) r.migrationMappingDefault = sanitizeText(get('#_pl-d-migmap').value);
+    if (get('#_pl-d-fields')) r.fields = sanitizeText(get('#_pl-d-fields').value);
+    if (get('#_pl-d-notes')) r.notes = sanitizeText(get('#_pl-d-notes').value);
+  }
+
+  function rebuild() {
+    // NOTE: do NOT syncFromDom() here. Callers sync the *current* entry BEFORE
+    // changing _selectedIdx; syncing again here would read the old entry's form
+    // values into the new index, overwriting the clicked entry (the "everything
+    // turns into Article" + duplicate-entries bug).
+    modal.innerHTML = buildBody();
+    wire();
+  }
+
+  function wire() {
+    modal.querySelector('#_pl-close')?.addEventListener('click', close);
+    modal.querySelector('#_pl-cancel')?.addEventListener('click', close);
+    modal.querySelector('#_pl-save')?.addEventListener('click', () => {
+      syncFromDom();
+      const cleaned = working.filter(e => String(e.patternName || '').trim());
+      state.patternLibrary = cleaned;
+      state.projectSettings.patternLibrary = cleaned;
+      setDirty(true);
+      showToast(`Saved ${cleaned.length} spec${cleaned.length !== 1 ? 's' : ''}`, 'success');
+      close();
+    });
+    modal.querySelector('#_pl-add')?.addEventListener('click', () => {
+      syncFromDom();
+      working.push({ patternName: '', kind: 'Page Template', description: '', buildGuidanceDefault: '', writerBriefDefault: '', migrationMappingDefault: '', fields: '', defaultMigrationTrack: '', notes: '' });
+      _selectedIdx = working.length - 1;
+      rebuild();
+      modal.querySelector('#_pl-d-name')?.focus();
+    });
+    modal.querySelector('#_pl-seed')?.addEventListener('click', async () => {
+      const defaults = await window.electronAPI.getDefaultPatternLibrary();
+      syncFromDom();
+      const existing = new Set(working.map(e => String(e.patternName || '').trim().toLowerCase()).filter(Boolean));
+      let added = 0;
+      defaults.forEach(d => {
+        if (!existing.has(d.patternName.toLowerCase())) {
+          working.push({ ...d });
+          added++;
+        }
+      });
+      rebuild();
+      showToast(added > 0 ? `Added ${added} default template${added !== 1 ? 's' : ''}` : 'All defaults already present', 'success');
+    });
+    modal.querySelector('#_pl-d-delete')?.addEventListener('click', () => {
+      if (_selectedIdx < 0) return;
+      working.splice(_selectedIdx, 1);
+      _selectedIdx = Math.min(_selectedIdx, working.length - 1);
+      rebuild();
+    });
+    // List item selection
+    modal.querySelectorAll('.pl-list-item').forEach(li => {
+      li.addEventListener('click', () => {
+        syncFromDom();
+        _selectedIdx = +li.dataset.idx;
+        rebuild();
+      });
+    });
+    // Live-update list when the spec name changes
+    modal.querySelector('#_pl-d-name')?.addEventListener('input', () => {
+      const li = modal.querySelector(`.pl-list-item[data-idx="${_selectedIdx}"] .pl-list-name`);
+      if (li) {
+        const badge = (working[_selectedIdx]?.kind || 'Page Template') === 'Content Model' ? 'Model' : 'Page';
+        li.innerHTML = `${escapeHtml(modal.querySelector('#_pl-d-name').value || '(unnamed)')} <span class="pl-kind-badge">${badge}</span>`;
+      }
+    });
+    // Changing Kind toggles the Field-schema row and the list badge — re-render.
+    modal.querySelector('#_pl-d-kind')?.addEventListener('change', () => { syncFromDom(); rebuild(); });
+  }
+
+  function close() {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  }
+  function onKey(e) { if (e.key === 'Escape') close(); }
+  document.addEventListener('keydown', onKey);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+  wire();
+}
+
+// ─── Triage Non-200 Pages ─────────────────────────────────────────────────────
+
+function maybeOfferNon200Triage() {
+  if (state.projectSettings.non200TriageDismissed) return;
+  const scColName = state.headers.find(h => h.toLowerCase() === 'status code');
+  if (!scColName) return;
+  const unhandledCount = state.editedRows.filter(row => {
+    const sc = parseInt(row[scColName] || '', 10);
+    if (isNaN(sc) || sc === 200) return false;
+    const cat = statusCodeCategory(sc);
+    if (!cat) return false;
+    const kke = String(row[kkeCol()] || '').trim();
+    return !kke; // only unassigned rows
+  }).length;
+  if (unhandledCount === 0) return;
+  showToast(`${unhandledCount} non-200 page${unhandledCount !== 1 ? 's' : ''} need triage — use Project → Triage Non-200 Pages`, 'info');
+}
+
+function openNon200TriageDialog() {
+  if (!state.headers.length) { showToast('Open a file first', 'error'); return; }
+
+  const scColName = state.headers.find(h => h.toLowerCase() === 'status code');
+  if (!scColName) { showToast('No "Status Code" column found', 'error'); return; }
+
+  const redirectUrlColName = state.headers.find(h => h.toLowerCase() === 'redirect url');
+
+  // Group non-200 rows by status code
+  const groups = new Map(); // code → { rows: [{row, origIndex}], cat }
+  state.editedRows.forEach((row, origIndex) => {
+    const sc = parseInt(row[scColName] || '', 10);
+    if (isNaN(sc) || sc === 200) return;
+    const cat = statusCodeCategory(sc);
+    if (!cat) return;
+    if (!groups.has(sc)) groups.set(sc, { rows: [], cat });
+    groups.get(sc).rows.push({ row, origIndex });
+  });
+
+  if (groups.size === 0) {
+    showToast('No non-200 pages found', 'info');
+    return;
+  }
+
+  // Sort codes: 3xx, then 4xx, then 5xx, numerically within each group
+  const sortedCodes = [...groups.keys()].sort((a, b) => a - b);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.zIndex = '900';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-dialog non200-modal';
+  modal.style.cssText = 'width:560px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column;';
+
+  // Build action options HTML per category
+  function actionOptionsHtml(code) {
+    const cat = statusCodeCategory(code);
+    if (cat === '3xx') return `
+      <option value="kill-redirect">Kill + copy redirect URL</option>
+      <option value="kill">Kill</option>
+      <option value="exclude">Exclude</option>
+      <option value="skip">Skip (no change)</option>`;
+    if (code === 404) return `
+      <option value="kill-404">Kill (404 sentinel)</option>
+      <option value="kill">Kill</option>
+      <option value="exclude">Exclude</option>
+      <option value="skip">Skip (no change)</option>`;
+    if (cat === '4xx') return `
+      <option value="kill">Kill</option>
+      <option value="evolve">Evolve – flag for review</option>
+      <option value="exclude">Exclude</option>
+      <option value="skip">Skip (no change)</option>`;
+    // 5xx
+    return `
+      <option value="evolve">Evolve – flag for review</option>
+      <option value="kill">Kill</option>
+      <option value="exclude">Exclude</option>
+      <option value="skip">Skip (no change)</option>`;
+  }
+
+  // Group rows HTML by category
+  function buildGroupSection(catLabel, catCodes) {
+    if (catCodes.length === 0) return '';
+    const rows = catCodes.map(code => {
+      const g = groups.get(code);
+      const def = defaultTriageAction(code);
+      const label = STATUS_CODE_LABELS[code] || `HTTP ${code}`;
+      return `
+        <tr data-code="${code}">
+          <td style="padding:6px 8px;white-space:nowrap;">
+            <span class="row-sc-badge row-sc-${g.cat}">${code}</span>
+          </td>
+          <td style="padding:6px 8px;font-size:12px;color:var(--text-muted);">${escapeHtml(label)}</td>
+          <td style="padding:6px 8px;font-size:12px;">${g.rows.length}</td>
+          <td style="padding:6px 8px;">
+            <select class="non200-action-sel" data-code="${code}" style="font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg-surface);color:var(--text);">
+              ${actionOptionsHtml(code)}
+            </select>
+          </td>
+        </tr>`;
+    }).join('');
+    return `
+      <tr class="non200-group-header">
+        <td colspan="4" style="padding:8px 8px 4px;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;border-top:1px solid var(--border);">${escapeHtml(catLabel)}</td>
+      </tr>
+      ${rows}`;
+  }
+
+  const codes3xx = sortedCodes.filter(c => statusCodeCategory(c) === '3xx');
+  const codes4xx = sortedCodes.filter(c => statusCodeCategory(c) === '4xx');
+  const codes5xx = sortedCodes.filter(c => statusCodeCategory(c) === '5xx');
+
+  modal.innerHTML = `
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <div style="font-weight:600;font-size:14px;">Triage Non-200 Pages</div>
+      <button id="_non200-close" class="modal-close" title="Close">×</button>
+    </div>
+    <div style="padding:14px 16px;overflow-y:auto;flex:1 1 auto;">
+      <p style="margin:0 0 12px;font-size:13px;color:var(--text-muted);">
+        Choose a KKE action for each status code group. Pages already assigned a KKE value can be skipped.
+      </p>
+      <table style="width:100%;border-collapse:collapse;">
+        <thead>
+          <tr style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">
+            <th style="padding:4px 8px;text-align:left;font-weight:600;">Code</th>
+            <th style="padding:4px 8px;text-align:left;font-weight:600;">Meaning</th>
+            <th style="padding:4px 8px;text-align:left;font-weight:600;">Count</th>
+            <th style="padding:4px 8px;text-align:left;font-weight:600;">Action</th>
+          </tr>
+        </thead>
+        <tbody id="_non200-tbody">
+          ${buildGroupSection('3xx Redirects', codes3xx)}
+          ${buildGroupSection('4xx Client Errors', codes4xx)}
+          ${buildGroupSection('5xx Server Errors', codes5xx)}
+        </tbody>
+      </table>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;cursor:pointer;">
+        <input type="checkbox" id="_non200-skip-assigned" checked>
+        Skip pages already assigned a KKE value
+      </label>
+    </div>
+    <div style="padding:10px 16px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;gap:8px;">
+      <div style="display:flex;align-items:center;gap:12px;min-width:0;">
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-muted);cursor:pointer;white-space:nowrap;">
+          <input type="checkbox" id="_non200-dismiss" ${state.projectSettings.non200TriageDismissed ? 'checked' : ''}>
+          Don't remind me about this file
+        </label>
+        <span id="_non200-affected-count" style="font-size:12px;color:var(--text-muted);"></span>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button id="_non200-cancel" class="btn btn-sm btn-ghost">Cancel</button>
+        <button id="_non200-apply" class="btn btn-sm btn-primary">Apply Triage</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  document.body.appendChild(modal);
+  registerModalDismiss(overlay, modal, () => close());
+
+  // Set default selections
+  modal.querySelectorAll('.non200-action-sel').forEach(sel => {
+    const code = parseInt(sel.dataset.code, 10);
+    const def = defaultTriageAction(code);
+    sel.value = def;
+  });
+
+  function getActions() {
+    const actions = new Map();
+    modal.querySelectorAll('.non200-action-sel').forEach(sel => {
+      actions.set(parseInt(sel.dataset.code, 10), sel.value);
+    });
+    return actions;
+  }
+
+  function updateAffectedCount() {
+    const skipAssigned = modal.querySelector('#_non200-skip-assigned').checked;
+    const actions = getActions();
+    let count = 0;
+    groups.forEach((g, code) => {
+      const action = actions.get(code) || 'skip';
+      if (action === 'skip') return;
+      g.rows.forEach(({ row }) => {
+        if (skipAssigned && String(row[kkeCol()] || '').trim()) return;
+        count++;
+      });
+    });
+    modal.querySelector('#_non200-affected-count').textContent =
+      count === 0 ? 'No pages will be changed' : `${count} page${count !== 1 ? 's' : ''} will be updated`;
+  }
+
+  modal.querySelectorAll('.non200-action-sel').forEach(sel => {
+    sel.addEventListener('change', updateAffectedCount);
+  });
+  modal.querySelector('#_non200-skip-assigned').addEventListener('change', updateAffectedCount);
+  updateAffectedCount();
+
+  function close() {
+    document.removeEventListener('keydown', onKey);
+    modal.remove();
+    overlay.remove();
+  }
+
+  function applyTriage() {
+    const skipAssigned = modal.querySelector('#_non200-skip-assigned').checked;
+    const actions = getActions();
+    let touched = 0;
+    groups.forEach((g, code) => {
+      const action = actions.get(code) || 'skip';
+      if (action === 'skip') return;
+      g.rows.forEach(({ row, origIndex }) => {
+        const editedRow = state.editedRows[origIndex];
+        if (!editedRow) return;
+        const existingKke = String(editedRow[kkeCol()] || '').trim();
+        if (skipAssigned && existingKke) return;
+
+        const oldKke = existingKke;
+        let newKke = '';
+
+        if (action === 'kill-redirect') {
+          newKke = 'Kill';
+          // Copy redirect URL only if Redirect_Destination is blank and redirect URL exists
+          if (redirectUrlColName) {
+            const existingDest = String(editedRow['Redirect_Destination'] || '').trim();
+            if (!existingDest) {
+              const redirectUrl = String(editedRow[redirectUrlColName] || '').trim();
+              if (redirectUrl) {
+                editedRow['Redirect_Destination'] = redirectUrl;
+                logChange(origIndex, 'Redirect_Destination', '', redirectUrl);
+              }
+            }
+          }
+        } else if (action === 'kill-404') {
+          newKke = 'Kill';
+          const existingDest = String(editedRow['Redirect_Destination'] || '').trim();
+          if (!existingDest) {
+            editedRow['Redirect_Destination'] = '404';
+            logChange(origIndex, 'Redirect_Destination', '', '404');
+          }
+        } else if (action === 'kill') {
+          newKke = 'Kill';
+        } else if (action === 'evolve') {
+          newKke = 'Evolve';
+        } else if (action === 'exclude') {
+          newKke = 'Exclude';
+        }
+
+        if (newKke && newKke !== oldKke) {
+          editedRow[kkeCol()] = newKke;
+          logChange(origIndex, kkeCol(), oldKke, newKke);
+          touched++;
+        }
+      });
+    });
+
+    close();
+    if (touched === 0) {
+      showToast('No pages were changed', 'info');
+      return;
+    }
+    setDirty(true);
+    applyFilter();
+    if (state.selectedIndex !== null) refreshRowInList(state.selectedIndex);
+    showToast(`Triaged ${touched} page${touched !== 1 ? 's' : ''}`, 'success');
+  }
+
+  function onKey(e) {
+    if (e.key === 'Escape') close();
+    if (e.key === 'Enter' && e.target.tagName !== 'SELECT') { e.preventDefault(); applyTriage(); }
+  }
+  document.addEventListener('keydown', onKey);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  modal.querySelector('#_non200-close').addEventListener('click', close);
+  modal.querySelector('#_non200-cancel').addEventListener('click', close);
+  modal.querySelector('#_non200-apply').addEventListener('click', applyTriage);
+  modal.querySelector('#_non200-dismiss').addEventListener('change', (e) => {
+    state.projectSettings.non200TriageDismissed = e.target.checked;
+    if (!e.target.checked) delete state.projectSettings.non200TriageDismissed;
+    setDirty(true);
+  });
+
+  makeModalDraggable(modal);
+}
+
+function maybeOfferGaKkeSetup() {
+  const existing = document.getElementById('ga-kke-banner');
+  if (existing) existing.remove();
+  const cfg = state.projectSettings.gaKkeConfig;
+  if (cfg) return; // already configured or dismissed
+  const detected = detectGa4Columns(state.headers);
+  const detectedCount = Object.values(detected).filter(Boolean).length;
+  if (detectedCount < 4) return;
+  if (state.headers.includes(GA_KKE_COL)) return; // already computed externally
+
+  const banner = document.createElement('div');
+  banner.id = 'ga-kke-banner';
+  banner.className = 'ga-kke-banner';
+  banner.innerHTML = `
+    <div style="flex:1;">
+      <div style="font-weight:600;margin-bottom:2px;">GA4 data detected</div>
+      <div style="color:var(--text-muted);font-size:12px;">Compute GA KKE recommendations?</div>
+    </div>
+    <button id="ga-kke-banner-setup" class="btn btn-sm btn-primary">Set up</button>
+    <button id="ga-kke-banner-dismiss" class="btn btn-sm btn-ghost">Dismiss</button>
+  `;
+  document.body.appendChild(banner);
+  banner.querySelector('#ga-kke-banner-setup').addEventListener('click', () => {
+    banner.remove();
+    openGaKkeConfigDialog();
+  });
+  banner.querySelector('#ga-kke-banner-dismiss').addEventListener('click', () => {
+    state.projectSettings.gaKkeConfig = { dismissed: true };
+    setDirty(true);
+    banner.remove();
+  });
+}
+
+function openGaKkeConfigDialog() {
+  const existing = document.getElementById('_ga-kke-modal');
+  if (existing) { existing.remove(); document.getElementById('_ga-kke-overlay')?.remove(); return; }
+
+  const cfg = state.projectSettings.gaKkeConfig && !state.projectSettings.gaKkeConfig.dismissed
+    ? state.projectSettings.gaKkeConfig
+    : defaultGaKkeConfig();
+
+  // Auto-fill column mapping if not already set
+  const detected = detectGa4Columns(state.headers);
+  const working = {
+    columnMap: {
+      sessions:           cfg.columnMap?.sessions           || detected.sessions,
+      engagementRate:     cfg.columnMap?.engagementRate     || detected.engagementRate,
+      avgSessionDuration: cfg.columnMap?.avgSessionDuration || detected.avgSessionDuration,
+      viewsPerSession:    cfg.columnMap?.viewsPerSession    || detected.viewsPerSession,
+    },
+    weights: { ...cfg.weights },
+    thresholds: { ...cfg.thresholds },
+    missingPolicy: cfg.missingPolicy || 'skip',
+  };
+
+  const overlay = document.createElement('div');
+  overlay.id = '_ga-kke-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:800;';
+
+  const dialog = document.createElement('div');
+  dialog.id = '_ga-kke-modal';
+  dialog.style.cssText = 'position:fixed;top:40px;left:50%;transform:translateX(-50%);background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;z-index:900;width:min(640px,92vw);max-height:calc(100vh - 80px);box-shadow:0 16px 48px rgba(0,0,0,0.3);display:flex;flex-direction:column;';
+
+  const headerOpts = () => ['<option value="">— none —</option>']
+    .concat(state.headers.map(h => `<option value="${escapeHtml(h)}">${escapeHtml(h)}</option>`))
+    .join('');
+  const selForCol = (key, cur) => `<select class="_gk-col" data-k="${key}" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;">${headerOpts().replace(`value="${escapeHtml(cur)}"`, `value="${escapeHtml(cur)}" selected`)}</select>`;
+
+  const metricRow = (key, label, cur, weight) => `
+    <div style="display:grid;grid-template-columns:160px 1fr 80px;gap:8px;align-items:center;margin-bottom:6px;">
+      <label style="font-size:12px;color:var(--text-secondary);">${label}</label>
+      ${selForCol(key, cur)}
+      <input type="number" class="_gk-w" data-k="${key}" value="${weight}" step="0.05" min="0" max="1" style="width:72px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;">
+    </div>
+  `;
+
+  const presetOptions = Object.entries(GA_KKE_PRESET_LABELS)
+    .map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+
+  const lastComputed = cfg.computedAt
+    ? `<div style="color:var(--text-muted);font-size:12px;margin-bottom:8px;">Last computed: ${new Date(cfg.computedAt).toLocaleString()}${cfg.lastRun ? ` (${cfg.lastRun.computed} rows scored, ${cfg.lastRun.skipped} skipped)` : ''}</div>`
+    : '';
+
+  dialog.innerHTML = `
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+      <div style="font-weight:600;font-size:15px;">GA KKE Settings</div>
+      <button id="_gk-close" class="modal-close" title="Close">×</button>
+    </div>
+    <div style="flex:1;overflow:auto;padding:16px 20px;">
+      ${lastComputed}
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px;">Column mapping &amp; weights</div>
+      <div style="display:grid;grid-template-columns:160px 1fr 80px;gap:8px;margin-bottom:4px;font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">
+        <div>Metric</div><div>Column</div><div>Weight</div>
+      </div>
+      ${metricRow('sessions',           'Sessions',               working.columnMap.sessions,           working.weights.sessions)}
+      ${metricRow('engagementRate',     'Engagement Rate',        working.columnMap.engagementRate,     working.weights.engagementRate)}
+      ${metricRow('avgSessionDuration', 'Avg Session Duration',   working.columnMap.avgSessionDuration, working.weights.avgSessionDuration)}
+      ${metricRow('viewsPerSession',    'Views per Session',      working.columnMap.viewsPerSession,    working.weights.viewsPerSession)}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <label style="font-size:12px;">Preset</label>
+          <select id="_gk-preset" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;">${presetOptions}</select>
+        </div>
+        <div id="_gk-sum" style="font-size:12px;color:var(--text-muted);">Sum: 1.00</div>
+      </div>
+
+      <div style="margin-top:16px;font-weight:600;font-size:13px;margin-bottom:8px;">Thresholds</div>
+      <div style="display:flex;gap:16px;align-items:center;">
+        <label style="font-size:12px;">Keep ≥ <input type="number" id="_gk-t-keep" value="${working.thresholds.keep}" step="0.05" min="0" max="1" style="width:64px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;margin-left:4px;"></label>
+        <label style="font-size:12px;">Evolve ≥ <input type="number" id="_gk-t-evolve" value="${working.thresholds.evolve}" step="0.05" min="0" max="1" style="width:64px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;margin-left:4px;"></label>
+        <span style="color:var(--text-muted);font-size:12px;">Below Evolve → Kill</span>
+      </div>
+
+      <div style="margin-top:16px;font-weight:600;font-size:13px;margin-bottom:8px;">Missing data</div>
+      <div style="display:flex;gap:16px;font-size:12px;">
+        <label><input type="radio" name="_gk-miss" value="skip"  ${working.missingPolicy === 'skip'  ? 'checked' : ''}> Skip row (leave blank)</label>
+        <label><input type="radio" name="_gk-miss" value="zero"  ${working.missingPolicy === 'zero'  ? 'checked' : ''}> Treat as zero</label>
+      </div>
+    </div>
+    <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;">
+      <button id="_gk-cancel" class="btn btn-sm btn-ghost">Cancel</button>
+      <button id="_gk-save" class="btn btn-sm btn-ghost">Save</button>
+      <button id="_gk-compute" class="btn btn-sm btn-primary">Save &amp; Compute</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.body.appendChild(dialog);
+  // Make GA KKE config dialog draggable (first child is its header)
+  makeModalDraggable(dialog, { handleSelector: ':scope > div:first-child' });
+
+  function readForm() {
+    dialog.querySelectorAll('._gk-col').forEach(sel => {
+      working.columnMap[sel.dataset.k] = sel.value;
+    });
+    dialog.querySelectorAll('._gk-w').forEach(inp => {
+      working.weights[inp.dataset.k] = parseFloat(inp.value) || 0;
+    });
+    working.thresholds.keep   = parseFloat(dialog.querySelector('#_gk-t-keep').value)   || 0;
+    working.thresholds.evolve = parseFloat(dialog.querySelector('#_gk-t-evolve').value) || 0;
+    const picked = dialog.querySelector('input[name="_gk-miss"]:checked');
+    working.missingPolicy = picked ? picked.value : 'skip';
+  }
+
+  function updateSum() {
+    readForm();
+    const sum = Object.values(working.weights).reduce((a, b) => a + b, 0);
+    const el = dialog.querySelector('#_gk-sum');
+    el.textContent = `Sum: ${sum.toFixed(2)}` + (Math.abs(sum - 1) > 0.001 ? ' (will be normalized)' : '');
+    el.style.color = Math.abs(sum - 1) > 0.001 ? 'var(--kke-evolve)' : 'var(--text-muted)';
+  }
+  dialog.addEventListener('input', updateSum);
+
+  dialog.querySelector('#_gk-preset').addEventListener('change', (e) => {
+    const p = GA_KKE_PRESETS[e.target.value];
+    if (!p) return;
+    Object.entries(p).forEach(([k, v]) => {
+      const inp = dialog.querySelector(`._gk-w[data-k="${k}"]`);
+      if (inp) inp.value = v;
+    });
+    updateSum();
+  });
+
+  function close() { dialog.remove(); overlay.remove(); }
+  function commitConfig() {
+    readForm();
+    state.projectSettings.gaKkeConfig = {
+      columnMap: working.columnMap,
+      weights: working.weights,
+      thresholds: working.thresholds,
+      missingPolicy: working.missingPolicy,
+      computedAt: state.projectSettings.gaKkeConfig?.computedAt || null,
+      lastRun: state.projectSettings.gaKkeConfig?.lastRun || null,
+    };
+    setDirty(true);
+  }
+  dialog.querySelector('#_gk-close').addEventListener('click', close);
+  dialog.querySelector('#_gk-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', close);
+  dialog.querySelector('#_gk-save').addEventListener('click', () => { commitConfig(); close(); showToast('GA KKE settings saved', 'success'); });
+  dialog.querySelector('#_gk-compute').addEventListener('click', () => {
+    commitConfig();
+    const result = computeGaKke();
+    close();
+    if (result) showToast(`GA KKE computed: ${result.computed} rows (${result.skipped} skipped)`, 'success');
+  });
+
+  updateSum();
+}
+
+function refreshGaKke() {
+  const cfg = state.projectSettings.gaKkeConfig;
+  if (!cfg || cfg.dismissed || !cfg.columnMap?.sessions) {
+    openGaKkeConfigDialog();
+    return;
+  }
+  const result = computeGaKke();
+  if (result) showToast(`GA KKE refreshed: ${result.computed} rows (${result.skipped} skipped)`, 'success');
+}
+
+// ─── Consolidate (merge a page's content into another inventory page) ─────────
+
+const CONSOLIDATE_COL = 'Consolidate_Into';
+
+/**
+ * Returns the canonical URL that should be stored in Consolidate_Into for a given target row.
+ * If the row has a Computed Path (nav assignment), that resolves to the new site URL.
+ * Otherwise falls back to the row's current inventory URL.
+ */
+function effectiveConsolidateUrl(row) {
+  if (!row) return '';
+  const urlCol = state.urlColumn || 'Address';
+  const comp = String(row['Computed Path'] || '').trim();
+  if (comp) {
+    const base = getRedirectBaseUrl();
+    return base ? base + '/' + comp.replace(/^\//, '') : '/' + comp.replace(/^\//, '');
+  }
+  return String(row[urlCol] || '').trim();
+}
+
+/**
+ * When a row's effective URL changes (e.g., it gains or changes its Computed Path), update
+ * all Consolidate_Into values that referenced its old URL to point to its new URL.
+ */
+function resyncConsolidateInto(oldUrl, newUrl) {
+  if (!oldUrl || !newUrl || oldUrl === newUrl) return;
+  state.editedRows.forEach((row, i) => {
+    const ct = String(row[CONSOLIDATE_COL] || '').trim();
+    if (ct === oldUrl) {
+      row[CONSOLIDATE_COL] = newUrl;
+      logChange(i, CONSOLIDATE_COL, ct, newUrl);
+    }
+  });
+}
+
+function rowIsConsolidate(row) {
+  if (!row) return false;
+  const kke = String(row[kkeCol()] || '').trim().toLowerCase();
+  const finalK = String(row[finalKkeCol()] || '').trim().toLowerCase();
+  return kke === 'consolidate' || finalK === 'consolidate';
+}
+
+function rowConsolidateNeedsTarget(row) {
+  if (!rowIsConsolidate(row)) return false;
+  return !String(row[CONSOLIDATE_COL] || '').trim();
+}
+
+/**
+ * Returns true when this row's Consolidate_Into target has KKE = Kill (or Exclude),
+ * meaning the consolidation destination is itself being removed from the site.
+ */
+function rowConsolidateHasDeadTarget(row) {
+  if (!rowIsConsolidate(row)) return false;
+  const ct = String(row[CONSOLIDATE_COL] || '').trim();
+  if (!ct) return false;
+  const urlCol = state.urlColumn || 'Address';
+  const targetRow = state.editedRows.find(r => {
+    const u = String(r[urlCol] || '').trim();
+    return u === ct || effectiveConsolidateUrl(r) === ct;
+  });
+  if (!targetRow) return false;
+  const targetKke = String(targetRow[kkeCol()] || '').trim().toLowerCase();
+  return targetKke === 'kill' || targetKke === 'exclude';
+}
+
+function updateConsolidateIndicator(row) {
+  const dot = els.consolidateIndicator;
+  if (!dot) return;
+  dot.classList.remove('needs-target', 'dead-target');
+  const target = row ? String(row[CONSOLIDATE_COL] || '').trim() : '';
+  if (target) {
+    dot.classList.remove('hidden');
+    if (rowConsolidateHasDeadTarget(row)) {
+      dot.classList.add('dead-target');
+      dot.title = 'Warning: consolidation target is Kill or Exclude';
+    } else {
+      dot.title = '';
+    }
+  } else if (rowConsolidateNeedsTarget(row)) {
+    dot.classList.remove('hidden');
+    dot.classList.add('needs-target');
+    dot.title = '';
+  } else {
+    dot.classList.add('hidden');
+    dot.title = '';
+  }
+}
+
+async function applyConsolidateTarget(origIndex, targetUrl) {
+  const row = state.editedRows[origIndex];
+  const oldTarget = String(row[CONSOLIDATE_COL] || '');
+  const rawTarget = String(targetUrl || '').trim();
+  if (!rawTarget) return;
+
+  // If the target has a Computed Path, store the resolved new URL rather than the inventory URL.
+  // This keeps Consolidate_Into pointing at the actual destination on the new site.
+  const urlCol = state.urlColumn || 'Address';
+  const targetRow = state.editedRows.find(r => String(r[urlCol] || '').trim() === rawTarget);
+  const newTarget = targetRow ? effectiveConsolidateUrl(targetRow) : rawTarget;
+
+  // If Consolidate intent already exists (via KKE or Final_KKE), we're just setting
+  // the target — don't overwrite KKE_Recommendation, and skip the kill-cleanup prompt.
+  const alreadyConsolidate = rowIsConsolidate(row);
+  const oldKke = row[kkeCol()];
+
+  if (!alreadyConsolidate) {
+    await promptKillCleanup(origIndex, 'Consolidate'); // cancel is fine — user can still proceed with the state change
+    row[kkeCol()] = 'Consolidate';
+    logChange(origIndex, kkeCol(), oldKke, 'Consolidate');
+    applyKkeStyle('Consolidate');
+  }
+
+  if (oldTarget !== newTarget) {
+    row[CONSOLIDATE_COL] = newTarget;
+    logChange(origIndex, CONSOLIDATE_COL, oldTarget, newTarget);
+  }
+
+  setDirty(true);
+  updateConsolidateIndicator(row);
+  refreshRowInList(origIndex);
+  renderMetaFields(row, origIndex);
+}
+
+function clearConsolidateTarget(origIndex) {
+  const row = state.editedRows[origIndex];
+  const old = String(row[CONSOLIDATE_COL] || '');
+  if (!old) return;
+  row[CONSOLIDATE_COL] = '';
+  logChange(origIndex, CONSOLIDATE_COL, old, '');
+  updateConsolidateIndicator(row);
+}
+
+// ─── Consolidate picker ───────────────────────────────────────────────────────
+
+function openConsolidatePicker(sourceIndex) {
+  const existing = document.getElementById('_cp-modal');
+  if (existing) { existing.remove(); document.getElementById('_cp-overlay')?.remove(); return; }
+
+  const sourceRow = state.editedRows[sourceIndex];
+  const urlCol = state.urlColumn || 'Address';
+  const sourceUrl = String(sourceRow[urlCol] || '').trim();
+  const currentTarget = String(sourceRow[CONSOLIDATE_COL] || '').trim();
+  const smeNotes = String(sourceRow[smeNotesCol()] || '').trim();
+  const notesHint = String(sourceRow[notesCol()] || '').trim();
+
+  // Title candidates
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1'
+                 : state.headers.includes('Title') ? 'Title'
+                 : null;
+
+  // Build candidate list: all rows except the source itself
+  const kke = kkeCol();
+  const allCandidates = state.editedRows.map((row, origIndex) => ({
+    origIndex,
+    url: String(row[urlCol] || '').trim(),
+    title: titleCol ? String(row[titleCol] || '').trim() : '',
+    kke: String(row[kke] || '').trim(),
+  })).filter(c => c.origIndex !== sourceIndex && c.url);
+
+  const overlay = document.createElement('div');
+  overlay.id = '_cp-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:800;';
+
+  const dialog = document.createElement('div');
+  dialog.id = '_cp-modal';
+  dialog.style.cssText = 'position:fixed;top:30px;left:50%;transform:translateX(-50%);background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;z-index:900;width:min(900px,94vw);max-height:calc(100vh - 60px);box-shadow:0 16px 48px rgba(0,0,0,0.3);display:flex;flex-direction:column;';
+
+  dialog.innerHTML = `
+    <div style="padding:14px 18px;border-bottom:1px solid var(--border);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <div style="font-weight:600;font-size:15px;">Consolidate into&hellip;</div>
+        <button id="_cp-close" class="modal-close" title="Close">×</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:2px;">Source:</div>
+      <div style="font-size:12px;font-family:var(--font-mono);word-break:break-all;background:var(--bg-field-bar);padding:4px 8px;border-radius:4px;">${escapeHtml(sourceUrl) || '<em>(no URL)</em>'}</div>
+      ${currentTarget ? `
+        <div style="margin-top:10px;padding:8px 10px;background:var(--kke-consolidate-bg);border:1px solid var(--kke-consolidate);border-radius:4px;">
+          <div style="font-size:11px;color:var(--kke-consolidate);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px;">Currently consolidating to</div>
+          <div style="font-size:12px;font-family:var(--font-mono);word-break:break-all;color:var(--kke-consolidate);">${escapeHtml(currentTarget)}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Pick a different page below to reassign, or use <strong>Clear target</strong> to remove.</div>
+        </div>
+      ` : ''}
+      ${smeNotes ? `
+        <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">SME Notes (possible hint):</div>
+        <div style="font-size:12px;background:#fef9c3;border:1px solid #fde047;padding:6px 8px;border-radius:4px;white-space:pre-wrap;word-break:break-word;">${escapeHtml(smeNotes)}</div>
+      ` : ''}
+      ${notesHint && !smeNotes ? `
+        <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">Notes:</div>
+        <div style="font-size:12px;background:var(--bg-field-bar);padding:6px 8px;border-radius:4px;white-space:pre-wrap;word-break:break-word;">${escapeHtml(notesHint)}</div>
+      ` : ''}
+    </div>
+    <div style="padding:10px 18px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;">
+      <input id="_cp-filter" type="text" placeholder="Filter by URL or title..." style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;font-family:var(--font-sans);">
+      <span id="_cp-count" style="font-size:12px;color:var(--text-muted);white-space:nowrap;"></span>
+    </div>
+    <div id="_cp-head" style="display:grid;grid-template-columns:60px 1fr 220px 80px;gap:0;padding:6px 18px;border-bottom:1px solid var(--border);background:var(--bg-field-bar);font-size:11px;text-transform:uppercase;color:var(--text-muted);letter-spacing:0.5px;font-weight:600;">
+      <div class="_cp-h" data-k="rownum" style="cursor:pointer;user-select:none;">#</div>
+      <div class="_cp-h" data-k="url" style="cursor:pointer;user-select:none;">URL</div>
+      <div class="_cp-h" data-k="title" style="cursor:pointer;user-select:none;">Title</div>
+      <div class="_cp-h" data-k="kke" style="cursor:pointer;user-select:none;">KKE</div>
+    </div>
+    <div id="_cp-scroll" style="flex:1;overflow-y:auto;position:relative;min-height:200px;">
+      <div id="_cp-body" style="position:relative;"></div>
+    </div>
+    <div style="padding:10px 18px;border-top:1px solid var(--border);background:var(--bg-field-bar);">
+      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px;">Selected target</div>
+      <div id="_cp-selected" style="font-size:12px;font-family:var(--font-mono);word-break:break-all;min-height:18px;">${currentTarget ? escapeHtml(currentTarget) : '<em style="color:var(--text-muted);font-family:var(--font-sans);">None selected</em>'}</div>
+    </div>
+    <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <button id="_cp-clear-target" class="btn btn-sm btn-ghost"${currentTarget ? '' : ' disabled'}>Clear target</button>
+      <div style="display:flex;gap:8px;">
+        <button id="_cp-cancel" class="btn btn-sm btn-ghost">Cancel</button>
+        <button id="_cp-set" class="btn btn-sm btn-primary" disabled>Set as target</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.body.appendChild(dialog);
+
+  // State: filter, sort, selection
+  let filterText = '';
+  let sort = { key: 'url', dir: 'asc' }; // asc | desc
+  let filtered = allCandidates.slice();
+  let selectedUrl = currentTarget || null;
+  const CP_ROW_H = 30;
+  const CP_OVERSCAN = 10;
+
+  const filterInput = dialog.querySelector('#_cp-filter');
+  const countEl = dialog.querySelector('#_cp-count');
+  const scrollEl = dialog.querySelector('#_cp-scroll');
+  const bodyEl = dialog.querySelector('#_cp-body');
+  const selEl = dialog.querySelector('#_cp-selected');
+  const setBtn = dialog.querySelector('#_cp-set');
+  const clearBtn = dialog.querySelector('#_cp-clear-target');
+
+  function applyFilterSort() {
+    const q = filterText.trim().toLowerCase();
+    filtered = allCandidates.filter(c => {
+      if (!q) return true;
+      return c.url.toLowerCase().includes(q) || c.title.toLowerCase().includes(q);
+    });
+    const key = sort.key;
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    filtered.sort((a, b) => {
+      let av, bv;
+      if (key === 'rownum') { av = a.origIndex; bv = b.origIndex; }
+      else { av = (a[key] || '').toString().toLowerCase(); bv = (b[key] || '').toString().toLowerCase(); }
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return 0;
+    });
+    countEl.textContent = `${filtered.length} of ${allCandidates.length} pages`;
+    bodyEl.style.height = (filtered.length * CP_ROW_H) + 'px';
+    renderVisible();
+    updateHeaderArrows();
+  }
+
+  function updateHeaderArrows() {
+    dialog.querySelectorAll('._cp-h').forEach(h => {
+      const k = h.dataset.k;
+      let label;
+      if (k === 'rownum') label = '#';
+      else if (k === 'url') label = 'URL';
+      else if (k === 'title') label = 'Title';
+      else if (k === 'kke') label = 'KKE';
+      if (sort.key === k) label += sort.dir === 'asc' ? ' ↑' : ' ↓';
+      h.textContent = label;
+    });
+  }
+
+  function renderVisible() {
+    const scrollTop = scrollEl.scrollTop;
+    const viewH = scrollEl.clientHeight;
+    const start = Math.max(0, Math.floor(scrollTop / CP_ROW_H) - CP_OVERSCAN);
+    const end = Math.min(filtered.length, Math.ceil((scrollTop + viewH) / CP_ROW_H) + CP_OVERSCAN);
+    bodyEl.querySelectorAll('._cp-row').forEach(el => el.remove());
+    for (let i = start; i < end; i++) {
+      const c = filtered[i];
+      const row = document.createElement('div');
+      row.className = '_cp-row' + (selectedUrl === c.url ? ' _cp-selected' : '');
+      row.style.cssText = `position:absolute;top:${i * CP_ROW_H}px;left:0;right:0;height:${CP_ROW_H}px;display:grid;grid-template-columns:60px 1fr 220px 80px;align-items:center;padding:0 18px;cursor:pointer;border-bottom:1px solid var(--border);font-size:12px;${selectedUrl === c.url ? 'background:var(--kke-keep-bg);' : ''}`;
+      const kkeClass = c.kke ? 'kke-badge-inline kke-' + c.kke.toLowerCase() : '';
+      row.innerHTML = `
+        <div style="color:var(--text-muted);">${c.origIndex + 1}</div>
+        <div class="_cp-url-cell" style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-family:var(--font-mono);">${escapeHtml(c.url)}</div>
+        <div style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${escapeHtml(c.title)}</div>
+        <div>${c.kke ? `<span class="${kkeClass}" style="font-size:10px;padding:1px 6px;border-radius:3px;background:var(--bg-field-bar);">${escapeHtml(c.kke)}</span>` : ''}</div>
+      `;
+      row.addEventListener('click', () => {
+        selectedUrl = c.url;
+        selEl.textContent = c.url;
+        setBtn.disabled = false;
+        renderVisible();
+      });
+      row.addEventListener('dblclick', () => {
+        selectedUrl = c.url;
+        confirmAndClose();
+      });
+      bodyEl.appendChild(row);
+    }
+  }
+
+  // Wire filter input
+  let filterTimer = null;
+  filterInput.addEventListener('input', () => {
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => {
+      filterText = filterInput.value;
+      applyFilterSort();
+    }, 80);
+  });
+  filterInput.addEventListener('keydown', e => {
+    if (e.key === 'Escape') close();
+  });
+
+  // Wire sort headers
+  dialog.querySelectorAll('._cp-h').forEach(h => {
+    h.addEventListener('click', () => {
+      const k = h.dataset.k;
+      if (sort.key === k) sort.dir = sort.dir === 'asc' ? 'desc' : 'asc';
+      else { sort.key = k; sort.dir = 'asc'; }
+      applyFilterSort();
+    });
+  });
+
+  scrollEl.addEventListener('scroll', () => renderVisible());
+  window.addEventListener('resize', renderVisible);
+
+  function close() {
+    dialog.remove();
+    overlay.remove();
+    window.removeEventListener('resize', renderVisible);
+  }
+  function confirmAndClose() {
+    close();
+    if (selectedUrl != null) applyConsolidateTarget(sourceIndex, selectedUrl);
+  }
+
+  registerModalDismiss(overlay, dialog, () => close());
+  dialog.querySelector('#_cp-cancel').addEventListener('click', close);
+  dialog.querySelector('#_cp-close').addEventListener('click', close);
+  overlay.addEventListener('click', close);
+  setBtn.addEventListener('click', confirmAndClose);
+  clearBtn.addEventListener('click', () => {
+    close();
+    clearConsolidateTarget(sourceIndex);
+    // If KKE was Consolidate, revert to blank
+    const row = state.editedRows[sourceIndex];
+    if (row[kkeCol()] === 'Consolidate') {
+      const oldK = 'Consolidate';
+      row[kkeCol()] = '';
+      logChange(sourceIndex, kkeCol(), oldK, '');
+      applyKkeStyle('');
+    }
+    setDirty(true);
+    refreshRowInList(sourceIndex);
+    renderMetaFields(row, sourceIndex);
+  });
+
+  // Initial render
+  applyFilterSort();
+  filterInput.focus();
+  // If current target exists, scroll to it
+  if (currentTarget) {
+    const idx = filtered.findIndex(c => c.url === currentTarget);
+    if (idx >= 0) {
+      setTimeout(() => { scrollEl.scrollTop = Math.max(0, idx * CP_ROW_H - 100); renderVisible(); }, 0);
+    }
+  }
+}
+
+// ─── Consolidation candidates (multi-page nav node bulk-resolve) ──────────────
+
+function buildConsolidationCandidates(filter) {
+  // filter (optional): { excludedKkes: Set, excludedGroups: Set }
+  const excludedKkes   = filter?.excludedKkes   || new Set();
+  const excludedGroups = filter?.excludedGroups || new Set();
+
+  // Group rows by NavID
+  const groups = new Map(); // NavID → [{ origIndex, row }]
+  state.editedRows.forEach((row, origIndex) => {
+    const id = String(row['NavID'] || '').trim();
+    if (!id) return;
+    const kke = String(row[kkeCol()] || '').trim();
+    const grp = String(row[groupCol()] || '').trim();
+    if (excludedKkes.has(kke)) return;
+    if (grp && excludedGroups.has(grp)) return;
+    const arr = groups.get(id) || [];
+    arr.push({ origIndex, row });
+    groups.set(id, arr);
+  });
+  // Keep only multi-page groups
+  const candidates = [];
+  groups.forEach((rows, navId) => {
+    if (rows.length < 2) return;
+    const node = state.navNodes.find(n => n.id === navId);
+    candidates.push({
+      navId,
+      node,
+      breadcrumb: node ? (node.breadcrumb || node.label || '') : `(unknown node ${navId})`,
+      computedPath: node ? (node.computedPath || '') : '',
+      rows,
+    });
+  });
+  // Sort by group size desc, then by breadcrumb
+  candidates.sort((a, b) => (b.rows.length - a.rows.length) || a.breadcrumb.localeCompare(b.breadcrumb));
+  return candidates;
+}
+
+function collectKkeValuesPresent() {
+  // Every KKE value that actually appears in editedRows, including undefined/typo values.
+  // Built-ins first, then custom states (in their order), then rogue values sorted.
+  const seen = new Set();
+  state.editedRows.forEach(r => {
+    const v = String(r[kkeCol()] || '').trim();
+    if (v) seen.add(v);
+  });
+  const ordered = [];
+  BUILTIN_KKE.forEach(s => { if (seen.has(s)) { ordered.push(s); seen.delete(s); } });
+  (state.customKkeStates || []).forEach(s => {
+    const lbl = s.label;
+    if (seen.has(lbl)) { ordered.push(lbl); seen.delete(lbl); }
+  });
+  // Rogue (undefined/typo) values
+  Array.from(seen).sort().forEach(v => ordered.push(v));
+  return ordered;
+}
+
+function collectGroupsPresent() {
+  const seen = new Set();
+  state.editedRows.forEach(r => {
+    const v = String(r[groupCol()] || '').trim();
+    if (v) seen.add(v);
+  });
+  return Array.from(seen).sort();
+}
+
+function openConsolidationCandidates() {
+  const existing = document.getElementById('_cc-modal');
+  if (existing) { existing.remove(); document.getElementById('_cc-overlay')?.remove(); return; }
+
+  const overlay = document.createElement('div');
+  overlay.id = '_cc-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:920;';
+
+  const dialog = document.createElement('div');
+  dialog.id = '_cc-modal';
+  dialog.style.cssText = 'position:fixed;top:30px;left:50%;transform:translateX(-50%);background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;z-index:930;width:min(960px,94vw);max-height:calc(100vh - 60px);box-shadow:0 16px 48px rgba(0,0,0,0.3);display:flex;flex-direction:column;';
+
+  // Session filter state
+  const filter = {
+    excludedKkes: new Set(),
+    excludedGroups: new Set(),
+  };
+
+  // KKE checkboxes — every value present in row data, with all checked by default
+  const kkeValues = collectKkeValuesPresent();
+  const groupValues = collectGroupsPresent();
+
+  const kkeCheckboxesHtml = kkeValues.map(v => `
+    <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:3px;cursor:pointer;background:var(--bg-surface);">
+      <input type="checkbox" class="_cc-kke-cb" data-kke="${escapeHtml(v)}" checked style="margin:0;">
+      <span>${escapeHtml(v)}</span>
+    </label>
+  `).join('');
+
+  const groupOptionsHtml = ['<option value="">— add group to exclude —</option>']
+    .concat(groupValues.map(g => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`))
+    .join('');
+
+  dialog.innerHTML = `
+    <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-weight:600;font-size:15px;">Consolidation Candidates</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">Nav nodes with 2+ pages assigned. For each group, pick a target page — others become Consolidate pointing to it.</div>
+      </div>
+      <button id="_cc-close" class="modal-close" title="Close">×</button>
+    </div>
+    <div style="padding:10px 20px;border-bottom:1px solid var(--border);background:var(--bg-field-bar);display:flex;flex-direction:column;gap:8px;">
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;">
+        <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;flex-shrink:0;margin-right:4px;">Include KKE:</span>
+        ${kkeCheckboxesHtml || '<span style="font-size:11px;color:var(--text-muted);">(no KKE values found)</span>'}
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+        <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;flex-shrink:0;">Exclude groups:</span>
+        <select id="_cc-group-add" style="font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:3px;">${groupOptionsHtml}</select>
+        <div id="_cc-excluded-groups" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
+      </div>
+    </div>
+    <div id="_cc-counter" style="padding:8px 20px;font-size:12px;color:var(--text-muted);background:var(--bg-field-bar);border-bottom:1px solid var(--border);"></div>
+    <div id="_cc-body" style="flex:1;overflow-y:auto;padding:12px 20px;"></div>
+    <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+      <div style="font-size:12px;color:var(--text-muted);">Skipped groups stay in the list across sessions; resolved groups disappear once their nav node has &lt; 2 pages.</div>
+      <button id="_cc-done" class="btn btn-sm btn-primary">Done</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.body.appendChild(dialog);
+
+  const counterEl = dialog.querySelector('#_cc-counter');
+  const bodyEl = dialog.querySelector('#_cc-body');
+  const groupAddEl = dialog.querySelector('#_cc-group-add');
+  const excludedGroupsEl = dialog.querySelector('#_cc-excluded-groups');
+
+  // Session-only "skipped" set so user can defer a group
+  const skipped = new Set();
+
+  function renderExcludedGroups() {
+    excludedGroupsEl.innerHTML = '';
+    Array.from(filter.excludedGroups).sort().forEach(g => {
+      const chip = document.createElement('span');
+      chip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 6px;background:var(--kke-kill-bg);color:var(--kke-kill);border-radius:3px;';
+      chip.innerHTML = `${escapeHtml(g)} <button style="background:none;border:none;color:inherit;cursor:pointer;padding:0;font-size:13px;line-height:1;">×</button>`;
+      chip.querySelector('button').addEventListener('click', () => {
+        filter.excludedGroups.delete(g);
+        renderExcludedGroups();
+        refresh();
+      });
+      excludedGroupsEl.appendChild(chip);
+    });
+  }
+
+  function refresh() {
+    const fresh = buildConsolidationCandidates(filter);
+    const remaining = fresh.filter(g => !skipped.has(g.navId));
+    const filterActive = filter.excludedKkes.size > 0 || filter.excludedGroups.size > 0;
+    const totalUnfiltered = buildConsolidationCandidates().length;
+    const hidden = totalUnfiltered - fresh.length;
+    let counter = `${remaining.length} group${remaining.length !== 1 ? 's' : ''} to resolve`;
+    if (skipped.size > 0) counter += ` · ${skipped.size} skipped this session`;
+    if (filterActive && hidden > 0) counter += ` · ${hidden} hidden by filter`;
+    counter += ` · ${totalUnfiltered} total`;
+    counterEl.textContent = counter;
+    bodyEl.innerHTML = '';
+    if (remaining.length === 0) {
+      bodyEl.innerHTML = '<div style="text-align:center;color:var(--text-muted);font-size:13px;padding:32px 0;">No multi-page nav nodes left to resolve. 🎉</div>';
+      return;
+    }
+    remaining.forEach(group => bodyEl.appendChild(renderCandidateGroup(group, refresh, skipped)));
+  }
+
+  // Wire KKE checkboxes
+  dialog.querySelectorAll('._cc-kke-cb').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const v = cb.dataset.kke;
+      if (cb.checked) filter.excludedKkes.delete(v);
+      else filter.excludedKkes.add(v);
+      refresh();
+    });
+  });
+  // Wire group add
+  groupAddEl.addEventListener('change', () => {
+    const v = groupAddEl.value;
+    if (!v) return;
+    filter.excludedGroups.add(v);
+    groupAddEl.value = '';
+    renderExcludedGroups();
+    refresh();
+  });
+
+  function close() {
+    dialog.remove();
+    overlay.remove();
+  }
+  dialog.querySelector('#_cc-close').addEventListener('click', close);
+  dialog.querySelector('#_cc-done').addEventListener('click', close);
+  overlay.addEventListener('click', close);
+
+  refresh();
+}
+
+function renderCandidateGroup(group, onChange, skipped) {
+  const urlCol = state.urlColumn || 'Address';
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1'
+                 : state.headers.includes('Title') ? 'Title' : null;
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'border:1px solid var(--border);border-radius:6px;padding:12px 14px;margin-bottom:14px;';
+
+  // Header
+  const h = document.createElement('div');
+  h.style.cssText = 'display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;';
+  h.innerHTML = `
+    <div>
+      <div style="font-weight:600;font-size:13px;">${escapeHtml(group.breadcrumb)}</div>
+      <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(group.computedPath || '')} · ${group.rows.length} pages · NavID ${escapeHtml(group.navId)}</div>
+    </div>
+    <div style="display:flex;gap:6px;flex-shrink:0;">
+      <button class="btn btn-sm btn-ghost _cc-skip">Skip</button>
+      <button class="btn btn-sm btn-primary _cc-apply" disabled>Apply</button>
+    </div>
+  `;
+  wrap.appendChild(h);
+
+  // Options
+  const optionList = document.createElement('div');
+  optionList.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin-bottom:8px;';
+  let selectedOrigIndex = null;
+
+  group.rows.forEach(({ origIndex, row }) => {
+    const url = String(row[urlCol] || '').trim();
+    const title = titleCol ? String(row[titleCol] || '').trim() : '';
+    const kke = String(row[kkeCol()] || '').trim();
+    const itemUrl = url || `(no URL — row ${origIndex + 1})`;
+
+    const opt = document.createElement('label');
+    opt.style.cssText = 'display:grid;grid-template-columns:24px 1fr 220px 80px;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--border-light);border-radius:4px;cursor:pointer;font-size:12px;';
+    opt.innerHTML = `
+      <input type="radio" name="_cc-${escapeHtml(group.navId)}" value="${origIndex}">
+      <span style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-family:var(--font-mono);" title="${escapeHtml(itemUrl)}">${escapeHtml(itemUrl)}</span>
+      <span style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis;" title="${escapeHtml(title)}">${escapeHtml(title || '(no title)')}</span>
+      <span>${kke ? `<span class="kke-badge ${kke.toLowerCase()}" style="font-size:10px;">${escapeHtml(kke)}</span>` : '<span style="color:var(--text-muted);font-size:10px;">—</span>'}</span>
+    `;
+    const radio = opt.querySelector('input');
+    radio.addEventListener('change', () => {
+      selectedOrigIndex = origIndex;
+      h.querySelector('._cc-apply').disabled = false;
+    });
+    optionList.appendChild(opt);
+  });
+  wrap.appendChild(optionList);
+
+  // Hint
+  const hint = document.createElement('div');
+  hint.style.cssText = 'font-size:11px;color:var(--text-muted);font-style:italic;';
+  hint.textContent = 'Target keeps its nav assignment and is set to Evolve. Others become Consolidate (target URL = the chosen page) and have their nav cleared.';
+  wrap.appendChild(hint);
+
+  // Wire actions
+  h.querySelector('._cc-skip').addEventListener('click', () => {
+    skipped.add(group.navId);
+    onChange();
+  });
+  h.querySelector('._cc-apply').addEventListener('click', () => {
+    if (selectedOrigIndex == null) return;
+    applyConsolidationGroup(group, selectedOrigIndex);
+    onChange();
+  });
+
+  return wrap;
+}
+
+function applyConsolidationGroup(group, targetOrigIndex) {
+  const targetRow = state.editedRows[targetOrigIndex];
+  // Use the resolved destination URL (new computed URL if available, otherwise inventory URL)
+  const resolvedTargetUrl = effectiveConsolidateUrl(targetRow);
+
+  // Target: set KKE to Evolve (unless it's already Evolve/Keep — preserve those; otherwise upgrade to Evolve)
+  const oldTargetKke = String(targetRow[kkeCol()] || '').trim();
+  if (oldTargetKke !== 'Evolve' && oldTargetKke !== 'Keep') {
+    targetRow[kkeCol()] = 'Evolve';
+    logChange(targetOrigIndex, kkeCol(), oldTargetKke, 'Evolve');
+  }
+
+  // Others: KKE = Consolidate, Consolidate_Into = resolved target URL, clear nav
+  group.rows.forEach(({ origIndex, row }) => {
+    if (origIndex === targetOrigIndex) return;
+    // Set Consolidate_Into
+    const oldConsTarget = String(row[CONSOLIDATE_COL] || '');
+    if (oldConsTarget !== resolvedTargetUrl) {
+      row[CONSOLIDATE_COL] = resolvedTargetUrl;
+      logChange(origIndex, CONSOLIDATE_COL, oldConsTarget, resolvedTargetUrl);
+    }
+    // Set KKE = Consolidate
+    const oldKke = String(row[kkeCol()] || '');
+    if (oldKke !== 'Consolidate') {
+      row[kkeCol()] = 'Consolidate';
+      logChange(origIndex, kkeCol(), oldKke, 'Consolidate');
+    }
+    // Clear nav assignment (page is going away, no point being in nav)
+    clearNavAssignment(row, origIndex);
+    // Clear any explicit redirect destination — let the resolver chase the consolidate target
+    const oldRedirect = String(row['Redirect_Destination'] || '');
+    if (oldRedirect) {
+      row['Redirect_Destination'] = '';
+      logChange(origIndex, 'Redirect_Destination', oldRedirect, '');
+    }
+  });
+
+  setDirty(true);
+  applyFilter();
+  if (state.selectedIndex !== null) {
+    populateAuditFields(state.editedRows[state.selectedIndex]);
+    renderMetaFields(state.editedRows[state.selectedIndex], state.selectedIndex);
+  }
+  showToast(`Consolidated ${group.rows.length - 1} page${group.rows.length - 1 !== 1 ? 's' : ''} into target.`, 'success');
+}
+
+// ─── Nav assignment ───────────────────────────────────────────────────────────
+
+function setupNav() {
+  els.btnNav.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleNavPopover();
+  });
+  els.btnNavClose.addEventListener('click', closeNavPopover);
+  els.btnNavAssign.addEventListener('click', assignNav);
+  els.btnNavClear.addEventListener('click', clearNav);
+  els.btnNavLoad.addEventListener('click', loadNavFromFile);
+  els.btnNavAddChild.addEventListener('click', showNewChildForm);
+  els.btnNavCreate.addEventListener('click', createNavChild);
+
+  // Edit slug for an already-assigned page
+  els.navSlugInput.addEventListener('change', () => {
+    if (state.selectedIndex === null) return;
+    const row = state.editedRows[state.selectedIndex];
+    const navID = row['NavID'] || '';
+    if (!navID) return; // not assigned yet — slug is used on Assign click
+    const node = state.navNodes.find(n => n.id === navID);
+    if (!node) return;
+    const slug = els.navSlugInput.value.trim();
+    // Check for duplicate slug among siblings
+    const parentNode = state.navNodes.find(n => (n.children || []).some(c => c.id === node.id));
+    if (slug && parentNode && navSlugExistsInBranch(parentNode, slug, node.id)) {
+      showToast(`Slug "${slug}" already exists under "${parentNode.label}"`, 'error');
+      els.navSlugInput.focus();
+      return;
+    }
+    const base = node.computedPath || '';
+    row['Computed Path'] = slug ? (base ? base + '/' + slug : slug) : base;
+    setDirty(true);
+    renderMetaFields(row, state.selectedIndex);
+    showToast('Slug updated', 'success');
+  });
+
+  // Clear buttons for page title and slug
+  $('btn-nav-clear-title').addEventListener('click', () => { els.navPageTitleInput.value = ''; });
+  $('btn-nav-clear-slug').addEventListener('click', () => { els.navSlugInput.value = ''; });
+
+  // Auto-generate slug from label
+  els.navNewLabel.addEventListener('input', () => {
+    els.navNewSlug.value = slugify(els.navNewLabel.value);
+  });
+
+  document.addEventListener('click', e => {
+    if (!els.navPopover.contains(e.target) && e.target !== els.btnNav) {
+      closeNavPopover();
+    }
+  });
+}
+
+function toggleNavPopover() {
+  if (!els.navPopover.classList.contains('hidden')) {
+    closeNavPopover();
+    return;
+  }
+  openNavPopover();
+}
+
+function openNavPopover() {
+  if (state.selectedIndex === null) return;
+
+  const rect = els.btnNav.getBoundingClientRect();
+  const popW = 540;
+  els.navPopover.classList.remove('hidden');
+  const popH = els.navPopover.offsetHeight;
+
+  let top = rect.bottom + 4;
+  if (top + popH > window.innerHeight - 8) {
+    top = rect.top - popH - 4;
+  }
+  els.navPopover.style.left = Math.max(8, Math.min(rect.right - popW, window.innerWidth - popW - 8)) + 'px';
+  els.navPopover.style.top  = Math.max(8, top) + 'px';
+
+  // Show current assignment
+  const row = state.editedRows[state.selectedIndex];
+  const currentNavID = row['NavID'] || '';
+  const fullTitle = row['Title 1'] || row['Title'] || '';
+  const pageTitle = extractPageTitle(fullTitle);
+
+  if (currentNavID) {
+    const node = state.navNodes.find(n => n.id === currentNavID);
+    if (node) {
+      els.navCurrentLabel.textContent = node.breadcrumb || node.label;
+      els.navCurrent.classList.remove('hidden');
+      els.btnNavClear.classList.remove('hidden');
+
+      // Show current slug — derive from stored computed path minus the nav node's path
+      const storedPath = row['Computed Path'] || '';
+      const nodeBase = node.computedPath || '';
+      let currentSlug = '';
+      if (nodeBase && storedPath.startsWith(nodeBase + '/')) {
+        currentSlug = storedPath.slice(nodeBase.length + 1);
+      } else if (!nodeBase) {
+        currentSlug = storedPath;
+      }
+      els.navSlugInput.value = currentSlug;
+      els.navPageTitleInput.value = pageTitle;
+      els.navPageFields.classList.remove('hidden');
+    } else {
+      els.navCurrent.classList.add('hidden');
+      els.btnNavClear.classList.add('hidden');
+    }
+  } else {
+    els.navCurrent.classList.add('hidden');
+    els.btnNavClear.classList.add('hidden');
+  }
+
+  // Reset selection state
+  state.navSelectedNode = null;
+  state.navSelectionPath = [];
+  els.btnNavAssign.disabled = true;
+  els.navBreadcrumb.classList.add('hidden');
+  els.navNewChild.classList.add('hidden');
+  els.btnNavAddChild.classList.add('hidden');
+
+  // If no current assignment, try to suggest based on parent URL
+  if (!currentNavID) {
+    els.navPageFields.classList.add('hidden');
+    const url = row[state.urlColumn] || '';
+    els.navSlugInput.value = extractSlug(url);
+    els.navPageTitleInput.value = pageTitle;
+
+    const suggestion = suggestNavFromUrl(url);
+    if (suggestion && state.navTree) {
+      // Pre-select the suggested node
+      const path = getNavSelectionPath(suggestion.node);
+      buildNavSelects(path);
+      updateNavAssignState(path);
+      // Override slug with the URL-derived one
+      els.navSlugInput.value = suggestion.slug;
+    } else if (state.navTree) {
+      buildNavSelects([]);
+    } else {
+      els.navSelects.innerHTML = '<p style="font-size:12px;color:var(--text-muted);">No navigation structure loaded. Use "Load File…" to import one.</p>';
+    }
+  } else if (state.navTree) {
+    buildNavSelects([]);
+  } else {
+    els.navSelects.innerHTML = '<p style="font-size:12px;color:var(--text-muted);">No navigation structure loaded. Use "Load File…" to import one.</p>';
+  }
+}
+
+function closeNavPopover() {
+  els.navPopover.classList.add('hidden');
+}
+
+function buildNavSelects(selectionPath) {
+  const container = els.navSelects;
+  container.innerHTML = '';
+
+  let currentChildren = state.navTree;
+
+  for (let level = 0; level <= selectionPath.length; level++) {
+    if (!currentChildren || currentChildren.length === 0) break;
+
+    const levelDiv = document.createElement('div');
+    levelDiv.className = 'nav-level';
+
+    // Label: show parent context
+    const label = document.createElement('span');
+    label.className = 'nav-level-label';
+    if (level === 0) {
+      label.textContent = 'Menu';
+    } else {
+      const parentNumber = selectionPath[level - 1];
+      const parentNode = findNavNode(parentNumber);
+      label.textContent = parentNode ? parentNode.label : '';
+    }
+    levelDiv.appendChild(label);
+
+    const select = document.createElement('select');
+    select.className = 'nav-level-select';
+
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = '— Select —';
+    select.appendChild(defaultOpt);
+
+    for (const item of currentChildren) {
+      const opt = document.createElement('option');
+      opt.value = item.number;
+      opt.textContent = item.label;
+      if (selectionPath[level] === item.number) opt.selected = true;
+      select.appendChild(opt);
+    }
+
+    const capturedLevel = level;
+    select.addEventListener('change', () => {
+      const newPath = selectionPath.slice(0, capturedLevel);
+      if (select.value) newPath.push(select.value);
+      buildNavSelects(newPath);
+      updateNavAssignState(newPath);
+    });
+
+    levelDiv.appendChild(select);
+    container.appendChild(levelDiv);
+
+    // Advance to children of selected item
+    if (selectionPath[level]) {
+      const selectedNode = currentChildren.find(n => n.number === selectionPath[level]);
+      if (selectedNode && selectedNode.children.length > 0) {
+        currentChildren = selectedNode.children;
+      } else {
+        break;
+      }
+    } else {
+      break;
+    }
+  }
+}
+
+function updateNavAssignState(selectionPath) {
+  state.navSelectionPath = selectionPath;
+  els.navNewChild.classList.add('hidden');
+
+  if (selectionPath.length > 0) {
+    const lastNumber = selectionPath[selectionPath.length - 1];
+    const node = findNavNode(lastNumber);
+    if (node) {
+      els.navBreadcrumb.textContent = node.breadcrumb || node.label;
+      els.navBreadcrumb.classList.remove('hidden');
+      els.btnNavAssign.disabled = false;
+      els.btnNavAddChild.classList.remove('hidden');
+      els.navPageFields.classList.remove('hidden');
+      state.navSelectedNode = node;
+      return;
+    }
+  }
+  els.navBreadcrumb.classList.add('hidden');
+  els.btnNavAssign.disabled = true;
+  els.btnNavAddChild.classList.add('hidden');
+  els.navPageFields.classList.add('hidden');
+  state.navSelectedNode = null;
+}
+
+function findNavNode(number) {
+  return state.navNodes.find(n => n.number === number) || null;
+}
+
+/** Check if a slug already exists among a node's children (case-insensitive). */
+function navSlugExistsInBranch(parentNode, slug, excludeNodeId) {
+  const children = parentNode.children || [];
+  const slugLower = slug.toLowerCase();
+  // Reference (alias) nodes don't occupy URL space — skip them
+  return children.some(child =>
+    child.id !== excludeNodeId &&
+    !child.refNodeId &&
+    (child.path || '').toLowerCase() === slugLower
+  );
+}
+
+function assignNav() {
+  if (!state.navSelectedNode || state.selectedIndex === null) return;
+  const node = state.navSelectedNode;
+  const row = state.editedRows[state.selectedIndex];
+  const pageSlug = els.navSlugInput.value.trim();
+  const pageTitleVal = els.navPageTitleInput.value.trim();
+
+  // Ensure columns exist in headers
+  ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'].forEach(col => {
+    if (!state.headers.includes(col)) state.headers.push(col);
+  });
+
+  if (pageSlug) {
+    // Check for duplicate slug in this branch
+    if (navSlugExistsInBranch(node, pageSlug)) {
+      showToast(`Slug "${pageSlug}" already exists under "${node.label}"`, 'error');
+      els.navSlugInput.focus();
+      return;
+    }
+    // Create a child node under the selected nav node
+    const childNode = createNavChildForPage(node, pageSlug, pageTitleVal || pageSlug);
+    // Capture old effective URL before reassigning (for Consolidate_Into sync)
+    const oldEffUrl = effectiveConsolidateUrl(row);
+    // Assign the row to the new child node
+    row['NavID']           = childNode.id;
+    row['Nav Destination'] = childNode.breadcrumb;
+    row['Nav_SortID']      = childNode.sortID;
+    row['Computed Path']   = childNode.computedPath;
+    // Update any Consolidate_Into values that referenced this page
+    resyncConsolidateInto(oldEffUrl, effectiveConsolidateUrl(row));
+
+    setDirty(true);
+    state.navTreeDirty = true;
+    closeNavPopover();
+    updateNavBadge(row);
+    renderMetaFields(row, state.selectedIndex);
+    renderVisibleRows();
+    showToast('Nav child created: ' + childNode.breadcrumb, 'success');
+  } else {
+    // Assign directly to the selected node
+    const oldEffUrl = effectiveConsolidateUrl(row);
+    row['NavID']           = node.id;
+    row['Nav Destination'] = node.breadcrumb;
+    row['Nav_SortID']      = node.sortID;
+    row['Computed Path']   = node.computedPath || '';
+    // Update any Consolidate_Into values that referenced this page
+    resyncConsolidateInto(oldEffUrl, effectiveConsolidateUrl(row));
+
+    setDirty(true);
+    closeNavPopover();
+    updateNavBadge(row);
+    renderMetaFields(row, state.selectedIndex);
+    renderVisibleRows();
+    showToast('Nav assigned: ' + node.label, 'success');
+  }
+}
+
+/** Create a child nav node under a parent for a specific page. Returns the new node. */
+function createNavChildForPage(parentNode, slug, label) {
+  let maxId = 0;
+  for (const n of state.navNodes) {
+    const idNum = parseInt(n.id, 10);
+    if (idNum > maxId) maxId = idNum;
+  }
+  const id = String(maxId + 1).padStart(5, '0');
+
+  const existingChildren = parentNode.children || [];
+  let maxChildIdx = 0;
+  for (const child of existingChildren) {
+    const parts = child.number.split('.');
+    const last = parseInt(parts[parts.length - 1], 10);
+    if (last > maxChildIdx) maxChildIdx = last;
+  }
+  const number = parentNode.number + '.' + (maxChildIdx + 1);
+
+  const breadcrumb = (parentNode.breadcrumb || parentNode.label) + ' > ' + label;
+  const computedPath = parentNode.computedPath ? parentNode.computedPath + '/' + slug : slug;
+  const sortID = buildSortID(number);
+
+  const newNode = {
+    number, label, path: slug, sortID,
+    parentNumber: parentNode.number,
+    breadcrumb, computedPath, id,
+    children: []
+  };
+
+  if (!parentNode.children) parentNode.children = [];
+  parentNode.children.push(newNode);
+  state.navNodes.push(newNode);
+  return newNode;
+}
+
+/** Remediate: scan all assigned pages and ensure each has a proper child node
+ *  in the nav tree. If a page has a slug (computed path extends beyond its node's path)
+ *  but no dedicated child node, create one. */
+function remediateNavAssignments() {
+  if (!state.navNodes || state.navNodes.length === 0) {
+    showToast('No nav structure loaded', 'error');
+    return;
+  }
+
+  let created = 0;
+  const oldPaths = snapshotNavPaths();
+
+  for (const row of state.editedRows) {
+    const navID = row['NavID'] || '';
+    if (!navID) continue;
+
+    const node = state.navNodes.find(n => n.id === navID);
+    if (!node) continue;
+
+    const storedPath = (row['Computed Path'] || '').trim();
+    const nodeBase = (node.computedPath || '').trim();
+
+    // Check if page has a slug beyond the node's path
+    let pageSlug = '';
+    if (nodeBase && storedPath.startsWith(nodeBase + '/')) {
+      pageSlug = storedPath.slice(nodeBase.length + 1);
+    } else if (!nodeBase && storedPath) {
+      pageSlug = storedPath;
+    }
+
+    if (!pageSlug) continue; // page is assigned directly to a node, no child needed
+
+    // Check if a child node already exists with this slug
+    const existingChild = (node.children || []).find(c => c.path === pageSlug);
+    if (existingChild) {
+      // Reassign to the existing child node if not already
+      if (row['NavID'] !== existingChild.id) {
+        row['NavID'] = existingChild.id;
+        row['Nav Destination'] = existingChild.breadcrumb;
+        row['Nav_SortID'] = existingChild.sortID;
+      }
+      continue;
+    }
+
+    // Create a child node for this page
+    const fullTitle = row['Title 1'] || row['Title'] || '';
+    const label = extractPageTitle(fullTitle) || pageSlug;
+    const childNode = createNavChildForPage(node, pageSlug, label);
+
+    // Reassign the row to the new child
+    row['NavID'] = childNode.id;
+    row['Nav Destination'] = childNode.breadcrumb;
+    row['Nav_SortID'] = childNode.sortID;
+    row['Computed Path'] = childNode.computedPath;
+    created++;
+  }
+
+  if (created > 0) {
+    recalcAllNumbers();
+    state.navTree.forEach(root => recalcDerivedFields(root));
+    resolveNavReferences();
+    cascadeNavChangesToRows(oldPaths);
+    state.navTreeDirty = true;
+    setDirty(true);
+    renderNavEditor();
+    showToast(`Remediated: ${created} child node${created !== 1 ? 's' : ''} created`, 'success');
+  } else {
+    showToast('All assigned pages already have nav nodes', 'success');
+  }
+}
+
+function clearNav() {
+  if (state.selectedIndex === null) return;
+  const row = state.editedRows[state.selectedIndex];
+  const oldNavID = row['NavID'] || '';
+
+  row['NavID']           = '';
+  row['Nav Destination'] = '';
+  row['Computed Path']   = '';
+  row['Nav_SortID']      = '';
+
+  setDirty(true);
+  closeNavPopover();
+  updateNavBadge(row);
+  renderMetaFields(row, state.selectedIndex);
+  renderVisibleRows();
+  showToast('Nav assignment removed');
+
+  // Check if the old node is now an orphan leaf — offer to remove it
+  if (oldNavID && state.navNodes.length > 0) {
+    const node = state.navNodes.find(n => n.id === oldNavID);
+    if (node) {
+      const hasChildren = node.children && node.children.length > 0;
+      const otherPages = state.editedRows.some(r => r['NavID'] === oldNavID);
+      if (!hasChildren && !otherPages) {
+        showOrphanNodeDialog(node);
+      }
+    }
+  }
+}
+
+function showOrphanNodeDialog(node) {
+  const existing = document.querySelector('.ne-orphan-dialog');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'ne-orphan-dialog';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.3);';
+
+  const dialog = document.createElement('div');
+  dialog.style.cssText = 'background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:20px;width:380px;box-shadow:0 8px 24px rgba(0,0,0,0.2);';
+
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:14px;font-weight:600;color:var(--text-primary);margin-bottom:8px;';
+  title.textContent = 'Remove empty nav node?';
+  dialog.appendChild(title);
+
+  const desc = document.createElement('div');
+  desc.style.cssText = 'font-size:12px;color:var(--text-secondary);margin-bottom:16px;line-height:1.5;';
+  desc.innerHTML = `<strong>${escapeHtml(node.breadcrumb || node.label)}</strong> now has no pages assigned and no children. Would you like to remove it from the navigation tree?`;
+  dialog.appendChild(desc);
+
+  const buttons = document.createElement('div');
+  buttons.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
+
+  const keepBtn = document.createElement('button');
+  keepBtn.className = 'btn btn-sm btn-ghost';
+  keepBtn.textContent = 'Keep node';
+  keepBtn.addEventListener('click', () => overlay.remove());
+
+  const removeBtn = document.createElement('button');
+  removeBtn.className = 'btn btn-sm btn-primary btn-danger';
+  removeBtn.textContent = 'Remove node';
+  removeBtn.addEventListener('click', () => {
+    overlay.remove();
+    executeDeleteNavNode(node, 'promote');
+    if (_navEditorOpen) renderNavEditor();
+  });
+
+  buttons.appendChild(keepBtn);
+  buttons.appendChild(removeBtn);
+  dialog.appendChild(buttons);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  const onKey = (e) => {
+    if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', onKey); }
+  };
+  document.addEventListener('keydown', onKey);
+}
+
+async function loadNavFromFile() {
+  const navTree = await window.electronAPI.loadNavFile();
+  if (navTree) {
+    state.navTree    = navTree.roots;
+    state.navNodes   = navTree.nodes;
+    state.newNavNodes = [];
+    state.navSortIDFormat = detectSortIDFormat(navTree.nodes);
+    els.btnNav.disabled = false;
+
+    // Ensure nav columns exist
+    ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'].forEach(col => {
+      if (!state.headers.includes(col)) state.headers.push(col);
+    });
+
+    showToast('Nav structure loaded (' + navTree.nodes.length + ' items)', 'success');
+    // Rebuild selects if popover is open
+    if (!els.navPopover.classList.contains('hidden')) {
+      buildNavSelects([]);
+    }
+  }
+}
+
+// ─── Text sanitization (paste/import cleanup) ─────────────────────────────────
+// Detects copy-paste residue: mojibake, HTML entities, control whitespace, NBSP,
+// zero-width chars, soft hyphens. Multi-character mojibake patterns only — bare
+// non-English characters (ü, é, ñ, etc.) are left untouched.
+const _MOJIBAKE_MAP = {
+  // Mac-Roman-as-UTF-8 family (curly quotes, dashes, ellipses, accented chars)
+  '‚Äô':"'",'‚Äò':"'",'‚Äú':'"','‚Äù':'"',
+  '‚Äì':'–','‚Äî':'—','‚Ä¶':'…','‚Ä¢':'•','‚Ä≤':'′','‚Ä≥':'″',
+  '√©':'é','√®':'è','√™':'ê','√´':'ë',
+  '√†':'à','√°':'á','√¢':'â','√§':'ä',
+  '√≠':'í','√Æ':'î','√Ø':'ï',
+  '√≥':'ó','√¥':'ô','√∂':'ö','√∫':'ú','√º':'ü',
+  '√±':'ñ','√ß':'ç',
+  '√â':'É','√Å':'Á','√ç':'Í','√ñ':'Ö','√ú':'Ü','√ë':'Ñ','√á':'Ç','√ì':'Ó','√ö':'Ú',
+  // UTF-8-as-Latin-1 family — common Latin-1 supplement chars get an extra Â prefix
+  'Â·':'·','Â°':'°','Â¢':'¢','Â£':'£','Â¤':'¤','Â¥':'¥','Â¦':'¦','Â§':'§','Â¨':'¨',
+  'Â©':'©','Âª':'»','Â«':'«','Â¬':'¬','Â®':'®','Â¯':'¯',
+  'Â±':'±','Â²':'²','Â³':'³','Â´':'´','Âµ':'µ','Â¶':'¶','Â¸':'¸','Â¹':'¹',
+  'Âº':'º','Â»':'»','Â¼':'¼','Â½':'½','Â¾':'¾','Â¿':'¿',
+  // Latin-1 family — smart-quote / dash mojibake (Windows-1252 → UTF-8 → Latin-1)
+  'â€™':"'",'â€˜':"'",'â€œ':'"','â€':'"','â€':'"',
+  'â€“':'–','â€”':'—','â€¦':'…','â€¢':'•',
+  'Ã©':'é','Ã¨':'è','Ãª':'ê','Ã«':'ë',
+  'Ã ':'à','Ã¡':'á','Ã¢':'â','Ã¤':'ä',
+  'Ã­':'í','Ã®':'î','Ã¯':'ï',
+  'Ã³':'ó','Ã´':'ô','Ã¶':'ö','Ãº':'ú','Ã¼':'ü',
+  'Ã±':'ñ','Ã§':'ç',
+};
+const _ENTITY_MAP = {
+  '&nbsp;':' ','&amp;':'&','&quot;':'"','&apos;':"'",'&lt;':'<','&gt;':'>',
+  '&ndash;':'–','&mdash;':'—','&hellip;':'…','&bull;':'•','&middot;':'·',
+  '&lsquo;':"'",'&rsquo;':"'",'&ldquo;':'"','&rdquo;':'"',
+  '&copy;':'©','&reg;':'®','&trade;':'™','&deg;':'°',
+};
+function sanitizeText(s) {
+  if (s == null) return s;
+  let v = String(s);
+  for (const [bad, good] of Object.entries(_MOJIBAKE_MAP)) {
+    if (v.includes(bad)) v = v.split(bad).join(good);
+  }
+  for (const [bad, good] of Object.entries(_ENTITY_MAP)) {
+    if (v.includes(bad)) v = v.split(bad).join(good);
+  }
+  v = v.replace(/&#(\d+);/g, (m, n) => String.fromCodePoint(parseInt(n, 10)));
+  v = v.replace(/&#x([0-9a-fA-F]+);/g, (m, n) => String.fromCodePoint(parseInt(n, 16)));
+  // VT, FF, NEL, LSEP, PSEP -> single space
+  v = v.replace(/[\u000B\u000C\u0085\u2028\u2029]/g, ' ');
+  // NBSP -> regular space
+  v = v.replace(/\u00A0/g, ' ');
+  // Zero-width chars + soft hyphen -> strip
+  v = v.replace(/[\u200B\u200C\u200D\uFEFF\u00AD]/g, '');
+  // Collapse runs of spaces/tabs and trim
+  v = v.replace(/[ \t]{2,}/g, ' ').trim();
+  return v;
+}
+
+/** Wire an input/textarea so paste content is sanitized before insertion,
+ *  and final value is sanitized on blur. `onCommit(value)` runs after a blur change. */
+function attachSanitizer(el, onCommit) {
+  el.addEventListener('paste', (e) => {
+    if (!e.clipboardData) return;
+    const raw = e.clipboardData.getData('text/plain');
+    const cleaned = sanitizeText(raw);
+    if (cleaned !== raw) {
+      e.preventDefault();
+      // Insert cleaned text at cursor position
+      const start = el.selectionStart, end = el.selectionEnd;
+      const before = el.value.slice(0, start);
+      const after = el.value.slice(end);
+      el.value = before + cleaned + after;
+      const pos = before.length + cleaned.length;
+      el.setSelectionRange(pos, pos);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
+  el.addEventListener('blur', () => {
+    const cleaned = sanitizeText(el.value);
+    if (cleaned !== el.value) {
+      el.value = cleaned;
+      if (typeof onCommit === 'function') onCommit(cleaned);
+      else el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
+}
+
+function updateNavBadge(row) {
+  const navDest = String(row['Nav Destination'] || '');
+  const navID = String(row['NavID'] || '').trim();
+  // Remove any existing badge
+  const existing = els.btnNav.querySelector('.nav-badge');
+  if (existing) existing.remove();
+  if (navDest) {
+    const badge = document.createElement('span');
+    badge.className = 'nav-badge';
+    badge.title = 'Assigned to: ' + navDest;
+    const txt = document.createElement('span');
+    txt.className = 'nb-text';
+    txt.textContent = navDest.split(' > ').pop();
+    badge.appendChild(txt);
+
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'nb-clear';
+    clear.textContent = '×';
+    clear.title = "Remove this page's nav assignment (the node stays in the tree)";
+    clear.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (state.selectedIndex == null) return;
+      promptClearNavAssignment(state.selectedIndex, navID, navDest);
+    });
+    badge.appendChild(clear);
+    els.btnNav.appendChild(badge);
+  }
+  updateRedirectBadge(row);
+}
+
+async function promptClearNavAssignment(origIndex, navID, navDest) {
+  // Determine whether the node will become empty after this clear (helps caution wording)
+  let nodeWillBeEmpty = false;
+  let stillHasOtherPages = 0;
+  let hasDescendantPages_ = false;
+  if (navID) {
+    state.editedRows.forEach((r, i) => {
+      if (i === origIndex) return;
+      if (String(r['NavID'] || '').trim() === navID) stillHasOtherPages++;
+    });
+    const node = state.navNodes && state.navNodes.find(n => n.id === navID);
+    if (node) {
+      const pageCounts = {};
+      state.editedRows.forEach((r, i) => {
+        if (i === origIndex) return; // simulate post-clear
+        const id = String(r['NavID'] || '').trim();
+        if (id) pageCounts[id] = (pageCounts[id] || 0) + 1;
+      });
+      hasDescendantPages_ = hasDescendantPages(node, pageCounts);
+      nodeWillBeEmpty = stillHasOtherPages === 0 && !hasDescendantPages_;
+    }
+  }
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:920;';
+  const dialog = document.createElement('div');
+  dialog.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:18px 20px;z-index:930;width:min(520px,94vw);box-shadow:0 16px 48px rgba(0,0,0,0.3);';
+
+  // The "also delete the now-empty node" option only appears when the node truly becomes empty
+  const emptyOption = nodeWillBeEmpty
+    ? `<div style="margin-top:10px;padding:10px 12px;background:var(--kke-evolve-bg);border:1px solid var(--kke-evolve);border-radius:4px;font-size:12px;">
+         <strong>Heads up:</strong> after this clear, the nav node will have no pages or descendants anywhere.
+         <label style="display:flex;align-items:flex-start;gap:8px;margin-top:8px;cursor:pointer;font-size:12px;color:var(--text-primary);">
+           <input type="checkbox" id="_nbc-delete-node" style="margin-top:2px;flex-shrink:0;">
+           <span>Also delete this now-empty node from the tree.<br><span style="color:var(--text-muted);">Skip this if the node is a placeholder for net-new content. Deleting it removes it permanently from the IA — you'd have to recreate it manually.</span></span>
+         </label>
+       </div>`
+    : (stillHasOtherPages > 0
+        ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">${stillHasOtherPages} other page${stillHasOtherPages !== 1 ? 's' : ''} ${stillHasOtherPages !== 1 ? 'are' : 'is'} still assigned to this node — it'll stay in the tree.</div>`
+        : (hasDescendantPages_
+            ? `<div style="margin-top:10px;font-size:12px;color:var(--text-muted);">No other pages on this node, but its descendants still have assigned pages — the node remains as a parent.</div>`
+            : ''));
+
+  dialog.innerHTML = `
+    <div style="font-weight:600;font-size:14px;margin-bottom:6px;">Clear nav assignment?</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Currently assigned to:</div>
+    <div style="font-size:12px;font-family:var(--font-mono);background:var(--bg-field-bar);padding:6px 8px;border-radius:4px;word-break:break-word;">${escapeHtml(navDest)}</div>
+    <div style="font-size:13px;color:var(--text-secondary);margin-top:12px;">
+      This removes the page's nav assignment only. The node itself stays in the tree — even if this page was the last one on it. Nodes are often kept as <em>placeholders</em> for net-new content, so deletion is a separate, more deliberate action.
+    </div>
+    ${emptyOption}
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+      <button id="_nbc-cancel" class="btn btn-sm btn-ghost">Cancel</button>
+      <button id="_nbc-clear"  class="btn btn-sm btn-primary">Clear assignment</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.body.appendChild(dialog);
+
+  function close() { dialog.remove(); overlay.remove(); }
+  dialog.querySelector('#_nbc-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', close);
+
+  // Update primary button label dynamically when the delete-node checkbox is toggled
+  const deleteCb = dialog.querySelector('#_nbc-delete-node');
+  const clearBtn = dialog.querySelector('#_nbc-clear');
+  if (deleteCb) {
+    deleteCb.addEventListener('change', () => {
+      clearBtn.textContent = deleteCb.checked ? 'Clear & delete node' : 'Clear assignment';
+      clearBtn.classList.toggle('btn-danger', deleteCb.checked);
+    });
+  }
+
+  clearBtn.addEventListener('click', () => {
+    const row = state.editedRows[origIndex];
+    const alsoDeleteNode = !!(deleteCb && deleteCb.checked);
+    // Resolve node BEFORE clearing the assignment (clearing zeros out NavID)
+    const nodeToDelete = alsoDeleteNode && navID
+      ? state.navNodes.find(n => n.id === navID)
+      : null;
+
+    clearNavAssignment(row, origIndex);
+    setDirty(true);
+
+    if (nodeToDelete) {
+      deleteNavNodeFromEditor(nodeToDelete);
+      showToast('Nav assignment cleared and empty node deleted from tree.', 'success');
+    } else {
+      showToast('Nav assignment cleared. Node still in tree.', 'success');
+    }
+
+    updateNavBadge(row);
+    refreshRowInList(origIndex);
+    close();
+  });
+  // Esc closes
+  function onKey(e) {
+    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
+    if (e.key === 'Enter')  { e.preventDefault(); dialog.querySelector('#_nbc-clear').click(); document.removeEventListener('keydown', onKey); }
+  }
+  document.addEventListener('keydown', onKey);
+}
+
+function updateRedirectBadge(row) {
+  const btn = $('btn-redirects');
+  if (!btn) return;
+  const dest = String(row['Redirect_Destination'] || '').trim();
+  // Remove any existing badge
+  const existing = btn.querySelector('.redirect-badge');
+  if (existing) existing.remove();
+  if (!dest) return;
+
+  const badge = document.createElement('span');
+  badge.className = 'redirect-badge';
+  badge.title = 'Redirects to: ' + dest;
+  // Show last meaningful path segment, fall back to host
+  let label = dest;
+  try {
+    const u = new URL(dest, 'https://example.com'); // base for relative paths
+    const parts = u.pathname.split('/').filter(Boolean);
+    label = parts.length > 0 ? '/' + parts[parts.length - 1] : (u.host || dest);
+  } catch (_) {
+    label = dest.replace(/^https?:\/\//, '').split('/').pop() || dest;
+  }
+  const txt = document.createElement('span');
+  txt.className = 'rb-text';
+  txt.textContent = label;
+  badge.appendChild(txt);
+
+  const clear = document.createElement('button');
+  clear.type = 'button';
+  clear.className = 'rb-clear';
+  clear.textContent = '×';
+  clear.title = 'Clear redirect destination';
+  clear.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (state.selectedIndex == null) return;
+    const r = state.editedRows[state.selectedIndex];
+    const old = String(r['Redirect_Destination'] || '');
+    if (!old) return;
+    r['Redirect_Destination'] = '';
+    logChange(state.selectedIndex, 'Redirect_Destination', old, '');
+    setDirty(true);
+    updateRedirectBadge(r);
+    refreshRowInList(state.selectedIndex);
+    showToast('Redirect cleared', 'success');
+  });
+  badge.appendChild(clear);
+  btn.appendChild(badge);
+}
+
+// ─── Nav tree / Nav editor ─────────────────────────────────────────────────
+
+let _navEditorOpen = false;
+
+function setupNavTree() {
+  // Tree button moved to the view switcher (Chunk iii). Toggle is wired via menu listener.
+  // The legacy in-audit-bar #btn-navtree no longer exists.
+  // Old modal close buttons still work as fallback
+  $('btn-navtree-close').addEventListener('click', closeNavTree);
+  $('navtree-overlay').addEventListener('click', closeNavTree);
+  $('btn-navtree-clear-filter').addEventListener('click', () => {
+    _navTreeFilter = null;
+    $('btn-navtree-clear-filter').classList.add('hidden');
+    applyFilter();
+    closeNavTree();
+  });
+
+  // Nav editor buttons
+  $('btn-nav-editor-close').addEventListener('click', () => closeNavEditor());
+  $('btn-nav-editor-add-root').addEventListener('click', addNavRootNode);
+  $('btn-nav-remediate').addEventListener('click', remediateNavAssignments);
+  $('btn-nav-consolidate-candidates').addEventListener('click', openConsolidationCandidates);
+
+  // Depth filter
+  $('nav-depth-filter').addEventListener('change', () => renderNavEditor());
+  const buildFilterEl = $('nav-build-filter');
+  if (buildFilterEl) buildFilterEl.addEventListener('change', () => renderNavEditor());
+  const phaseFilterEl = $('nav-phase-filter');
+  if (phaseFilterEl) phaseFilterEl.addEventListener('change', () => renderNavEditor());
+
+  // Bulk menu set/clear for visible nodes
+  $('btn-nav-set-menu-filtered').addEventListener('click', () => {
+    const nodes = getNavDepthFilteredNodes();
+    if (nodes.length === 0) return;
+    nodes.forEach(n => { n.inMenu = 'Y'; });
+    setDirty(true);
+    state.navTreeDirty = true;
+    renderNavEditor();
+    showToast(`Set Menu for ${nodes.length} nodes`, 'success');
+  });
+  $('btn-nav-clear-menu-filtered').addEventListener('click', () => {
+    const nodes = getNavDepthFilteredNodes();
+    if (nodes.length === 0) return;
+    nodes.forEach(n => { n.inMenu = ''; });
+    setDirty(true);
+    state.navTreeDirty = true;
+    renderNavEditor();
+    showToast(`Cleared Menu for ${nodes.length} nodes`, 'success');
+  });
+
+  // Collapse / expand all nav nodes
+  $('btn-nav-collapse-all').addEventListener('click', () => {
+    state.navNodes.forEach(n => { if (n.children && n.children.length > 0) _navCollapsed.add(n.id); });
+    renderNavEditor();
+  });
+  $('btn-nav-expand-all').addEventListener('click', () => {
+    _navCollapsed.clear();
+    renderNavEditor();
+  });
+
+  // Sitemap generator
+  $('btn-nav-sitemap').addEventListener('click', generateNavSitemap);
+
+  // Navigation IA report
+  $('btn-nav-ia-report').addEventListener('click', reportNavIa);
+
+  // Nav export dropdown
+  const exportBtn = $('btn-nav-export');
+  const exportMenu = $('nav-export-menu');
+  exportBtn.addEventListener('click', () => {
+    exportMenu.classList.toggle('hidden');
+  });
+  document.addEventListener('click', (e) => {
+    if (!exportBtn.contains(e.target) && !exportMenu.contains(e.target)) {
+      exportMenu.classList.add('hidden');
+    }
+  });
+  $('btn-nav-export-indented').addEventListener('click', () => {
+    exportMenu.classList.add('hidden');
+    exportNavTree('indented');
+  });
+  $('btn-nav-export-flat').addEventListener('click', () => {
+    exportMenu.classList.add('hidden');
+    exportNavTree('flat');
+  });
+
+  // Column resize handles
+  setupNavEditorColumnResize();
+}
+
+function setupNavEditorColumnResize() {
+  const handles = document.querySelectorAll('#nav-editor-col-headers .ne-col-resize');
+  handles.forEach(handle => {
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const colClass = handle.dataset.col;
+
+      // Find the header element to the left of this handle
+      const headerEl = handle.previousElementSibling;
+      if (!headerEl) return;
+
+      const startX = e.clientX;
+      const startWidth = headerEl.getBoundingClientRect().width;
+
+      handle.classList.add('dragging');
+
+      function onMouseMove(e) {
+        const delta = e.clientX - startX;
+        const newWidth = Math.max(60, startWidth + delta);
+
+        // Update header width
+        headerEl.style.width = newWidth + 'px';
+        headerEl.style.flex = 'none';
+
+        // Update all matching cells in the body
+        const bodyEls = document.querySelectorAll(`#nav-editor-body .${colClass}`);
+        bodyEls.forEach(el => {
+          el.style.width = newWidth + 'px';
+          el.style.flex = 'none';
+        });
+      }
+
+      function onMouseUp() {
+        handle.classList.remove('dragging');
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      }
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+  });
+}
+
+function toggleNavEditor() {
+  if (_navEditorOpen) {
+    closeNavEditor();
+  } else {
+    openNavEditor();
+  }
+}
+
+function openNavEditor() {
+  if (!state.navTree) {
+    // Initialize empty nav structure
+    state.navTree = [];
+    state.navNodes = [];
+    state.navSortIDFormat = { segWidth: 4, maxLevels: 9 };
+    // Ensure nav columns exist in headers
+    ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'].forEach(col => {
+      if (!state.headers.includes(col)) state.headers.push(col);
+    });
+    els.btnNav.disabled = false;
+  }
+
+  // Close other full-panel views
+  if (_redirectEditorOpen) closeRedirectEditor();
+  if (_tableViewOpen) closeTableView();
+
+  _navEditorOpen = true;
+  document.getElementById('app').classList.add('tv-active');
+  $('content-area').classList.add('hidden');
+  $('no-selection').classList.add('hidden');
+  $('nav-editor').classList.remove('hidden');
+  // Legacy in-audit-bar buttons removed in Chunk iii; null-safe check kept for any stragglers.
+  const btnNT = $('btn-navtree');
+  if (btnNT) { btnNT.classList.add('nav-editor-active'); btnNT.textContent = 'Tree ✓'; }
+
+  renderNavEditor();
+
+  // Highlight the nav node assigned to the currently selected row
+  highlightAssignedNavNode();
+  if (typeof refreshViewSwitcher === 'function') refreshViewSwitcher();
+}
+
+function highlightAssignedNavNode() {
+  if (state.selectedIndex === null) return;
+  const navID = state.editedRows[state.selectedIndex]?.['NavID'];
+  if (!navID) return;
+
+  // Expand collapsed ancestors so the node is visible
+  const node = state.navNodes.find(n => n.id === navID);
+  if (!node) return;
+  let cur = node.parentNumber ? state.navNodes.find(n => n.number === node.parentNumber) : null;
+  let needsRerender = false;
+  while (cur) {
+    if (_navCollapsed.has(cur.id)) {
+      _navCollapsed.delete(cur.id);
+      needsRerender = true;
+    }
+    cur = cur.parentNumber ? state.navNodes.find(n => n.number === cur.parentNumber) : null;
+  }
+  if (needsRerender) renderNavEditor();
+
+  // Highlight and scroll into view
+  const el = $('nav-editor-body').querySelector(`[data-node-id="${navID}"] > .ne-row`);
+  if (el) {
+    el.classList.add('ne-row-highlight');
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    // Remove highlight after a few seconds so it doesn't persist permanently
+    setTimeout(() => el.classList.remove('ne-row-highlight'), 3000);
+  }
+}
+
+function closeNavEditor() {
+  _navEditorOpen = false;
+  document.getElementById('app').classList.remove('tv-active');
+  $('nav-editor').classList.add('hidden');
+  if ($('btn-navtree')) {
+    $('btn-navtree').classList.remove('nav-editor-active');
+    $('btn-navtree').textContent = 'Tree';
+  }
+
+  // Restore appropriate view
+  if (state.selectedIndex !== null) {
+    $('content-area').classList.remove('hidden');
+  } else {
+    $('no-selection').classList.remove('hidden');
+  }
+  if (typeof refreshViewSwitcher === 'function') refreshViewSwitcher();
+}
+
+async function exportNavTree(format) {
+  if (!state.navTree || state.navNodes.length === 0) {
+    showToast('No navigation tree to export', 'error');
+    return;
+  }
+
+  // If any nodes have a phase set, ask whether to include them in the export
+  const phasedCount = state.navNodes.filter(n => String(n.phase || '').trim()).length;
+  let includePhase = true; // include phased nodes by default; user can opt out for client-clean exports
+  if (phasedCount > 0) {
+    const answer = await showPhaseExportPrompt(phasedCount);
+    if (answer === 'cancel') return;
+    includePhase = answer === 'include';
+  }
+
+  // Precompute pages-per-NavID for the status column
+  const pageCounts = {};
+  state.editedRows.forEach(r => {
+    const id = String(r['NavID'] || '').trim();
+    if (id) pageCounts[id] = (pageCounts[id] || 0) + 1;
+  });
+  function statusFor(node) {
+    if (node.url) return '🔗 ' + node.url;
+    const refTarget = node.refNodeId ? state.navNodes.find(n => n.id === node.refNodeId) : null;
+    if (node.refNodeId) return '↗ ' + (refTarget ? refTarget.breadcrumb : '(broken ref)');
+    const count = pageCounts[node.id] || 0;
+    if (count > 0) return String(count);
+    const hasChildren = node.children && node.children.length > 0;
+    if (hasChildren && hasDescendantPages(node, pageCounts)) return 'NEW';
+    return 'Empty';
+  }
+
+  // Walk tree depth-first to build ordered rows
+  const rows = [];
+  let maxDepth = 0;
+  function walkTree(node, depth) {
+    const phase = String(node.phase || '').trim();
+    // If excluding phased nodes, skip this node and its entire subtree
+    if (!includePhase && phase) return;
+    if (depth > maxDepth) maxDepth = depth;
+    const refTarget = node.refNodeId ? state.navNodes.find(n => n.id === node.refNodeId) : null;
+    const inMenuRaw = String(node.inMenu || '').trim().toLowerCase();
+    const inMenu = (inMenuRaw === 'y' || inMenuRaw === 'true' || inMenuRaw === '1' || inMenuRaw === 'yes') ? 'Yes' : '';
+    rows.push({
+      number: node.number,
+      label: refTarget ? node.label + ' ↗' : node.label,
+      computedPath: node.computedPath || '',
+      breadcrumb: node.breadcrumb || '',
+      refTo: refTarget ? refTarget.breadcrumb : '',
+      status: statusFor(node),
+      pageCount: pageCounts[node.id] || 0,
+      inMenu,
+      phase,
+      notes: node.notes || '',
+      depth
+    });
+    if (node.children) {
+      for (const child of node.children) walkTree(child, depth + 1);
+    }
+  }
+  for (const root of state.navTree) walkTree(root, 0);
+
+  const result = await window.electronAPI.exportNavTree({ format, rows, maxDepth: maxDepth + 1, includePhase });
+  if (result.success) {
+    showToast(`Exported ${result.count} nodes to ${result.filePath.split('/').pop()}`, 'success');
+  } else if (result.error !== 'Cancelled') {
+    showToast('Export failed: ' + result.error, 'error');
+  }
+}
+
+function showPhaseExportPrompt(phasedCount) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:920;';
+    const dialog = document.createElement('div');
+    dialog.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:18px 20px;z-index:930;width:min(480px,94vw);box-shadow:0 16px 48px rgba(0,0,0,0.3);';
+    dialog.innerHTML = `
+      <div style="font-weight:600;font-size:14px;margin-bottom:8px;">Include Future / phased nodes?</div>
+      <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">
+        ${phasedCount} node${phasedCount !== 1 ? 's' : ''} have a non-current Phase set (Future, Stretch, Archived, etc.).
+        Including them adds a <strong>Phase</strong> column so they're flagged in the export.
+        Excluding them gives a clean current-build view for client deliverables.
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;">
+        <button id="_pep-cancel" class="btn btn-sm btn-ghost">Cancel</button>
+        <button id="_pep-exclude" class="btn btn-sm btn-ghost">Exclude phased</button>
+        <button id="_pep-include" class="btn btn-sm btn-primary">Include with Phase column</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    document.body.appendChild(dialog);
+    function close(answer) { dialog.remove(); overlay.remove(); resolve(answer); }
+    dialog.querySelector('#_pep-cancel').addEventListener('click', () => close('cancel'));
+    dialog.querySelector('#_pep-exclude').addEventListener('click', () => close('exclude'));
+    dialog.querySelector('#_pep-include').addEventListener('click', () => close('include'));
+    overlay.addEventListener('click', () => close('cancel'));
+  });
+}
+
+function detectDuplicateNavIds() {
+  const groups = new Map();
+  state.navNodes.forEach(n => {
+    if (!n.id) return;
+    const arr = groups.get(n.id) || [];
+    arr.push(n);
+    groups.set(n.id, arr);
+  });
+  const dups = [];
+  groups.forEach((nodes, id) => { if (nodes.length > 1) dups.push({ id, nodes }); });
+  return dups;
+}
+
+function fixDuplicateNavIds() {
+  const dups = detectDuplicateNavIds();
+  if (dups.length === 0) return { groups: 0, renumbered: 0, affectedPages: 0 };
+
+  // Find max ID currently in use
+  let maxId = 0;
+  state.navNodes.forEach(n => {
+    const idNum = parseInt(n.id, 10);
+    if (!isNaN(idNum) && idNum > maxId) maxId = idNum;
+  });
+
+  let renumbered = 0;
+  let affectedPages = 0;
+  dups.forEach(({ id, nodes }) => {
+    affectedPages += state.editedRows.filter(r => String(r['NavID'] || '') === id).length;
+    // Keep the first node's ID; renumber the rest
+    for (let i = 1; i < nodes.length; i++) {
+      maxId++;
+      const newId = String(maxId).padStart(5, '0');
+      nodes[i].id = newId;
+      renumbered++;
+    }
+  });
+
+  state.navTreeDirty = true;
+  setDirty(true);
+  return { groups: dups.length, renumbered, affectedPages };
+}
+
+function renderNavEditor() {
+  // Keep the Build filter's per-value options (status:NAME / assignee:NAME) in sync.
+  populateNavBuildFilter();
+  // Phase 2, Chunk δ: invalidate per-node page count cache used by build indicators
+  invalidateNavPageCountsCache();
+  // Count pages per node — exclude Kill/Consolidate rows (going away; NavID is a redirect
+  // hint, not evidence that the page lives at this node).
+  const pageCounts = {};
+  state.editedRows.forEach(row => {
+    const navID = row['NavID'] || '';
+    if (!navID) return;
+    const effective = String(row[finalKkeCol()] || row[kkeCol()] || '').trim().toLowerCase();
+    if (effective === 'kill' || effective === 'consolidate') return;
+    pageCounts[navID] = (pageCounts[navID] || 0) + 1;
+  });
+
+  // Pages stats (audit row level)
+  const assignedRows = state.editedRows.filter(r => String(r['NavID'] || '').trim()).length;
+  // Keep/Evolve rows that still need a nav assignment
+  const needsPlacement = state.editedRows.filter(r => {
+    if (String(r['NavID'] || '').trim()) return false;
+    if (isFragmentRow(r)) return false; // fragments have no nav home — not a placement gap
+    const effective = String(r[finalKkeCol()] || r[kkeCol()] || '').trim();
+    return effective === 'Keep' || effective === 'Evolve';
+  }).length;
+
+  // Node stats — exclude future/phased nodes from the current-build buckets.
+  // Reference (alias) nodes are excluded from hub/empty counts since they point
+  // to another node's content and are never expected to have direct page assignments.
+  const currentNodes = state.navNodes.filter(n => !String(n.phase || '').trim());
+  const futureCount = state.navNodes.length - currentNodes.length;
+
+  const assignedNodeCount = currentNodes.filter(n => (pageCounts[n.id] || 0) > 0).length;
+
+  // Net new = current non-alias, non-header interior nodes with no direct pages but descendants that have pages
+  const hubCount = currentNodes.filter(n => {
+    if (n.refNodeId) return false;
+    if (n.nodeType === 'Header' || n.nodeType === 'Fragment') return false;
+    const c = pageCounts[n.id] || 0;
+    const hc = n.children && n.children.length > 0;
+    return c === 0 && hc && hasDescendantPages(n, pageCounts);
+  }).length;
+
+  // Empty = current non-alias, non-header, non-fragment leaf nodes with no pages
+  const orphanCount = currentNodes.filter(n => {
+    if (n.refNodeId) return false;
+    if (n.nodeType === 'Header' || n.nodeType === 'Fragment') return false;
+    return !pageCounts[n.id] && (!n.children || n.children.length === 0);
+  }).length;
+
+  const phaseCounts = {};
+  state.navNodes.forEach(n => {
+    const p = String(n.phase || '').trim();
+    if (p) phaseCounts[p] = (phaseCounts[p] || 0) + 1;
+  });
+
+  // Stats: node counts first (current build), phased nodes excluded, then page placement
+  let statsText = `${state.navNodes.length} nodes · ${currentNodes.length} current (${assignedNodeCount} assigned, ${hubCount} net new, ${orphanCount} empty)`;
+  // Show each phase bucket individually (e.g. "12 future · 3 stretch")
+  Object.entries(phaseCounts).sort((a,b) => b[1]-a[1]).forEach(([p, c]) => {
+    statsText += ` · ${c} ${p.toLowerCase()}`;
+  });
+  statsText += ` · ${assignedRows} pages placed`;
+  const fragmentCount = state.navNodes.filter(n => n.nodeType === 'Fragment').length;
+  if (fragmentCount > 0) statsText += ` · ${fragmentCount} fragment${fragmentCount !== 1 ? 's' : ''}`;
+  // "need placement" is rendered as a clickable link below (after statsEl text is set).
+
+  // Phase 2, Chunk δ: build-phase tally — only show when at least one node has a status
+  const statusCounts = {};
+  state.navNodes.forEach(n => {
+    const s = String(n.pageStatus || '').trim();
+    if (s) statusCounts[s] = (statusCounts[s] || 0) + 1;
+  });
+  const statusKeys = Object.keys(statusCounts);
+  if (statusKeys.length > 0) {
+    statsText += ' · ';
+    statsText += statusKeys.sort().map(k => `${statusCounts[k]} ${k.toLowerCase()}`).join(' · ');
+  }
+  // Readiness warning summary
+  const totalWarnings = state.navNodes.reduce((acc, n) => acc + computeNodeReadinessWarnings(n).length, 0);
+  if (totalWarnings > 0) {
+    statsText += ` · ⚠ ${totalWarnings} readiness`;
+  }
+
+  // Duplicate-NavID warning + Fix button (replaces stats span content if duplicates exist)
+  const dupNavIds = detectDuplicateNavIds();
+  const statsEl = $('nav-editor-stats');
+  statsEl.textContent = statsText;
+
+  // Clickable "N need placement" — jumps to the audit view filtered to those rows.
+  if (needsPlacement > 0) {
+    const ph = document.createElement('span');
+    ph.textContent = ` · ${needsPlacement} need placement`;
+    ph.style.cssText = 'color:var(--kke-evolve);cursor:pointer;text-decoration:underline;';
+    ph.title = 'Keep/Evolve pages not yet assigned to a nav node — click to find them in the sidebar';
+    ph.addEventListener('click', () => {
+      closeNavEditor();
+      applyKkeSpecialFilter('_needs-placement');
+      showToast(`Showing ${needsPlacement} page${needsPlacement !== 1 ? 's' : ''} that need nav placement`, 'info');
+    });
+    statsEl.appendChild(ph);
+  }
+
+  if (dupNavIds.length > 0) {
+    const totalNodes = dupNavIds.reduce((s, g) => s + g.nodes.length, 0);
+    const warn = document.createElement('span');
+    warn.style.cssText = 'margin-left:12px;color:var(--kke-kill);font-weight:600;cursor:pointer;text-decoration:underline;';
+    warn.textContent = `⚠ ${dupNavIds.length} duplicate ID${dupNavIds.length > 1 ? 's' : ''} (${totalNodes} nodes affected) — click to fix`;
+    warn.title = 'Pages assigned to a duplicated ID appear under every node sharing that ID. Fix renumbers duplicates with new unique IDs.';
+    warn.addEventListener('click', async () => {
+      const ok = await confirmDialog({
+        title: 'Fix duplicate nav IDs',
+        message:
+          `${dupNavIds.length} ID${dupNavIds.length > 1 ? 's are' : ' is'} shared by ${totalNodes} nodes. ` +
+          `Fix will renumber the duplicates with new unique IDs (the first node in each group keeps the original ID).\n\n` +
+          `After the fix, pages currently assigned to a duplicated ID stay with the first node. ` +
+          `You may need to manually re-assign some pages using the nav picker.\n\nProceed?`,
+        confirmLabel: 'Fix',
+      });
+      if (!ok) return;
+      const result = fixDuplicateNavIds();
+      renderNavEditor();
+      showToast(`Fixed: ${result.groups} duplicate ID group${result.groups > 1 ? 's' : ''}, ${result.renumbered} node${result.renumbered > 1 ? 's' : ''} renumbered. ${result.affectedPages} page${result.affectedPages !== 1 ? 's' : ''} may need re-assignment.`, 'success');
+    });
+    statsEl.appendChild(warn);
+  }
+
+  // Precompute duplicate slugs across the entire tree
+  const dupSlugs = buildDuplicateSlugSet(state.navTree);
+
+  // Populate depth filter dropdown
+  const depthSel = $('nav-depth-filter');
+  const currentDepth = depthSel.value;
+  let maxDepth = 0;
+  function calcMaxDepth(nodes, d) {
+    if (!nodes) return;
+    nodes.forEach(n => { if (d > maxDepth) maxDepth = d; calcMaxDepth(n.children, d + 1); });
+  }
+  calcMaxDepth(state.navTree, 0);
+  depthSel.innerHTML = '<option value="">All</option>';
+  for (let d = 0; d <= maxDepth; d++) {
+    const opt = document.createElement('option');
+    opt.value = d;
+    opt.textContent = d === 0 ? 'Top level' : `Level ${d}`;
+    depthSel.appendChild(opt);
+  }
+  if (currentDepth !== '' && parseInt(currentDepth) <= maxDepth) depthSel.value = currentDepth;
+
+  const depthFilter = depthSel.value !== '' ? parseInt(depthSel.value) : null;
+
+  const body = $('nav-editor-body');
+  body.innerHTML = '';
+  state.navTree.forEach(node => {
+    body.appendChild(renderNavEditorNode(node, pageCounts, 0, dupSlugs, depthFilter));
+  });
+}
+
+async function generateNavSitemap() {
+  if (!state.navTree || state.navTree.length === 0) {
+    showToast('No navigation structure loaded', 'error');
+    return;
+  }
+
+  const depthFilter = $('nav-depth-filter').value !== '' ? parseInt($('nav-depth-filter').value) : null;
+
+  // Build color map from all buildPattern values across the nav tree
+  const SITEMAP_PALETTE = [
+    '#4F46E5', '#0891B2', '#059669', '#D97706', '#DC2626',
+    '#7C3AED', '#0284C7', '#65A30D', '#DB2777', '#9333EA',
+    '#C2410C', '#0D9488',
+  ];
+  const patternSet = new Set();
+  function walkForPatterns(nodes) {
+    if (!nodes) return;
+    nodes.forEach(n => {
+      if (n.buildPattern) patternSet.add(n.buildPattern);
+      walkForPatterns(n.children);
+    });
+  }
+  walkForPatterns(state.navTree);
+  const colorMap = {};
+  [...patternSet].sort().forEach((p, i) => { colorMap[p] = SITEMAP_PALETTE[i % SITEMAP_PALETTE.length]; });
+
+  function makeShouldInclude(menuOnly) {
+    return function shouldInclude(node) {
+      if (!menuOnly) return true;
+      if (node.inMenu === 'Y' || node.inMenu === 'y') return true;
+      return (node.children || []).some(c => shouldInclude(c));
+    };
+  }
+
+  function buildSitemap(menuOnly) {
+    const idMap = new Map();
+    const shouldInclude = makeShouldInclude(menuOnly);
+
+    function sanitizeId(id) {
+      return 'N' + id.replace(/[^a-zA-Z0-9]/g, '_');
+    }
+
+    // Analyze tree shape to pick best layout direction
+    let maxWidth = 0;  // widest level (most siblings at any depth)
+    let maxDepth = 0;
+    function analyzeShape(nodes, depth) {
+      if (!nodes) return;
+      const included = nodes.filter(n => (depthFilter === null || depth <= depthFilter) && shouldInclude(n));
+      if (included.length > maxWidth) maxWidth = included.length;
+      if (depth > maxDepth) maxDepth = depth;
+      included.forEach(n => analyzeShape(n.children, depth + 1));
+    }
+    analyzeShape(state.navTree, 0);
+
+    // Build node definitions for a subtree
+    function addNodes(mermaidRef, nodes, depth, parentMermaidId) {
+      if (!nodes) return;
+      nodes.forEach(node => {
+        if (depthFilter !== null && depth > depthFilter) return;
+        if (!shouldInclude(node)) return;
+
+        const mid = sanitizeId(node.id);
+        idMap.set(node.id, mid);
+
+        let label = (node.label || '(unnamed)').replace(/"/g, "'");
+        if (label.length > 30) label = label.substring(0, 28) + '…';
+        const menu = node.inMenu === 'Y' ? ' *' : '';
+        mermaidRef.code += `  ${mid}["${label}${menu}"]\n`;
+
+        if (parentMermaidId) {
+          mermaidRef.code += `  ${parentMermaidId} --> ${mid}\n`;
+        }
+
+        addNodes(mermaidRef, node.children, depth + 1, mid);
+      });
+    }
+
+    // One diagram per top-level node, using LR (left-to-right) for vertical layout
+    const topNodes = state.navTree.filter(n => shouldInclude(n));
+    const mermaidCharts = [];
+
+    topNodes.forEach(root => {
+      if (depthFilter !== null && 0 > depthFilter) return;
+      const chart = { code: 'graph LR\n' };
+      const mid = sanitizeId(root.id);
+      idMap.set(root.id, mid);
+      let label = (root.label || '(unnamed)').replace(/"/g, "'");
+      if (label.length > 30) label = label.substring(0, 28) + '…';
+      const menu = root.inMenu === 'Y' ? ' *' : '';
+      chart.code += `  ${mid}["${label}${menu}"]\n`;
+      addNodes(chart, root.children || [], 1, mid);
+      mermaidCharts.push({ title: root.label, code: chart.code });
+    });
+
+    // Combined mermaid (for code export)
+    let mermaid = 'graph TD\n';
+    const combined = { code: mermaid };
+    addNodes(combined, state.navTree, 0, null);
+    mermaid = combined.code;
+
+    // Text tree
+    let textTree = '';
+    function addTextNodes(nodes, depth, prefix) {
+      if (!nodes) return;
+      const filtered = menuOnly ? nodes.filter(n => shouldInclude(n)) : nodes;
+      filtered.forEach((node, i) => {
+        if (depthFilter !== null && depth > depthFilter) return;
+        const isLast = i === filtered.length - 1;
+        const connector = depth === 0 ? '' : (isLast ? '└── ' : '├── ');
+        const childPrefix = depth === 0 ? '' : (isLast ? '    ' : '│   ');
+        const menu = '';
+        const path = node.computedPath ? ` (/${node.computedPath})` : '';
+        textTree += prefix + connector + node.label + menu + path + '\n';
+        addTextNodes(node.children, depth + 1, prefix + childPrefix);
+      });
+    }
+    addTextNodes(state.navTree, 0, '');
+
+    return { mermaid, textTree, nodeCount: idMap.size, charts: mermaidCharts };
+  }
+
+  // Build initial sitemap (all nodes)
+  let current = buildSitemap(false);
+
+  function renderSitemapModal(data, menuOnly, activeTab) {
+    if (!activeTab) activeTab = 'visual';
+    let html = `<div style="padding:0;display:flex;flex-direction:column;height:100%;">`;
+
+    // Toolbar
+    html += `<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0;">`;
+    html += `<div style="font-weight:600;font-size:13px;">Sitemap — ${data.nodeCount} nodes${depthFilter !== null ? ` (depth ≤ ${depthFilter})` : ''}</div>`;
+    html += `<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;">`;
+    html += `<input type="checkbox" id="sitemap-menu-only" ${menuOnly ? 'checked' : ''}> Menu items only`;
+    html += `</label>`;
+    html += `<span style="flex:1"></span>`;
+    // Tabs
+    html += `<button class="btn btn-sm ${activeTab === 'visual' ? 'btn-primary' : 'btn-ghost'}" id="sitemap-tab-visual">Visual</button>`;
+    html += `<button class="btn btn-sm ${activeTab === 'text' ? 'btn-primary' : 'btn-ghost'}" id="sitemap-tab-text">Text Tree</button>`;
+    html += `<button class="btn btn-sm btn-ghost" id="sitemap-export-pdf">Export PDF</button>`;
+    html += `<button class="btn btn-sm btn-ghost" id="sitemap-export-svg">Export SVG</button>`;
+    html += `</div>`;
+
+    // Visual tab
+    html += `<div id="sitemap-panel-visual" style="flex:1;overflow:auto;min-height:0;${activeTab !== 'visual' ? 'display:none;' : ''}">`;
+    html += `<div id="sitemap-mermaid-render" style="background:#fff;padding:16px;min-height:100%;cursor:grab;transform-origin:0 0;"></div>`;
+    html += `</div>`;
+
+    // Text tree tab
+    html += `<div id="sitemap-panel-text" style="flex:1;overflow:auto;min-height:0;padding:12px 16px;${activeTab !== 'text' ? 'display:none;' : ''}">`;
+    html += `<div style="display:flex;justify-content:flex-end;margin-bottom:4px;">`;
+    html += `<button id="btn-copy-text-tree" class="btn btn-sm btn-ghost">Copy</button>`;
+    html += `</div>`;
+    html += `<pre style="background:var(--bg-base);border:1px solid var(--border);border-radius:4px;padding:10px;font-size:11px;font-family:var(--font-mono);overflow:auto;white-space:pre;margin:0;">${escapeHtml(data.textTree)}</pre>`;
+    html += `</div>`;
+
+    html += `</div>`;
+    return html;
+  }
+
+  let _sitemapActiveTab = 'visual';
+
+  async function showSitemapModal(menuOnly) {
+    current = buildSitemap(menuOnly);
+    $('progress-body').innerHTML = renderSitemapModal(current, menuOnly, _sitemapActiveTab);
+    $('progress-body').style.height = '100%';
+    $('btn-progress-export-pdf').classList.add('hidden');
+    $('btn-progress-export-html').classList.add('hidden');
+
+    // Make the modal larger for the sitemap
+    const modal = $('progress-modal');
+    modal.style.width = '90vw';
+    modal.style.maxWidth = '1200px';
+    modal.style.height = '85vh';
+    $('progress-overlay').classList.remove('hidden');
+    modal.classList.remove('hidden');
+
+    // Restore modal size on close
+    const origClose = closeProgressDashboard;
+
+    // Render D3 tidy tree
+    const renderDiv = $('sitemap-mermaid-render');
+    if (renderDiv && _sitemapActiveTab === 'visual') {
+      renderDiv.innerHTML = '<p style="color:var(--text-muted);font-size:12px;padding:20px;">Rendering tree...</p>';
+
+      // Build D3-compatible tree data
+      const shouldIncludeD3 = makeShouldInclude(menuOnly);
+      const pageCounts = _navPageCountsCache();
+      function buildD3Tree(nodes) {
+        if (!nodes) return [];
+        return nodes.filter(n => shouldIncludeD3(n)).map(n => {
+          const allChildren = n.children || [];
+          // hasHiddenChildren: in menu-only mode, children that exist but are completely excluded
+          const hiddenChildren = menuOnly ? allChildren.filter(c => !shouldIncludeD3(c)) : [];
+          return {
+            name: (n.label || '(unnamed)').substring(0, 35),
+            menu: n.inMenu === 'Y' || n.inMenu === 'y',
+            pattern: n.buildPattern || '',
+            phase: n.phase || '',
+            pageCount: pageCounts[n.id] || 0,
+            hasHiddenChildren: hiddenChildren.length > 0,
+            children: (depthFilter !== null && getNodeDepth(n) >= depthFilter) ? [] : buildD3Tree(n.children),
+          };
+        });
+      }
+
+      function getNodeDepth(node) {
+        let depth = 0;
+        let cur = node;
+        while (cur.parentNumber) {
+          depth++;
+          cur = state.navNodes.find(n => n.number === cur.parentNumber) || { parentNumber: '' };
+        }
+        return depth;
+      }
+
+      // Build separate trees for each top-level nav (Utility Nav, Main Nav, Footer Nav, etc.)
+      const d3Trees = buildD3Tree(state.navTree);
+
+      renderDiv.innerHTML = '<p style="color:var(--text-muted);font-size:12px;padding:20px;">Rendering ' + d3Trees.length + ' tree(s)...</p>';
+
+      const renderAll = async () => {
+        renderDiv.innerHTML = '';
+        for (const tree of d3Trees) {
+          const section = document.createElement('div');
+          section.style.cssText = 'margin-bottom:24px;border:1px solid #e0e0e0;border-radius:8px;overflow:hidden;';
+
+          const heading = document.createElement('div');
+          heading.style.cssText = 'font-weight:600;font-size:14px;padding:10px 16px;background:#f5f5f5;border-bottom:1px solid #e0e0e0;';
+          heading.textContent = tree.name;
+          section.appendChild(heading);
+
+          const chartDiv = document.createElement('div');
+          chartDiv.style.cssText = 'overflow:auto;background:#fff;position:relative;cursor:grab;';
+          section.appendChild(chartDiv);
+          renderDiv.appendChild(section);
+
+          try {
+            const result = await window.electronAPI.renderSitemapD3({ treeData: tree, colorMap, options: { menuOnly } });
+            if (result.success && result.svg) {
+              chartDiv.innerHTML = result.svg;
+              const svg = chartDiv.querySelector('svg');
+              if (svg) {
+                svg.style.display = 'block';
+                svg.style.transform = 'scale(1)';
+                svg.style.transformOrigin = '0 0';
+                svg.style.minWidth = svg.getAttribute('width') + 'px';
+                // Setup zoom/pan for this chart
+                let scale = 1;
+                let panning = false, startX, startY, scrollL, scrollT;
+                chartDiv.addEventListener('wheel', e => {
+                  e.preventDefault();
+                  scale = Math.max(0.2, Math.min(3, scale + (e.deltaY > 0 ? -0.1 : 0.1)));
+                  svg.style.transform = 'scale(' + scale + ')';
+                  svg.style.transformOrigin = '0 0';
+                }, { passive: false });
+                chartDiv.addEventListener('mousedown', e => {
+                  panning = true; chartDiv.style.cursor = 'grabbing';
+                  startX = e.pageX; startY = e.pageY;
+                  scrollL = chartDiv.scrollLeft; scrollT = chartDiv.scrollTop;
+                });
+                chartDiv.addEventListener('mousemove', e => {
+                  if (!panning) return; e.preventDefault();
+                  chartDiv.scrollLeft = scrollL - (e.pageX - startX);
+                  chartDiv.scrollTop = scrollT - (e.pageY - startY);
+                });
+                chartDiv.addEventListener('mouseup', () => { panning = false; chartDiv.style.cursor = 'grab'; });
+                chartDiv.addEventListener('mouseleave', () => { panning = false; chartDiv.style.cursor = 'grab'; });
+              }
+            } else {
+              chartDiv.innerHTML = '<p style="color:var(--text-muted);font-size:12px;padding:12px;">Could not render: ' + escapeHtml(result.error || '') + '</p>';
+            }
+          } catch (err) {
+            chartDiv.innerHTML = '<p style="color:var(--kke-kill);font-size:12px;padding:12px;">Error: ' + escapeHtml(err.message) + '</p>';
+          }
+        }
+      };
+      renderAll();
+    }
+
+    // Wire buttons
+    setTimeout(() => {
+      $('btn-copy-text-tree')?.addEventListener('click', () => {
+        navigator.clipboard.writeText(current.textTree).then(() => showToast('Text tree copied'));
+      });
+      $('sitemap-menu-only')?.addEventListener('change', (e) => {
+        showSitemapModal(e.target.checked);
+      });
+      // Tab switching
+      $('sitemap-tab-visual')?.addEventListener('click', () => {
+        _sitemapActiveTab = 'visual';
+        showSitemapModal(menuOnly);
+      });
+      $('sitemap-tab-text')?.addEventListener('click', () => {
+        _sitemapActiveTab = 'text';
+        $('sitemap-panel-visual').style.display = 'none';
+        $('sitemap-panel-text').style.display = '';
+        $('sitemap-tab-visual').className = 'btn btn-sm btn-ghost';
+        $('sitemap-tab-text').className = 'btn btn-sm btn-primary';
+      });
+      // Export buttons
+      $('sitemap-export-pdf')?.addEventListener('click', async () => {
+        const svgs = [...$('sitemap-mermaid-render').querySelectorAll('svg')];
+        if (svgs.length === 0) { showToast('No diagram to export', 'error'); return; }
+        let html = '<div style="font-family:-apple-system,Helvetica Neue,Arial,sans-serif;padding:24px;">';
+        const ps = state.projectSettings;
+        html += '<h1 style="font-size:18px;margin:0 0 4px;">Site Map</h1>';
+        const cp = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
+        if (cp) html += '<p style="font-size:13px;color:#666;margin:0 0 16px;">' + escapeHtml(cp) + '</p>';
+        // Include each section with clean SVGs (no zoom transforms)
+        const sections = $('sitemap-mermaid-render').querySelectorAll(':scope > div');
+        sections.forEach(sec => {
+          const clone = sec.cloneNode(true);
+          const svgEl = clone.querySelector('svg');
+          if (svgEl) {
+            svgEl.style.transform = '';
+            svgEl.style.transformOrigin = '';
+            svgEl.style.minWidth = '';
+            svgEl.style.display = 'block';
+            svgEl.style.maxWidth = '100%';
+            svgEl.style.height = 'auto';
+          }
+          html += clone.outerHTML;
+        });
+        html += '</div>';
+        const fullHtml = buildReportShell('Site Map', html.replace(buildReportShell('',''), ''));
+        const defaultName = reportDefaultName('Site Map');
+        await exportReport('Site Map', html, defaultName, 'pdf');
+      });
+      $('sitemap-export-svg')?.addEventListener('click', () => {
+        const svgs = [...$('sitemap-mermaid-render').querySelectorAll('svg')];
+        if (svgs.length === 0) { showToast('No diagram to export', 'error'); return; }
+        // Combine all SVGs into one HTML with embedded SVGs
+        let combined = '<!DOCTYPE html><html><head><style>body{font-family:-apple-system,Helvetica Neue,Arial,sans-serif;margin:24px;}</style></head><body>';
+        const ps = state.projectSettings;
+        combined += '<h1 style="font-size:18px;">Site Map</h1>';
+        const cp = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
+        if (cp) combined += '<p style="color:#666;">' + escapeHtml(cp) + '</p>';
+        const sections = $('sitemap-mermaid-render').querySelectorAll(':scope > div');
+        sections.forEach(sec => {
+          const heading = sec.querySelector('div:first-child');
+          const svg = sec.querySelector('svg');
+          if (heading) combined += '<h2 style="margin-top:24px;">' + heading.textContent + '</h2>';
+          if (svg) {
+            // Clone SVG and strip any zoom transform for clean export
+            const clone = svg.cloneNode(true);
+            clone.style.transform = '';
+            clone.style.transformOrigin = '';
+            clone.style.minWidth = '';
+            clone.style.display = 'block';
+            combined += clone.outerHTML;
+          }
+        });
+        combined += '</body></html>';
+        const defaultName = reportDefaultName('Site Map') + '.html';
+        window.electronAPI.exportReportHtml({ html: combined, defaultName }).then(r => {
+          if (r.success) showToast('SVG/HTML exported — opens in Word', 'success');
+          else if (r.error !== 'Cancelled') showToast('Export failed: ' + r.error, 'error');
+        });
+      });
+    }, 50);
+  }
+
+  function setupSitemapZoom(container) {
+    let scale = 1;
+    let panning = false;
+    let startX, startY, scrollLeft, scrollTop;
+    const parent = container.parentElement;
+
+    // Zoom with scroll wheel
+    parent.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      scale = Math.max(0.2, Math.min(3, scale + delta));
+      container.style.transform = `scale(${scale})`;
+    }, { passive: false });
+
+    // Pan with mouse drag
+    parent.addEventListener('mousedown', (e) => {
+      panning = true;
+      parent.style.cursor = 'grabbing';
+      startX = e.pageX - parent.offsetLeft;
+      startY = e.pageY - parent.offsetTop;
+      scrollLeft = parent.scrollLeft;
+      scrollTop = parent.scrollTop;
+    });
+    parent.addEventListener('mousemove', (e) => {
+      if (!panning) return;
+      e.preventDefault();
+      const x = e.pageX - parent.offsetLeft;
+      const y = e.pageY - parent.offsetTop;
+      parent.scrollLeft = scrollLeft - (x - startX);
+      parent.scrollTop = scrollTop - (y - startY);
+    });
+    parent.addEventListener('mouseup', () => { panning = false; parent.style.cursor = 'grab'; });
+    parent.addEventListener('mouseleave', () => { panning = false; parent.style.cursor = 'grab'; });
+  }
+
+  await showSitemapModal(true);
+}
+
+/** Get nav nodes visible under the current depth filter. */
+function getNavDepthFilteredNodes() {
+  const depthFilter = $('nav-depth-filter').value !== '' ? parseInt($('nav-depth-filter').value) : null;
+  const results = [];
+  function collect(nodes, depth) {
+    if (!nodes) return;
+    nodes.forEach(n => {
+      if (depthFilter === null || depth <= depthFilter) results.push(n);
+      collect(n.children, depth + 1);
+    });
+  }
+  collect(state.navTree, 0);
+  return results;
+}
+
+/** Build a Set of node IDs that have a duplicate slug among their siblings.
+ *  Reference (alias) nodes are excluded — their slug doesn't compete for URL space
+ *  because the navigation maps to the target node's path, not the alias's. */
+function buildDuplicateSlugSet(roots) {
+  const dupes = new Set();
+  function scan(children) {
+    if (!children || children.length === 0) return;
+    const bySlug = {};
+    for (const child of children) {
+      if (child.refNodeId) continue; // alias — slug not part of URL hierarchy
+      const slug = (child.path || '').trim().toLowerCase();
+      if (!slug) continue;
+      if (!bySlug[slug]) bySlug[slug] = [];
+      bySlug[slug].push(child.id);
+    }
+    for (const ids of Object.values(bySlug)) {
+      if (ids.length > 1) ids.forEach(id => dupes.add(id));
+    }
+    for (const child of children) scan(child.children);
+  }
+  scan(roots);
+  return dupes;
+}
+
+function renderNavEditorNode(node, pageCounts, depth, dupSlugs, depthFilter) {
+  // Phase filter: '__current__' keeps only nodes with empty phase; '__nonblank__' keeps only phased nodes.
+  const phaseFilterEl = document.getElementById('nav-phase-filter');
+  const phaseFilter = phaseFilterEl ? phaseFilterEl.value : '';
+  if (phaseFilter) {
+    const nodePhase = String(node.phase || '').trim();
+    if (phaseFilter === '__current__' && nodePhase) return document.createDocumentFragment();
+    if (phaseFilter === '__nonblank__' && !nodePhase) return document.createDocumentFragment();
+  }
+  // Phase 2, Chunk δ: build filter
+  const buildFilterEl = document.getElementById('nav-build-filter');
+  const buildFilter = buildFilterEl ? buildFilterEl.value : '';
+  if (buildFilter) {
+    // Keep the ancestor path to any match: assignees/patterns/etc. usually live on
+    // leaf build-pages, so pruning a non-matching parent would hide its matching
+    // descendants. Render this node if it OR any descendant matches.
+    if (!nodeOrDescendantMatchesBuildFilter(node, buildFilter)) return document.createDocumentFragment();
+  }
+
+  const wrapper = document.createElement('div');
+  wrapper.dataset.nodeId = node.id;
+
+  const row = document.createElement('div');
+  row.className = 'ne-row';
+
+  const count = pageCounts[node.id] || 0;
+  const hasChildren = node.children && node.children.length > 0;
+  const showChildren = hasChildren && (depthFilter === null || depthFilter === undefined || depth < depthFilter);
+
+  // Header/structural nodes are intentional grouping nodes with no page content.
+  // Phased nodes (Future, Stretch, Archived, etc.) are also excluded — they're not
+  // part of the current build and shouldn't generate NEW or empty warnings.
+  const isHeader = node.nodeType === 'Header';
+  // Fragment / shared-content node: lives in a content repository (keeps its computed path)
+  // but is not a page — no menu, no breadcrumb, no redirect. Excluded from new/empty counts
+  // like a header, but rendered as its own shared-content layer.
+  const isFragment = node.nodeType === 'Fragment';
+  const isPhased = !!String(node.phase || '').trim();
+
+  // Determine node status indicators
+  const isHub = !isHeader && !isFragment && !isPhased && count === 0 && hasChildren && hasDescendantPages(node, pageCounts);
+  // Treat "leaf with no pages" AND "parent of an entirely empty subtree" the same — both are
+  // empty branches with no content anywhere. The structural distinction (has children vs not)
+  // doesn't help an auditor cleaning up: in both cases the answer is "remove or assign content".
+  const isOrphanLeaf = !isHeader && !isFragment && !isPhased && count === 0 && !isHub;
+
+  // Left section: grip + toggle + number + label (indented by depth)
+  const leftSection = document.createElement('span');
+  leftSection.className = 'ne-left';
+  leftSection.style.paddingLeft = (depth * 14) + 'px';
+
+  // Grip
+  const grip = document.createElement('span');
+  grip.className = 'ne-grip';
+  grip.textContent = '⠿';
+  grip.draggable = true;
+  grip.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/nav-node-id', node.id);
+    e.dataTransfer.effectAllowed = 'move';
+    // Use the full row as the drag image so the user sees what they're moving
+    e.dataTransfer.setDragImage(row, 24, Math.floor(row.offsetHeight / 2));
+    // Defer opacity change so setDragImage captures the row at full opacity
+    requestAnimationFrame(() => row.classList.add('ne-row-dragging'));
+  });
+  grip.addEventListener('dragend', () => {
+    row.classList.remove('ne-row-dragging');
+    clearNavDropIndicators();
+  });
+  leftSection.appendChild(grip);
+
+  // Toggle
+  const toggle = document.createElement('span');
+  toggle.className = 'ne-toggle';
+  // While a build filter is active, force branches open so matching descendants
+  // aren't hidden inside a collapsed ancestor.
+  const isCollapsed = hasChildren && _navCollapsed.has(node.id) && !buildFilter;
+  toggle.textContent = hasChildren ? (showChildren ? (isCollapsed ? '▸' : '▾') : '▸') : ' ';
+  leftSection.appendChild(toggle);
+
+  // Number (read-only text)
+  const numCell = document.createElement('span');
+  numCell.className = 'ne-cell ne-cell-number ne-cell-text';
+  numCell.textContent = node.number;
+  leftSection.appendChild(numCell);
+
+  const isRef = !!node.refNodeId;
+  const refTarget = isRef ? state.navNodes.find(n => n.id === node.refNodeId) : null;
+
+  if (isRef) {
+    row.classList.add('ne-row-ref');
+  }
+  // Phase styling — Future / Stretch / Archived nodes get a phase class
+  const phase = String(node.phase || '').trim();
+  if (phase) {
+    row.classList.add('ne-row-phase');
+    row.dataset.phase = phase;
+  }
+
+  // Label (static — editable only through the full editor; double-click opens it)
+  const labelCell = document.createElement('span');
+  labelCell.className = 'ne-cell ne-cell-label';
+  const labelText = document.createElement('span');
+  labelText.className = 'ne-label-text';
+  labelText.textContent = node.label || '';
+  if (isRef) labelText.style.fontStyle = 'italic';
+  const hasNotes = node.notes && String(node.notes).trim();
+  if (hasNotes) {
+    labelCell.classList.add('ne-cell-has-notes');
+  }
+  labelText.title = hasNotes
+    ? String(node.notes) + '\n\n— Double-click to open editor —'
+    : 'Double-click to open editor';
+  // Double-click → open full editor (single-click does nothing special; row selection
+  // and drag-to-reorder live elsewhere in the row UX).
+  labelText.addEventListener('dblclick', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openNavNodeEditor(node);
+  });
+  labelCell.appendChild(labelText);
+
+  // Phase 2, Chunk δ: build-phase indicators (status badge + assignee + pattern)
+  // Render inline after the label text. Each indicator is conditional — appears
+  // only when the corresponding field is set, so rows without build metadata
+  // stay visually clean.
+  const buildIndicators = buildNavRowBuildIndicators(node);
+  if (buildIndicators) labelCell.appendChild(buildIndicators);
+
+  leftSection.appendChild(labelCell);
+
+  row.appendChild(leftSection);
+
+  // Right section: slug + path + breadcrumb + count + actions (fixed position)
+  // Slug (editable input) — disabled for reference nodes
+  const slugCell = document.createElement('span');
+  slugCell.className = 'ne-cell ne-col-slug';
+  if (isRef) {
+    const refHint = document.createElement('span');
+    refHint.className = 'ne-cell-text ne-ref-hint';
+    refHint.textContent = refTarget ? '→ ' + refTarget.breadcrumb : '→ (broken ref)';
+    slugCell.appendChild(refHint);
+  } else {
+    const slugInput = document.createElement('input');
+    slugInput.type = 'text';
+    slugInput.value = node.path || '';
+    slugInput.addEventListener('input', () => onNavNodeEdit(node, 'path', slugInput.value));
+    attachSanitizer(slugInput, () => onNavNodeEdit(node, 'path', slugInput.value));
+    slugCell.appendChild(slugInput);
+  }
+  if (dupSlugs && dupSlugs.has(node.id)) {
+    slugCell.classList.add('ne-slug-duplicate');
+    slugCell.title = 'Duplicate slug in this branch';
+  }
+  row.appendChild(slugCell);
+
+  // Computed Path / External URL
+  const pathCell = document.createElement('span');
+  pathCell.className = 'ne-cell ne-col-path';
+  pathCell.dataset.field = 'computedPath';
+  if (node.url) {
+    // External URL — show as editable with different style
+    const urlInput = document.createElement('input');
+    urlInput.type = 'text';
+    urlInput.value = node.url;
+    urlInput.style.cssText = 'color:var(--accent);font-style:italic;';
+    urlInput.title = 'External URL (overrides computed path)';
+    urlInput.addEventListener('input', () => {
+      node.url = urlInput.value.trim();
+      setDirty(true);
+      state.navTreeDirty = true;
+    });
+    pathCell.appendChild(urlInput);
+    // Clear URL button
+    const clearUrl = document.createElement('span');
+    clearUrl.textContent = '✕';
+    clearUrl.title = 'Remove external URL';
+    clearUrl.style.cssText = 'cursor:pointer;font-size:10px;color:var(--text-muted);padding:0 4px;';
+    clearUrl.addEventListener('click', () => {
+      node.url = '';
+      setDirty(true);
+      state.navTreeDirty = true;
+      renderNavEditor();
+    });
+    pathCell.appendChild(clearUrl);
+  } else {
+    // Normal computed path (read-only text)
+    const pathText = document.createElement('span');
+    pathText.className = 'ne-cell-text';
+    pathText.textContent = node.computedPath || '';
+    pathCell.appendChild(pathText);
+  }
+  row.appendChild(pathCell);
+
+  // Breadcrumb (read-only)
+  const bcCell = document.createElement('span');
+  bcCell.className = 'ne-cell ne-col-breadcrumb ne-cell-text';
+  bcCell.textContent = node.breadcrumb || '';
+  bcCell.dataset.field = 'breadcrumb';
+  row.appendChild(bcCell);
+
+  // Count + status indicator
+  const countCell = document.createElement('span');
+  countCell.className = 'ne-cell ne-col-count ne-count' + (count === 0 ? ' zero' : '');
+  if (node.url) {
+    // External URL node
+    countCell.textContent = '🔗';
+    countCell.title = 'External URL: ' + node.url;
+    countCell.classList.add('ne-ext-url');
+  } else if (isRef) {
+    // Reference node
+    countCell.textContent = '↗';
+    countCell.title = 'Reference to: ' + (refTarget ? refTarget.breadcrumb : '(broken)');
+    countCell.classList.add('ne-ref-indicator');
+  } else if (isHub) {
+    countCell.classList.add('ne-hub');
+    countCell.innerHTML = '<span class="ne-net-new-badge">NEW</span>';
+    countCell.title = 'Net New: children have assigned pages but this node has none — client needs to develop content for this page';
+    row.classList.add('ne-row-hub');
+  } else if (isOrphanLeaf) {
+    countCell.classList.add('ne-orphan');
+    countCell.textContent = '○';
+    countCell.title = hasChildren
+      ? 'Empty branch: no pages assigned anywhere in this subtree — candidate for removal'
+      : 'Empty leaf: no pages assigned';
+    row.classList.add('ne-row-orphan');
+  } else if (isHeader && count === 0) {
+    countCell.classList.add('ne-header-node');
+    countCell.textContent = '≡';
+    countCell.title = 'Header / organizing level — structural grouping node, no page content';
+    row.classList.add('ne-row-header');
+  } else if (isFragment) {
+    countCell.classList.add('ne-fragment-node');
+    countCell.innerHTML = '<span class="ne-fragment-badge">FRAG</span>';
+    countCell.title = 'Fragment / shared content — embedded into pages; no menu, breadcrumb, or redirect. Computed path is its repository location.';
+    row.classList.add('ne-row-fragment');
+  } else {
+    countCell.textContent = count || '';
+  }
+  // If this node has a phase set, prepend a small pill (visible regardless of count)
+  if (phase) {
+    const phasePill = document.createElement('span');
+    phasePill.className = 'ne-phase-badge';
+    phasePill.dataset.phase = phase;
+    phasePill.textContent = phase.toUpperCase();
+    phasePill.title = `Phase: ${phase} — not required for the current build`;
+    countCell.prepend(phasePill);
+  }
+  if (count > 0) {
+    countCell.classList.add('ne-count-clickable');
+    countCell.title = 'Click to show assigned pages';
+    countCell.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleNavPageList(wrapper, node, depth);
+    });
+  }
+  row.appendChild(countCell);
+
+  // Menu checkbox
+  const menuCell = document.createElement('span');
+  menuCell.className = 'ne-cell ne-col-menu';
+  const menuCb = document.createElement('input');
+  menuCb.type = 'checkbox';
+  menuCb.checked = node.inMenu === 'Y' || node.inMenu === 'y' || node.inMenu === 'true';
+  menuCb.title = 'Include in menu';
+  menuCb.addEventListener('change', () => {
+    node.inMenu = menuCb.checked ? 'Y' : '';
+    setDirty(true);
+    state.navTreeDirty = true;
+  });
+  menuCell.appendChild(menuCb);
+  row.appendChild(menuCell);
+
+  // Actions: url + add-child + delete
+  const actionsCell = document.createElement('span');
+  actionsCell.className = 'ne-cell ne-col-actions';
+  actionsCell.style.display = 'flex';
+  actionsCell.style.gap = '2px';
+
+  // URL button
+  const urlBtn = document.createElement('button');
+  urlBtn.className = 'ne-url-btn';
+  urlBtn.title = node.url ? 'Edit external URL' : 'Set external URL';
+  urlBtn.textContent = '🔗';
+  if (node.url) urlBtn.style.opacity = '1';
+  urlBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // Toggle inline URL editor in the path cell
+    const existingEditor = row.querySelector('.ne-url-editor');
+    if (existingEditor) { existingEditor.remove(); return; }
+
+    const editor = document.createElement('div');
+    editor.className = 'ne-url-editor';
+    editor.style.cssText = 'position:absolute;right:0;top:100%;background:var(--bg-surface);border:1px solid var(--border);border-radius:4px;box-shadow:0 4px 12px rgba(0,0,0,0.15);padding:8px;z-index:100;display:flex;gap:6px;align-items:center;min-width:350px;';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = node.url || '';
+    input.placeholder = 'https://example.com/page';
+    input.style.cssText = 'flex:1;padding:4px 8px;border:1px solid var(--border);border-radius:3px;font-size:12px;font-family:var(--font-sans);';
+    editor.appendChild(input);
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'btn btn-sm btn-primary';
+    saveBtn.textContent = 'Set';
+    saveBtn.addEventListener('click', () => {
+      node.url = input.value.trim();
+      setDirty(true);
+      state.navTreeDirty = true;
+      renderNavEditor();
+    });
+    editor.appendChild(saveBtn);
+
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'btn btn-sm btn-ghost';
+    clearBtn.textContent = 'Clear';
+    clearBtn.addEventListener('click', () => {
+      node.url = '';
+      setDirty(true);
+      state.navTreeDirty = true;
+      renderNavEditor();
+    });
+    editor.appendChild(clearBtn);
+
+    wrapper.style.position = 'relative';
+    wrapper.appendChild(editor);
+    input.focus();
+    input.select();
+
+    // Close on outside click
+    setTimeout(() => {
+      const closeHandler = (ev) => {
+        if (!editor.contains(ev.target) && ev.target !== urlBtn) {
+          editor.remove();
+          document.removeEventListener('click', closeHandler);
+        }
+      };
+      document.addEventListener('click', closeHandler);
+    }, 0);
+  });
+  actionsCell.appendChild(urlBtn);
+
+  const editBtn = document.createElement('button');
+  editBtn.className = 'ne-edit-btn';
+  editBtn.title = 'Edit node (label, slug, phase, build / write guidance, status, assignees, notes)…';
+  editBtn.textContent = '✎';
+  editBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openNavNodeEditor(node);
+  });
+  // Indicator: small dot when notes exist
+  if (node.notes && String(node.notes).trim()) {
+    editBtn.classList.add('has-notes');
+    editBtn.title = 'Edit node (notes present) — label, slug, phase, build / write guidance, status, assignees…';
+  }
+  actionsCell.appendChild(editBtn);
+
+  const addBtn = document.createElement('button');
+  addBtn.className = 'ne-add-child-btn';
+  addBtn.title = 'Add child node';
+  addBtn.textContent = '+';
+  addBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    addNavChildNode(node);
+  });
+  actionsCell.appendChild(addBtn);
+
+  const cloneBtn = document.createElement('button');
+  cloneBtn.className = 'ne-clone-btn';
+  cloneBtn.title = 'Clone branch (structure only, no page assignments)';
+  cloneBtn.textContent = '⧉';
+  cloneBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    cloneNavBranch(node);
+  });
+  actionsCell.appendChild(cloneBtn);
+
+  // Reference button — make/clear reference to another node
+  const refBtn = document.createElement('button');
+  refBtn.className = 'ne-ref-btn';
+  if (isRef) {
+    refBtn.title = 'Clear reference';
+    refBtn.textContent = '⊘';
+    refBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      clearNavReference(node);
+    });
+  } else {
+    refBtn.title = 'Make reference to another node';
+    refBtn.textContent = '↗';
+    refBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showNavReferencePicker(node);
+    });
+  }
+  actionsCell.appendChild(refBtn);
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'ne-delete-btn';
+  delBtn.title = 'Delete node (children promoted to parent)';
+  delBtn.textContent = '✕';
+  delBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    deleteNavNode(node);
+  });
+  actionsCell.appendChild(delBtn);
+
+  row.appendChild(actionsCell);
+  wrapper.appendChild(row);
+
+  // Drop zone on the row for reordering / reparenting
+  row.addEventListener('dragover', (e) => {
+    // Only handle nav node drags
+    if (!e.dataTransfer.types.includes('text/nav-node-id')) {
+      // Could be sidebar row drag — handle that separately
+      if (e.dataTransfer.types.includes('text/plain')) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (!_navDragOver || _navDragOver.el !== row || _navDragOver.zone !== 'into') {
+          if (_navDragOver) _navDragOver.el.classList.remove('ne-drop-before', 'ne-drop-after', 'ne-drop-into');
+          row.classList.add('ne-drop-into');
+          _navDragOver = { el: row, zone: 'into' };
+        }
+      }
+      return;
+    }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+
+    const rect = row.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const h = rect.height;
+    // Wider before/after zones (top/bottom 30%) for easier precise placement
+    const newZone = y < h * 0.30 ? 'before' : y > h * 0.70 ? 'after' : 'into';
+
+    // Only update DOM when target row or zone actually changes — avoids full-DOM scans
+    if (_navDragOver && _navDragOver.el === row && _navDragOver.zone === newZone) return;
+    if (_navDragOver) _navDragOver.el.classList.remove('ne-drop-before', 'ne-drop-after', 'ne-drop-into');
+    row.classList.add(`ne-drop-${newZone}`);
+    _navDragOver = { el: row, zone: newZone };
+  });
+
+  row.addEventListener('dragleave', (e) => {
+    // dragleave fires when moving between child elements within the same row —
+    // ignore those events; only clear when the cursor actually leaves the row.
+    if (row.contains(e.relatedTarget)) return;
+    if (_navDragOver && _navDragOver.el === row) {
+      row.classList.remove('ne-drop-before', 'ne-drop-after', 'ne-drop-into');
+      _navDragOver = null;
+    }
+  });
+
+  row.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const zone = row.classList.contains('ne-drop-before') ? 'before'
+               : row.classList.contains('ne-drop-after') ? 'after'
+               : 'into';
+    clearNavDropIndicators();
+
+    // Handle sidebar row drop (assign nav — single or bulk)
+    if (!e.dataTransfer.types.includes('text/nav-node-id') && e.dataTransfer.types.includes('text/plain')) {
+      const raw = e.dataTransfer.getData('text/plain');
+      let indices;
+      try { indices = JSON.parse(raw); } catch (_) { indices = null; }
+      if (Array.isArray(indices) && indices.length > 1) {
+        bulkAssignNavToRows(indices, node);
+      } else {
+        const idx = Array.isArray(indices) ? indices[0] : parseInt(raw, 10);
+        if (!isNaN(idx)) assignNavToRow(idx, node);
+      }
+      return;
+    }
+
+    // Handle nav node reorder/reparent
+    const draggedId = e.dataTransfer.getData('text/nav-node-id');
+    if (!draggedId || draggedId === node.id) return;
+    const draggedNode = state.navNodes.find(n => n.id === draggedId);
+    if (!draggedNode) return;
+
+    // Prevent dropping onto own descendant
+    if (isNavDescendantOf(node, draggedNode)) return;
+
+    moveNavNode(draggedNode, node, zone);
+  });
+
+  // Children container (skip if depth filter limits visibility)
+  if (showChildren) {
+    const childContainer = document.createElement('div');
+    childContainer.className = 'ne-children' + (isCollapsed ? '' : ' open');
+    node.children.forEach(child => {
+      childContainer.appendChild(renderNavEditorNode(child, pageCounts, depth + 1, dupSlugs, depthFilter));
+    });
+    wrapper.appendChild(childContainer);
+
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = childContainer.classList.contains('open');
+      childContainer.classList.toggle('open');
+      toggle.textContent = isOpen ? '▸' : '▾';
+      if (isOpen) _navCollapsed.add(node.id);
+      else _navCollapsed.delete(node.id);
+    });
+  }
+
+  // No click-to-filter in the editor — that's for the old modal only
+
+  return wrapper;
+}
+
+function toggleNavPageList(wrapper, node, depth) {
+  const existing = wrapper.querySelector('.ne-page-list');
+  if (existing) {
+    existing.remove();
+    return;
+  }
+
+  // Find all rows assigned to this node
+  const pages = [];
+  state.editedRows.forEach((row, origIndex) => {
+    if (String(row['NavID'] || '') === node.id) {
+      pages.push({ origIndex, row });
+    }
+  });
+  if (pages.length === 0) return;
+
+  const list = document.createElement('div');
+  list.className = 'ne-page-list';
+  list.style.paddingLeft = ((depth * 14) + 36) + 'px';
+
+  pages.forEach(({ origIndex, row }) => {
+    const item = document.createElement('div');
+    item.className = 'ne-page-item';
+
+    const title = row['Title 1'] || row['Title'] || '';
+    const url = row[state.urlColumn] || '';
+    const kke = row[kkeCol()] || '';
+
+    if (kke) {
+      const badge = document.createElement('span');
+      badge.className = 'ne-page-kke kke-badge-' + kke.toLowerCase();
+      badge.textContent = kke;
+      item.appendChild(badge);
+    }
+
+    const titleSpan = document.createElement('span');
+    titleSpan.className = 'ne-page-title';
+    titleSpan.textContent = title || '(no title)';
+    item.appendChild(titleSpan);
+
+    const urlSpan = document.createElement('span');
+    urlSpan.className = 'ne-page-url';
+    urlSpan.textContent = url;
+    item.appendChild(urlSpan);
+
+    item.addEventListener('click', () => {
+      closeNavEditor();
+      selectRow(origIndex);
+    });
+
+    list.appendChild(item);
+  });
+
+  // Insert after the row but before children container
+  const rowEl = wrapper.querySelector('.ne-row');
+  rowEl.after(list);
+}
+
+function clearNavDropIndicators() {
+  // Fast path: clear only the tracked element
+  if (_navDragOver) {
+    _navDragOver.el.classList.remove('ne-drop-before', 'ne-drop-after', 'ne-drop-into');
+    _navDragOver = null;
+  }
+  // Safety fallback — cleans up anything the fast path missed (e.g. after a re-render mid-drag)
+  document.querySelectorAll('.ne-drop-before, .ne-drop-after, .ne-drop-into').forEach(el => {
+    el.classList.remove('ne-drop-before', 'ne-drop-after', 'ne-drop-into');
+  });
+}
+
+// ─── Nav editor: inline editing ────────────────────────────────────────────
+
+function onNavNodeEdit(node, field, value) {
+  const oldPaths = snapshotNavPaths();
+  node[field] = value;
+  recalcDerivedFields(node);
+  resolveNavReferences();
+  cascadeNavChangesToRows(oldPaths);
+  setDirty(true);
+  state.navTreeDirty = true;
+
+  // Update DOM for this node + descendants without full re-render
+  updateNavEditorNodeDOM(node);
+  if (node.children) {
+    walkNavTree(node.children, child => updateNavEditorNodeDOM(child));
+  }
+
+  // Refresh duplicate slug highlights for siblings when slug changes
+  if (field === 'path') {
+    refreshDuplicateSlugHighlights(node);
+  }
+}
+
+function recalcDerivedFields(node) {
+  // Rebuild breadcrumb: walk up parents
+  const labels = [];
+  let cur = node;
+  while (cur) {
+    labels.unshift(cur.label);
+    cur = cur.parentNumber ? state.navNodes.find(n => n.number === cur.parentNumber) : null;
+  }
+  node.breadcrumb = labels.join(' > ');
+
+  // Rebuild computed path
+  const slugs = [];
+  cur = node;
+  while (cur) {
+    if (cur.path) slugs.unshift(cur.path);
+    cur = cur.parentNumber ? state.navNodes.find(n => n.number === cur.parentNumber) : null;
+  }
+  node.computedPath = slugs.join('/');
+
+  // Recurse into children
+  if (node.children) {
+    node.children.forEach(child => recalcDerivedFields(child));
+  }
+}
+
+function showNavReferencePicker(node) {
+  const existing = document.querySelector('.ne-ref-picker');
+  if (existing) existing.remove();
+
+  // Exclude self and descendants
+  const descendants = new Set();
+  function collectIds(n) {
+    descendants.add(n.id);
+    if (n.children) n.children.forEach(collectIds);
+  }
+  collectIds(node);
+
+  const candidates = state.navNodes.filter(n => !descendants.has(n.id) && !n.refNodeId)
+    .sort((a, b) => (a.sortID || a.number || '').localeCompare(b.sortID || b.number || ''));
+
+  const overlay = document.createElement('div');
+  overlay.className = 'ne-ref-picker';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.3);';
+
+  const dialog = document.createElement('div');
+  dialog.style.cssText = 'background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:16px;width:880px;max-width:90vw;max-height:70vh;display:flex;flex-direction:column;box-shadow:0 8px 24px rgba(0,0,0,0.2);';
+
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:14px;font-weight:600;margin-bottom:8px;';
+  title.textContent = `Make "${node.label}" a reference to:`;
+  dialog.appendChild(title);
+
+  const search = document.createElement('input');
+  search.type = 'text';
+  search.placeholder = 'Search nodes...';
+  search.style.cssText = 'width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;margin-bottom:8px;font-family:var(--font-sans);';
+  dialog.appendChild(search);
+
+  const list = document.createElement('div');
+  list.style.cssText = 'flex:1;overflow-y:auto;border:1px solid var(--border);border-radius:4px;';
+
+  function renderList(filter) {
+    list.innerHTML = '';
+    const filtered = filter
+      ? candidates.filter(n => {
+          // If filter looks like a node number (digits and dots), match from start
+          if (/^[\d.]+$/.test(filter)) {
+            return n.number.startsWith(filter) || n.number === filter;
+          }
+          return n.label.toLowerCase().includes(filter) || n.breadcrumb.toLowerCase().includes(filter);
+        })
+      : candidates;
+    filtered.forEach(n => {
+      const depth = (n.number || '').split('.').length - 1;
+      const indent = depth * 16;
+      const item = document.createElement('div');
+      item.style.cssText = 'padding:5px 10px 5px ' + (10 + indent) + 'px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border-subtle, #eee);display:flex;gap:8px;align-items:baseline;';
+      item.addEventListener('mouseenter', () => item.style.background = 'var(--bg-hover)');
+      item.addEventListener('mouseleave', () => item.style.background = '');
+
+      const num = document.createElement('span');
+      num.style.cssText = 'color:var(--text-muted);font-family:var(--font-mono);font-size:10px;flex-shrink:0;min-width:50px;';
+      num.textContent = n.number;
+      item.appendChild(num);
+
+      const lbl = document.createElement('span');
+      lbl.style.cssText = depth === 0 ? 'font-weight:600;' : 'font-weight:400;';
+      lbl.textContent = n.label;
+      item.appendChild(lbl);
+
+      item.addEventListener('click', () => {
+        overlay.remove();
+        const oldPaths = snapshotNavPaths();
+        node.refNodeId = n.id;
+        node.computedPath = n.computedPath;
+        resolveNavReferences();
+        cascadeNavChangesToRows(oldPaths);
+        setDirty(true);
+        state.navTreeDirty = true;
+        renderNavEditor();
+        showToast(`${node.label} now references ${n.breadcrumb}`, 'success');
+      });
+
+      list.appendChild(item);
+    });
+    if (filtered.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:12px;text-align:center;color:var(--text-muted);font-size:12px;';
+      empty.textContent = 'No matching nodes';
+      list.appendChild(empty);
+    }
+  }
+
+  renderList('');
+  search.addEventListener('input', () => renderList(search.value.toLowerCase()));
+  dialog.appendChild(list);
+
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;justify-content:flex-end;margin-top:10px;';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-sm btn-ghost';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', () => overlay.remove());
+  btnRow.appendChild(cancelBtn);
+  dialog.appendChild(btnRow);
+
+  overlay.appendChild(dialog);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  search.focus();
+
+  const onKey = (e) => {
+    if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', onKey); }
+  };
+  document.addEventListener('keydown', onKey);
+}
+
+/** Picker for choosing a reassignment target during nav-node deletion.
+ *  Excludes the node being deleted and its descendants. Calls onPicked(node). */
+function openReassignTargetPicker(excludeNode, onPicked) {
+  const existing = document.querySelector('.ne-reassign-picker');
+  if (existing) existing.remove();
+
+  const excludeIds = new Set([excludeNode.id]);
+  collectAllDescendants(excludeNode).forEach(d => excludeIds.add(d.id));
+
+  const candidates = state.navNodes
+    .filter(n => !excludeIds.has(n.id))
+    .sort((a, b) => (a.sortID || a.number || '').localeCompare(b.sortID || b.number || ''));
+
+  const overlay = document.createElement('div');
+  overlay.className = 'ne-reassign-picker';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:600;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.4);';
+
+  const dialog = document.createElement('div');
+  dialog.style.cssText = 'background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:16px;width:880px;max-width:90vw;max-height:70vh;display:flex;flex-direction:column;box-shadow:0 8px 24px rgba(0,0,0,0.2);';
+
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:14px;font-weight:600;margin-bottom:4px;';
+  title.textContent = 'Reassign pages to:';
+  dialog.appendChild(title);
+
+  const sub = document.createElement('div');
+  sub.style.cssText = 'font-size:12px;color:var(--text-muted);margin-bottom:8px;';
+  sub.textContent = `Pick the destination node for pages currently assigned to "${excludeNode.label}".`;
+  dialog.appendChild(sub);
+
+  const search = document.createElement('input');
+  search.type = 'text';
+  search.placeholder = 'Search by label, breadcrumb, or node number…';
+  search.style.cssText = 'width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;margin-bottom:8px;font-family:var(--font-sans);';
+  dialog.appendChild(search);
+
+  const list = document.createElement('div');
+  list.style.cssText = 'flex:1;overflow-y:auto;border:1px solid var(--border);border-radius:4px;';
+
+  function renderList(filter) {
+    list.innerHTML = '';
+    const filtered = filter
+      ? candidates.filter(n => {
+          if (/^[\d.]+$/.test(filter)) {
+            return n.number.startsWith(filter) || n.number === filter;
+          }
+          const f = filter.toLowerCase();
+          return (n.label || '').toLowerCase().includes(f) || (n.breadcrumb || '').toLowerCase().includes(f);
+        })
+      : candidates;
+    if (filtered.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:14px;font-size:12px;color:var(--text-muted);text-align:center;';
+      empty.textContent = 'No matches.';
+      list.appendChild(empty);
+      return;
+    }
+    filtered.slice(0, 500).forEach(n => {
+      const depth = (n.number || '').split('.').length - 1;
+      const indent = depth * 16;
+      const item = document.createElement('div');
+      item.style.cssText = `display:grid;grid-template-columns:80px 1fr;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border-light);cursor:pointer;font-size:12px;${depth === 0 ? 'font-weight:600;' : ''}`;
+      const num = document.createElement('div');
+      num.style.cssText = 'color:var(--text-muted);font-family:var(--font-mono);';
+      num.textContent = n.number;
+      item.appendChild(num);
+      const lbl = document.createElement('div');
+      lbl.style.cssText = `padding-left:${indent}px;`;
+      lbl.textContent = n.label;
+      if (n.refNodeId) {
+        const ref = document.createElement('span');
+        ref.style.cssText = 'color:var(--text-muted);margin-left:6px;font-style:italic;';
+        ref.textContent = ' (alias)';
+        lbl.appendChild(ref);
+      }
+      item.appendChild(lbl);
+      item.addEventListener('mouseenter', () => item.style.background = 'var(--bg-field-bar)');
+      item.addEventListener('mouseleave', () => item.style.background = '');
+      item.addEventListener('click', () => {
+        overlay.remove();
+        onPicked(n);
+      });
+      list.appendChild(item);
+    });
+  }
+  renderList('');
+  search.addEventListener('input', () => renderList(search.value.trim()));
+
+  const footer = document.createElement('div');
+  footer.style.cssText = 'display:flex;justify-content:flex-end;margin-top:10px;';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-sm btn-ghost';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', () => overlay.remove());
+  footer.appendChild(cancelBtn);
+
+  dialog.appendChild(list);
+  dialog.appendChild(footer);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  search.focus();
+}
+
+function clearNavReference(node) {
+  const oldPaths = snapshotNavPaths();
+  node.refNodeId = '';
+  // Recalculate this node's own path
+  recalcDerivedFields(node);
+  cascadeNavChangesToRows(oldPaths);
+  setDirty(true);
+  state.navTreeDirty = true;
+  renderNavEditor();
+  showToast(`Reference cleared from ${node.label}`, 'success');
+}
+
+function resolveNavReferences() {
+  // After all derived fields are recalculated, resolve reference nodes
+  for (const node of state.navNodes) {
+    if (node.refNodeId) {
+      const target = state.navNodes.find(n => n.id === node.refNodeId);
+      if (target) {
+        node.computedPath = target.computedPath;
+      }
+    }
+  }
+}
+
+function updateNavEditorNodeDOM(node) {
+  const wrapper = document.querySelector(`[data-node-id="${node.id}"]`);
+  if (!wrapper) return;
+  const row = wrapper.querySelector('.ne-row');
+  if (!row) return;
+
+  // Update computed path cell
+  const pathCell = row.querySelector('[data-field="computedPath"]');
+  if (pathCell) pathCell.textContent = node.computedPath || '';
+
+  // Update breadcrumb cell
+  const bcCell = row.querySelector('[data-field="breadcrumb"]');
+  if (bcCell) bcCell.textContent = node.breadcrumb || '';
+
+  // Update number cell
+  const numCell = row.querySelector('.ne-cell-number');
+  if (numCell) numCell.textContent = node.number;
+}
+
+/** Refresh duplicate-slug highlights for a node's siblings (including itself). */
+function refreshDuplicateSlugHighlights(node) {
+  // Find siblings: the parent's children, or the top-level tree if no parent
+  const parent = node.parentNumber
+    ? state.navNodes.find(n => n.number === node.parentNumber)
+    : null;
+  const siblings = parent ? (parent.children || []) : state.navTree;
+
+  // Detect duplicates among siblings
+  const bySlug = {};
+  for (const sib of siblings) {
+    const slug = (sib.path || '').trim().toLowerCase();
+    if (!slug) continue;
+    if (!bySlug[slug]) bySlug[slug] = [];
+    bySlug[slug].push(sib.id);
+  }
+  const dupeIds = new Set();
+  for (const ids of Object.values(bySlug)) {
+    if (ids.length > 1) ids.forEach(id => dupeIds.add(id));
+  }
+
+  // Update DOM for each sibling
+  for (const sib of siblings) {
+    const wrapper = document.querySelector(`[data-node-id="${sib.id}"]`);
+    if (!wrapper) continue;
+    const slugCell = wrapper.querySelector('.ne-col-slug');
+    if (!slugCell) continue;
+    if (dupeIds.has(sib.id)) {
+      slugCell.classList.add('ne-slug-duplicate');
+      slugCell.title = 'Duplicate slug in this branch';
+    } else {
+      slugCell.classList.remove('ne-slug-duplicate');
+      slugCell.title = '';
+    }
+  }
+}
+
+/** Save old computed paths before recalc so cascade can detect page suffixes.
+ *  Call this BEFORE recalcDerivedFields(). */
+function snapshotNavPaths() {
+  const map = {};
+  state.navNodes.forEach(n => { map[n.id] = n.computedPath || ''; });
+  return map;
+}
+
+function cascadeNavChangesToRows(oldPaths) {
+  const baseUrl = getRedirectBaseUrl();
+
+  // Build a helper that converts a computed path to the full redirect URL
+  // using the same format that resolveRedirectDestinations() uses.
+  const pathToRedirectUrl = (p) => {
+    if (!p) return '';
+    return baseUrl ? baseUrl + '/' + p.replace(/^\//, '') : '/' + p.replace(/^\//, '');
+  };
+
+  state.editedRows.forEach(row => {
+    const navID = row['NavID'] || '';
+    if (!navID) return;
+    const node = state.navNodes.find(n => n.id === navID);
+    if (!node) return;
+
+    row['Nav Destination'] = node.breadcrumb || node.label;
+    row['Nav_SortID'] = node.sortID || '';
+
+    // Preserve page-specific slug suffix
+    const storedPath = row['Computed Path'] || '';
+    const oldBase = (oldPaths && oldPaths[navID]) || '';
+    const newBase = node.computedPath || '';
+    let pageSuffix = '';
+    // Check if stored path had an extra slug after the OLD node path
+    if (oldBase && storedPath.length > oldBase.length && storedPath.startsWith(oldBase + '/')) {
+      pageSuffix = storedPath.slice(oldBase.length + 1);
+    } else if (newBase && storedPath.length > newBase.length && storedPath.startsWith(newBase + '/')) {
+      pageSuffix = storedPath.slice(newBase.length + 1);
+    }
+    const oldComputedPath = row['Computed Path'] || '';
+    row['Computed Path'] = pageSuffix ? newBase + '/' + pageSuffix : newBase;
+
+    // Keep Consolidate_Into in sync when the nav path changes.
+    if (oldBase !== newBase) {
+      const oldAutoUrl = baseUrl ? baseUrl + '/' + oldBase.replace(/^\//, '') : '/' + oldBase.replace(/^\//, '');
+      const oldFullComputedUrl = baseUrl ? baseUrl + '/' + oldComputedPath.replace(/^\//, '') : '/' + oldComputedPath.replace(/^\//, '');
+      const newComputedUrl = baseUrl ? baseUrl + '/' + (row['Computed Path']).replace(/^\//, '') : '/' + (row['Computed Path']).replace(/^\//, '');
+      // Update references that point to the old nav-base URL or old full computed URL
+      resyncConsolidateInto(oldAutoUrl, newComputedUrl);
+      if (oldFullComputedUrl !== oldAutoUrl) {
+        resyncConsolidateInto(oldFullComputedUrl, newComputedUrl);
+      }
+    }
+
+    // Keep Redirect_Destination in sync when it was auto-derived from the old nav path.
+    // Only update it if it exactly matches what we would have generated from the OLD path —
+    // that signals it was auto-set, not manually edited. Manual values are left untouched.
+    if (oldBase && oldBase !== newBase) {
+      const existing = String(row['Redirect_Destination'] || '').trim();
+      if (existing && existing !== '404') {
+        const oldAutoUrl = pathToRedirectUrl(oldBase);
+        if (existing === oldAutoUrl || existing === '/' + oldBase || existing === oldBase) {
+          const newRedirect = pathToRedirectUrl(newBase);
+          if (newRedirect !== existing) {
+            logChange(row._rowIndex ?? state.editedRows.indexOf(row), 'Redirect_Destination', existing, newRedirect);
+            row['Redirect_Destination'] = newRedirect;
+          }
+        }
+      }
+    }
+  });
+  // Update sidebar indicators
+  renderVisibleRows();
+}
+
+/** Check if any descendant of a node has pages assigned. Reference (alias) nodes
+ *  are skipped — their target's pages don't logically belong to this branch. */
+function hasDescendantPages(node, pageCounts) {
+  if (!node.children) return false;
+  for (const child of node.children) {
+    if (child.refNodeId) continue; // alias — its target's pages aren't this branch's
+    if (pageCounts[child.id]) return true;
+    if (hasDescendantPages(child, pageCounts)) return true;
+  }
+  return false;
+}
+
+function walkNavTree(nodes, fn) {
+  for (const node of nodes) {
+    fn(node);
+    if (node.children) walkNavTree(node.children, fn);
+  }
+}
+
+// ─── Nav editor: drag-and-drop reorder/reparent ─────────────────────────
+
+function isNavDescendantOf(candidate, ancestor) {
+  // Walk up from candidate checking if we hit ancestor
+  let cur = candidate;
+  while (cur) {
+    if (cur.id === ancestor.id) return true;
+    cur = cur.parentNumber ? state.navNodes.find(n => n.number === cur.parentNumber) : null;
+  }
+  return false;
+}
+
+function moveNavNode(dragged, target, zone) {
+  const oldPaths = snapshotNavPaths();
+
+  // Remove dragged from old parent
+  removeNavNodeFromParent(dragged);
+
+  if (zone === 'into') {
+    // Reparent: add dragged as last child of target
+    target.children.push(dragged);
+    dragged.parentNumber = target.number;
+  } else {
+    // Insert before/after target as sibling
+    const targetParent = target.parentNumber
+      ? state.navNodes.find(n => n.number === target.parentNumber)
+      : null;
+    const siblings = targetParent ? targetParent.children : state.navTree;
+    const targetIdx = siblings.indexOf(target);
+    const insertIdx = zone === 'before' ? targetIdx : targetIdx + 1;
+    siblings.splice(insertIdx, 0, dragged);
+    dragged.parentNumber = target.parentNumber || '';
+  }
+
+  // Recalculate all numbers and derived fields
+  recalcAllNumbers();
+  state.navTree.forEach(root => recalcDerivedFields(root));
+    resolveNavReferences();
+  cascadeNavChangesToRows(oldPaths);
+  state.navTreeDirty = true;
+  setDirty(true);
+  renderNavEditor();
+}
+
+function removeNavNodeFromParent(node) {
+  if (node.parentNumber) {
+    const parent = state.navNodes.find(n => n.number === node.parentNumber);
+    if (parent) {
+      const idx = parent.children.indexOf(node);
+      if (idx >= 0) parent.children.splice(idx, 1);
+    }
+  } else {
+    // Root node
+    const idx = state.navTree.indexOf(node);
+    if (idx >= 0) state.navTree.splice(idx, 1);
+  }
+}
+
+/** Flatten the nav tree in DFS pre-order (parent before its children, siblings in
+ *  array order) for persistence. Sibling order = what the editor shows, so saving in
+ *  this order makes manual reordering survive a reload. Falls back to include any
+ *  node not reachable from the tree so nothing is dropped. */
+function flattenNavTreeForSave() {
+  const out = [];
+  const seen = new Set();
+  (function walk(nodes) {
+    (nodes || []).forEach(n => {
+      out.push(n);
+      seen.add(n);
+      if (n.children && n.children.length) walk(n.children);
+    });
+  })(state.navTree);
+  (state.navNodes || []).forEach(n => { if (!seen.has(n)) out.push(n); });
+  return out;
+}
+
+function recalcAllNumbers() {
+  function assignNumbers(nodes, prefix) {
+    nodes.forEach((node, i) => {
+      const num = prefix ? prefix + '.' + (i + 1) : String(i + 1);
+      node.number = num;
+      node.sortID = buildSortID(num);
+      if (node.children && node.children.length > 0) {
+        node.children.forEach(child => { child.parentNumber = num; });
+        assignNumbers(node.children, num);
+      }
+    });
+  }
+  assignNumbers(state.navTree, '');
+}
+
+// ─── Nav editor: add / delete nodes ─────────────────────────────────────
+
+function addNavChildNode(parentNode) {
+  const label = 'New Node';
+  const slug = 'new-node';
+
+  const existingChildren = parentNode.children || [];
+  let maxChildIdx = 0;
+  for (const child of existingChildren) {
+    const parts = child.number.split('.');
+    const last = parseInt(parts[parts.length - 1], 10);
+    if (last > maxChildIdx) maxChildIdx = last;
+  }
+  const number = parentNode.number + '.' + (maxChildIdx + 1);
+
+  let maxId = 0;
+  for (const n of state.navNodes) {
+    const idNum = parseInt(n.id, 10);
+    if (idNum > maxId) maxId = idNum;
+  }
+  const id = String(maxId + 1).padStart(5, '0');
+
+  const breadcrumb = (parentNode.breadcrumb || parentNode.label) + ' > ' + label;
+  const computedPath = parentNode.computedPath ? parentNode.computedPath + '/' + slug : slug;
+  const sortID = buildSortID(number);
+
+  const newNode = {
+    number, label, path: slug, sortID,
+    parentNumber: parentNode.number,
+    breadcrumb, computedPath, id,
+    children: []
+  };
+
+  parentNode.children.push(newNode);
+  state.navNodes.push(newNode);
+  state.navTreeDirty = true;
+  setDirty(true);
+  renderNavEditor();
+
+  // Focus the new label input
+  setTimeout(() => {
+    const wrapper = document.querySelector(`[data-node-id="${id}"]`);
+    if (wrapper) {
+      const input = wrapper.querySelector('.ne-cell-label input');
+      if (input) { input.focus(); input.select(); }
+    }
+  }, 50);
+}
+
+function addNavRootNode() {
+  if (!state.navTree) state.navTree = [];
+  if (!state.navNodes) state.navNodes = [];
+
+  const label = 'New Root';
+  const slug = 'new-root';
+  const number = String(state.navTree.length + 1);
+
+  let maxId = 0;
+  for (const n of state.navNodes) {
+    const idNum = parseInt(n.id, 10);
+    if (idNum > maxId) maxId = idNum;
+  }
+  const id = String(maxId + 1).padStart(5, '0');
+
+  const sortID = buildSortID(number);
+
+  const newNode = {
+    number, label, path: slug, sortID,
+    parentNumber: '', breadcrumb: label,
+    computedPath: slug, id, children: []
+  };
+
+  state.navTree.push(newNode);
+  state.navNodes.push(newNode);
+  state.navTreeDirty = true;
+  setDirty(true);
+  renderNavEditor();
+
+  setTimeout(() => {
+    const wrapper = document.querySelector(`[data-node-id="${id}"]`);
+    if (wrapper) {
+      const input = wrapper.querySelector('.ne-cell-label input');
+      if (input) { input.focus(); input.select(); }
+    }
+  }, 50);
+}
+
+// ─── Nav node editor modal ────────────────────────────────────────────────────
+
+/** Apply a Pattern's default templates to the currently-open node editor.
+ *  Behavior (decision D from Phase 2 planning):
+ *  - Build_Guidance / Writer_Brief fields that are BLANK are silently filled.
+ *  - Fields that are POPULATED trigger a small dialog offering Replace, Append, or Keep.
+ *  - Never silently clobbers human-written content.
+ *  Also nudges Migration_Track suggestion if the pattern specifies one (not yet
+ *  per-node — flagged as future work; surfaces as a toast hint for now).
+ */
+function applyPatternToNode(pattern, dialog) {
+  const bTa = dialog.querySelector('#_nne-bguidance');
+  const wTa = dialog.querySelector('#_nne-wbrief');
+  if (!bTa || !wTa) return;
+
+  const bCurrent = bTa.value.trim();
+  const wCurrent = wTa.value.trim();
+  const bDefault = String(pattern.buildGuidanceDefault || '');
+  const wDefault = String(pattern.writerBriefDefault || '');
+
+  const conflicts = [];
+  if (bCurrent && bDefault) conflicts.push({ field: 'build', label: 'Build Guidance', ta: bTa, current: bCurrent, def: bDefault });
+  if (wCurrent && wDefault) conflicts.push({ field: 'write', label: 'Writer Brief',   ta: wTa, current: wCurrent, def: wDefault });
+
+  // Silently fill any blank field with the pattern's default
+  if (!bCurrent && bDefault) bTa.value = bDefault;
+  if (!wCurrent && wDefault) wTa.value = wDefault;
+
+  // For any non-blank field with a pattern default, show the apply-pattern dialog
+  if (conflicts.length > 0) {
+    showApplyPatternDialog(pattern, conflicts);
+  }
+
+  // Migration track hint — non-binding for now
+  if (pattern.defaultMigrationTrack) {
+    showToast(`Pattern "${pattern.patternName}" suggests Migration Track: ${pattern.defaultMigrationTrack}`, 'success');
+  }
+}
+
+function showApplyPatternDialog(pattern, conflicts) {
+  document.getElementById('_apl-overlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = '_apl-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.style.zIndex = '950';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-dialog apply-pattern-modal';
+  modal.addEventListener('click', e => e.stopPropagation());
+  modal.style.width = 'min(800px, 64vw)';
+  modal.style.maxHeight = '80vh';
+
+  const sectionsHtml = conflicts.map((c, i) => `
+    <div class="apl-section" data-idx="${i}">
+      <div class="apl-section-head">${escapeHtml(c.label)} <span style="color:var(--text-muted);font-weight:400;font-size:11px;">already has content</span></div>
+      <div class="apl-grid">
+        <div class="apl-col">
+          <div class="apl-col-head">Existing</div>
+          <pre class="apl-pre">${escapeHtml(c.current)}</pre>
+        </div>
+        <div class="apl-col">
+          <div class="apl-col-head">Pattern default</div>
+          <pre class="apl-pre">${escapeHtml(c.def)}</pre>
+        </div>
+      </div>
+      <div class="apl-actions">
+        <label><input type="radio" name="apl-${i}" value="keep" checked> <strong>Keep existing</strong> (ignore pattern)</label>
+        <label><input type="radio" name="apl-${i}" value="append"> <strong>Append</strong> pattern below existing</label>
+        <label><input type="radio" name="apl-${i}" value="replace"> <strong>Replace</strong> existing with pattern</label>
+      </div>
+    </div>
+  `).join('');
+
+  modal.innerHTML = `
+    <div class="modal-header">
+      <h2 style="margin:0;">Apply pattern: ${escapeHtml(pattern.patternName)}</h2>
+      <button class="modal-close" id="_apl-close" title="Close">×</button>
+    </div>
+    <div class="modal-body" style="overflow-y:auto;padding:14px 16px;">
+      <p style="color:var(--text-muted);font-size:12px;margin:0 0 10px;">
+        The pattern has default content for ${conflicts.length} field${conflicts.length !== 1 ? 's' : ''} that already contain${conflicts.length === 1 ? 's' : ''} content. Choose what to do for each.
+      </p>
+      ${sectionsHtml}
+    </div>
+    <div class="modal-footer" style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);">
+      <span style="flex:1;"></span>
+      <button id="_apl-cancel" class="btn btn-sm btn-ghost">Cancel</button>
+      <button id="_apl-apply" class="btn btn-sm btn-primary">Apply</button>
+    </div>
+  `;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  makeModalDraggable(modal);
+
+  const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  modal.querySelector('#_apl-close').addEventListener('click', close);
+  modal.querySelector('#_apl-cancel').addEventListener('click', close);
+  modal.querySelector('#_apl-apply').addEventListener('click', () => {
+    conflicts.forEach((c, i) => {
+      const choice = modal.querySelector(`input[name="apl-${i}"]:checked`)?.value || 'keep';
+      if (choice === 'replace') c.ta.value = c.def;
+      else if (choice === 'append') c.ta.value = c.current.replace(/\s+$/, '') + '\n\n' + c.def;
+      // 'keep' = no-op
+    });
+    showToast('Pattern applied', 'success');
+    close();
+  });
+}
+
+/** Filter predicate for the nav editor's "Build" filter dropdown. */
+/** Rebuild the Build-filter dropdown, appending per-value options for each Page Status
+ *  and each Assignee currently in the project. Preserves the current selection. */
+function populateNavBuildFilter() {
+  const sel = $('nav-build-filter');
+  if (!sel) return;
+  const current = sel.value;
+  const opt = (v, label) => `<option value="${escapeHtml(v)}">${escapeHtml(label)}</option>`;
+  const statuses  = (state.pageStatusLibrary || []).map(s => s.name).filter(Boolean);
+  const assignees = (state.assigneeLibrary || []).filter(Boolean);
+  const statusValues  = statuses.map(n => opt('status:' + n, n)).join('');
+  const assigneeValues = assignees.map(n => opt('assignee:' + n, n)).join('');
+  sel.innerHTML =
+    opt('', 'All') +
+    `<optgroup label="By status">` +
+      opt('__status__has', 'Has any status') + opt('__status__none', 'No status set') +
+      statusValues +
+    `</optgroup>` +
+    `<optgroup label="By assignee">` +
+      opt('__assignee__has', 'Has any assignee') + opt('__assignee__none', 'No assignee') +
+      assigneeValues +
+    `</optgroup>` +
+    `<optgroup label="By pattern">` +
+      opt('__pattern__has', 'Has pattern') + opt('__pattern__none', 'No pattern') +
+    `</optgroup>` +
+    `<optgroup label="By guidance">` +
+      opt('__guidance__has', 'Has build guidance or writer brief') +
+      opt('__guidance__none', 'No guidance content') +
+    `</optgroup>`;
+  // Restore prior selection if it still exists.
+  if ([...sel.options].some(o => o.value === current)) sel.value = current;
+}
+
+/** True if the node OR any descendant matches the build filter (keeps ancestor paths visible). */
+function nodeOrDescendantMatchesBuildFilter(node, filter) {
+  if (matchesNavBuildFilter(node, filter)) return true;
+  if (node.children) {
+    for (const child of node.children) {
+      if (nodeOrDescendantMatchesBuildFilter(child, filter)) return true;
+    }
+  }
+  return false;
+}
+
+function matchesNavBuildFilter(node, filter) {
+  if (!filter) return true;
+  // Special filters live alongside per-status / per-assignee selections (added later)
+  switch (filter) {
+    case '__status__has':   return !!String(node.pageStatus || '').trim();
+    case '__status__none':  return !String(node.pageStatus || '').trim();
+    case '__assignee__has': return !!String(node.buildAssignee || '').trim() || !!String(node.writeAssignee || '').trim() || !!String(node.migrateAssignee || '').trim();
+    case '__assignee__none':return !String(node.buildAssignee || '').trim() && !String(node.writeAssignee || '').trim() && !String(node.migrateAssignee || '').trim();
+    case '__pattern__has':  return !!String(node.buildPattern || '').trim();
+    case '__pattern__none': return !String(node.buildPattern || '').trim();
+    case '__guidance__has': return !!String(node.buildGuidance || '').trim() || !!String(node.writerBrief || '').trim();
+    case '__guidance__none':return !String(node.buildGuidance || '').trim() && !String(node.writerBrief || '').trim();
+  }
+  // status:NAME or assignee:NAME for per-value filters (not yet wired in UI; supported for future)
+  if (filter.startsWith('status:'))   return node.pageStatus === filter.slice(7);
+  if (filter.startsWith('assignee:')) return node.buildAssignee === filter.slice(9) || node.writeAssignee === filter.slice(9) || node.migrateAssignee === filter.slice(9);
+  return true;
+}
+
+/** Phase 2, Chunk δ: build inline indicators for a nav row.
+ *  Returns a single span containing zero or more chip/badge children:
+ *  - Status pill (colored, from pageStatusLibrary)
+ *  - Pattern indicator (small "P" badge with tooltip)
+ *  - Assignee dots (B / W initials)
+ *  - Readiness warnings (⚠ missing brief, missing pattern, etc.)
+ *  Returns null if the node has no indicators to show — keeps blank rows clean.
+ */
+function buildNavRowBuildIndicators(node) {
+  const status   = String(node.pageStatus || '').trim();
+  const pattern  = String(node.buildPattern || '').trim();
+  const builder  = String(node.buildAssignee || '').trim();
+  const writer   = String(node.writeAssignee || '').trim();
+  const guidance = String(node.buildGuidance || '').trim();
+  const brief    = String(node.writerBrief || '').trim();
+  const warnings = computeNodeReadinessWarnings(node);
+
+  if (!status && !pattern && !builder && !writer && !guidance && !brief && warnings.length === 0) return null;
+
+  const wrap = document.createElement('span');
+  wrap.className = 'ne-build-indicators';
+
+  if (status) {
+    const entry = (state.pageStatusLibrary || []).find(s => s.name === status);
+    const color = entry?.color || '#94a3b8';
+    const pill = document.createElement('span');
+    pill.className = 'ne-status-pill';
+    pill.textContent = status;
+    pill.title = `Page status: ${status}`;
+    pill.style.background = color + '22'; // 13% opacity background
+    pill.style.color = color;
+    pill.style.borderColor = color + '66';
+    wrap.appendChild(pill);
+  }
+
+  if (pattern) {
+    const p = document.createElement('span');
+    p.className = 'ne-build-badge ne-build-pattern';
+    p.textContent = 'P';
+    p.title = `Pattern: ${pattern}`;
+    wrap.appendChild(p);
+  }
+  if (guidance) {
+    const g = document.createElement('span');
+    g.className = 'ne-build-badge ne-build-guidance';
+    g.textContent = 'G';
+    g.title = 'Build guidance present';
+    wrap.appendChild(g);
+  }
+  if (brief) {
+    const b = document.createElement('span');
+    b.className = 'ne-build-badge ne-build-brief';
+    b.textContent = 'W';
+    b.title = 'Writer brief present';
+    wrap.appendChild(b);
+  }
+  if (builder) {
+    const b = document.createElement('span');
+    b.className = 'ne-assignee-chip ne-assignee-build';
+    b.textContent = '🔧 ' + assigneeShort(builder);
+    b.title = `Builder: ${builder}`;
+    wrap.appendChild(b);
+  }
+  if (writer) {
+    const w = document.createElement('span');
+    w.className = 'ne-assignee-chip ne-assignee-write';
+    w.textContent = '✎ ' + assigneeShort(writer);
+    w.title = `Writer: ${writer}`;
+    wrap.appendChild(w);
+  }
+
+  warnings.forEach(w => {
+    const el = document.createElement('span');
+    el.className = 'ne-build-warning';
+    el.textContent = '⚠';
+    el.title = w + ' · click to open editor';
+    el.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openNavNodeEditor(node);
+    });
+    wrap.appendChild(el);
+  });
+
+  return wrap;
+}
+
+/** Shorten an assignee name for display in a chip. */
+function assigneeShort(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '';
+  if (parts.length === 1) return parts[0].length > 12 ? parts[0].slice(0, 11) + '…' : parts[0];
+  // First name + last initial
+  return parts[0] + ' ' + parts[parts.length - 1].charAt(0).toUpperCase() + '.';
+}
+
+/** Compute readiness warnings for a single node. Returns an array of human-readable
+ *  warning strings (tooltipable).
+ *
+ *  Updated post-Chunk δ: warnings dropped intentionally. Build/Writer guidance
+ *  is the exception across most sites — flagging absence is noisy. The positive
+ *  P / G / W badges already surface nodes that HAVE guidance, which is the
+ *  useful signal. Keeping this function in place returns [] so all existing
+ *  callers (stats bar, filter dropdown, row indicators) continue to work without
+ *  any warnings being raised.
+ */
+function computeNodeReadinessWarnings(node) {
+  // Intentionally empty. See comment above.
+  return [];
+}
+
+let _navPageCountsCacheMap = null;
+function _navPageCountsCache() {
+  if (_navPageCountsCacheMap) return _navPageCountsCacheMap;
+  _navPageCountsCacheMap = {};
+  // Exclude Kill/Consolidate rows — those pages are going away; their NavID is a
+  // redirect hint, not evidence that the page lives at that node.
+  (state.editedRows || []).forEach(r => {
+    const id = String(r['NavID'] || '').trim();
+    if (!id) return;
+    const effective = String(r[finalKkeCol()] || r[kkeCol()] || '').trim().toLowerCase();
+    if (effective === 'kill' || effective === 'consolidate') return;
+    _navPageCountsCacheMap[id] = (_navPageCountsCacheMap[id] || 0) + 1;
+  });
+  return _navPageCountsCacheMap;
+}
+function invalidateNavPageCountsCache() { _navPageCountsCacheMap = null; }
+function countNodePages(node) {
+  return _navPageCountsCache()[node.id] || 0;
+}
+
+/** Sort nodes for the editor's prev/next navigation.
+ *  Returns a flat array in **tree pre-order**: parent → first child → its children →
+ *  next sibling → … This matches the visual order the user sees in the nav tree,
+ *  so Prev from `2.1.1.1.1.1` goes to its parent `2.1.1.1.1`, and Next goes to
+ *  the next sibling (or further into its descendants if no sibling).
+ *  Siblings are ordered by sortID (dot-separated numeric segments), falling
+ *  back to parsed order when sortIDs tie or are missing.
+ */
+function sortNodesForNavigation(nodes) {
+  if (!Array.isArray(nodes) || nodes.length === 0) return [];
+
+  // Build child index keyed by parent number for O(1) lookup
+  const childrenByParent = new Map();
+  const nodeByNumber = new Map();
+  nodes.forEach((n, originalIdx) => {
+    nodeByNumber.set(n.number, n);
+    const parent = n.parentNumber || '';
+    if (!childrenByParent.has(parent)) childrenByParent.set(parent, []);
+    childrenByParent.get(parent).push({ n, originalIdx });
+  });
+
+  const parseSortId = (s) => String(s || '').split('.').map(p => {
+    const x = parseFloat(p);
+    return isFinite(x) ? x : Number.MAX_SAFE_INTEGER;
+  });
+  const cmp = (a, b) => {
+    const A = parseSortId(a.n.sortID);
+    const B = parseSortId(b.n.sortID);
+    for (let i = 0; i < Math.max(A.length, B.length); i++) {
+      const av = A[i] === undefined ? -1 : A[i];
+      const bv = B[i] === undefined ? -1 : B[i];
+      if (av !== bv) return av - bv;
+    }
+    return a.originalIdx - b.originalIdx;
+  };
+
+  // Sort children at every parent level
+  childrenByParent.forEach(arr => arr.sort(cmp));
+
+  // Pre-order traversal starting at roots (parentNumber is empty or its parent is absent)
+  const result = [];
+  const visited = new Set();
+  function visit(node) {
+    if (!node || visited.has(node.number)) return;
+    visited.add(node.number);
+    result.push(node);
+    const kids = childrenByParent.get(node.number) || [];
+    kids.forEach(({ n }) => visit(n));
+  }
+  // Roots: nodes whose parent isn't found in nodeByNumber
+  const roots = nodes.filter(n => !n.parentNumber || !nodeByNumber.has(n.parentNumber));
+  const sortedRoots = roots.map((n, originalIdx) => ({ n, originalIdx })).sort(cmp);
+  sortedRoots.forEach(({ n }) => visit(n));
+  // Append any orphan nodes that weren't reached (shouldn't normally happen, but safe)
+  nodes.forEach(n => { if (!visited.has(n.number)) { visited.add(n.number); result.push(n); } });
+  return result;
+}
+
+function openNavNodeEditor(node) {
+  // Reuse the existing modal if one's already open (e.g., prev/next navigation).
+  // Avoids the destroy-recreate flash, which is also an accessibility concern.
+  let overlay = document.getElementById('_nne-overlay');
+  let dialog = document.getElementById('_nne-modal');
+  const reusing = !!(overlay && dialog);
+
+  const parent = node.parentNumber ? state.navNodes.find(n => n.number === node.parentNumber) : null;
+  const refTarget = node.refNodeId ? state.navNodes.find(n => n.id === node.refNodeId) : null;
+  const pageCount = state.editedRows.filter(r => String(r['NavID'] || '') === node.id).length;
+
+  if (!reusing) {
+    overlay = document.createElement('div');
+    overlay.id = '_nne-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:920;';
+
+    dialog = document.createElement('div');
+    dialog.id = '_nne-modal';
+    dialog.style.cssText = 'position:fixed;top:30px;left:50%;transform:translateX(-50%);background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;z-index:930;width:min(70vw,1200px);min-width:640px;max-height:calc(100vh - 60px);box-shadow:0 16px 48px rgba(0,0,0,0.3);display:flex;flex-direction:column;';
+  }
+
+  // Compute navigation order: sortID-sorted flat list across all nodes
+  const ordered = sortNodesForNavigation(state.navNodes);
+  const orderedIdx = ordered.findIndex(n => n.id === node.id);
+  const prevNode = orderedIdx > 0 ? ordered[orderedIdx - 1] : null;
+  const nextNode = orderedIdx >= 0 && orderedIdx < ordered.length - 1 ? ordered[orderedIdx + 1] : null;
+  const posLabel = orderedIdx >= 0 ? `${orderedIdx + 1} of ${ordered.length}` : '—';
+
+  dialog.innerHTML = `
+    <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;font-size:15px;">Edit Nav Node</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:2px;font-family:var(--font-mono);">${escapeHtml(node.number)} · ID ${escapeHtml(node.id)}${pageCount > 0 ? ` · ${pageCount} page${pageCount !== 1 ? 's' : ''}` : ''}</div>
+      </div>
+      <div class="nne-nav" style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+        <button id="_nne-prev" class="btn btn-sm btn-ghost" title="Previous node${prevNode ? ' (' + (prevNode.label || prevNode.number) + ')' : ''}" ${!prevNode ? 'disabled' : ''}>←</button>
+        <span class="nne-nav-pos" style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);min-width:64px;text-align:center;">${posLabel}</span>
+        <button id="_nne-next" class="btn btn-sm btn-ghost" title="Next node${nextNode ? ' (' + (nextNode.label || nextNode.number) + ')' : ''}" ${!nextNode ? 'disabled' : ''}>→</button>
+      </div>
+      <button id="_nne-close" class="modal-close" title="Close">×</button>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:14px 18px;">
+
+      <div style="display:grid;grid-template-columns:90px 1fr;gap:6px 12px;align-items:center;font-size:12px;margin-bottom:14px;">
+        <div style="color:var(--text-muted);">Parent</div>
+        <div>${parent ? escapeHtml(parent.number + ' · ' + parent.label) : '<em>(root)</em>'}</div>
+        <div style="color:var(--text-muted);">Breadcrumb</div>
+        <div id="_nne-bc" style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${escapeHtml(node.breadcrumb || '')}</div>
+        <div style="color:var(--text-muted);">Computed Path</div>
+        <div id="_nne-cp" style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${escapeHtml(node.computedPath || '')}</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:90px 1fr;gap:8px 12px;align-items:center;margin-bottom:10px;">
+        <label for="_nne-label" style="font-size:12px;color:var(--text-secondary);">Label</label>
+        <input id="_nne-label" type="text" value="${escapeHtml(node.label || '')}" style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;">
+
+        <label for="_nne-slug" style="font-size:12px;color:var(--text-secondary);">Slug</label>
+        <input id="_nne-slug" type="text" value="${escapeHtml(node.path || '')}" placeholder="(URL segment)" style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;font-family:var(--font-mono);">
+
+        <label style="font-size:12px;color:var(--text-secondary);">In menu</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;">
+          <input id="_nne-inmenu" type="checkbox" ${(node.inMenu === 'Y' || node.inMenu === 'y' || node.inMenu === 'true') ? 'checked' : ''}>
+          <span style="color:var(--text-muted);">Include in navigation menus</span>
+        </label>
+
+        <label for="_nne-url" style="font-size:12px;color:var(--text-secondary);">External URL</label>
+        <input id="_nne-url" type="text" value="${escapeHtml(node.url || '')}" placeholder="https://… (leave blank for normal node)" style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono);">
+
+        <label style="font-size:12px;color:var(--text-secondary);">Reference</label>
+        <div style="display:flex;align-items:center;gap:6px;font-size:12px;">
+          ${refTarget
+            ? `<span style="font-style:italic;color:var(--text-secondary);">→ ${escapeHtml(refTarget.breadcrumb)}</span>
+               <button id="_nne-ref-clear" class="btn btn-sm btn-ghost" style="font-size:11px;">Clear</button>`
+            : node.refNodeId
+              ? '<span style="color:var(--kke-kill);">Broken reference (target missing)</span> <button id="_nne-ref-clear" class="btn btn-sm btn-ghost" style="font-size:11px;">Clear</button>'
+              : '<span style="color:var(--text-muted);">(none — this is a real node)</span>'}
+        </div>
+
+        <label for="_nne-phase" style="font-size:12px;color:var(--text-secondary);">Phase</label>
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+          <select id="_nne-phase" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;">
+            <option value="">— Current build (default)</option>
+            <option value="Future" ${node.phase === 'Future' ? 'selected' : ''}>Future / Aspirational</option>
+            <option value="Stretch" ${node.phase === 'Stretch' ? 'selected' : ''}>Stretch goal</option>
+            <option value="Archived" ${node.phase === 'Archived' ? 'selected' : ''}>Archived</option>
+            ${node.phase && !['','Future','Stretch','Archived'].includes(node.phase) ? `<option value="${escapeHtml(node.phase)}" selected>${escapeHtml(node.phase)} (custom)</option>` : ''}
+          </select>
+          <span style="color:var(--text-muted);font-size:11px;">Mark nodes that aren't required for the current build.</span>
+        </div>
+
+        <label for="_nne-node-type" style="font-size:12px;color:var(--text-secondary);">Node type</label>
+        <div>
+          <select id="_nne-node-type" style="font-size:13px;padding:4px 8px;min-width:200px;">
+            <option value="" ${!node.nodeType ? 'selected' : ''}>Page (standard)</option>
+            <option value="Header" ${node.nodeType === 'Header' ? 'selected' : ''}>Header / organizing level</option>
+            <option value="Fragment" ${node.nodeType === 'Fragment' ? 'selected' : ''}>Fragment / shared content</option>
+          </select>
+          <div id="_nne-node-type-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
+        </div>
+      </div>
+
+      <div style="margin-top:14px;">
+        <label for="_nne-notes" style="font-size:12px;color:var(--text-secondary);font-weight:600;">Migration notes</label>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Internal IA / strategy commentary. Surfaces as a hover tooltip on the node.</div>
+        <textarea id="_nne-notes" rows="4" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono);resize:vertical;box-sizing:border-box;">${escapeHtml(node.notes || '')}</textarea>
+      </div>
+
+      <!-- ── Phase 2, Chunk α: Build section ───────────────────────────────── -->
+      <div class="nne-section">
+        <div class="nne-section-header">
+          <span class="nne-section-pill" style="background:#dbeafe;color:#1e40af;">Build</span>
+          <span style="font-size:11px;color:var(--text-muted);">For the person constructing this page in the new CMS.</span>
+        </div>
+        <div style="display:grid;grid-template-columns:90px 1fr;gap:8px 12px;align-items:center;margin-top:8px;">
+          <label for="_nne-pattern" style="font-size:12px;color:var(--text-secondary);">Pattern</label>
+          <div id="_nne-pattern-wrap" style="display:flex;align-items:center;gap:6px;"></div>
+
+          <label for="_nne-status" style="font-size:12px;color:var(--text-secondary);">Page status</label>
+          <div id="_nne-status-wrap" style="display:flex;align-items:center;gap:6px;"></div>
+
+          <label for="_nne-bassignee" style="font-size:12px;color:var(--text-secondary);">Builder</label>
+          <div id="_nne-bassignee-wrap" style="display:flex;align-items:center;gap:6px;"></div>
+        </div>
+        <div style="margin-top:10px;">
+          <label for="_nne-bguidance" style="font-size:12px;color:var(--text-secondary);font-weight:600;">Build guidance</label>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Markdown supported. Specific instructions for building this page.</div>
+          <textarea id="_nne-bguidance" rows="5" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono);resize:vertical;box-sizing:border-box;">${escapeHtml(node.buildGuidance || '')}</textarea>
+        </div>
+      </div>
+
+      <!-- ── Phase 2, Chunk α: Write section ───────────────────────────────── -->
+      <div class="nne-section">
+        <div class="nne-section-header">
+          <span class="nne-section-pill" style="background:#f3e8ff;color:#6b21a8;">Write</span>
+          <span style="font-size:11px;color:var(--text-muted);">For the content writer. Especially important for net-new pages.</span>
+        </div>
+        <div style="display:grid;grid-template-columns:90px 1fr;gap:8px 12px;align-items:center;margin-top:8px;">
+          <label for="_nne-wassignee" style="font-size:12px;color:var(--text-secondary);">Writer</label>
+          <div id="_nne-wassignee-wrap" style="display:flex;align-items:center;gap:6px;"></div>
+        </div>
+        <div style="margin-top:10px;">
+          <label for="_nne-wbrief" style="font-size:12px;color:var(--text-secondary);font-weight:600;">Writer brief</label>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Markdown supported. Audience, purpose, key messages, voice, etc.</div>
+          <textarea id="_nne-wbrief" rows="5" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono);resize:vertical;box-sizing:border-box;">${escapeHtml(node.writerBrief || '')}</textarea>
+        </div>
+      </div>
+
+      <!-- ── Phase 1, Chunk 1c: Migrate section ────────────────────────────── -->
+      <div class="nne-section">
+        <div class="nne-section-header">
+          <span class="nne-section-pill" style="background:#fef3c7;color:#92400e;">Migrate</span>
+          <span style="font-size:11px;color:var(--text-muted);">For the person mapping source content into the new CMS.</span>
+        </div>
+        <div style="display:grid;grid-template-columns:90px 1fr;gap:8px 12px;align-items:center;margin-top:8px;">
+          <label for="_nne-massignee" style="font-size:12px;color:var(--text-secondary);">Migrator</label>
+          <div id="_nne-massignee-wrap" style="display:flex;align-items:center;gap:6px;"></div>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">The source→target field mapping for this content type lives on its Target Spec (Project → Target Spec Library → Migration mapping). Add per-page exceptions in Migration notes above.</div>
+      </div>
+    </div>
+    <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <button id="_nne-delete" class="btn btn-sm btn-ghost" style="color:var(--kke-kill);">Delete Node</button>
+      <div style="display:flex;gap:8px;">
+        <button id="_nne-cancel" class="btn btn-sm btn-ghost">Cancel</button>
+        <button id="_nne-save" class="btn btn-sm btn-primary">Save</button>
+      </div>
+    </div>
+  `;
+  if (!reusing) {
+    document.body.appendChild(overlay);
+    document.body.appendChild(dialog);
+    // Make Nav Node editor draggable (first child div is its header row)
+    makeModalDraggable(dialog, { handleSelector: ':scope > div:first-child' });
+  }
+
+  const labelInp = dialog.querySelector('#_nne-label');
+  const slugInp = dialog.querySelector('#_nne-slug');
+  const inmenuInp = dialog.querySelector('#_nne-inmenu');
+  const urlInp = dialog.querySelector('#_nne-url');
+  const notesInp = dialog.querySelector('#_nne-notes');
+  const bcEl = dialog.querySelector('#_nne-bc');
+  const cpEl = dialog.querySelector('#_nne-cp');
+
+  // Live preview of breadcrumb / computed path as user types
+  function refreshDerivedPreview() {
+    const newLabel = labelInp.value.trim();
+    const newSlug = slugInp.value.trim();
+    const labels = [];
+    let cur = parent;
+    while (cur) {
+      labels.unshift(cur.label);
+      cur = cur.parentNumber ? state.navNodes.find(n => n.number === cur.parentNumber) : null;
+    }
+    bcEl.textContent = [...labels, newLabel].filter(Boolean).join(' > ');
+    const parentPath = parent ? (parent.computedPath || '') : '';
+    cpEl.textContent = parentPath ? (newSlug ? parentPath + '/' + newSlug : parentPath) : newSlug;
+  }
+  labelInp.addEventListener('input', refreshDerivedPreview);
+  slugInp.addEventListener('input', refreshDerivedPreview);
+
+  function close() { dialog.remove(); overlay.remove(); }
+  dialog.querySelector('#_nne-close').addEventListener('click', close);
+  dialog.querySelector('#_nne-cancel').addEventListener('click', close);
+  // Overlay-level handlers persist across reuse; only attach once
+  if (!reusing) overlay.addEventListener('click', close);
+
+  const refClearBtn = dialog.querySelector('#_nne-ref-clear');
+  if (refClearBtn) {
+    refClearBtn.addEventListener('click', () => {
+      clearNavReference(node);
+      close();
+      openNavNodeEditor(node);
+    });
+  }
+
+  dialog.querySelector('#_nne-delete').addEventListener('click', async () => {
+    const childrenCount = node.children ? node.children.length : 0;
+    const msg = `Delete "${node.label}"?` +
+      (childrenCount > 0 ? `\n\n${childrenCount} child node${childrenCount !== 1 ? 's' : ''} will be promoted to this node's parent.` : '') +
+      (pageCount > 0 ? `\n\n${pageCount} assigned page${pageCount !== 1 ? 's' : ''} will lose their nav assignment.` : '');
+    if (!(await confirmDialog({ title: 'Delete nav node', message: msg, confirmLabel: 'Delete', danger: true }))) return;
+    deleteNavNodeFromEditor(node);
+    close();
+  });
+
+  // Sanitize inputs on paste/blur
+  attachSanitizer(labelInp);
+  attachSanitizer(slugInp);
+  attachSanitizer(notesInp);
+
+  // Markdown toolbars for the three markdown fields
+  attachMarkdownToolbar(notesInp);
+  attachMarkdownToolbar(dialog.querySelector('#_nne-bguidance'));
+  attachMarkdownToolbar(dialog.querySelector('#_nne-wbrief'));
+
+  // Prev / next navigation between nodes — commit edits in place, then re-render
+  // the modal content for the target node (reusing the same overlay+dialog elements
+  // so there's no destroy/recreate flash; better for accessibility too).
+  const navTo = (target) => {
+    if (!target) return;
+    // Use whichever commit function is attached to the current dialog (may have
+    // been rebuilt by a previous prev/next call).
+    const currentDialog = document.getElementById('_nne-modal');
+    if (currentDialog && typeof currentDialog._nneCommitEdits === 'function') {
+      currentDialog._nneCommitEdits();
+    }
+    renderNavEditor();
+    openNavNodeEditor(target); // reuses existing overlay+dialog — no flash
+  };
+  dialog.querySelector('#_nne-prev')?.addEventListener('click', () => navTo(prevNode));
+  dialog.querySelector('#_nne-next')?.addEventListener('click', () => navTo(nextNode));
+
+  // ── Phase 2, Chunk α/β: build/write field wiring ─────────────────────────
+  const bGuidanceInp = dialog.querySelector('#_nne-bguidance');
+  const wBriefInp    = dialog.querySelector('#_nne-wbrief');
+  attachSanitizer(bGuidanceInp);
+  attachSanitizer(wBriefInp);
+
+  // Pattern picker — inline-add select over state.patternLibrary.
+  // On selection, run the apply-pattern flow (fill blank Build_Guidance / Writer_Brief;
+  // show preview/append/replace dialog if either already has content).
+  let _currentPatternValue = node.buildPattern || '';
+  const patternNames = state.patternLibrary.map(p => p.patternName);
+  buildInlineAddSelect({
+    wrapEl: dialog.querySelector('#_nne-pattern-wrap'),
+    selectId: '_nne-pattern',
+    options: patternNames,
+    currentValue: _currentPatternValue,
+    placeholder: '— No pattern',
+    newPromptTitle: 'New pattern name',
+    onNewValue: (val) => {
+      val = sanitizeText(val).trim();
+      if (!val) return null;
+      if (state.patternLibrary.find(p => p.patternName.toLowerCase() === val.toLowerCase())) return val;
+      state.patternLibrary.push({
+        patternName: val, description: '', buildGuidanceDefault: '', writerBriefDefault: '',
+        defaultMigrationTrack: '', notes: ''
+      });
+      state.projectSettings.patternLibrary = state.patternLibrary;
+      setDirty(true);
+      return val;
+    }
+  });
+  // Hook the select's change → apply pattern's default templates
+  const patternSel = dialog.querySelector('#_nne-pattern');
+  if (patternSel) {
+    patternSel.addEventListener('change', () => {
+      const newVal = patternSel.value;
+      if (!newVal) { _currentPatternValue = ''; return; }
+      if (newVal === '__new__') return; // handled by buildInlineAddSelect
+      if (newVal === _currentPatternValue) return;
+      _currentPatternValue = newVal;
+      const pattern = state.patternLibrary.find(p => p.patternName === newVal);
+      if (!pattern) return;
+      applyPatternToNode(pattern, dialog);
+    });
+  }
+
+  // Build inline-add dropdowns for Page Status, Build Assignee, Write Assignee
+  buildInlineAddSelect({
+    wrapEl: dialog.querySelector('#_nne-status-wrap'),
+    selectId: '_nne-status',
+    options: state.pageStatusLibrary.map(s => s.name),
+    currentValue: node.pageStatus || '',
+    placeholder: '— Not set',
+    newPromptTitle: 'New page status',
+    onNewValue: (val) => {
+      val = sanitizeText(val).trim();
+      if (!val) return null;
+      if (state.pageStatusLibrary.find(s => s.name.toLowerCase() === val.toLowerCase())) return val;
+      state.pageStatusLibrary.push({ name: val, color: nextPageStatusColor() });
+      state.projectSettings.pageStatusLibrary = state.pageStatusLibrary;
+      setDirty(true);
+      return val;
+    },
+    decorator: (val) => {
+      const entry = state.pageStatusLibrary.find(s => s.name === val);
+      if (!entry) return null;
+      const chip = document.createElement('span');
+      chip.className = 'page-status-swatch';
+      chip.style.background = entry.color;
+      return chip;
+    }
+  });
+
+  buildInlineAddSelect({
+    wrapEl: dialog.querySelector('#_nne-bassignee-wrap'),
+    selectId: '_nne-bassignee',
+    options: state.assigneeLibrary,
+    currentValue: node.buildAssignee || '',
+    placeholder: '— Unassigned',
+    newPromptTitle: 'New assignee',
+    onNewValue: (val) => {
+      val = sanitizeText(val).trim();
+      if (!val) return null;
+      if (state.assigneeLibrary.find(n => n.toLowerCase() === val.toLowerCase())) return val;
+      state.assigneeLibrary.push(val);
+      state.assigneeLibrary.sort((a, b) => a.localeCompare(b));
+      state.projectSettings.assigneeLibrary = state.assigneeLibrary;
+      setDirty(true);
+      return val;
+    }
+  });
+
+  buildInlineAddSelect({
+    wrapEl: dialog.querySelector('#_nne-wassignee-wrap'),
+    selectId: '_nne-wassignee',
+    options: state.assigneeLibrary,
+    currentValue: node.writeAssignee || '',
+    placeholder: '— Unassigned',
+    newPromptTitle: 'New assignee',
+    onNewValue: (val) => {
+      val = sanitizeText(val).trim();
+      if (!val) return null;
+      if (state.assigneeLibrary.find(n => n.toLowerCase() === val.toLowerCase())) return val;
+      state.assigneeLibrary.push(val);
+      state.assigneeLibrary.sort((a, b) => a.localeCompare(b));
+      state.projectSettings.assigneeLibrary = state.assigneeLibrary;
+      setDirty(true);
+      return val;
+    }
+  });
+
+  buildInlineAddSelect({
+    wrapEl: dialog.querySelector('#_nne-massignee-wrap'),
+    selectId: '_nne-massignee',
+    options: state.assigneeLibrary,
+    currentValue: node.migrateAssignee || '',
+    placeholder: '— Unassigned',
+    newPromptTitle: 'New assignee',
+    onNewValue: (val) => {
+      val = sanitizeText(val).trim();
+      if (!val) return null;
+      if (state.assigneeLibrary.find(n => n.toLowerCase() === val.toLowerCase())) return val;
+      state.assigneeLibrary.push(val);
+      state.assigneeLibrary.sort((a, b) => a.localeCompare(b));
+      state.projectSettings.assigneeLibrary = state.assigneeLibrary;
+      setDirty(true);
+      return val;
+    }
+  });
+
+  // Node-type hint: explain what each type does (and its downstream effects).
+  const nodeTypeSel  = dialog.querySelector('#_nne-node-type');
+  const nodeTypeHint = dialog.querySelector('#_nne-node-type-hint');
+  const NODE_TYPE_HINTS = {
+    '':         'A normal page with a URL, breadcrumb, and (if in menu) a nav entry.',
+    'Header':   'Structural grouping only — no page content. Excluded from new/empty counts.',
+    'Fragment': 'Shared content embedded into pages (e.g. AEM experience fragment). Keeps its computed path as a repository location, but has no menu entry, breadcrumb, or redirect.',
+  };
+  const updateNodeTypeHint = () => {
+    if (nodeTypeHint) nodeTypeHint.textContent = NODE_TYPE_HINTS[nodeTypeSel ? nodeTypeSel.value : ''] || '';
+  };
+  if (nodeTypeSel) nodeTypeSel.addEventListener('change', updateNodeTypeHint);
+  updateNodeTypeHint();
+
+  // Extracted so prev/next can commit edits without closing the modal.
+  function commitEdits() {
+    const newLabel = sanitizeText(labelInp.value).trim();
+    const newSlug = sanitizeText(slugInp.value).trim();
+    const newInmenu = inmenuInp.checked ? 'Y' : '';
+    const newUrl = urlInp.value.trim();
+    const newNotes = sanitizeText(notesInp.value);
+    const phaseInp = dialog.querySelector('#_nne-phase');
+    const newPhase = phaseInp ? phaseInp.value : '';
+
+    const nodeTypeInp = dialog.querySelector('#_nne-node-type');
+    const newNodeType = nodeTypeInp ? nodeTypeInp.value : '';
+
+    if (newLabel !== node.label) onNavNodeEdit(node, 'label', newLabel);
+    if (newSlug !== node.path)   onNavNodeEdit(node, 'path', newSlug);
+    if (newInmenu !== (node.inMenu || ''))       { node.inMenu    = newInmenu;    state.navTreeDirty = true; setDirty(true); }
+    if (newUrl !== (node.url || ''))             { node.url       = newUrl;       state.navTreeDirty = true; setDirty(true); }
+    if (newNotes !== (node.notes || ''))         { node.notes     = newNotes;     state.navTreeDirty = true; setDirty(true); }
+    if (newPhase !== (node.phase || ''))         { node.phase     = newPhase;     state.navTreeDirty = true; setDirty(true); }
+    if (newNodeType !== (node.nodeType || ''))   { node.nodeType  = newNodeType;  state.navTreeDirty = true; setDirty(true); }
+
+    const newPattern    = sanitizeText(dialog.querySelector('#_nne-pattern').value).trim();
+    const newBGuidance  = sanitizeText(dialog.querySelector('#_nne-bguidance').value);
+    const newWBrief     = sanitizeText(dialog.querySelector('#_nne-wbrief').value);
+    const newStatus     = dialog.querySelector('#_nne-status').value;
+    const newBAssignee  = dialog.querySelector('#_nne-bassignee').value;
+    const newWAssignee  = dialog.querySelector('#_nne-wassignee').value;
+    const newMAssignee  = dialog.querySelector('#_nne-massignee').value;
+    if (newPattern !== (node.buildPattern || ''))    { node.buildPattern   = newPattern;   state.navTreeDirty = true; setDirty(true); }
+    if (newBGuidance !== (node.buildGuidance || '')) { node.buildGuidance  = newBGuidance; state.navTreeDirty = true; setDirty(true); }
+    if (newWBrief !== (node.writerBrief || ''))      { node.writerBrief    = newWBrief;    state.navTreeDirty = true; setDirty(true); }
+    if (newStatus !== (node.pageStatus || ''))       { node.pageStatus     = newStatus;    state.navTreeDirty = true; setDirty(true); }
+    if (newBAssignee !== (node.buildAssignee || '')) { node.buildAssignee  = newBAssignee; state.navTreeDirty = true; setDirty(true); }
+    if (newWAssignee !== (node.writeAssignee || '')) { node.writeAssignee  = newWAssignee; state.navTreeDirty = true; setDirty(true); }
+    if (newMAssignee !== (node.migrateAssignee || '')) { node.migrateAssignee = newMAssignee; state.navTreeDirty = true; setDirty(true); }
+  }
+
+  // Expose for the prev/next navTo handler defined above.
+  dialog._nneCommitEdits = commitEdits;
+
+  dialog.querySelector('#_nne-save').addEventListener('click', () => {
+    commitEdits();
+    renderNavEditor();
+    close();
+    showToast('Node updated', 'success');
+  });
+
+  // Keyboard: Esc closes, Cmd/Ctrl+Enter saves. Persists across reuse — gate.
+  if (!reusing) {
+    dialog.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(); }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        dialog.querySelector('#_nne-save').click();
+      }
+    });
+  }
+
+  // On a reuse (prev/next), don't steal focus away from any field — just let
+  // the new content render. On a fresh open, focus the label for quick edits.
+  if (!reusing) setTimeout(() => labelInp.focus(), 0);
+}
+
+/** Walk the live tree to find which children array actually contains `target`.
+ *  Returns { siblings, idx } or null. Uses reference equality — immune to
+ *  stale/mismatched parentNumber values after reorganisations. */
+function _findNavNodeLocation(target, nodes) {
+  for (let i = 0; i < nodes.length; i++) {
+    if (nodes[i] === target) return { siblings: nodes, idx: i };
+    if (nodes[i].children && nodes[i].children.length > 0) {
+      const found = _findNavNodeLocation(target, nodes[i].children);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function deleteNavNodeFromEditor(node) {
+  // Find the node's actual location in the live tree by reference (not by parentNumber,
+  // which can be stale after reorganisations and cause silent deletion failures).
+  const loc = _findNavNodeLocation(node, state.navTree);
+  if (!loc) { showToast('Node not found in tree', 'error'); return; }
+  const { siblings, idx } = loc;
+
+  // Promote children
+  if (node.children && node.children.length > 0) {
+    node.children.forEach(child => {
+      child.parentNumber = node.parentNumber || '';
+    });
+    siblings.splice(idx, 1, ...node.children);
+  } else {
+    siblings.splice(idx, 1);
+  }
+
+  // Remove from flat list
+  const flatIdx = state.navNodes.indexOf(node);
+  if (flatIdx >= 0) state.navNodes.splice(flatIdx, 1);
+
+  // Clear NavID on rows that pointed to this node
+  state.editedRows.forEach((row, i) => {
+    if (String(row['NavID'] || '') === node.id) {
+      logChange(i, 'NavID', node.id, '');
+      row['NavID'] = '';
+      row['Nav Destination'] = '';
+      row['Computed Path'] = '';
+      row['Nav_SortID'] = '';
+    }
+  });
+
+  // Recompute numbers / paths
+  recalcAllNumbers();
+  state.navTree.forEach(root => recalcDerivedFields(root));
+  resolveNavReferences();
+  state.navTreeDirty = true;
+  setDirty(true);
+  renderNavEditor();
+  showToast(`Deleted "${node.label}"`, 'success');
+}
+
+function cloneNavBranch(node) {
+  // Find the next available ID
+  let maxId = 0;
+  for (const n of state.navNodes) {
+    const idNum = parseInt(n.id, 10);
+    if (idNum > maxId) maxId = idNum;
+  }
+
+  // Deep-clone a node and all children, assigning new IDs
+  function cloneNode(src) {
+    maxId++;
+    const id = String(maxId).padStart(5, '0');
+    const clone = {
+      number: '',  // will be recalculated
+      label: src.label + ' (copy)',
+      path: src.path,
+      sortID: '',
+      parentNumber: '',
+      breadcrumb: '',
+      computedPath: '',
+      id,
+      children: []
+    };
+    state.navNodes.push(clone);
+    if (src.children && src.children.length > 0) {
+      clone.children = src.children.map(child => {
+        const childClone = cloneNode(child);
+        childClone.label = child.label; // only top-level gets "(copy)"
+        return childClone;
+      });
+    }
+    return clone;
+  }
+
+  const cloned = cloneNode(node);
+
+  // Insert after the original node as a sibling
+  const parent = node.parentNumber ? state.navNodes.find(n => n.number === node.parentNumber) : null;
+  const siblings = parent ? parent.children : state.navTree;
+  const idx = siblings.indexOf(node);
+  siblings.splice(idx + 1, 0, cloned);
+  cloned.parentNumber = node.parentNumber || '';
+
+  // Recalculate everything
+  recalcAllNumbers();
+  state.navTree.forEach(root => recalcDerivedFields(root));
+    resolveNavReferences();
+  state.navTreeDirty = true;
+  setDirty(true);
+  renderNavEditor();
+
+  // Focus the cloned node's label
+  setTimeout(() => {
+    const wrapper = document.querySelector(`[data-node-id="${cloned.id}"]`);
+    if (wrapper) {
+      const input = wrapper.querySelector('.ne-cell-label input');
+      if (input) { input.focus(); input.select(); }
+    }
+  }, 50);
+}
+
+function deleteNavNode(node) {
+  // Always confirm — deletion is destructive.
+  const allIds = new Set([node.id]);
+  collectAllDescendants(node).forEach(d => allIds.add(d.id));
+  const assignedPages = state.editedRows.filter(r => allIds.has(r['NavID']));
+  const hasChildren = node.children && node.children.length > 0;
+  const parent = node.parentNumber ? state.navNodes.find(n => n.number === node.parentNumber) : null;
+  showDeleteConfirmDialog(node, assignedPages.length, hasChildren, parent);
+}
+
+function showDeleteConfirmDialog(node, assignedCount, hasChildren, parent) {
+  const childCount = countDescendants(node);
+  const existing = document.querySelector('.ne-delete-dialog');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'ne-delete-dialog';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.3);';
+
+  const dialog = document.createElement('div');
+  dialog.style.cssText = 'background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:20px;width:420px;box-shadow:0 8px 24px rgba(0,0,0,0.2);';
+
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:14px;font-weight:600;color:var(--text-primary);margin-bottom:8px;';
+  title.textContent = `Delete "${node.label}"?`;
+  dialog.appendChild(title);
+
+  // Description
+  const desc = document.createElement('div');
+  desc.style.cssText = 'font-size:12px;color:var(--text-secondary);margin-bottom:12px;line-height:1.5;';
+  const parts = [];
+  if (hasChildren) parts.push(`${childCount} child${childCount !== 1 ? 'ren' : ''}`);
+  if (assignedCount > 0) parts.push(`${assignedCount} assigned page${assignedCount !== 1 ? 's' : ''}`);
+  if (parts.length > 0) {
+    desc.textContent = `This node has ${parts.join(' and ')}.`;
+  } else {
+    desc.textContent = 'This node has no children and no assigned pages.';
+  }
+  dialog.appendChild(desc);
+
+  // Breadcrumb context for clarity
+  if (node.breadcrumb) {
+    const bc = document.createElement('div');
+    bc.style.cssText = 'font-family:var(--font-mono);font-size:11px;color:var(--text-muted);background:var(--bg-field-bar);padding:5px 8px;border-radius:4px;margin-bottom:12px;word-break:break-word;';
+    bc.textContent = node.breadcrumb;
+    dialog.appendChild(bc);
+  }
+
+  // Assignment handling (if pages are assigned)
+  let assignAction = 'clear'; // default
+  let reassignTargetNode = null; // populated when user picks "Reassign to another…"
+  let reassignChip = null;
+  if (assignedCount > 0) {
+    const assignSection = document.createElement('div');
+    assignSection.style.cssText = 'font-size:12px;margin-bottom:14px;';
+    const assignLabel = document.createElement('div');
+    assignLabel.style.cssText = 'font-weight:600;margin-bottom:6px;color:var(--text-primary);';
+    assignLabel.textContent = 'What should happen to assigned pages?';
+    assignSection.appendChild(assignLabel);
+
+    const options = [
+      { value: 'clear', label: 'Clear assignments (pages become unassigned)' },
+    ];
+    if (parent) {
+      options.unshift({ value: 'parent', label: `Reassign to parent (${parent.label})` });
+    }
+    options.push({ value: 'other', label: 'Reassign to another node…' });
+
+    options.forEach((opt, i) => {
+      const radio = document.createElement('label');
+      radio.style.cssText = 'display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;color:var(--text-secondary);';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = 'ne-delete-assign';
+      input.value = opt.value;
+      if (i === 0) { input.checked = true; assignAction = opt.value; }
+      input.addEventListener('change', () => {
+        assignAction = opt.value;
+        if (opt.value === 'other') {
+          openReassignTargetPicker(node, (picked) => {
+            reassignTargetNode = picked;
+            updateReassignChip();
+          });
+        } else {
+          reassignTargetNode = null;
+          updateReassignChip();
+        }
+      });
+      radio.appendChild(input);
+      radio.appendChild(document.createTextNode(opt.label));
+      assignSection.appendChild(radio);
+    });
+
+    // Chip area showing currently picked target for "other"
+    reassignChip = document.createElement('div');
+    reassignChip.style.cssText = 'margin-left:22px;font-size:11px;color:var(--text-muted);min-height:14px;';
+    assignSection.appendChild(reassignChip);
+
+    function updateReassignChip() {
+      if (assignAction === 'other' && reassignTargetNode) {
+        reassignChip.innerHTML = '→ <span style="font-family:var(--font-mono);">' + escapeHtml(reassignTargetNode.breadcrumb || reassignTargetNode.label) + '</span> <button id="_dn-clear-target" class="btn btn-sm btn-ghost" style="font-size:10px;padding:1px 5px;margin-left:4px;">change</button>';
+        reassignChip.querySelector('#_dn-clear-target').addEventListener('click', (e) => {
+          e.preventDefault();
+          openReassignTargetPicker(node, (picked) => {
+            reassignTargetNode = picked;
+            updateReassignChip();
+          });
+        });
+      } else if (assignAction === 'other') {
+        reassignChip.textContent = '(pick a target node)';
+      } else {
+        reassignChip.textContent = '';
+      }
+    }
+
+    dialog.appendChild(assignSection);
+  }
+
+  // Buttons
+  const buttons = document.createElement('div');
+  buttons.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-sm btn-ghost';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', () => overlay.remove());
+
+  function checkAndExecute(mode) {
+    if (assignAction === 'other' && !reassignTargetNode) {
+      showToast('Pick a target node for reassignment first', 'error');
+      return;
+    }
+    overlay.remove();
+    executeDeleteNavNode(node, mode, assignAction, reassignTargetNode);
+    showToast(`Deleted "${node.label}"`, 'success');
+  }
+
+  if (hasChildren) {
+    const promoteBtn = document.createElement('button');
+    promoteBtn.className = 'btn btn-sm btn-primary';
+    promoteBtn.textContent = 'Promote children';
+    promoteBtn.title = 'Delete this node but keep its children, moving them up to the parent';
+    promoteBtn.addEventListener('click', () => checkAndExecute('promote'));
+
+    const deleteAllBtn = document.createElement('button');
+    deleteAllBtn.className = 'btn btn-sm';
+    deleteAllBtn.style.cssText = 'background:var(--kke-kill);color:#fff;border:none;';
+    deleteAllBtn.textContent = 'Delete all';
+    deleteAllBtn.title = 'Delete this node and all its children';
+    deleteAllBtn.addEventListener('click', () => checkAndExecute('delete-all'));
+
+    buttons.appendChild(cancelBtn);
+    buttons.appendChild(promoteBtn);
+    buttons.appendChild(deleteAllBtn);
+  } else {
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'btn btn-sm';
+    deleteBtn.style.cssText = 'background:var(--kke-kill);color:#fff;border:none;';
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.addEventListener('click', () => checkAndExecute('promote'));
+
+    buttons.appendChild(cancelBtn);
+    buttons.appendChild(deleteBtn);
+  }
+
+  dialog.appendChild(buttons);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  // Close on Escape
+  const onKey = (e) => {
+    if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', onKey); }
+  };
+  document.addEventListener('keydown', onKey);
+}
+
+function countDescendants(node) {
+  let count = 0;
+  if (node.children) {
+    count += node.children.length;
+    node.children.forEach(child => { count += countDescendants(child); });
+  }
+  return count;
+}
+
+function collectAllDescendants(node) {
+  const result = [];
+  if (node.children) {
+    node.children.forEach(child => {
+      result.push(child);
+      result.push(...collectAllDescendants(child));
+    });
+  }
+  return result;
+}
+
+function executeDeleteNavNode(node, mode, assignAction, reassignTarget) {
+  const oldPaths = snapshotNavPaths();
+  const parent = node.parentNumber ? state.navNodes.find(n => n.number === node.parentNumber) : null;
+  const siblings = parent ? parent.children : state.navTree;
+  const idx = siblings.indexOf(node);
+  if (idx < 0) return;
+
+  // Collect IDs being deleted
+  const idsToDelete = new Set([node.id]);
+
+  if (mode === 'promote') {
+    // Promote children to parent at the same position
+    const promoted = node.children || [];
+    promoted.forEach(child => { child.parentNumber = node.parentNumber || ''; });
+    siblings.splice(idx, 1, ...promoted);
+
+    // Remove only this node from flat list
+    const flatIdx = state.navNodes.indexOf(node);
+    if (flatIdx >= 0) state.navNodes.splice(flatIdx, 1);
+  } else {
+    // Delete all descendants too
+    const descendants = collectAllDescendants(node);
+    descendants.forEach(d => idsToDelete.add(d.id));
+
+    // Remove the entire branch from the tree
+    siblings.splice(idx, 1);
+
+    // Remove all from flat list
+    idsToDelete.forEach(id => {
+      const flatIdx = state.navNodes.findIndex(n => n.id === id);
+      if (flatIdx >= 0) state.navNodes.splice(flatIdx, 1);
+    });
+  }
+
+  // Handle assignments for deleted nodes
+  state.editedRows.forEach((row, origIdx) => {
+    if (!idsToDelete.has(row['NavID'])) return;
+    const oldNavId = row['NavID'];
+    if (assignAction === 'parent' && parent) {
+      row['NavID']           = parent.id;
+      row['Nav Destination'] = parent.breadcrumb || parent.label;
+      row['Computed Path']   = parent.computedPath || '';
+      row['Nav_SortID']      = parent.sortID || '';
+    } else if (assignAction === 'other' && reassignTarget) {
+      row['NavID']           = reassignTarget.id;
+      row['Nav Destination'] = reassignTarget.breadcrumb || reassignTarget.label;
+      row['Computed Path']   = reassignTarget.computedPath || '';
+      row['Nav_SortID']      = reassignTarget.sortID || '';
+    } else {
+      row['NavID'] = '';
+      row['Nav Destination'] = '';
+      row['Computed Path'] = '';
+      row['Nav_SortID'] = '';
+    }
+    if (oldNavId !== row['NavID']) {
+      logChange(origIdx, 'NavID', oldNavId, row['NavID']);
+    }
+  });
+
+  recalcAllNumbers();
+  state.navTree.forEach(root => recalcDerivedFields(root));
+    resolveNavReferences();
+  cascadeNavChangesToRows(oldPaths);
+  state.navTreeDirty = true;
+  setDirty(true);
+  renderNavEditor();
+}
+
+// ─── Nav tree: legacy modal open/close for old overlay references ──────
+
+function assignNavToRow(origIndex, node) {
+  // If assigning to a reference node, redirect to the target
+  if (node.refNodeId) {
+    const target = state.navNodes.find(n => n.id === node.refNodeId);
+    if (target) {
+      showToast(`${node.label} is a reference — assigning to ${target.label} instead`, 'info');
+      node = target;
+    }
+  }
+  const row = state.editedRows[origIndex];
+  row['NavID']           = node.id;
+  row['Nav Destination'] = node.breadcrumb || node.label;
+  row['Nav_SortID']      = node.sortID || '';
+  row['Computed Path']   = node.computedPath || '';
+
+  ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'].forEach(col => {
+    if (!state.headers.includes(col)) state.headers.push(col);
+  });
+
+  setDirty(true);
+  renderVisibleRows();
+  if (_navEditorOpen) renderNavEditor();
+  showToast(`Assigned row ${origIndex + 1} to ${node.label}`, 'success');
+}
+
+/** Bulk-assign multiple sidebar rows to a nav node, creating child nodes with slug from URL. */
+function bulkAssignNavToRows(origIndices, node) {
+  // If assigning to a reference node, redirect to the target
+  if (node.refNodeId) {
+    const target = state.navNodes.find(n => n.id === node.refNodeId);
+    if (target) {
+      showToast(`${node.label} is a reference — assigning to ${target.label} instead`, 'info');
+      node = target;
+    }
+  }
+
+  const urlCol = state.urlColumn || 'Address';
+  ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'].forEach(col => {
+    if (!state.headers.includes(col)) state.headers.push(col);
+  });
+
+  const oldPaths = snapshotNavPaths();
+  let assigned = 0;
+  let dupes = 0;
+
+  for (const origIndex of origIndices) {
+    const row = state.editedRows[origIndex];
+    if (!row) continue;
+
+    // Derive slug from the page URL (last path segment)
+    const url = row[urlCol] || '';
+    let slug = '';
+    try {
+      const u = new URL(url);
+      const segments = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
+      slug = segments.length > 0 ? segments[segments.length - 1] : '';
+    } catch (_) {
+      const segments = url.replace(/\/+$/, '').split('/').filter(Boolean);
+      slug = segments.length > 0 ? segments[segments.length - 1] : '';
+    }
+
+    // Use title from the row (Title 1 or first title-like header)
+    const title = row['Title 1'] || row['Title'] || slug || 'untitled';
+
+    // Check for duplicate slug
+    if (slug && navSlugExistsInBranch(node, slug)) {
+      dupes++;
+      continue;
+    }
+
+    if (slug) {
+      // Create a child node
+      const childNode = createNavChildForPage(node, slug, title);
+      row['NavID']           = childNode.id;
+      row['Nav Destination'] = childNode.breadcrumb;
+      row['Nav_SortID']      = childNode.sortID;
+      row['Computed Path']   = childNode.computedPath;
+    } else {
+      // No slug — assign directly to the node
+      row['NavID']           = node.id;
+      row['Nav Destination'] = node.breadcrumb || node.label;
+      row['Nav_SortID']      = node.sortID || '';
+      row['Computed Path']   = node.computedPath || '';
+    }
+    assigned++;
+  }
+
+  cascadeNavChangesToRows(oldPaths);
+  setDirty(true);
+  state.navTreeDirty = true;
+  state.multiSelected.clear();
+  renderVisibleRows();
+  if (_navEditorOpen) renderNavEditor();
+
+  const parts = [`${assigned} pages assigned to ${node.label}`];
+  if (dupes) parts.push(`${dupes} skipped (duplicate slugs)`);
+  showToast(parts.join(', '), 'success');
+}
+
+function closeNavTree() {
+  $('navtree-overlay').classList.add('hidden');
+  $('navtree-modal').classList.add('hidden');
+}
+
+// ─── Nav: URL-based suggestion ────────────────────────────────────────────────
+
+function suggestNavFromUrl(url) {
+  if (!url || !state.urlColumn) return null;
+
+  // Normalize: strip trailing slash, lowercase for comparison
+  let currentPath;
+  try {
+    const u = new URL(url);
+    currentPath = u.origin + u.pathname.replace(/\/+$/, '');
+  } catch (e) {
+    currentPath = url.replace(/\/+$/, '');
+  }
+
+  // Walk up the URL path, looking for assigned pages
+  let testPath = currentPath;
+  while (testPath) {
+    const lastSlash = testPath.lastIndexOf('/');
+    if (lastSlash <= testPath.indexOf('//') + 1) break; // don't go past the origin
+    testPath = testPath.substring(0, lastSlash);
+
+    // Find a row with this URL that has a nav assignment
+    for (const row of state.editedRows) {
+      let rowUrl = String(row[state.urlColumn] || '');
+      try {
+        const ru = new URL(rowUrl);
+        rowUrl = ru.origin + ru.pathname.replace(/\/+$/, '');
+      } catch (e) {
+        rowUrl = rowUrl.replace(/\/+$/, '');
+      }
+
+      if (rowUrl.toLowerCase() === testPath.toLowerCase()) {
+        const navID = row['NavID'] || '';
+        if (navID) {
+          const node = state.navNodes.find(n => n.id === navID);
+          if (node) {
+            // Derive slug: the part of the current URL after the parent URL
+            const remainder = currentPath.substring(testPath.length + 1);
+            // Could be multi-segment (e.g., "about/team") — just use the last segment
+            const slug = remainder.split('/').pop() || extractSlug(url);
+            return { node, slug };
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function getNavSelectionPath(targetNode) {
+  // Build the selection path (array of Numbers) from root to this node
+  const path = [];
+  let current = targetNode;
+  while (current) {
+    path.unshift(current.number);
+    current = current.parentNumber ? findNavNode(current.parentNumber) : null;
+  }
+  return path;
+}
+
+// ─── Nav: create child node ───────────────────────────────────────────────────
+
+function showNewChildForm() {
+  if (!state.navSelectedNode) return;
+  els.navNewChildParent.textContent = state.navSelectedNode.label;
+  els.navNewLabel.value = '';
+  els.navNewSlug.value = '';
+  els.navNewChild.classList.remove('hidden');
+  els.navNewLabel.focus();
+}
+
+function createNavChild() {
+  if (!state.navSelectedNode) return;
+  const label = els.navNewLabel.value.trim();
+  if (!label) return;
+  const slug = els.navNewSlug.value.trim() || slugify(label);
+
+  const parent = state.navSelectedNode;
+
+  // Calculate Number: parent.number + "." + (max sibling + 1)
+  const existingChildren = parent.children || [];
+  let maxChildIdx = 0;
+  for (const child of existingChildren) {
+    const parts = child.number.split('.');
+    const last = parseInt(parts[parts.length - 1], 10);
+    if (last > maxChildIdx) maxChildIdx = last;
+  }
+  const newIdx = maxChildIdx + 1;
+  const number = parent.number + '.' + newIdx;
+
+  // Calculate unique ID: find max numeric ID, increment
+  let maxId = 0;
+  for (const n of state.navNodes) {
+    const idNum = parseInt(n.id, 10);
+    if (idNum > maxId) maxId = idNum;
+  }
+  const id = String(maxId + 1).padStart(5, '0');
+
+  // Breadcrumb
+  const breadcrumb = (parent.breadcrumb || parent.label) + ' > ' + label;
+
+  // Computed path
+  const computedPath = parent.computedPath ? parent.computedPath + '/' + slug : slug;
+
+  // SortID: each level = 4 chars zero-padded, 9 levels × 4 = 36 chars
+  const sortID = buildSortID(number);
+
+  const newNode = {
+    number,
+    label,
+    path: slug,
+    sortID,
+    parentNumber: parent.number,
+    breadcrumb,
+    computedPath,
+    id,
+    children: []
+  };
+
+  // Add to tree
+  parent.children.push(newNode);
+  state.navNodes.push(newNode);
+  state.newNavNodes.push(newNode);
+
+  // Hide form, rebuild selects with new child selected
+  els.navNewChild.classList.add('hidden');
+  const newPath = [...state.navSelectionPath, number];
+  buildNavSelects(newPath);
+  updateNavAssignState(newPath);
+
+  showToast('Created: ' + label, 'success');
+}
+
+/** Extract the page-specific part of a title by splitting on common delimiters.
+ *  e.g. "About Us | Penn State" → "About Us", "Board Members - Smeal College" → "Board Members" */
+function extractPageTitle(fullTitle) {
+  if (!fullTitle) return '';
+  // Split on common title delimiters (with surrounding spaces)
+  const delimiters = / \| | — | – | - /;
+  const parts = fullTitle.split(delimiters).map(p => p.trim()).filter(Boolean);
+  // First segment is typically the page-specific title
+  return parts.length > 0 ? parts[0] : fullTitle.trim();
+}
+
+function extractSlug(url) {
+  try {
+    const u = new URL(url);
+    const parts = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
+    if (parts.length === 0) return '';
+    let slug = parts[parts.length - 1];
+    // Strip common extensions
+    slug = slug.replace(/\.(html?|php|aspx?|jsp)$/i, '');
+    return slug;
+  } catch (e) {
+    // Not a valid URL, try path-like extraction
+    const parts = url.replace(/\/+$/, '').split('/').filter(Boolean);
+    return parts.length > 0 ? parts[parts.length - 1] : '';
+  }
+}
+
+function slugify(text) {
+  return text
+    .toLowerCase()
+    .replace(/['']/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function detectSortIDFormat(nodes) {
+  // Find a single-level node (no dots in Number) to determine segment width
+  for (const n of nodes) {
+    if (!n.sortID || !n.number) continue;
+    const parts = n.number.split('.');
+    const sid = n.sortID;
+    if (parts.length === 1) {
+      // The first segment is the padded number, rest is zeros
+      // Find where the number digits end and zeros begin
+      const numVal = parseInt(parts[0], 10);
+      const numStr = String(numVal);
+      // Segment width = position of first zero-run after the number
+      // E.g. "0001" → width 4, "00001" → width 5
+      for (let w = numStr.length; w <= sid.length; w++) {
+        const seg = sid.substring(0, w);
+        if (parseInt(seg, 10) === numVal && sid.substring(w).match(/^0+$/)) {
+          return { segWidth: w, maxLevels: sid.length / w };
+        }
+      }
+    }
+  }
+  // Fallback: try any node — compare Number parts count to SortID structure
+  for (const n of nodes) {
+    if (!n.sortID || !n.number) continue;
+    const parts = n.number.split('.');
+    const sid = n.sortID;
+    // Try common segment widths
+    for (const w of [4, 5, 3, 6]) {
+      if (sid.length % w !== 0) continue;
+      const levels = sid.length / w;
+      if (levels < parts.length) continue;
+      // Verify: each part matches its segment
+      let match = true;
+      for (let i = 0; i < parts.length; i++) {
+        const seg = sid.substring(i * w, (i + 1) * w);
+        if (parseInt(seg, 10) !== parseInt(parts[i], 10)) { match = false; break; }
+      }
+      if (match) return { segWidth: w, maxLevels: levels };
+    }
+  }
+  return { segWidth: 4, maxLevels: 9 }; // safe default
+}
+
+function buildSortID(number) {
+  const { segWidth } = state.navSortIDFormat;
+  const parts = number.split('.').map(p => parseInt(p, 10));
+  return parts.map(p => String(p).padStart(segWidth, '0')).join('');
+}
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+
+let toastTimer;
+function showToast(msg, type = '') {
+  const toast = $('toast');
+  toast.textContent = msg;
+  toast.className = 'show' + (type ? ` ${type}` : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.className = ''; }, 2500);
+}
+
+// ─── Group assignment ──────────────────────────────────────────────────────────
+
+function setupGroup() {
+  els.groupSelect.addEventListener('change', async () => {
+    if (state.selectedIndex === null) return;
+    const val = els.groupSelect.value;
+
+    // "+ New group…" option
+    if (val === '__new__') {
+      const name = await showPrompt('New Group', 'Group name');
+      if (name && name.trim()) {
+        const trimmed = name.trim();
+        if (!state.groupLibrary.includes(trimmed)) {
+          state.groupLibrary.push(trimmed);
+          state.groupLibrary.sort();
+          window.electronAPI.savePrefs({ groupLibrary: state.groupLibrary });
+        }
+        state.editedRows[state.selectedIndex][groupCol()] = trimmed;
+        setDirty(true);
+        refreshRowInList(state.selectedIndex);
+        populateGroupSelect(trimmed);
+        populateGroupFilter();
+      } else {
+        // Cancelled — revert select to current value
+        populateGroupSelect(state.editedRows[state.selectedIndex][groupCol()] || '');
+      }
+      return;
+    }
+
+    state.editedRows[state.selectedIndex][groupCol()] = val;
+    setDirty(true);
+    refreshRowInList(state.selectedIndex);
+  });
+
+  els.groupFilter.addEventListener('change', async () => {
+    const val = els.groupFilter.value;
+    if (val === '__new__') {
+      const name = await showPrompt('New Group', 'Group name');
+      if (name && name.trim()) {
+        const trimmed = name.trim();
+        if (!state.groupLibrary.includes(trimmed)) {
+          state.groupLibrary.push(trimmed);
+          state.groupLibrary.sort();
+          window.electronAPI.savePrefs({ groupLibrary: state.groupLibrary });
+        }
+        populateGroupFilter();
+        // Select the new group as filter
+        els.groupFilter.value = trimmed;
+        state.groupFilter = trimmed;
+      } else {
+        els.groupFilter.value = state.groupFilter; // revert
+        return;
+      }
+    } else {
+      state.groupFilter = val;
+    }
+    state.projectSettings.groupFilter = state.groupFilter;
+    setDirty(true);
+    applyFilter();
+  });
+}
+
+// ─── Published Status / Page Type / Content Theme ─────────────────────────────
+
+function populatePublishedStatusSelect(currentValue) {
+  const sel = $('published-status-select');
+  if (!sel) return;
+  // Options are fixed (Published / Unpublished / Draft / 404). If a non-listed value
+  // exists in data (e.g. CMS-specific status), show it as the selected option.
+  const fixed = ['', 'Published', 'Unpublished', 'Draft', '404'];
+  Array.from(sel.querySelectorAll('option')).forEach(o => o.selected = false);
+  if (fixed.includes(currentValue)) {
+    const match = sel.querySelector(`option[value="${currentValue}"]`);
+    if (match) match.selected = true;
+    // Remove any prior custom option leftover
+    const custom = sel.querySelector('option[data-custom="1"]');
+    if (custom) custom.remove();
+  } else if (currentValue) {
+    let custom = sel.querySelector('option[data-custom="1"]');
+    if (!custom) {
+      custom = document.createElement('option');
+      custom.dataset.custom = '1';
+      sel.appendChild(custom);
+    }
+    custom.value = currentValue;
+    custom.textContent = currentValue + ' (custom)';
+    custom.selected = true;
+  }
+}
+
+function populatePageTypeSelect(currentValue) {
+  const sel = $('page-type-select');
+  if (!sel) return;
+  sel.innerHTML = '';
+  const blankOpt = document.createElement('option');
+  blankOpt.value = '';
+  blankOpt.textContent = '—';
+  sel.appendChild(blankOpt);
+  const lib = (state.pageTypeLibrary || []).slice().sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  lib.forEach(v => {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = v;
+    if (v === currentValue) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  if (currentValue && !lib.includes(currentValue)) {
+    const opt = document.createElement('option');
+    opt.value = currentValue;
+    opt.textContent = currentValue;
+    opt.selected = true;
+    sel.appendChild(opt);
+  }
+  const newOpt = document.createElement('option');
+  newOpt.value = '__new__';
+  newOpt.textContent = '+ New content type…';
+  sel.appendChild(newOpt);
+  if (!currentValue) blankOpt.selected = true;
+}
+
+function populateContentThemeSelect(currentValue) {
+  const sel = $('content-theme-select');
+  if (!sel) return;
+  sel.innerHTML = '';
+  const blankOpt = document.createElement('option');
+  blankOpt.value = '';
+  blankOpt.textContent = '—';
+  sel.appendChild(blankOpt);
+  // Combine library + any in-use values from row data
+  const fromData = new Set();
+  state.editedRows.forEach(r => {
+    const v = String(r['Content_Theme'] || '').trim();
+    if (v) fromData.add(v);
+  });
+  const lib = Array.from(new Set([...(state.contentThemeLibrary || []), ...fromData]))
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  lib.forEach(v => {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = v;
+    if (v === currentValue) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  if (currentValue && !lib.includes(currentValue)) {
+    const opt = document.createElement('option');
+    opt.value = currentValue;
+    opt.textContent = currentValue;
+    opt.selected = true;
+    sel.appendChild(opt);
+  }
+  const newOpt = document.createElement('option');
+  newOpt.value = '__new__';
+  newOpt.textContent = '+ New theme…';
+  sel.appendChild(newOpt);
+  if (!currentValue) blankOpt.selected = true;
+}
+
+function setupPublishedAndTypeAndTheme() {
+  const psSel = $('published-status-select');
+  const ptSel = $('page-type-select');
+  const ctSel = $('content-theme-select');
+  if (psSel) {
+    psSel.addEventListener('change', () => {
+      if (state.selectedIndex == null) return;
+      const row = state.editedRows[state.selectedIndex];
+      const old = String(row['Published_Status'] || '');
+      row['Published_Status'] = psSel.value;
+      logChange(state.selectedIndex, 'Published_Status', old, psSel.value);
+      setDirty(true);
+      refreshRowInList(state.selectedIndex);
+    });
+  }
+  if (ptSel) {
+    ptSel.addEventListener('change', async () => {
+      if (state.selectedIndex == null) return;
+      let val = ptSel.value;
+      if (val === '__new__') {
+        const name = await showPrompt('Add content type', 'Label');
+        if (!name || !name.trim()) {
+          populatePageTypeSelect(state.editedRows[state.selectedIndex]['Page_Type'] || '');
+          return;
+        }
+        val = sanitizeText(name).trim();
+        if (!state.pageTypeLibrary.includes(val)) {
+          state.pageTypeLibrary.push(val);
+          state.pageTypeLibrary.sort();
+          window.electronAPI.savePrefs({ pageTypeLibrary: state.pageTypeLibrary });
+        }
+        // Two-way sync: the dropdown vocabulary is global, but the crosswalk is
+        // per-project. Seed a blank Content Type Registry stub for the new type
+        // (unless an entry already covers it, exact or split match) so it shows
+        // up in the registry editor / crosswalk report and can be mapped.
+        if (state.projectSettings && !lookupContentTypeRegistry(val)) {
+          if (!Array.isArray(state.projectSettings.contentTypeRegistry)) {
+            state.projectSettings.contentTypeRegistry = [];
+          }
+          state.projectSettings.contentTypeRegistry.push({
+            contentType: val, defaultContentNature: '', targetContentType: '',
+            targetSpec: '', defaultMigrationTrack: '', notes: ''
+          });
+        }
+      }
+      const row = state.editedRows[state.selectedIndex];
+      const old = String(row['Page_Type'] || '');
+      row['Page_Type'] = val;
+      logChange(state.selectedIndex, 'Page_Type', old, val);
+      setDirty(true);
+      populatePageTypeSelect(val);
+      // Phase 1, Chunk C: ContentTypeRegistry default flow — fill blank
+      // Content_Nature / Migration_Track from registry if available. Never overwrite human input.
+      applyContentTypeRegistryDefaults(state.selectedIndex, /*forUI=*/true);
+      refreshRowInList(state.selectedIndex);
+    });
+  }
+  if (ctSel) {
+    ctSel.addEventListener('change', async () => {
+      if (state.selectedIndex == null) return;
+      let val = ctSel.value;
+      if (val === '__new__') {
+        const name = await showPrompt('Add content theme', 'Label');
+        if (!name || !name.trim()) {
+          populateContentThemeSelect(state.editedRows[state.selectedIndex]['Content_Theme'] || '');
+          return;
+        }
+        val = sanitizeText(name).trim();
+        if (!state.contentThemeLibrary.includes(val)) {
+          state.contentThemeLibrary.push(val);
+          state.contentThemeLibrary.sort();
+          state.projectSettings.contentThemeLibrary = state.contentThemeLibrary;
+        }
+      }
+      const row = state.editedRows[state.selectedIndex];
+      const old = String(row['Content_Theme'] || '');
+      row['Content_Theme'] = val;
+      logChange(state.selectedIndex, 'Content_Theme', old, val);
+      setDirty(true);
+      populateContentThemeSelect(val);
+      refreshRowInList(state.selectedIndex);
+    });
+  }
+}
+
+function populateGroupSelect(currentValue) {
+  els.groupSelect.innerHTML = '';
+
+  const blankOpt = document.createElement('option');
+  blankOpt.value = '';
+  blankOpt.textContent = '—';
+  els.groupSelect.appendChild(blankOpt);
+
+  const allGroups = collectGroups();
+  allGroups.forEach(g => {
+    const opt = document.createElement('option');
+    opt.value = g;
+    opt.textContent = g;
+    if (g === currentValue) opt.selected = true;
+    els.groupSelect.appendChild(opt);
+  });
+
+  const note = glossaryTooltip('group', currentValue);
+  els.groupSelect.title = note || '';
+
+  // If current value isn't in the list, add it
+  if (currentValue && !allGroups.includes(currentValue)) {
+    const opt = document.createElement('option');
+    opt.value = currentValue;
+    opt.textContent = currentValue;
+    opt.selected = true;
+    els.groupSelect.appendChild(opt);
+  }
+
+  const newOpt = document.createElement('option');
+  newOpt.value = '__new__';
+  newOpt.textContent = '+ New group…';
+  els.groupSelect.appendChild(newOpt);
+
+  if (!currentValue) blankOpt.selected = true;
+}
+
+function populateGroupFilter() {
+  const current = els.groupFilter.value;
+  els.groupFilter.innerHTML = '<option value="">All groups</option>';
+  const allGroups = collectGroups();
+
+  allGroups.forEach(g => {
+    const opt = document.createElement('option');
+    opt.value = g;
+    opt.textContent = g;
+    if (g === current) opt.selected = true;
+    els.groupFilter.appendChild(opt);
+  });
+
+  const newOpt = document.createElement('option');
+  newOpt.value = '__new__';
+  newOpt.textContent = '+ New group…';
+  els.groupFilter.appendChild(newOpt);
+
+  els.groupFilter.classList.remove('hidden');
+}
+
+function collectGroups() {
+  const set = new Set(state.groupLibrary);
+  for (const row of state.editedRows) {
+    const g = String(row[groupCol()] || '').trim();
+    if (g) set.add(g);
+  }
+  return [...set].sort();
+}
+
+// ─── Progress dashboard ───────────────────────────────────────────────────────
+
+let _progressModalExporter = null;
+
+function setupProgress() {
+  const btnProgress = $('btn-progress');
+  if (btnProgress) btnProgress.addEventListener('click', openProgressDashboard);
+  $('btn-progress-close').addEventListener('click', closeProgressDashboard);
+  $('progress-overlay').addEventListener('click', closeProgressDashboard);
+  $('btn-progress-export-pdf').addEventListener('click', () => {
+    if (_progressModalExporter) _progressModalExporter('pdf');
+  });
+  $('btn-progress-export-html').addEventListener('click', () => {
+    if (_progressModalExporter) _progressModalExporter('html');
+  });
+}
+
+/** Gather all progress stats into a plain object for rendering and PDF export */
+function gatherProgressStats() {
+  const total = state.editedRows.length;
+  const kkeCounts = {};
+  BUILTIN_KKE.forEach(s => kkeCounts[s] = 0);
+  state.customKkeStates.forEach(s => kkeCounts[s.label] = 0);
+  let unreviewed = 0, flagged = 0, tagged = 0, noted = 0;
+  const groupCounts = {};
+
+  let smeReviewed = 0, smeApproved = 0, smeChanged = 0, finalResolved = 0;
+
+  state.editedRows.forEach(row => {
+    const kke = String(row[kkeCol()] || '').trim();
+    if (kke && kkeCounts.hasOwnProperty(kke)) kkeCounts[kke]++;
+    else unreviewed++;
+    if (String(row['_Flagged'] || '').trim() === '1') flagged++;
+    if (String(row[tagsCol()] || '').trim()) tagged++;
+    if (String(row[notesCol()] || '').trim()) noted++;
+    const g = String(row[groupCol()] || '').trim();
+    if (g) groupCounts[g] = (groupCounts[g] || 0) + 1;
+
+    const sme = String(row[smeDecisionCol()] || '').trim();
+    if (sme) {
+      smeReviewed++;
+      if (sme === 'Approve') smeApproved++;
+      else if (sme.startsWith('Change:')) smeChanged++;
+    }
+    if (String(row[finalKkeCol()] || '').trim()) finalResolved++;
+  });
+
+  const reviewed = total - unreviewed;
+  const pct = total > 0 ? Math.round((reviewed / total) * 100) : 0;
+  const groups = Object.entries(groupCounts).sort((a, b) => b[1] - a[1]);
+  const smeTotal = reviewed; // reviewable set = rows with KKE decision
+  const smePct = smeTotal > 0 ? Math.round((smeReviewed / smeTotal) * 100) : 0;
+  const finalPct = smeTotal > 0 ? Math.round((finalResolved / smeTotal) * 100) : 0;
+
+  return { total, reviewed, pct, kkeCounts, unreviewed, flagged, tagged, noted, groups,
+           smeTotal, smeReviewed, smePct, smeApproved, smeChanged, finalResolved, finalPct };
+}
+
+/** KKE color map (CSS variable values resolved at call time) */
+function kkeColor(label) {
+  const map = { Keep: '--kke-keep', Kill: '--kke-kill', Evolve: '--kke-evolve', Exclude: '--kke-exclude' };
+  if (map[label]) return `var(${map[label]})`;
+  const custom = state.customKkeStates.find(s => s.label === label);
+  return custom ? custom.color : 'var(--text-primary)';
+}
+
+/** Resolve a CSS variable to its computed value (for PDF) */
+function resolvedKkeColor(label) {
+  const map = { Keep: '--kke-keep', Kill: '--kke-kill', Evolve: '--kke-evolve', Exclude: '--kke-exclude' };
+  if (map[label]) return getComputedStyle(document.documentElement).getPropertyValue(map[label]).trim();
+  const custom = state.customKkeStates.find(s => s.label === label);
+  return custom ? custom.color : '#333';
+}
+
+/** Resolve a CSS variable to its computed value */
+function resolvedKkeBgColor(label) {
+  const map = { Keep: '--kke-keep-bg', Kill: '--kke-kill-bg', Evolve: '--kke-evolve-bg', Exclude: '--kke-exclude-bg' };
+  if (map[label]) return getComputedStyle(document.documentElement).getPropertyValue(map[label]).trim();
+  const custom = state.customKkeStates.find(s => s.label === label);
+  return custom ? custom.color + '33' : '#33333333';
+}
+
+function openProgressDashboard() {
+  const total = state.editedRows.length;
+  if (total === 0) { showToast('No file open', 'error'); return; }
+
+  const stats = gatherProgressStats();
+  const ps = state.projectSettings;
+
+  const clientProject = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
+  let html = '';
+  if (clientProject) {
+    html += `<div style="font-size:14px;font-weight:500;color:var(--text-primary);margin-bottom:12px;">${escapeHtml(clientProject)}</div>`;
+  } else {
+    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Set client &amp; project name in Project Settings (▤)</div>`;
+  }
+  html += `
+    <div class="progress-stat"><span class="progress-stat-label">Total pages</span><span class="progress-stat-value">${stats.total}</span></div>
+    <div class="progress-stat"><span class="progress-stat-label">Reviewed</span><span class="progress-stat-value">${stats.reviewed} (${stats.pct}%)</span></div>
+    <div class="progress-bar-wrap">`;
+
+  allKkeStates().forEach(label => {
+    const count = stats.kkeCounts[label] || 0;
+    const widthPct = (count / stats.total * 100).toFixed(1);
+    html += `<div class="progress-bar-seg" style="width:${widthPct}%;background:${kkeColor(label)}20;border-right:1px solid ${kkeColor(label)};"></div>`;
+  });
+
+  html += `</div>
+    <div class="progress-section-title">By status</div>`;
+
+  allKkeStates().forEach(label => {
+    html += `<div class="progress-stat"><span class="progress-stat-label">${escapeHtml(label)}</span><span class="progress-stat-value" style="color:${kkeColor(label)}">${stats.kkeCounts[label] || 0}</span></div>`;
+  });
+
+  html += `
+    <div class="progress-stat"><span class="progress-stat-label">Unreviewed</span><span class="progress-stat-value">${stats.unreviewed}</span></div>
+    <div class="progress-section-title">Other</div>
+    <div class="progress-stat"><span class="progress-stat-label">Flagged</span><span class="progress-stat-value">${stats.flagged}</span></div>
+    <div class="progress-stat"><span class="progress-stat-label">Tagged</span><span class="progress-stat-value">${stats.tagged}</span></div>
+    <div class="progress-stat"><span class="progress-stat-label">With notes</span><span class="progress-stat-value">${stats.noted}</span></div>
+  `;
+
+  if (stats.groups.length > 0) {
+    html += '<div class="progress-section-title">By group</div>';
+    stats.groups.forEach(([g, c]) => {
+      html += `<div class="progress-stat"><span class="progress-stat-label">${escapeHtml(g)}</span><span class="progress-stat-value">${c}</span></div>`;
+    });
+  }
+
+  // SME Review section
+  if (stats.smeReviewed > 0 || stats.finalResolved > 0) {
+    html += '<div class="progress-section-title" style="margin-top:16px;">SME Review</div>';
+    html += `<div class="progress-stat"><span class="progress-stat-label">SME Reviewed</span><span class="progress-stat-value">${stats.smeReviewed} of ${stats.smeTotal} (${stats.smePct}%)</span></div>`;
+    html += `<div class="progress-stat"><span class="progress-stat-label" style="padding-left:16px;">Approved</span><span class="progress-stat-value">${stats.smeApproved}</span></div>`;
+    html += `<div class="progress-stat"><span class="progress-stat-label" style="padding-left:16px;">Changed</span><span class="progress-stat-value">${stats.smeChanged}</span></div>`;
+    html += `<div class="progress-stat"><span class="progress-stat-label">Final KKE Resolved</span><span class="progress-stat-value">${stats.finalResolved} of ${stats.smeTotal} (${stats.finalPct}%)</span></div>`;
+    const pending = stats.smeTotal - stats.finalResolved;
+    if (pending > 0) {
+      html += `<div class="progress-stat"><span class="progress-stat-label" style="padding-left:16px;">Pending final decision</span><span class="progress-stat-value">${pending}</span></div>`;
+    }
+  }
+
+  $('progress-body').innerHTML = html;
+  $('btn-progress-export-pdf').classList.remove('hidden');
+  $('btn-progress-export-pdf').classList.remove('hidden');
+  $('btn-progress-export-html').classList.remove('hidden');
+  $('btn-progress-export-pdf').textContent = 'PDF';
+  _progressModalExporter = exportProgressPdf;
+  const titleEl = $('progress-modal-title');
+  if (titleEl) titleEl.textContent = 'Audit Progress';
+  $('progress-overlay').classList.remove('hidden');
+  $('progress-modal').classList.remove('hidden');
+}
+
+function closeProgressDashboard() {
+  $('progress-overlay').classList.add('hidden');
+  $('progress-modal').classList.add('hidden');
+  // Reset modal size (sitemap may have enlarged it)
+  const modal = $('progress-modal');
+  modal.style.width = '';
+  modal.style.maxWidth = '';
+  modal.style.height = '';
+  $('progress-body').style.height = '';
+}
+
+async function exportProgressPdf(format) {
+  const stats = gatherProgressStats();
+  if (stats.total === 0) { showToast('No data to export', 'error'); return; }
+
+  const ps = state.projectSettings;
+  const clientName = ps.clientName || '';
+  const projectName = ps.projectName || '';
+  const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  // Build bar segments
+  let barHtml = '';
+  allKkeStates().forEach(label => {
+    const count = stats.kkeCounts[label] || 0;
+    const widthPct = (count / stats.total * 100).toFixed(1);
+    const bgColor = resolvedKkeBgColor(label);
+    const borderColor = resolvedKkeColor(label);
+    barHtml += `<div style="width:${widthPct}%;background:${bgColor};border-right:1px solid ${borderColor};height:100%"></div>`;
+  });
+
+  // Build status rows
+  let statusHtml = '';
+  allKkeStates().forEach(label => {
+    const color = resolvedKkeColor(label);
+    statusHtml += `<tr><td>${escapeHtml(label)}</td><td style="color:${color};font-weight:600;text-align:right">${stats.kkeCounts[label] || 0}</td></tr>`;
+  });
+  statusHtml += `<tr><td>Unreviewed</td><td style="text-align:right">${stats.unreviewed}</td></tr>`;
+
+  // Build group rows
+  let groupHtml = '';
+  if (stats.groups.length > 0) {
+    groupHtml = '<h3 style="margin:18px 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#888">By Group</h3><table style="width:100%;border-collapse:collapse">';
+    stats.groups.forEach(([g, c]) => {
+      groupHtml += `<tr><td>${escapeHtml(g)}</td><td style="text-align:right;font-weight:600">${c}</td></tr>`;
+    });
+    groupHtml += '</table>';
+  }
+
+  const pdfHtml = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; color: #222; margin: 40px; line-height: 1.5; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 14px; color: #666; font-weight: 400; margin: 0 0 24px; }
+  h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #888; margin: 18px 0 8px; }
+  .meta { font-size: 13px; color: #555; margin-bottom: 4px; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 6px 0; font-size: 13px; border-bottom: 1px solid #eee; }
+  td:last-child { font-family: 'SF Mono', 'Menlo', monospace; font-size: 13px; }
+  .bar-wrap { height: 20px; background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; overflow: hidden; display: flex; margin: 10px 0 16px; }
+  .summary-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 14px; border-bottom: 1px solid #eee; }
+  .summary-value { font-weight: 600; font-family: 'SF Mono', 'Menlo', monospace; }
+  .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #ddd; font-size: 11px; color: #999; }
+</style></head><body>
+  <h1>Content Audit Progress Report</h1>
+  <h2>${clientName ? escapeHtml(clientName) + (projectName ? ' — ' + escapeHtml(projectName) : '') : (projectName ? escapeHtml(projectName) : '')}</h2>
+  ${clientName || projectName ? '' : '<div style="margin-bottom:24px"></div>'}
+  <div class="meta">Report date: ${dateStr}</div>
+  <div class="meta">File: ${escapeHtml(state.filePath ? state.filePath.split('/').pop() : 'Unknown')}</div>
+
+  <div style="margin-top:20px">
+    <div class="summary-row"><span>Total pages</span><span class="summary-value">${stats.total}</span></div>
+    <div class="summary-row"><span>Reviewed</span><span class="summary-value">${stats.reviewed} (${stats.pct}%)</span></div>
+  </div>
+
+  <div class="bar-wrap">${barHtml}</div>
+
+  <h3>By Status</h3>
+  <table>${statusHtml}</table>
+
+  <h3>Other</h3>
+  <table>
+    <tr><td>Flagged</td><td style="text-align:right;font-weight:600">${stats.flagged}</td></tr>
+    <tr><td>Tagged</td><td style="text-align:right;font-weight:600">${stats.tagged}</td></tr>
+    <tr><td>With notes</td><td style="text-align:right;font-weight:600">${stats.noted}</td></tr>
+  </table>
+
+  ${groupHtml}
+
+  <div class="footer">Generated by Transmission</div>
+</body></html>`;
+
+  const baseName = [clientName, projectName, 'audit-progress'].filter(Boolean).join('-').replace(/\s+/g, '-').toLowerCase();
+  if (format === 'html') {
+    const result = await window.electronAPI.exportReportHtml({ html: pdfHtml, defaultName: baseName + '.html' });
+    if (result.success) showToast('HTML saved');
+    else if (result.error !== 'Cancelled') showToast('Export failed: ' + result.error, 'error');
+  } else {
+    const result = await window.electronAPI.exportProgressPdf({ html: pdfHtml, defaultName: baseName + '.pdf' });
+    if (result.success) showToast('PDF saved');
+    else if (result.error !== 'Cancelled') showToast('Export failed: ' + result.error, 'error');
+  }
+}
+
+// ─── Dynamic KKE buttons ──────────────────────────────────────────────────────
+
+function renderKkeButtons() {
+  // Update label to reflect current KKE column
+  const kkeLabel = $('kke-buttons-label');
+  if (kkeLabel) {
+    const col = kkeCol();
+    const abbr = col.replace('KKE_Recommendation', 'KKE')
+                     .replace('Final_KKE', 'Final KKE')
+                     .replace('SME_Decision', 'SME Decision')
+                     .replace(/_/g, ' ');
+    kkeLabel.textContent = abbr;
+  }
+  // Main KKE buttons in audit bar
+  els.kkeButtons.innerHTML = '';
+  allKkeStates().forEach(label => {
+    const btn = document.createElement('button');
+    btn.className = 'kke-btn';
+    btn.dataset.kke = label;
+    btn.textContent = label;
+    els.kkeButtons.appendChild(btn);
+  });
+
+  // Bulk KKE buttons
+  const bulkGroup = document.querySelector('#bulk-bar .kke-btn-group');
+  if (bulkGroup) {
+    bulkGroup.innerHTML = '';
+    allKkeStates().forEach(label => {
+      const btn = document.createElement('button');
+      btn.className = 'kke-btn bulk-kke-btn';
+      btn.dataset.kke = label;
+      btn.textContent = label;
+      bulkGroup.appendChild(btn);
+    });
+  }
+
+  // Inject CSS for custom states
+  let styleEl = document.getElementById('custom-kke-styles');
+  if (!styleEl) {
+    styleEl = document.createElement('style');
+    styleEl.id = 'custom-kke-styles';
+    document.head.appendChild(styleEl);
+  }
+  let css = '';
+  state.customKkeStates.forEach(s => {
+    const cls = s.label.toLowerCase().replace(/[^a-z0-9]/g, '-');
+    css += `.kke-btn.kke-active-${cls} { background-color: ${s.color}22; color: ${s.color}; border-color: ${s.color}; }\n`;
+    css += `.kke-badge.${cls} { background: ${s.color}22; color: ${s.color}; }\n`;
+  });
+  styleEl.textContent = css;
+}
+
+function renderKkeFilterOptions() {
+  const dd = els.kkeFilterDropdown;
+  dd.innerHTML = '';
+
+  const statuses = allKkeStates();
+  const specials = [
+    { value: '_unreviewed', text: 'Unreviewed' },
+    { value: '_flagged', text: 'Flagged' },
+    { value: '_duplicates', text: 'Duplicates' },
+    { value: '_sme-conflicts', text: 'SME Conflicts' },
+    { value: '_sme-pending', text: 'Pending Final KKE' },
+    { value: '_consolidate-no-target', text: 'Consolidate (no target)' },
+    { value: '_consolidate-dead-target', text: 'Consolidate → Kill/Exclude target' },
+    { value: '_shared-nav', text: 'Shared nav node (2+ pages)' },
+    { value: '_needs-placement', text: 'Needs nav placement (Keep/Evolve, no node)' },
+    { value: '_suggested-disagree', text: 'Suggested KKE: sources disagree' },
+    { value: '_suggested-mismatch', text: 'Suggested KKE: differs from my KKE' }
+  ];
+
+  // Status checkboxes
+  statuses.forEach(s => {
+    const label = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = s;
+    cb.checked = state.kkeFilter.includes(s);
+    cb.addEventListener('change', () => onKkeFilterChange());
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(s));
+    dd.appendChild(label);
+  });
+
+  // Separator
+  const sep = document.createElement('div');
+  sep.className = 'kke-filter-sep';
+  dd.appendChild(sep);
+
+  // Special filters
+  specials.forEach(({ value, text }) => {
+    const label = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = value;
+    cb.checked = state.kkeFilter.includes(value);
+    cb.addEventListener('change', () => onKkeFilterChange());
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(text));
+    dd.appendChild(label);
+  });
+
+  // Clear all link
+  const sep2 = document.createElement('div');
+  sep2.className = 'kke-filter-sep';
+  dd.appendChild(sep2);
+  const clearLabel = document.createElement('label');
+  clearLabel.style.color = 'var(--accent)';
+  clearLabel.style.cursor = 'pointer';
+  clearLabel.textContent = 'Clear all';
+  clearLabel.addEventListener('click', () => {
+    state.kkeFilter = [];
+    state.projectSettings.kkeFilter = [];
+    window.electronAPI.savePrefs({ kkeFilter: [] });
+    setDirty(true);
+    renderKkeFilterOptions();
+    updateKkeFilterBtn();
+    applyFilter();
+  });
+  dd.appendChild(clearLabel);
+
+  updateKkeFilterBtn();
+}
+
+function onKkeFilterChange() {
+  const checked = [...els.kkeFilterDropdown.querySelectorAll('input:checked')].map(cb => cb.value);
+  state.kkeFilter = checked;
+  state.projectSettings.kkeFilter = checked;
+  window.electronAPI.savePrefs({ kkeFilter: checked });
+  setDirty(true);
+  updateKkeFilterBtn();
+  applyFilter();
+}
+
+function updateKkeFilterBtn() {
+  const count = state.kkeFilter.length;
+  if (count === 0) {
+    els.kkeFilterBtn.textContent = 'All statuses ▾';
+  } else if (count === 1) {
+    // Special filters (values starting with "_") are wordy — show a generic chip instead of the raw key.
+    const v = state.kkeFilter[0];
+    els.kkeFilterBtn.textContent = (v && v.startsWith('_') ? '1 filter' : v) + ' ▾';
+  } else {
+    els.kkeFilterBtn.textContent = count + ' filters ▾';
+  }
+}
+
+/** Programmatically apply a single sidebar KKE/special filter (used by stats-line links). */
+function applyKkeSpecialFilter(value) {
+  state.kkeFilter = [value];
+  state.projectSettings.kkeFilter = state.kkeFilter;
+  window.electronAPI.savePrefs({ kkeFilter: state.kkeFilter });
+  setDirty(true);
+  renderKkeFilterOptions();
+  updateKkeFilterBtn();
+  applyFilter();
+}
+
+// ─── Content extraction (Phase 5.3) ───────────────────────────────────────────
+
+let _lastPopoverText = '';
+
+function showResultPopover(title, html, plainText, anchorEl) {
+  _lastPopoverText = plainText;
+  els.assessResults.innerHTML = html;
+  els.assessLoading.classList.add('hidden');
+  els.assessLlmSection.classList.add('hidden');
+  els.btnAssessAccept.classList.add('hidden');
+  els.btnAssessLlm.classList.add('hidden');
+  $('btn-assess-batch').classList.add('hidden');
+
+  // Show copy/export buttons
+  $('btn-result-copy').classList.remove('hidden');
+  $('btn-result-export').classList.remove('hidden');
+
+  const rect = anchorEl.getBoundingClientRect();
+  els.assessPopover.style.top = (rect.bottom + 4) + 'px';
+  els.assessPopover.style.right = '20px';
+  els.assessPopover.style.left = 'auto';
+  els.assessPopover.querySelector('.popover-title').textContent = title;
+  els.assessPopover.classList.remove('hidden');
+}
+
+function setButtonLoading(btn, loading) {
+  if (loading) {
+    btn._origContent = btn.innerHTML;
+    btn.innerHTML = '<span class="btn-spinner"></span>';
+    btn.disabled = true;
+  } else {
+    btn.innerHTML = btn._origContent || btn.innerHTML;
+    btn.disabled = false;
+  }
+}
+
+async function extractPageContent() {
+  const btn = $('btn-extract-content');
+  setButtonLoading(btn, true);
+  try {
+    const result = await els.webview.executeJavaScript(`
+      (function() {
+        const headings = [];
+        document.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {
+          headings.push({ level: h.tagName, text: h.textContent.trim() });
+        });
+        const body = document.body.innerText || '';
+        const wordCount = body.split(/\\s+/).filter(w => w.length > 0).length;
+        const links = [];
+        document.querySelectorAll('a[href]').forEach(a => {
+          links.push({ href: a.href, text: a.textContent.trim() });
+        });
+        return {
+          title: document.title,
+          wordCount,
+          headingCount: headings.length,
+          headings: headings.slice(0, 30),
+          linkCount: links.length,
+          bodyPreview: body.substring(0, 500)
+        };
+      })()
+    `);
+
+    // Build HTML
+    let html = '<div style="font-size:13px;line-height:1.6;">';
+    html += `<div style="margin-bottom:8px;"><strong>Title:</strong> ${escapeHtml(result.title)}</div>`;
+    html += `<div style="margin-bottom:8px;"><strong>Word count:</strong> ${result.wordCount} | <strong>Headings:</strong> ${result.headingCount} | <strong>Links:</strong> ${result.linkCount}</div>`;
+    if (result.headings.length > 0) {
+      html += '<div style="margin-bottom:8px;"><strong>Heading structure:</strong></div>';
+      result.headings.forEach(h => {
+        const indent = (parseInt(h.level.charAt(1)) - 1) * 16;
+        html += `<div style="padding-left:${indent}px;font-size:12px;color:var(--text-secondary);"><span style="color:var(--text-muted);">${h.level}</span> ${escapeHtml(h.text)}</div>`;
+      });
+    }
+    html += '</div>';
+
+    // Build plain text
+    let text = `Page Content: ${els.webview.getURL()}\n`;
+    text += `Title: ${result.title}\n`;
+    text += `Word count: ${result.wordCount} | Headings: ${result.headingCount} | Links: ${result.linkCount}\n`;
+    if (result.headings.length > 0) {
+      text += '\nHeading structure:\n';
+      result.headings.forEach(h => {
+        const depth = parseInt(h.level.charAt(1));
+        text += `${'  '.repeat(depth - 1)}${h.level} ${h.text}\n`;
+      });
+    }
+
+    showResultPopover('Page Content', html, text, btn);
+  } catch (e) {
+    showToast('Content extraction failed: ' + e.message, 'error');
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
+// ─── Broken link check (Phase 5.4) ────────────────────────────────────────────
+
+async function checkPageLinks() {
+  const btn = $('btn-check-links');
+  setButtonLoading(btn, true);
+  try {
+    const pageUrl = els.webview.getURL();
+    const links = await els.webview.executeJavaScript(`
+      Array.from(document.querySelectorAll('a[href]'))
+        .map(a => a.href)
+        .filter(h => h.startsWith('http'))
+    `);
+
+    const unique = [...new Set(links)];
+    if (unique.length === 0) { showToast('No links found on page'); return; }
+
+    const results = await window.electronAPI.checkLinks({ urls: unique });
+    const broken = results.filter(r => !r.ok);
+    const ok = results.filter(r => r.ok);
+
+    // Build HTML
+    let html = '<div style="font-size:13px;line-height:1.6;">';
+    html += `<div style="margin-bottom:8px;"><strong>${unique.length} links checked</strong>, <span style="color:${broken.length > 0 ? 'var(--danger)' : 'var(--kke-keep)'}">${broken.length} broken</span></div>`;
+
+    if (broken.length > 0) {
+      broken.forEach(r => {
+        html += `<div style="font-size:12px;color:var(--danger);margin-bottom:4px;word-break:break-all;">
+          <strong>${r.status || 'ERR'}</strong> ${escapeHtml(r.url)}${r.error ? ' (' + escapeHtml(r.error) + ')' : ''}
+        </div>`;
+      });
+    } else {
+      html += '<div style="color:var(--kke-keep);">All links are valid.</div>';
+    }
+    html += '</div>';
+
+    // Build plain text
+    let text = `Link Check: ${pageUrl}\n`;
+    text += `${unique.length} links checked, ${broken.length} broken\n\n`;
+    if (broken.length > 0) {
+      text += 'BROKEN:\n';
+      broken.forEach(r => {
+        text += `  [${r.status || 'ERR'}] ${r.url}${r.error ? ' (' + r.error + ')' : ''}\n`;
+      });
+      text += '\n';
+    }
+    text += 'OK:\n';
+    ok.forEach(r => {
+      text += `  [${r.status}] ${r.url}\n`;
+    });
+
+    showResultPopover('Link Check', html, text, btn);
+  } catch (e) {
+    showToast('Link check failed: ' + e.message, 'error');
+  } finally {
+    setButtonLoading(btn, false);
+  }
+}
+
+// ─── Rubric editor ────────────────────────────────────────────────────────────
+
+let _rubricCurrentStatus = 'keep';
+
+function setupRubricEditor() {
+  $('btn-edit-rubrics').addEventListener('click', () => {
+    closeSettingsPopover();
+    openRubricEditor();
+  });
+  $('btn-rubric-close').addEventListener('click', closeRubricEditor);
+  $('rubric-overlay').addEventListener('click', closeRubricEditor);
+
+  // Tab switching
+  document.querySelectorAll('.rubric-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.rubric-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      _rubricCurrentStatus = tab.dataset.status;
+      loadRubricContent(_rubricCurrentStatus);
+    });
+  });
+
+  $('btn-rubric-save').addEventListener('click', saveRubricContent);
+}
+
+async function openRubricEditor() {
+  _rubricCurrentStatus = 'keep';
+  document.querySelectorAll('.rubric-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.status === 'keep');
+  });
+  await loadRubricContent('keep');
+  $('rubric-overlay').classList.remove('hidden');
+  $('rubric-modal').classList.remove('hidden');
+}
+
+async function loadRubricContent(status) {
+  $('rubric-status').textContent = 'Loading…';
+  const result = await window.electronAPI.readRubricFile({ status });
+  $('rubric-editor').value = result.content || `# ${status.charAt(0).toUpperCase() + status.slice(1)}\n\n## Field Rules\n- \n\n## Content Rules\n- `;
+  $('rubric-status').textContent = result.error || '';
+}
+
+async function saveRubricContent() {
+  const content = $('rubric-editor').value;
+  const result = await window.electronAPI.writeRubricFile({ status: _rubricCurrentStatus, content });
+  if (result.success) {
+    $('rubric-status').textContent = 'Saved';
+    showToast(`Rubric "${_rubricCurrentStatus}" saved`, 'success');
+  } else {
+    $('rubric-status').textContent = result.error || 'Save failed';
+    showToast('Save failed: ' + (result.error || 'unknown error'), 'error');
+  }
+}
+
+function closeRubricEditor() {
+  $('rubric-overlay').classList.add('hidden');
+  $('rubric-modal').classList.add('hidden');
+}
+
+// ─── Undo/Redo (Phase 6) ──────────────────────────────────────────────────────
+
+const _undoStack = [];
+const _redoStack = [];
+const MAX_UNDO = 100;
+
+function pushUndo(action) {
+  _undoStack.push(action);
+  if (_undoStack.length > MAX_UNDO) _undoStack.shift();
+  _redoStack.length = 0; // clear redo on new action
+}
+
+function undo() {
+  if (_undoStack.length === 0) { showToast('Nothing to undo — only KKE changes are undoable', 'info'); return; }
+  const action = _undoStack.pop();
+  _redoStack.push(action);
+  applyUndoAction(action, true);
+}
+
+function redo() {
+  if (_redoStack.length === 0) { showToast('Nothing to redo'); return; }
+  const action = _redoStack.pop();
+  _undoStack.push(action);
+  applyUndoAction(action, false);
+}
+
+function applyUndoAction(action, isUndo) {
+  const val = isUndo ? action.oldValue : action.newValue;
+  state.editedRows[action.origIndex][action.field] = val;
+  setDirty(true);
+  renderVisibleRows();
+  if (state.selectedIndex === action.origIndex) {
+    populateAuditFields(state.editedRows[action.origIndex]);
+    applyKkeStyle(state.editedRows[action.origIndex][kkeCol()] || '');
+  }
+}
+
+// Track KKE changes for undo
+function recordKkeChange(origIndex, oldVal, newVal) {
+  pushUndo({ origIndex, field: kkeCol(), oldValue: oldVal, newValue: newVal });
+  logChange(origIndex, kkeCol(), oldVal, newVal);
+}
+
+function setupUndo() {
+  window.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+      if (['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+      e.preventDefault();
+      undo();
+    }
+    if ((e.metaKey || e.ctrlKey) && ((e.key === 'z' && e.shiftKey) || e.key === 'Z')) {
+      if (['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+      e.preventDefault();
+      redo();
+    }
+  });
+}
+
+// ─── Computed Columns ────────────────────────────────────────────────────────
+
+function setupComputedColumns() {
+  $('btn-open-computed-cols').addEventListener('click', () => {
+    closeProjectSettingsPopover();
+    openComputedColumnsEditor();
+  });
+  $('btn-computed-cols-close').addEventListener('click', closeComputedColumnsEditor);
+  $('btn-computed-cols-done').addEventListener('click', closeComputedColumnsEditor);
+  $('computed-cols-overlay').addEventListener('click', (e) => {
+    if (e.target.id === 'computed-cols-overlay') closeComputedColumnsEditor();
+  });
+  $('btn-add-computed-col').addEventListener('click', () => {
+    state.computedColumns.push({ name: '', formula: '', order: state.computedColumns.length });
+    renderComputedColumnCards();
+  });
+  $('btn-recalc-computed').addEventListener('click', () => recalculateComputedColumns());
+}
+
+function openComputedColumnsEditor() {
+  renderComputedColumnCards();
+  // Show available columns
+  const nonComputed = state.headers.filter(h => h !== '_rowIndex' && !state.computedColumns.some(c => c.name === h));
+  $('computed-cols-available').innerHTML = '<strong>Available columns:</strong> ' +
+    nonComputed.map(h => `<code style="background:var(--bg-hover);padding:1px 4px;border-radius:3px;font-size:10px;">{${h}}</code>`).join(' ');
+  $('computed-cols-overlay').classList.remove('hidden');
+  makeModalDraggable($('computed-cols-modal'));
+}
+
+function closeComputedColumnsEditor() {
+  $('computed-cols-overlay').classList.add('hidden');
+  resetModalPosition($('computed-cols-modal'));
+  // Persist definitions to project settings
+  saveComputedColumnDefs();
+}
+
+function saveComputedColumnDefs() {
+  // Filter out empty definitions
+  state.computedColumns = state.computedColumns.filter(c => c.name.trim() || c.formula.trim());
+  // Normalize order
+  state.computedColumns.forEach((c, i) => c.order = i);
+  state.projectSettings.computedColumns = JSON.stringify(state.computedColumns);
+  setDirty(true);
+}
+
+function renderComputedColumnCards() {
+  const list = $('computed-cols-list');
+  list.innerHTML = '';
+  state.computedColumns.forEach((col, idx) => {
+    const card = document.createElement('div');
+    card.className = 'cc-card';
+
+    // Header row: name input + delete button
+    const header = document.createElement('div');
+    header.className = 'cc-card-header';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.value = col.name;
+    nameInput.placeholder = 'Column name (e.g. GA Score)';
+    nameInput.addEventListener('input', () => {
+      col.name = nameInput.value;
+    });
+    nameInput.addEventListener('change', () => saveComputedColumnDefs());
+    header.appendChild(nameInput);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'cc-delete-btn';
+    delBtn.textContent = '✕';
+    delBtn.title = 'Remove this computed column';
+    delBtn.addEventListener('click', () => {
+      state.computedColumns.splice(idx, 1);
+      saveComputedColumnDefs();
+      renderComputedColumnCards();
+    });
+    header.appendChild(delBtn);
+    card.appendChild(header);
+
+    // Formula textarea
+    const formulaInput = document.createElement('textarea');
+    formulaInput.className = 'cc-formula-input';
+    formulaInput.value = col.formula;
+    formulaInput.placeholder = 'e.g. {Sessions} * 0.4 + {Pageviews} * 0.3\nor classify({Score}, 0: "Kill", 40: "Evolve", 70: "Keep")';
+    formulaInput.rows = 2;
+    formulaInput.addEventListener('input', () => {
+      col.formula = formulaInput.value;
+    });
+    formulaInput.addEventListener('change', () => saveComputedColumnDefs());
+    card.appendChild(formulaInput);
+
+    // Preview (first 5 rows)
+    if (col.name && col.formula && state.editedRows.length > 0) {
+      const preview = document.createElement('div');
+      preview.className = 'cc-preview';
+      // Quick preview: evaluate for up to 5 rows
+      const sampleRows = state.editedRows.slice(0, 5);
+      // We need to evaluate just this one column for preview
+      window.electronAPI.evaluateComputedColumns({
+        definitions: state.computedColumns.filter(c => c.name && c.formula),
+        rows: sampleRows
+      }).then(({ results, errors }) => {
+        if (errors && errors.length > 0) {
+          preview.innerHTML = '';
+          const errEl = document.createElement('span');
+          errEl.className = 'cc-error';
+          errEl.textContent = errors.join('; ');
+          preview.appendChild(errEl);
+        } else if (results) {
+          const vals = results.map(r => {
+            const v = r[col.name];
+            return v === undefined || v === '' ? '—' : String(v);
+          });
+          preview.innerHTML = '<strong>Preview:</strong> ' + vals.join(' · ');
+        }
+      });
+      card.appendChild(preview);
+    }
+
+    list.appendChild(card);
+  });
+}
+
+async function recalculateComputedColumns() {
+  const defs = state.computedColumns.filter(c => c.name.trim() && c.formula.trim());
+  if (defs.length === 0) {
+    showToast('No computed columns defined', 'info');
+    return;
+  }
+
+  // Ensure column headers exist
+  for (const def of defs) {
+    if (!state.headers.includes(def.name)) {
+      state.headers.push(def.name);
+    }
+  }
+
+  const { results, errors } = await window.electronAPI.evaluateComputedColumns({
+    definitions: defs,
+    rows: state.editedRows
+  });
+
+  if (errors && errors.length > 0) {
+    showToast('Formula errors: ' + errors.join('; '), 'error');
+  }
+
+  if (results && results.length === state.editedRows.length) {
+    for (let i = 0; i < results.length; i++) {
+      for (const [colName, value] of Object.entries(results[i])) {
+        state.editedRows[i][colName] = value;
+      }
+    }
+    setDirty(true);
+    applyFilter();
+    renderColHeaders();
+    if (state.selectedIndex !== null) {
+      renderMetaFields(state.selectedIndex);
+    }
+    showToast(`Recalculated ${defs.length} column(s) across ${results.length} rows`, 'success');
+  }
+
+  // Refresh preview in editor if open
+  if (!$('computed-cols-overlay').classList.contains('hidden')) {
+    renderComputedColumnCards();
+  }
+}
+
+// ─── Unified Export dialog (Chunk i — replaces the old separate menu items) ──
+
+function openUnifiedExportDialog() {
+  if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
+  document.getElementById('_xpd-overlay')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = '_xpd-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.style.zIndex = '900';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-dialog xpd-modal';
+  modal.style.width = 'min(700px, 62vw)';
+  modal.addEventListener('click', e => e.stopPropagation());
+
+  // Counts to surface
+  const filteredCount = state.filteredRows.length;
+  const decisionCount = state.editedRows.filter(r => {
+    return ['KKE_Recommendation', 'Tags', 'Notes', 'Group', 'Primary Tag'].some(h => {
+      const col = h === 'KKE_Recommendation' ? kkeCol()
+                : h === 'Tags' ? tagsCol()
+                : h === 'Notes' ? notesCol()
+                : h === 'Group' ? groupCol()
+                : primaryTagCol();
+      return String(r[col] || '').trim();
+    });
+  }).length;
+
+  modal.innerHTML = `
+    <div class="modal-header">
+      <h2 style="margin:0;">Export…</h2>
+      <button class="modal-close" id="_xpd-close" title="Close">×</button>
+    </div>
+    <div class="modal-body" style="padding:16px;">
+      <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px;">
+        Choose what to export. Each option saves a separate file.
+      </p>
+      <div class="xpd-options">
+        <button type="button" class="xpd-option" data-kind="filtered">
+          <div class="xpd-option-title">Filtered Rows</div>
+          <div class="xpd-option-desc">Every column of the currently-filtered rows. ${filteredCount} row${filteredCount !== 1 ? 's' : ''} match the active filter.</div>
+          <div class="xpd-option-format">→ xlsx</div>
+        </button>
+        <button type="button" class="xpd-option" data-kind="decisions">
+          <div class="xpd-option-title">Audit Decisions</div>
+          <div class="xpd-option-desc">Just the audit columns (URL · KKE · Tags · Notes · Group · Primary Tag · NavID). ${decisionCount} row${decisionCount !== 1 ? 's' : ''} have at least one decision.</div>
+          <div class="xpd-option-format">→ CSV / JSON</div>
+        </button>
+        <button type="button" class="xpd-option" data-kind="redirects">
+          <div class="xpd-option-title">Redirect Map</div>
+          <div class="xpd-option-desc">Source URL → destination for every Kill and URL-changed row. Honors the 404 sentinel.</div>
+          <div class="xpd-option-format">→ CSV</div>
+        </button>
+        <button type="button" class="xpd-option" data-kind="migration">
+          <div class="xpd-option-title">Migration Tracker</div>
+          <div class="xpd-option-desc">Nav-tree-centric deliverable for engineering. Multi-sheet xlsx (Nav Plan · Source Pages · Redirects · Archive).</div>
+          <div class="xpd-option-format">→ xlsx</div>
+        </button>
+      </div>
+    </div>
+  `;
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  makeModalDraggable(modal);
+
+  const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  modal.querySelector('#_xpd-close').addEventListener('click', close);
+
+  modal.querySelectorAll('.xpd-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const kind = btn.dataset.kind;
+      close();
+      switch (kind) {
+        case 'filtered':  exportFilteredRows(); break;
+        case 'decisions': exportAuditDecisions(); break;
+        case 'redirects': exportRedirectMap(); break;
+        case 'migration': openMigrationTrackerExportDialog(); break;
+      }
+    });
+  });
+}
+
+// ─── Export filtered rows ─────────────────────────────────────────────────────
+
+async function exportFilteredRows() {
+  if (state.filteredRows.length === 0) { showToast('No rows to export', 'error'); return; }
+  const headers = state.headers.filter(h => h !== '_rowIndex');
+  const rows = state.filteredRows.map(({ row }) => {
+    const obj = {};
+    headers.forEach(h => { obj[h] = row[h] ?? ''; });
+    return obj;
+  });
+  const result = await window.electronAPI.exportFiltered({ headers, rows });
+  if (result.success) showToast(`Exported ${rows.length} rows`, 'success');
+  else if (result.error !== 'Cancelled') showToast(`Export failed: ${result.error}`, 'error');
+}
+
+// ─── Audit decisions export (Phase 7.4) ───────────────────────────────────────
+
+async function exportAuditDecisions() {
+  if (state.editedRows.length === 0) { showToast('No data to export', 'error'); return; }
+  const urlCol = state.urlColumn || 'Address';
+  const auditHeaders = [urlCol, kkeCol(), tagsCol(), notesCol(), groupCol(), primaryTagCol(), 'NavID', 'Nav Destination'];
+  const validHeaders = auditHeaders.filter(h => state.headers.includes(h));
+  const rows = state.editedRows.map(row => {
+    const obj = {};
+    validHeaders.forEach(h => { obj[h] = row[h] ?? ''; });
+    return obj;
+  }).filter(row => {
+    // Only export rows with at least one audit decision
+    return validHeaders.some(h => h !== urlCol && String(row[h] || '').trim());
+  });
+
+  if (rows.length === 0) { showToast('No audit decisions to export', 'error'); return; }
+  const result = await window.electronAPI.exportAuditCsv({ headers: validHeaders, rows });
+  if (result.success) showToast(`Exported ${rows.length} decisions`, 'success');
+  else if (result.error !== 'Cancelled') showToast('Export failed: ' + result.error, 'error');
+}
+
+// ─── Multi-Auditor Merge ──────────────────────────────────────────────────────
+
+async function mergeAuditorDecisions() {
+  if (state.editedRows.length === 0) { showToast('Open a file first', 'error'); return; }
+
+  // Use import/merge flow to get the other auditor's file
+  const fileInfo = await window.electronAPI.importAuditMergeOpen();
+  if (!fileInfo) return;
+  if (fileInfo.error) { showToast('Import error: ' + fileInfo.error, 'error'); return; }
+
+  // Load first sheet (or let user pick)
+  const sheetName = fileInfo.sheetNames[0];
+  const data = await window.electronAPI.importAuditMergeReadSheet({ filePath: fileInfo.filePath, sheetName });
+  if (!data || data.error) { showToast('Error: ' + (data?.error || 'Unknown'), 'error'); return; }
+
+  const urlCol = state.urlColumn || 'Address';
+  const impUrlCol = data.headers.find(h => h.toLowerCase() === urlCol.toLowerCase());
+  if (!impUrlCol) { showToast(`Import file missing "${urlCol}" column`, 'error'); return; }
+
+  // Find KKE column in imported file
+  const impKkeCol = data.headers.find(h => h.toLowerCase() === kkeCol().toLowerCase());
+  if (!impKkeCol) { showToast(`Import file missing "${kkeCol()}" column`, 'error'); return; }
+
+  // Build URL lookup from imported file
+  const importMap = new Map();
+  data.rows.forEach(row => {
+    const url = String(row[impUrlCol] || '').trim().toLowerCase();
+    if (url) importMap.set(url, row);
+  });
+
+  // Find conflicts and agreements
+  let agreed = 0, filled = 0;
+  const conflicts = [];
+
+  state.editedRows.forEach((row, origIndex) => {
+    const url = String(row[urlCol] || '').trim().toLowerCase();
+    if (!url) return;
+    const imp = importMap.get(url);
+    if (!imp) return;
+
+    const myKke = String(row[kkeCol()] || '').trim();
+    const theirKke = String(imp[impKkeCol] || '').trim();
+
+    if (!theirKke) return; // other auditor didn't review this row
+
+    if (!myKke) {
+      // I haven't reviewed, take their decision
+      row[kkeCol()] = theirKke;
+      logChange(origIndex, kkeCol(), '', theirKke);
+      filled++;
+    } else if (myKke === theirKke) {
+      agreed++;
+    } else {
+      conflicts.push({ origIndex, row, myKke, theirKke });
+    }
+  });
+
+  setDirty(true);
+  applyFilter();
+
+  const fileName = fileInfo.filePath.split('/').pop();
+  const parts = [`Merged from ${fileName}`, `${agreed} agreed`, `${filled} filled`];
+
+  if (conflicts.length === 0) {
+    showToast(parts.join(', ') + ' — no conflicts', 'success');
+    return;
+  }
+
+  parts.push(`${conflicts.length} conflicts`);
+  showToast(parts.join(', '), 'info');
+
+  // Show conflict resolution dialog (reuse SME resolve modal)
+  setTimeout(() => showAuditorConflictDialog(conflicts), 300);
+}
+
+function showAuditorConflictDialog(conflicts) {
+  const overlay = $('sme-resolve-overlay');
+  const modal   = $('sme-resolve-modal');
+  const body    = $('sme-resolve-body');
+  const countEl = $('sme-resolve-count');
+  const btnDone = $('btn-sme-resolve-done');
+  const btnAcceptAll = $('btn-sme-accept-all');
+  const btnKeepAll   = $('btn-sme-keep-all');
+  const btnClose     = $('btn-sme-resolve-close');
+
+  // Update header title
+  modal.querySelector('.modal-title').textContent = 'Resolve Auditor Conflicts';
+  btnAcceptAll.textContent = 'Accept All Theirs';
+  btnKeepAll.textContent = 'Keep All Mine';
+
+  function renderList() {
+    body.innerHTML = '';
+    countEl.textContent = `${conflicts.length} conflict${conflicts.length !== 1 ? 's' : ''} remaining`;
+
+    if (conflicts.length === 0) {
+      body.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px;">All conflicts resolved.</div>';
+      return;
+    }
+
+    conflicts.forEach((c, idx) => {
+      const el = document.createElement('div');
+      el.className = 'sme-conflict-row';
+
+      const title = document.createElement('span');
+      title.className = 'sme-cr-title';
+      title.textContent = c.row['Title 1'] || c.row['Title'] || '(no title)';
+      title.title = c.row[state.urlColumn] || '';
+      el.appendChild(title);
+
+      const myBadge = document.createElement('span');
+      myBadge.className = 'sme-cr-kke kke-badge kke-' + c.myKke.toLowerCase().replace(/[^a-z0-9]/g, '-');
+      myBadge.textContent = c.myKke;
+      myBadge.title = 'Mine';
+      el.appendChild(myBadge);
+
+      const arrow = document.createElement('span');
+      arrow.className = 'sme-cr-arrow';
+      arrow.textContent = 'vs';
+      el.appendChild(arrow);
+
+      const theirBadge = document.createElement('span');
+      theirBadge.className = 'sme-cr-sme kke-badge kke-' + c.theirKke.toLowerCase().replace(/[^a-z0-9]/g, '-');
+      theirBadge.textContent = c.theirKke;
+      theirBadge.title = 'Theirs';
+      el.appendChild(theirBadge);
+
+      const finalWrap = document.createElement('span');
+      finalWrap.className = 'sme-cr-final';
+      const select = document.createElement('select');
+      ['', ...allKkeStates()].forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v; opt.textContent = v || '—';
+        select.appendChild(opt);
+      });
+      finalWrap.appendChild(select);
+      el.appendChild(finalWrap);
+
+      const actions = document.createElement('span');
+      actions.className = 'sme-cr-actions';
+      const confirmBtn = document.createElement('button');
+      confirmBtn.textContent = '✓';
+      confirmBtn.addEventListener('click', () => {
+        const val = select.value;
+        if (!val) { showToast('Select a value', 'error'); return; }
+        logChange(c.origIndex, kkeCol(), c.myKke, val);
+        c.row[kkeCol()] = val;
+        setDirty(true);
+        conflicts.splice(idx, 1);
+        renderList();
+      });
+      actions.appendChild(confirmBtn);
+      el.appendChild(actions);
+
+      body.appendChild(el);
+    });
+  }
+
+  overlay.classList.remove('hidden');
+  modal.classList.remove('hidden');
+  renderList();
+
+  function cleanup() {
+    overlay.classList.add('hidden');
+    modal.classList.add('hidden');
+    modal.querySelector('.modal-title').textContent = 'Resolve SME Conflicts';
+    btnAcceptAll.textContent = 'Accept All SME';
+    btnKeepAll.textContent = 'Keep All Original';
+    btnDone.removeEventListener('click', onDone);
+    btnAcceptAll.removeEventListener('click', onAcceptAll);
+    btnKeepAll.removeEventListener('click', onKeepAll);
+    btnClose.removeEventListener('click', onDone);
+    overlay.removeEventListener('click', onDone);
+    applyFilter();
+    renderVisibleRows();
+  }
+
+  function onDone() { cleanup(); }
+
+  async function onAcceptAll() {
+    if (!(await confirmDialog({ title: 'Accept all', message: `Accept the other auditor's decision for all ${conflicts.length} rows?`, confirmLabel: 'Accept all' }))) return;
+    conflicts.forEach(c => {
+      logChange(c.origIndex, kkeCol(), c.myKke, c.theirKke);
+      c.row[kkeCol()] = c.theirKke;
+    });
+    setDirty(true);
+    conflicts.length = 0;
+    renderList();
+  }
+
+  async function onKeepAll() {
+    if (!(await confirmDialog({ title: 'Keep all', message: `Keep your original decision for all ${conflicts.length} rows?`, confirmLabel: 'Keep mine' }))) return;
+    conflicts.length = 0;
+    renderList();
+  }
+
+  btnDone.addEventListener('click', onDone);
+  btnAcceptAll.addEventListener('click', onAcceptAll);
+  btnKeepAll.addEventListener('click', onKeepAll);
+  btnClose.addEventListener('click', onDone);
+  overlay.addEventListener('click', onDone);
+}
+
+// ─── Audit Templates ─────────────────────────────────────────────────────────
+
+async function saveAuditTemplate() {
+  const name = await showPrompt('Save Audit Template', 'Template name');
+  if (!name || !name.trim()) return;
+
+  const template = {
+    name: name.trim(),
+    version: 1,
+    createdAt: new Date().toISOString(),
+    visibleFields: state.visibleFields,
+    tagLibrary: state.tagLibrary,
+    groupLibrary: state.groupLibrary || [],
+    sidebarColumns: state.sidebarColumns || [],
+    customKkeStates: state.customKkeStates || [],
+    columnMap: { ...state.columnMap },
+    autoAdvance: state.autoAdvance,
+    projectSettings: {
+      clientName: state.projectSettings.clientName || '',
+      projectName: state.projectSettings.projectName || '',
+      siteDomain: state.projectSettings.siteDomain || '',
+      defaultRedirectUrl: state.projectSettings.defaultRedirectUrl || '',
+      savedFilters: state.projectSettings.savedFilters || []
+    }
+  };
+
+  const result = await window.electronAPI.saveAuditTemplate({ template });
+  if (result.success) {
+    showToast(`Template "${name.trim()}" saved`, 'success');
+  } else if (result.error !== 'Cancelled') {
+    showToast('Save failed: ' + result.error, 'error');
+  }
+}
+
+async function loadAuditTemplate() {
+  const result = await window.electronAPI.loadAuditTemplate();
+  if (!result) return;
+  if (result.error) { showToast('Load failed: ' + result.error, 'error'); return; }
+
+  const t = result.template;
+  if (!t || !t.name) { showToast('Invalid template file', 'error'); return; }
+
+  const apply = await confirmDialog({ title: 'Apply audit template', message: `Apply template "${t.name}"?\n\nThis will update: visible fields, tag library, group library, sidebar columns, custom KKE states, column mapping, and project settings.\n\nYour current data will not be affected.`, confirmLabel: 'Apply' });
+  if (!apply) return;
+
+  // Apply template settings
+  if (t.visibleFields) {
+    state.visibleFields = t.visibleFields;
+    window.electronAPI.savePrefs({ visibleFields: state.visibleFields });
+  }
+  if (t.tagLibrary) {
+    state.tagLibrary = t.tagLibrary;
+    window.electronAPI.savePrefs({ tagLibrary: state.tagLibrary });
+  }
+  if (t.groupLibrary) {
+    state.groupLibrary = t.groupLibrary;
+    window.electronAPI.savePrefs({ groupLibrary: state.groupLibrary });
+  }
+  if (t.sidebarColumns) {
+    state.sidebarColumns = t.sidebarColumns;
+    window.electronAPI.savePrefs({ sidebarColumns: state.sidebarColumns });
+  }
+  if (t.customKkeStates) {
+    state.customKkeStates = t.customKkeStates;
+  }
+  if (t.columnMap) {
+    Object.assign(state.columnMap, t.columnMap);
+  }
+  if (t.autoAdvance !== undefined) {
+    state.autoAdvance = t.autoAdvance;
+    window.electronAPI.savePrefs({ autoAdvance: state.autoAdvance });
+  }
+  if (t.projectSettings) {
+    Object.assign(state.projectSettings, t.projectSettings);
+  }
+
+  // Re-render UI with new settings
+  setDirty(true);
+  renderKkeButtons();
+  renderKkeFilterOptions();
+  populateGroupFilter();
+  renderSavedFilterSelect();
+  if (state.selectedIndex !== null) {
+    renderMetaFields(state.editedRows[state.selectedIndex], state.selectedIndex);
+    populateAuditFields(state.editedRows[state.selectedIndex]);
+  }
+  applyFilter();
+  showToast(`Template "${t.name}" applied`, 'success');
+}
+
+// ─── Redirect Resolution (on save) ───────────────────────────────────────────
+
+/**
+ * Before save, sweep all Consolidate_Into values and update any that still hold
+ * an inventory URL (old site URL) for a target that now has a Computed Path.
+ * Rows whose Consolidate_Into already holds a computed/external URL are left alone.
+ */
+function resolveConsolidateIntoUrls() {
+  const urlCol = state.urlColumn || 'Address';
+
+  // Index rows by their inventory URL so we can find targets quickly
+  const rowByInventoryUrl = new Map();
+  state.editedRows.forEach(row => {
+    const u = String(row[urlCol] || '').trim();
+    if (u) rowByInventoryUrl.set(u, row);
+  });
+
+  state.editedRows.forEach((row, i) => {
+    const ct = String(row[CONSOLIDATE_COL] || '').trim();
+    if (!ct) return;
+    // Only act if the stored value is a known inventory URL — if it's already a
+    // computed/external URL it won't appear in this map, so we leave it alone.
+    const targetRow = rowByInventoryUrl.get(ct);
+    if (!targetRow) return;
+    const newUrl = effectiveConsolidateUrl(targetRow);
+    if (newUrl && newUrl !== ct) {
+      row[CONSOLIDATE_COL] = newUrl;
+      logChange(i, CONSOLIDATE_COL, ct, newUrl);
+    }
+  });
+}
+
+/** A row "renders as" a Fragment (embeddable content object) — no public URL,
+ *  so it is excluded from redirects and from nav-placement checks. Stored value
+ *  is 'Content Object' (UI label "Fragment (embeddable)"). */
+function isFragmentRow(row) {
+  return String(row['Content_Nature'] || '').trim() === 'Content Object';
+}
+
+function resolveRedirectDestinations() {
+  const urlCol = state.urlColumn || 'Address';
+  const destCol = 'Redirect_Destination';
+  const baseUrl = getRedirectBaseUrl();
+  const defaultRedirectUrl = (state.projectSettings.defaultRedirectUrl || '').trim();
+
+  // Build a URL → row lookup for consolidate chain resolution
+  const rowByUrl = new Map();
+  state.editedRows.forEach(r => {
+    const u = String(r[urlCol] || '').trim();
+    if (u) rowByUrl.set(u, r);
+  });
+
+  // Given a page's target URL, chase it through consolidate/computed-path to find its final URL.
+  // The literal sentinel "404" is propagated unchanged — if a consolidate/redirect target is 404,
+  // the source resolves to 404 too (intentional deindex cascades).
+  const resolveFinalUrl = (startUrl, visited = new Set()) => {
+    if (!startUrl) return '';
+    if (startUrl === '404') return '404';
+    if (visited.has(startUrl)) return startUrl; // cycle — bail, use last url
+    visited.add(startUrl);
+    const target = rowByUrl.get(startUrl);
+    if (!target) return startUrl; // external or not in inventory — use as-is
+    const targetKke = String(target[kkeCol()] || '').trim().toLowerCase();
+    // If the target itself is set to 404, propagate
+    const targetExplicit = String(target[destCol] || '').trim();
+    if (targetExplicit === '404') return '404';
+    // If the target is itself being consolidated, follow the chain
+    if (targetKke === 'consolidate') {
+      const next = String(target[CONSOLIDATE_COL] || '').trim();
+      if (next) return resolveFinalUrl(next, visited);
+    }
+    // Target will move to a new URL via nav Computed Path
+    const targetComputed = String(target['Computed Path'] || '').trim();
+    if (targetComputed) {
+      return baseUrl ? baseUrl + '/' + targetComputed.replace(/^\//, '') : '/' + targetComputed.replace(/^\//, '');
+    }
+    // Target has an explicit redirect of its own
+    if (targetExplicit) return targetExplicit;
+    return startUrl;
+  };
+
+  state.editedRows.forEach(row => {
+    // Fragments / embeddable content objects have no public URL — never write a redirect.
+    if (isFragmentRow(row)) return;
+    const kke = String(row[kkeCol()] || '').trim().toLowerCase();
+    const existing = String(row[destCol] || '').trim();
+    const computed = String(row['Computed Path'] || '').trim();
+    const selfUrl = String(row[urlCol] || '').trim();
+
+    if (kke === 'consolidate') {
+      const target = String(row[CONSOLIDATE_COL] || '').trim();
+      if (!target) { row[destCol] = ''; return; }
+      // Preserve manual overrides (existing ≠ raw Consolidate_Into URL).
+      // If existing equals the raw target URL, it was auto-derived and should be re-derived
+      // in case the target has since been assigned to the nav tree (new Computed Path).
+      if (existing && existing !== target) return;
+      // Chase to final URL, seeding visited with self to avoid self-cycles
+      row[destCol] = resolveFinalUrl(target, new Set([selfUrl]));
+      return;
+    }
+
+    if (kke === 'kill') {
+      if (existing) return; // explicit value already set
+      // Priority: Consolidate_Into > nav node path > default destination > blank
+      let resolved = '';
+      const consolidateTarget = String(row[CONSOLIDATE_COL] || '').trim();
+      if (consolidateTarget) {
+        resolved = resolveFinalUrl(consolidateTarget, new Set([selfUrl]));
+      }
+      if (!resolved) {
+        const navID = row['NavID'] || '';
+        if (navID && state.navNodes && state.navNodes.length > 0) {
+          const node = state.navNodes.find(n => n.id === navID);
+          if (node && node.computedPath) {
+            resolved = baseUrl ? baseUrl + '/' + node.computedPath.replace(/^\//, '') : '/' + node.computedPath.replace(/^\//, '');
+          }
+        }
+      }
+      if (!resolved && defaultRedirectUrl) resolved = defaultRedirectUrl;
+      row[destCol] = resolved; // blank if nothing resolved (retired/404)
+    } else if (computed) {
+      // Non-kill pages with URL changes via nav mapping
+      if (existing) return;
+      const srcUrl = String(row[urlCol] || '').trim();
+      let srcPath = '';
+      try { srcPath = new URL(srcUrl).pathname.replace(/\/+$/, ''); } catch (_) { srcPath = srcUrl.replace(/\/+$/, ''); }
+      const destPath = '/' + computed.replace(/^\//, '').replace(/\/+$/, '');
+      if (srcPath !== destPath) {
+        row[destCol] = baseUrl ? baseUrl + destPath : destPath;
+      }
+    }
+  });
+}
+
+// ─── Report Infrastructure ───────────────────────────────────────────────────
+
+const REPORT_CSS = `
+  body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; color: #222; margin: 0; padding: 0; }
+  .report-wrap { max-width: 900px; margin: 0 auto; padding: 32px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 24px 0 8px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+  h3 { font-size: 14px; margin: 16px 0 6px; }
+  .report-meta { font-size: 13px; color: #666; margin: 0 0 4px; }
+  .report-date { font-size: 12px; color: #999; margin: 0 0 20px; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 16px; font-size: 12px; }
+  th { text-align: left; font-weight: 600; border-bottom: 2px solid #ddd; padding: 6px 8px; }
+  td { border-bottom: 1px solid #eee; padding: 5px 8px; }
+  .stat-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+  .stat-label { color: #444; }
+  .stat-value { font-weight: 600; font-family: 'SF Mono', Menlo, monospace; }
+  .bar-wrap { height: 20px; background: #f0f0f0; border-radius: 4px; overflow: hidden; display: flex; margin: 8px 0 12px; }
+  .bar-seg { height: 100%; }
+  .badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+  .section-box { background: #fafafa; border: 1px solid #eee; border-radius: 6px; padding: 12px 16px; margin: 12px 0; }
+  .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #ddd; font-size: 11px; color: #999; }
+  .page-break { page-break-before: always; }
+  @media print { .report-wrap { padding: 16px; } }
+`;
+
+function buildReportShell(title, bodyHtml) {
+  const ps = state.projectSettings;
+  const clientProject = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
+  const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const fileName = state.filePath ? state.filePath.split('/').pop() : '';
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
+<style>${REPORT_CSS}</style></head><body>
+<div class="report-wrap">
+  <h1>${escapeHtml(title)}</h1>
+  ${clientProject ? `<p class="report-meta">${escapeHtml(clientProject)}</p>` : ''}
+  <p class="report-date">${dateStr}${fileName ? ' · ' + escapeHtml(fileName) : ''}</p>
+  ${bodyHtml}
+  <div class="footer">Generated by Transmission</div>
+</div></body></html>`;
+}
+
+function reportDefaultName(suffix) {
+  const ps = state.projectSettings;
+  return [ps.clientName, ps.projectName, suffix].filter(Boolean).join(' - ');
+}
+
+function showReport(title, bodyHtml, exporterFn) {
+  $('progress-body').innerHTML = `<div style="padding:16px;font-size:13px;line-height:1.6;">${bodyHtml}</div>`;
+  $('btn-progress-export-pdf').classList.remove('hidden');
+  $('btn-progress-export-html').classList.remove('hidden');
+  $('btn-progress-export-pdf').textContent = 'PDF';
+  _progressModalExporter = exporterFn;
+  const titleEl = $('progress-modal-title');
+  if (titleEl) titleEl.textContent = title;
+  $('progress-overlay').classList.remove('hidden');
+  $('progress-modal').classList.remove('hidden');
+}
+
+// Template-rendered reports own their whole layout (cover, header, footer), so they
+// get a bare CSS shell with no auto-injected client/project/date header.
+function buildReportShellRaw(title, bodyHtml) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
+<style>${REPORT_CSS}</style></head><body>
+<div class="report-wrap">${bodyHtml}</div></body></html>`;
+}
+
+async function exportReport(title, bodyHtml, defaultName, format, opts = {}) {
+  const html = opts.rawShell ? buildReportShellRaw(title, bodyHtml) : buildReportShell(title, bodyHtml);
+  if (format === 'html') {
+    const result = await window.electronAPI.exportReportHtml({ html, defaultName: defaultName + '.html' });
+    if (result.success) showToast('HTML exported', 'success');
+    else if (result.error !== 'Cancelled') showToast('Export failed: ' + result.error, 'error');
+  } else {
+    const result = await window.electronAPI.exportProgressPdf({ html, defaultName: defaultName + '.pdf' });
+    if (result.success) showToast('PDF exported', 'success');
+    else if (result.error !== 'Cancelled') showToast('Export failed: ' + result.error, 'error');
+  }
+}
+
+function kkeBarHtml(counts, total) {
+  if (total === 0) return '';
+  let html = '<div class="bar-wrap">';
+  allKkeStates().forEach(label => {
+    const count = counts[label] || 0;
+    if (count === 0) return;
+    const pct = (count / total * 100).toFixed(1);
+    const bg = resolvedKkeBgColor(label);
+    const border = resolvedKkeColor(label);
+    html += `<div class="bar-seg" style="width:${pct}%;background:${bg};border-right:1px solid ${border};" title="${label}: ${count} (${pct}%)"></div>`;
+  });
+  html += '</div>';
+  return html;
+}
+
+function kkeStatsRows(counts) {
+  let html = '';
+  allKkeStates().forEach(label => {
+    const count = counts[label] || 0;
+    if (count === 0) return;
+    const color = resolvedKkeColor(label);
+    html += `<div class="stat-row"><span class="stat-label" style="color:${color}">${escapeHtml(label)}</span><span class="stat-value">${count}</span></div>`;
+  });
+  return html;
+}
+
+// ─── Report: Executive Summary ───────────────────────────────────────────────
+
+function reportExecutiveSummary() {
+  if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
+  const stats = gatherProgressStats();
+  const urlCol = state.urlColumn || 'Address';
+
+  const killPct = stats.total > 0 ? Math.round((stats.kkeCounts['Kill'] || 0) / stats.total * 100) : 0;
+  const evolveCount = stats.kkeCounts['Evolve'] || 0;
+  const keepCount = stats.kkeCounts['Keep'] || 0;
+
+  // Auto-generate findings
+  const findings = [];
+  if (killPct > 0) findings.push(`${killPct}% of pages (${stats.kkeCounts['Kill']}) recommended for removal`);
+  if (evolveCount > 0) findings.push(`${evolveCount} pages need content updates or improvements`);
+  if (keepCount > 0) findings.push(`${keepCount} pages are valuable and should be retained`);
+  if (stats.unreviewed > 0) findings.push(`${stats.unreviewed} pages still pending review`);
+
+  // Check for low-link pages
+  if (state.headers.includes('Unique Inlinks')) {
+    const noLinks = state.editedRows.filter(r => parseInt(r['Unique Inlinks'] || '0') === 0).length;
+    if (noLinks > 0) findings.push(`${noLinks} pages have no internal links (orphan pages)`);
+  }
+
+  let body = `
+    <h2>Overview</h2>
+    <div class="stat-row"><span class="stat-label">Total pages audited</span><span class="stat-value">${stats.total}</span></div>
+    <div class="stat-row"><span class="stat-label">Pages reviewed</span><span class="stat-value">${stats.reviewed} (${stats.pct}%)</span></div>
+    ${kkeBarHtml(stats.kkeCounts, stats.total)}
+    ${kkeStatsRows(stats.kkeCounts)}
+
+    <h2>Key Findings</h2>
+    <ul>${findings.map(f => `<li>${escapeHtml(f)}</li>`).join('')}</ul>
+  `;
+
+  if (stats.smeReviewed > 0) {
+    body += `
+      <h2>SME Review Status</h2>
+      <div class="stat-row"><span class="stat-label">SME reviews received</span><span class="stat-value">${stats.smeReviewed} of ${stats.smeTotal} (${stats.smePct}%)</span></div>
+      <div class="stat-row"><span class="stat-label">Approved</span><span class="stat-value">${stats.smeApproved}</span></div>
+      <div class="stat-row"><span class="stat-label">Changes requested</span><span class="stat-value">${stats.smeChanged}</span></div>
+      <div class="stat-row"><span class="stat-label">Final decisions resolved</span><span class="stat-value">${stats.finalResolved} of ${stats.smeTotal} (${stats.finalPct}%)</span></div>
+    `;
+  }
+
+  if (stats.groups.length > 0) {
+    body += `<h2>By Section</h2>`;
+    stats.groups.forEach(([g, c]) => {
+      body += `<div class="stat-row"><span class="stat-label">${escapeHtml(g)}</span><span class="stat-value">${c} pages</span></div>`;
+    });
+  }
+
+  const title = 'Executive Summary';
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
+}
+
+// ─── Report: Content Inventory by Section ────────────────────────────────────
+
+function reportContentInventory() {
+  if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
+  const urlCol = state.urlColumn || 'Address';
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1' : 'Title';
+
+  // Group rows
+  const groups = {};
+  const ungrouped = [];
+  state.editedRows.forEach(row => {
+    const g = String(row[groupCol()] || '').trim();
+    if (g) {
+      if (!groups[g]) groups[g] = [];
+      groups[g].push(row);
+    } else {
+      ungrouped.push(row);
+    }
+  });
+
+  let body = `<h2>Summary</h2>
+    <div class="stat-row"><span class="stat-label">Total pages</span><span class="stat-value">${state.editedRows.length}</span></div>
+    <div class="stat-row"><span class="stat-label">Groups</span><span class="stat-value">${Object.keys(groups).length}</span></div>
+    <div class="stat-row"><span class="stat-label">Ungrouped pages</span><span class="stat-value">${ungrouped.length}</span></div>
+  `;
+
+  const sortedGroups = Object.entries(groups).sort((a, b) => b[1].length - a[1].length);
+
+  sortedGroups.forEach(([name, rows]) => {
+    const kkeCounts = {};
+    allKkeStates().forEach(s => kkeCounts[s] = 0);
+    let noted = 0;
+    rows.forEach(r => {
+      const k = String(r[kkeCol()] || '').trim();
+      if (k && kkeCounts.hasOwnProperty(k)) kkeCounts[k]++;
+      if (String(r[notesCol()] || '').trim()) noted++;
+    });
+
+    body += `<h2>${escapeHtml(name)} (${rows.length} pages)</h2>`;
+    body += kkeBarHtml(kkeCounts, rows.length);
+    body += kkeStatsRows(kkeCounts);
+    if (noted > 0) body += `<div class="stat-row"><span class="stat-label">Pages with notes</span><span class="stat-value">${noted}</span></div>`;
+
+    // Sample pages (first 5)
+    const sample = rows.slice(0, 5);
+    body += `<table><tr><th>Title</th><th>URL</th><th>KKE</th></tr>`;
+    sample.forEach(r => {
+      body += `<tr><td>${escapeHtml(r[titleCol] || '')}</td><td style="font-size:11px;color:#666;">${escapeHtml(r[urlCol] || '')}</td><td>${escapeHtml(r[kkeCol()] || '')}</td></tr>`;
+    });
+    if (rows.length > 5) body += `<tr><td colspan="3" style="color:#999;">… and ${rows.length - 5} more</td></tr>`;
+    body += `</table>`;
+  });
+
+  if (ungrouped.length > 0) {
+    body += `<h2>Ungrouped (${ungrouped.length} pages)</h2>`;
+    const sample = ungrouped.slice(0, 10);
+    body += `<table><tr><th>Title</th><th>URL</th><th>KKE</th></tr>`;
+    sample.forEach(r => {
+      body += `<tr><td>${escapeHtml(r[titleCol] || '')}</td><td style="font-size:11px;color:#666;">${escapeHtml(r[urlCol] || '')}</td><td>${escapeHtml(r[kkeCol()] || '')}</td></tr>`;
+    });
+    if (ungrouped.length > 10) body += `<tr><td colspan="3" style="color:#999;">… and ${ungrouped.length - 10} more</td></tr>`;
+    body += `</table>`;
+  }
+
+  const title = 'Content Inventory by Section';
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
+}
+
+// ─── Report: SME Review Status ───────────────────────────────────────────────
+
+function reportSmeStatus() {
+  if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
+  const stats = gatherProgressStats();
+
+  // Per-owner breakdown
+  const byOwner = {};
+  state.editedRows.forEach(row => {
+    const owner = String(row[contentOwnerCol()] || '').trim() || 'Unassigned';
+    if (!byOwner[owner]) byOwner[owner] = { assigned: 0, reviewed: 0, approved: 0, changed: 0, conflicts: 0 };
+    const kke = String(row[kkeCol()] || '').trim();
+    if (kke) byOwner[owner].assigned++;
+    const sme = String(row[smeDecisionCol()] || '').trim();
+    if (sme) {
+      byOwner[owner].reviewed++;
+      if (sme === 'Approve') byOwner[owner].approved++;
+      else if (sme.startsWith('Change:')) {
+        byOwner[owner].changed++;
+        const final_ = String(row[finalKkeCol()] || '').trim();
+        if (!final_) byOwner[owner].conflicts++;
+      }
+    }
+  });
+
+  let body = `
+    <h2>Overall Progress</h2>
+    <div class="stat-row"><span class="stat-label">Pages requiring SME review</span><span class="stat-value">${stats.smeTotal}</span></div>
+    <div class="stat-row"><span class="stat-label">SME reviews received</span><span class="stat-value">${stats.smeReviewed} (${stats.smePct}%)</span></div>
+    <div class="stat-row"><span class="stat-label">Approved (agree with auditor)</span><span class="stat-value">${stats.smeApproved}</span></div>
+    <div class="stat-row"><span class="stat-label">Changes requested</span><span class="stat-value">${stats.smeChanged}</span></div>
+    <div class="stat-row"><span class="stat-label">Final KKE resolved</span><span class="stat-value">${stats.finalResolved} (${stats.finalPct}%)</span></div>
+    <div class="stat-row"><span class="stat-label">Pending final decision</span><span class="stat-value">${stats.smeTotal - stats.finalResolved}</span></div>
+
+    <h2>By Content Owner</h2>
+    <table>
+      <tr><th>Owner</th><th>Assigned</th><th>Reviewed</th><th>%</th><th>Approved</th><th>Changed</th><th>Unresolved</th></tr>
+  `;
+
+  Object.entries(byOwner).sort((a, b) => b[1].assigned - a[1].assigned).forEach(([owner, d]) => {
+    const pct = d.assigned > 0 ? Math.round(d.reviewed / d.assigned * 100) : 0;
+    body += `<tr><td>${escapeHtml(owner)}</td><td>${d.assigned}</td><td>${d.reviewed}</td><td>${pct}%</td><td>${d.approved}</td><td>${d.changed}</td><td>${d.conflicts || '—'}</td></tr>`;
+  });
+  body += `</table>`;
+
+  // Unresolved conflicts
+  const conflicts = state.editedRows.filter(r => {
+    const sme = String(r[smeDecisionCol()] || '').trim();
+    const final_ = String(r[finalKkeCol()] || '').trim();
+    return sme && sme.startsWith('Change:') && !final_;
+  });
+  if (conflicts.length > 0) {
+    const urlCol = state.urlColumn || 'Address';
+    const titleCol = state.headers.includes('Title 1') ? 'Title 1' : 'Title';
+    body += `<h2>Unresolved Conflicts (${conflicts.length})</h2>`;
+    body += `<table><tr><th>Title</th><th>KKE</th><th>SME Decision</th><th>Owner</th></tr>`;
+    conflicts.slice(0, 30).forEach(r => {
+      body += `<tr><td>${escapeHtml(r[titleCol] || '')}</td><td>${escapeHtml(r[kkeCol()] || '')}</td><td>${escapeHtml(r[smeDecisionCol()] || '')}</td><td>${escapeHtml(r[contentOwnerCol()] || '')}</td></tr>`;
+    });
+    if (conflicts.length > 30) body += `<tr><td colspan="4" style="color:#999;">… and ${conflicts.length - 30} more</td></tr>`;
+    body += `</table>`;
+  }
+
+  const title = 'SME Review Status';
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
+}
+
+// ─── Report: Redirect Map Report ─────────────────────────────────────────────
+
+function reportRedirectMap() {
+  if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
+  const urlCol = state.urlColumn || 'Address';
+  const destCol = 'Redirect_Destination';
+  const siteDomain = state.projectSettings.siteDomain || '';
+  const defaultDest = state.projectSettings.defaultRedirectUrl || '';
+
+  // Collect redirect entries
+  const killRedirects = [];
+  const movedRedirects = [];
+  const fourOhFours = []; // intentional deindex (Redirect_Destination === '404')
+  const chains = [];
+
+  const urlMap = new Map();
+  state.editedRows.forEach((row, i) => {
+    const url = String(row[urlCol] || '').trim().toLowerCase();
+    if (url) urlMap.set(url, row);
+  });
+
+  state.editedRows.forEach(row => {
+    const kke = String(row[kkeCol()] || '').trim();
+    const url = String(row[urlCol] || '').trim();
+    const dest = String(row[destCol] || '').trim();
+    const computed = String(row['Computed Path'] || '').trim();
+
+    // Intentional 404 — bucket separately, no redirect rule
+    if (dest === '404') {
+      fourOhFours.push({ url, title: row['Title 1'] || row['Title'] || '', kke });
+      return;
+    }
+
+    if (kke === 'Kill') {
+      const finalDest = dest || (computed ? (siteDomain ? siteDomain + '/' + computed : '/' + computed) : defaultDest || '/');
+      killRedirects.push({ url, dest: finalDest, title: row['Title 1'] || row['Title'] || '' });
+      // Check chain
+      if (finalDest && urlMap.has(finalDest.toLowerCase())) {
+        const target = urlMap.get(finalDest.toLowerCase());
+        if (String(target[kkeCol()] || '').trim() === 'Kill') {
+          chains.push({ url, dest: finalDest });
+        }
+      }
+    } else if (computed) {
+      let srcPath = '';
+      try { srcPath = new URL(url).pathname.replace(/\/+$/, ''); } catch (_) { srcPath = url; }
+      const destPath = '/' + computed.replace(/^\//, '').replace(/\/+$/, '');
+      if (srcPath !== destPath) {
+        movedRedirects.push({ url, dest: siteDomain ? siteDomain + destPath : destPath, title: row['Title 1'] || row['Title'] || '' });
+      }
+    }
+  });
+
+  const total = killRedirects.length + movedRedirects.length;
+
+  let body = `
+    <h2>Summary</h2>
+    <div class="stat-row"><span class="stat-label">Total redirects needed</span><span class="stat-value">${total}</span></div>
+    <div class="stat-row"><span class="stat-label">Kill pages</span><span class="stat-value">${killRedirects.length}</span></div>
+    <div class="stat-row"><span class="stat-label">URL-changed pages</span><span class="stat-value">${movedRedirects.length}</span></div>
+    <div class="stat-row"><span class="stat-label">Intentional 404s (no redirect)</span><span class="stat-value">${fourOhFours.length}</span></div>
+  `;
+
+  if (chains.length > 0) {
+    body += `<div class="section-box" style="border-color:#e8a308;"><strong style="color:#e8a308;">⚠ ${chains.length} redirect chain${chains.length !== 1 ? 's' : ''} detected</strong> — these redirect to another page that is also being redirected.`;
+    chains.slice(0, 5).forEach(c => { body += `<br><span style="font-size:12px;">${escapeHtml(c.url)} → ${escapeHtml(c.dest)}</span>`; });
+    body += `</div>`;
+  }
+
+  if (killRedirects.length > 0) {
+    body += `<h2>Kill Page Redirects (${killRedirects.length})</h2>`;
+    body += `<table><tr><th>Source URL</th><th>Destination</th></tr>`;
+    killRedirects.forEach(r => {
+      body += `<tr><td style="font-size:11px;">${escapeHtml(r.url)}</td><td style="font-size:11px;">${escapeHtml(r.dest)}</td></tr>`;
+    });
+    body += `</table>`;
+  }
+
+  if (movedRedirects.length > 0) {
+    body += `<h2>URL-Changed Redirects (${movedRedirects.length})</h2>`;
+    body += `<table><tr><th>Current URL</th><th>New URL</th></tr>`;
+    movedRedirects.forEach(r => {
+      body += `<tr><td style="font-size:11px;">${escapeHtml(r.url)}</td><td style="font-size:11px;">${escapeHtml(r.dest)}</td></tr>`;
+    });
+    body += `</table>`;
+  }
+
+  if (fourOhFours.length > 0) {
+    body += `<h2 class="page-break">Intentional 404s (${fourOhFours.length})</h2>`;
+    body += `<p style="font-size:12px;color:#666;">These URLs are marked to return a 404 — search engines should deindex them. <strong>No redirect rule should be written</strong> for these URLs.</p>`;
+    body += `<table><tr><th>URL</th><th>Title</th></tr>`;
+    fourOhFours.forEach(r => {
+      body += `<tr><td style="font-size:11px;">${escapeHtml(r.url)}</td><td style="font-size:11px;">${escapeHtml(r.title)}</td></tr>`;
+    });
+    body += `</table>`;
+  }
+
+  const title = 'Redirect Map Report';
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
+}
+
+// ─── Report: Net New Content Brief ───────────────────────────────────────────
+
+function reportNetNewBrief() {
+  if (!state.navNodes || state.navNodes.length === 0) { showToast('No navigation structure loaded', 'error'); return; }
+
+  const pageCounts = {};
+  state.editedRows.forEach(row => {
+    const navID = row['NavID'] || '';
+    if (navID) pageCounts[navID] = (pageCounts[navID] || 0) + 1;
+  });
+
+  const urlCol = state.urlColumn || 'Address';
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1' : 'Title';
+
+  // Find net new nodes (have descendant pages but no direct pages)
+  const netNew = [];
+  state.navNodes.forEach(node => {
+    const count = pageCounts[node.id] || 0;
+    const hasChildren = node.children && node.children.length > 0;
+    if (count === 0 && hasChildren && hasDescendantPages(node, pageCounts)) {
+      // Find child pages
+      const childPages = [];
+      function collectChildPages(n) {
+        state.editedRows.forEach(r => {
+          if (r['NavID'] === n.id) childPages.push(r);
+        });
+        (n.children || []).forEach(collectChildPages);
+      }
+      node.children.forEach(collectChildPages);
+
+      netNew.push({ node, childPages });
+    }
+  });
+
+  let body = `
+    <h2>Summary</h2>
+    <div class="stat-row"><span class="stat-label">Net new pages needed</span><span class="stat-value">${netNew.length}</span></div>
+    <p style="font-size:13px;color:#666;">These navigation nodes have child pages assigned from the existing site audit but no page of their own. New content needs to be developed for each.</p>
+  `;
+
+  netNew.forEach(({ node, childPages }) => {
+    body += `<div class="section-box">`;
+    body += `<h3 style="margin:0 0 4px;">${escapeHtml(node.breadcrumb || node.label)}</h3>`;
+    body += `<p style="font-size:12px;color:#666;margin:0 0 8px;">Path: <code>${escapeHtml(node.computedPath || '—')}</code></p>`;
+    body += `<p style="font-size:12px;margin:0 0 4px;"><strong>${childPages.length}</strong> child page${childPages.length !== 1 ? 's' : ''} assigned underneath:</p>`;
+    body += `<ul style="font-size:12px;margin:4px 0 0;">`;
+    childPages.slice(0, 8).forEach(r => {
+      body += `<li>${escapeHtml(r[titleCol] || r[urlCol] || '(untitled)')}</li>`;
+    });
+    if (childPages.length > 8) body += `<li style="color:#999;">… and ${childPages.length - 8} more</li>`;
+    body += `</ul></div>`;
+  });
+
+  if (netNew.length === 0) {
+    body += `<p style="color:#228b22;">No net new pages needed — all navigation nodes have content assigned.</p>`;
+  }
+
+  const title = 'Net New Content Brief';
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
+}
+
+// ─── Report: Migration Checklist ─────────────────────────────────────────────
+
+// ─── Phase 2, Chunk ε: Migration Tracker Export ──────────────────────────────
+// Nav-tree-centric deliverable for the engineering team. Multi-sheet xlsx with:
+//   - Nav Plan       (one row per nav node: URL, pattern, status, assignees, guidance)
+//   - Source Pages   (audit rows joined to their nav node assignment + KKE decision)
+//   - Redirects      (Kill rows + URL-changed Keep/Evolve rows + intentional 404s)
+//   - Archive        (Kill rows with rationale, for client reference)
+// Pre-export dialog lets the user opt sheets in/out and decide on phase inclusion.
+
+function openMigrationTrackerExportDialog() {
+  if (!state.navNodes || state.navNodes.length === 0) {
+    showToast('Migration Tracker needs a nav tree — none loaded', 'error');
+    return;
+  }
+
+  document.getElementById('_mte-overlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = '_mte-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.style.zIndex = '900';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-dialog mte-modal';
+  modal.style.width = 'min(740px, 62vw)';
+  modal.style.maxHeight = '80vh';
+  modal.addEventListener('click', e => e.stopPropagation());
+
+  // Counts to preview
+  const totalNodes = state.navNodes.length;
+  const phasedNodes = state.navNodes.filter(n => String(n.phase || '').trim()).length;
+  const refNodes = state.navNodes.filter(n => n.refNodeId).length;
+  const assignedRows = state.editedRows.filter(r => String(r['NavID'] || '').trim()).length;
+  const killRows = state.editedRows.filter(r => String((r[finalKkeCol()] || r[kkeCol()]) || '').trim() === 'Kill').length;
+
+  modal.innerHTML = `
+    <div class="modal-header">
+      <h2 style="margin:0;">Export Migration Tracker</h2>
+      <button class="modal-close" id="_mte-close" title="Close">×</button>
+    </div>
+    <div class="modal-body" style="padding:16px;overflow-y:auto;">
+      <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px;">
+        Nav-tree-centric deliverable for the engineering team. The Nav Plan sheet enumerates every page in the new site with its pattern, guidance, assignees, and status. Companion sheets give traceability and the redirect manifest.
+      </p>
+
+      <div class="mte-section">
+        <div class="mte-section-title">Sheets to include</div>
+        <label class="mte-opt"><input type="checkbox" id="_mte-sheet-plan" checked disabled> <strong>Nav Plan</strong> <span class="mte-count">${totalNodes} node${totalNodes !== 1 ? 's' : ''}</span></label>
+        <label class="mte-opt"><input type="checkbox" id="_mte-sheet-sources" checked> <strong>Source Pages</strong> <span class="mte-count">${assignedRows} assigned audit row${assignedRows !== 1 ? 's' : ''}</span></label>
+        <label class="mte-opt"><input type="checkbox" id="_mte-sheet-redirects" checked> <strong>Redirects</strong> <span class="mte-count">Kill rows + URL changes</span></label>
+        <label class="mte-opt"><input type="checkbox" id="_mte-sheet-archive" checked> <strong>Archive</strong> <span class="mte-count">${killRows} Kill row${killRows !== 1 ? 's' : ''}</span></label>
+      </div>
+
+      <div class="mte-section">
+        <div class="mte-section-title">Nav Plan options</div>
+        <label class="mte-opt"><input type="checkbox" id="_mte-include-phased" ${phasedNodes > 0 ? '' : 'disabled'}> Include phased nodes <span class="mte-count">${phasedNodes} Future / Stretch / Archived</span></label>
+        <label class="mte-opt"><input type="checkbox" id="_mte-include-refs" ${refNodes > 0 ? '' : 'disabled'}> Include reference nodes <span class="mte-count">${refNodes} alias node${refNodes !== 1 ? 's' : ''}</span></label>
+      </div>
+
+      <div class="mte-section">
+        <div class="mte-section-title">Source pages options</div>
+        <label class="mte-opt"><input type="checkbox" id="_mte-source-include-kill" checked> Include Kill rows <span class="mte-count">(traceability — what's going away)</span></label>
+        <label class="mte-opt"><input type="checkbox" id="_mte-source-include-exclude"> Include Exclude rows <span class="mte-count">(out of scope)</span></label>
+      </div>
+    </div>
+    <div class="modal-footer" style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);">
+      <span style="flex:1;"></span>
+      <button id="_mte-cancel" class="btn btn-sm btn-ghost">Cancel</button>
+      <button id="_mte-export" class="btn btn-sm btn-primary">Export…</button>
+    </div>
+  `;
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  makeModalDraggable(modal);
+
+  const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  modal.querySelector('#_mte-close').addEventListener('click', close);
+  modal.querySelector('#_mte-cancel').addEventListener('click', close);
+
+  modal.querySelector('#_mte-export').addEventListener('click', async () => {
+    const opts = {
+      sheets: {
+        plan:      true, // always
+        sources:   modal.querySelector('#_mte-sheet-sources').checked,
+        redirects: modal.querySelector('#_mte-sheet-redirects').checked,
+        archive:   modal.querySelector('#_mte-sheet-archive').checked
+      },
+      plan: {
+        includePhased: modal.querySelector('#_mte-include-phased').checked,
+        includeRefs:   modal.querySelector('#_mte-include-refs').checked
+      },
+      sources: {
+        includeKill:    modal.querySelector('#_mte-source-include-kill').checked,
+        includeExclude: modal.querySelector('#_mte-source-include-exclude').checked
+      }
+    };
+    close();
+    await runMigrationTrackerExport(opts);
+  });
+}
+
+/** Gather data and ship to main for xlsx writing. */
+async function runMigrationTrackerExport(opts) {
+  const sheets = [];
+
+  // Nav Plan — every nav node as a row with build metadata
+  sheets.push(buildNavPlanSheet(opts.plan));
+
+  if (opts.sheets.sources) sheets.push(buildSourcePagesSheet(opts.sources));
+  if (opts.sheets.redirects) sheets.push(buildRedirectsSheet());
+  if (opts.sheets.archive) sheets.push(buildArchiveSheet());
+
+  // Default file name from project settings
+  const ps = state.projectSettings || {};
+  const slug = (ps.projectName || ps.clientName || 'project')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const stamp = new Date().toISOString().slice(0, 10);
+  const defaultName = `${slug || 'project'}-migration-tracker-${stamp}.xlsx`;
+
+  try {
+    const result = await window.electronAPI.exportMigrationTracker({ defaultName, sheets });
+    if (result?.success) {
+      showToast(`Exported ${sheets.length} sheet${sheets.length !== 1 ? 's' : ''} — ${result.filePath.split('/').pop()}`, 'success');
+    } else if (result?.error && result.error !== 'Cancelled') {
+      showToast('Export failed: ' + result.error, 'error');
+    }
+  } catch (e) {
+    showToast('Export failed: ' + e.message, 'error');
+  }
+}
+
+function buildNavPlanSheet(planOpts) {
+  invalidateNavPageCountsCache();
+  const pageCounts = _navPageCountsCache();
+  const ordered = sortNodesForNavigation(state.navNodes);
+
+  const filtered = ordered.filter(n => {
+    if (!planOpts.includeRefs && n.refNodeId) return false;
+    if (!planOpts.includePhased && String(n.phase || '').trim()) return false;
+    return true;
+  });
+
+  // Determine net-new flag at export time
+  const isNetNew = (n) => {
+    const c = pageCounts[n.id] || 0;
+    const hc = n.children && n.children.length > 0;
+    return c === 0 && hc && hasDescendantPages(n, pageCounts);
+  };
+
+  const baseUrl = getRedirectBaseUrl ? getRedirectBaseUrl() : '';
+  const aoa = [[
+    'Sort', 'Number', 'Breadcrumb', 'Label', 'URL', 'Page Status', 'Build Pattern',
+    'Builder', 'Writer', 'Migrator', 'Build Guidance', 'Writer Brief', 'Migration Notes',
+    'Source Page Count', 'Net New', 'Phase', 'In Menu', 'External URL', 'Readiness Warnings'
+  ]];
+  filtered.forEach(n => {
+    const cp = String(n.computedPath || '').replace(/^\//, '');
+    const url = baseUrl ? baseUrl + '/' + cp : '/' + cp;
+    const warnings = computeNodeReadinessWarnings(n);
+    aoa.push([
+      n.sortID || '',
+      n.number || '',
+      n.breadcrumb || '',
+      n.label || '',
+      url,
+      n.pageStatus || '',
+      n.buildPattern || '',
+      n.buildAssignee || '',
+      n.writeAssignee || '',
+      n.migrateAssignee || '',
+      n.buildGuidance || '',
+      n.writerBrief || '',
+      n.notes || '',
+      pageCounts[n.id] || 0,
+      isNetNew(n) ? 'Y' : '',
+      n.phase || '',
+      n.inMenu || '',
+      n.url || '',
+      warnings.join(' · ')
+    ]);
+  });
+
+  return {
+    name: 'Nav Plan',
+    aoa,
+    cols: [
+      { wch: 10 }, { wch: 8 }, { wch: 40 }, { wch: 30 }, { wch: 50 },
+      { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 16 },
+      { wch: 60 }, { wch: 60 }, { wch: 40 },
+      { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 8 }, { wch: 30 }, { wch: 30 }
+    ]
+  };
+}
+
+function buildSourcePagesSheet(sourceOpts) {
+  const urlCol = state.urlColumn || 'Address';
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
+  const navById = new Map();
+  (state.navNodes || []).forEach(n => navById.set(n.id, n));
+
+  const NATURE_LABEL = { '': '', 'Page': 'Page', 'Content Object': 'Fragment', 'Generated': 'Generated' };
+  const aoa = [[
+    'Source URL', 'Title', 'KKE', 'Final KKE', 'Suggested KKE',
+    'Content Type', 'Renders As', 'Target Content Type',
+    'Group', 'Primary Tag',
+    'Target Nav Breadcrumb', 'Target Computed Path', 'Target Pattern', 'Target Status',
+    'Notes'
+  ]];
+
+  state.editedRows.forEach(r => {
+    const kke = String(r[kkeCol()] || '').trim();
+    const finalK = String(r[finalKkeCol()] || '').trim();
+    const effective = finalK || kke;
+    if (effective === 'Kill' && !sourceOpts.includeKill) return;
+    if (effective === 'Exclude' && !sourceOpts.includeExclude) return;
+    const navID = String(r['NavID'] || '').trim();
+    const node = navID ? navById.get(navID) : null;
+    aoa.push([
+      r[urlCol] || '',
+      titleCol ? (r[titleCol] || '') : '',
+      kke,
+      finalK,
+      r['Suggested_KKE'] || '',
+      r['Page_Type'] || '',
+      NATURE_LABEL[String(r['Content_Nature'] || '').trim()] ?? (r['Content_Nature'] || ''),
+      r['Target_Content_Type'] || '',
+      r[groupCol()] || '',
+      r[primaryTagCol()] || '',
+      node?.breadcrumb || '',
+      node?.computedPath || '',
+      node?.buildPattern || '',
+      node?.pageStatus || '',
+      r[notesCol()] || ''
+    ]);
+  });
+
+  return {
+    name: 'Source Pages',
+    aoa,
+    cols: [{ wch: 50 }, { wch: 35 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 18 }, { wch: 14 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 40 }, { wch: 30 }, { wch: 18 }, { wch: 14 }, { wch: 50 }]
+  };
+}
+
+function buildRedirectsSheet() {
+  // Reuse the resolver to ensure consistency with the Redirect Editor view
+  if (typeof resolveRedirectDestinations === 'function') {
+    try { resolveRedirectDestinations(); } catch (_) { /* ignore */ }
+  }
+  const urlCol = state.urlColumn || 'Address';
+  const aoa = [['Source URL', 'Destination', 'Disposition', 'Reason']];
+
+  state.editedRows.forEach(r => {
+    const source = String(r[urlCol] || '').trim();
+    if (!source) return;
+    if (isFragmentRow(r)) return; // fragments have no public URL — no redirect row
+    const kke = String(r[finalKkeCol()] || r[kkeCol()] || '').trim();
+    const dest = String(r['Redirect_Destination'] || '').trim();
+    if (kke === 'Kill') {
+      if (dest === '404') {
+        aoa.push([source, '(404)', '404 — intentional deindex', 'Kill']);
+      } else if (dest) {
+        aoa.push([source, dest, '301', 'Kill']);
+      } else {
+        aoa.push([source, '', '(TBD)', 'Kill, no destination set']);
+      }
+    } else if (dest && dest !== '404') {
+      // Non-Kill row with explicit dest (URL-changed via nav, etc.)
+      aoa.push([source, dest, '301', 'URL changed']);
+    }
+  });
+
+  return {
+    name: 'Redirects',
+    aoa,
+    cols: [{ wch: 50 }, { wch: 50 }, { wch: 24 }, { wch: 30 }]
+  };
+}
+
+function buildArchiveSheet() {
+  const urlCol = state.urlColumn || 'Address';
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
+  const aoa = [['Source URL', 'Title', 'KKE', 'Notes', 'Tags']];
+  state.editedRows.forEach(r => {
+    const kke = String(r[finalKkeCol()] || r[kkeCol()] || '').trim();
+    if (kke !== 'Kill') return;
+    aoa.push([
+      r[urlCol] || '',
+      titleCol ? (r[titleCol] || '') : '',
+      kke,
+      r[notesCol()] || '',
+      r[tagsCol()] || ''
+    ]);
+  });
+  return {
+    name: 'Archive',
+    aoa,
+    cols: [{ wch: 50 }, { wch: 35 }, { wch: 10 }, { wch: 50 }, { wch: 30 }]
+  };
+}
+
+function reportMigrationChecklist() {
+  if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
+  const urlCol = state.urlColumn || 'Address';
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1' : 'Title';
+  const destCol = 'Redirect_Destination';
+  const siteDomain = state.projectSettings.siteDomain || '';
+
+  const keep = [], kill = [], evolve = [], exclude = [], other = [];
+  const redirects = [];
+  const urlChanged = [];
+
+  state.editedRows.forEach(row => {
+    const kke = String(row[kkeCol()] || '').trim();
+    const url = String(row[urlCol] || '').trim();
+    const computed = String(row['Computed Path'] || '').trim();
+    const dest = String(row[destCol] || '').trim();
+
+    if (kke === 'Keep') keep.push(row);
+    else if (kke === 'Kill') {
+      kill.push(row);
+      // Skip intentional 404s from the redirect manifest — they get a separate handling.
+      if (dest !== '404') {
+        const finalDest = dest || (siteDomain && computed ? siteDomain + '/' + computed : '') || state.projectSettings.defaultRedirectUrl || '';
+        redirects.push({ url, dest: finalDest, title: row[titleCol] || '' });
+      }
+    }
+    else if (kke === 'Evolve') evolve.push(row);
+    else if (kke === 'Exclude') exclude.push(row);
+    else if (kke) other.push(row);
+
+    // URL-changed pages (not Kill)
+    if (kke !== 'Kill' && computed) {
+      let srcPath = '';
+      try { srcPath = new URL(url).pathname.replace(/\/+$/, ''); } catch (_) { srcPath = url; }
+      const destPath = '/' + computed.replace(/^\//, '').replace(/\/+$/, '');
+      if (srcPath !== destPath) {
+        urlChanged.push({ url, newUrl: siteDomain ? siteDomain + destPath : destPath, title: row[titleCol] || '' });
+        redirects.push({ url, dest: siteDomain ? siteDomain + destPath : destPath, title: row[titleCol] || '' });
+      }
+    }
+  });
+
+  // Net new count
+  let netNewCount = 0;
+  if (state.navNodes) {
+    const pageCounts = {};
+    state.editedRows.forEach(r => { const id = r['NavID'] || ''; if (id) pageCounts[id] = (pageCounts[id] || 0) + 1; });
+    state.navNodes.forEach(n => {
+      const c = pageCounts[n.id] || 0;
+      const hc = n.children && n.children.length > 0;
+      if (c === 0 && hc && hasDescendantPages(n, pageCounts)) netNewCount++;
+    });
+  }
+
+  let body = `
+    <h2>Migration Summary</h2>
+    <div class="stat-row"><span class="stat-label">Total pages audited</span><span class="stat-value">${state.editedRows.length}</span></div>
+    <div class="stat-row"><span class="stat-label">Pages to retain</span><span class="stat-value">${keep.length}</span></div>
+    <div class="stat-row"><span class="stat-label">Pages to remove</span><span class="stat-value">${kill.length}</span></div>
+    <div class="stat-row"><span class="stat-label">Pages to update</span><span class="stat-value">${evolve.length}</span></div>
+    <div class="stat-row"><span class="stat-label">Pages excluded</span><span class="stat-value">${exclude.length}</span></div>
+    ${other.length > 0 ? `<div class="stat-row"><span class="stat-label">Other status</span><span class="stat-value">${other.length}</span></div>` : ''}
+    <div class="stat-row"><span class="stat-label">Total redirects needed</span><span class="stat-value">${redirects.length}</span></div>
+    <div class="stat-row"><span class="stat-label">URL changes (non-Kill)</span><span class="stat-value">${urlChanged.length}</span></div>
+    ${netNewCount > 0 ? `<div class="stat-row"><span class="stat-label">Net new pages to create</span><span class="stat-value">${netNewCount}</span></div>` : ''}
+  `;
+
+  // Pages to Evolve (with notes)
+  if (evolve.length > 0) {
+    body += `<h2 class="page-break">Pages to Update (${evolve.length})</h2>`;
+    body += `<table><tr><th>Title</th><th>URL</th><th>Notes</th></tr>`;
+    evolve.forEach(r => {
+      body += `<tr><td>${escapeHtml(r[titleCol] || '')}</td><td style="font-size:11px;color:#666;">${escapeHtml(r[urlCol] || '')}</td><td style="font-size:11px;">${escapeHtml(r[notesCol()] || '')}</td></tr>`;
+    });
+    body += `</table>`;
+  }
+
+  // Redirects
+  if (redirects.length > 0) {
+    body += `<h2 class="page-break">Redirect Map (${redirects.length})</h2>`;
+    body += `<table><tr><th>Source URL</th><th>Destination</th></tr>`;
+    redirects.forEach(r => {
+      body += `<tr><td style="font-size:11px;">${escapeHtml(r.url)}</td><td style="font-size:11px;">${escapeHtml(r.dest)}</td></tr>`;
+    });
+    body += `</table>`;
+  }
+
+  // Pages to Keep with URL changes
+  if (urlChanged.length > 0) {
+    body += `<h2 class="page-break">URL Changes (${urlChanged.length})</h2>`;
+    body += `<table><tr><th>Current URL</th><th>New URL</th></tr>`;
+    urlChanged.forEach(r => {
+      body += `<tr><td style="font-size:11px;">${escapeHtml(r.url)}</td><td style="font-size:11px;">${escapeHtml(r.newUrl)}</td></tr>`;
+    });
+    body += `</table>`;
+  }
+
+  const title = 'Migration Checklist';
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
+}
+
+// ─── Report: Navigation IA ────────────────────────────────────────────────────
+
+const _NAV_IA_ACCENT_COLORS = [
+  '#1D3E6E', '#0C5F4A', '#7A1C1C', '#3A3A7C',
+  '#1A5C38', '#6B3F00', '#3D2B1F'
+];
+
+function reportNavIa() {
+  if (!state.navNodes || state.navNodes.length === 0) {
+    showToast('No navigation structure loaded', 'error');
+    return;
+  }
+
+  const pageCounts = _navPageCountsCache();
+
+  // Separate count of Kill/Consolidate (redirect-only) pages per node.
+  // These don't count as "live" pages at the destination but the node isn't
+  // truly empty either — the URL is intentionally going somewhere.
+  const redirectCounts = {};
+  (state.editedRows || []).forEach(r => {
+    const id = String(r['NavID'] || '').trim();
+    if (!id) return;
+    const effective = String(r[finalKkeCol()] || r[kkeCol()] || '').trim().toLowerCase();
+    if (effective === 'kill' || effective === 'consolidate') {
+      redirectCounts[id] = (redirectCounts[id] || 0) + 1;
+    }
+  });
+
+  // Determine section-card nodes.
+  // If there is a single root (e.g. "Smeal"), use its in-menu children as cards.
+  // If multiple roots, each root is a card.
+  const roots = state.navTree || [];
+  let sectionNodes;
+  if (roots.length === 1) {
+    sectionNodes = (roots[0].children || []).filter(n => n.inMenu === 'Y');
+  } else {
+    sectionNodes = roots.filter(n => n.inMenu === 'Y');
+  }
+
+  if (sectionNodes.length === 0) {
+    showToast('No in-menu top-level nodes found', 'error');
+    return;
+  }
+
+  const previewHtml = _navIaPreviewHtml(sectionNodes, pageCounts, redirectCounts);
+  const exportHtml  = _navIaExportHtml(sectionNodes, pageCounts, redirectCounts);
+  const title = 'Navigation IA';
+  const defaultName = reportDefaultName(title);
+
+  showReport(title, previewHtml, async (fmt) => {
+    if (fmt === 'html') {
+      const result = await window.electronAPI.exportReportHtml({ html: exportHtml, defaultName: defaultName + '.html' });
+      if (result.success) showToast('HTML exported', 'success');
+      else if (result.error !== 'Cancelled') showToast('Export failed: ' + result.error, 'error');
+    } else {
+      const result = await window.electronAPI.exportProgressPdf({ html: exportHtml, defaultName: defaultName + '.pdf' });
+      if (result.success) showToast('PDF exported', 'success');
+      else if (result.error !== 'Cancelled') showToast('Export failed: ' + result.error, 'error');
+    }
+  });
+}
+
+// Total pages on a node and all its descendants
+function _navIaSubtreePageCount(node, pageCounts) {
+  let count = pageCounts[node.id] || 0;
+  (node.children || []).forEach(c => { count += _navIaSubtreePageCount(c, pageCounts); });
+  return count;
+}
+
+// ── Preview HTML (inline styles for progress modal) ───────────────────────────
+
+function _navIaPreviewHtml(sectionNodes, pageCounts, redirectCounts) {
+  const totalNodes = (state.navNodes || []).length;
+  const inMenuCount = (state.navNodes || []).filter(n => n.inMenu === 'Y').length;
+
+  let html = `<div style="font-family:system-ui,sans-serif;font-size:13px;line-height:1.5;color:#1a1a2e;">`;
+
+  // Stats bar
+  html += `<div style="margin-bottom:14px;padding:8px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;font-size:11.5px;color:#64748b;display:flex;gap:20px;flex-wrap:wrap;">`;
+  html += `<span><strong style="color:#1e293b;">${sectionNodes.length}</strong> mega-menu sections</span>`;
+  html += `<span><strong style="color:#1e293b;">${inMenuCount}</strong> in-menu nodes</span>`;
+  html += `<span><strong style="color:#1e293b;">${totalNodes}</strong> total nodes</span>`;
+  html += `</div>`;
+
+  sectionNodes.forEach((section, i) => {
+    const accent = _NAV_IA_ACCENT_COLORS[i % _NAV_IA_ACCENT_COLORS.length];
+    const sectionTotal = _navIaSubtreePageCount(section, pageCounts);
+
+    html += `<div style="margin-bottom:10px;border:1px solid #e2e8f0;border-radius:5px;overflow:hidden;">`;
+    html += `<div style="background:${escapeHtml(accent)};color:white;padding:7px 12px;display:flex;align-items:center;gap:8px;">`;
+    html += `<span style="font-weight:600;font-size:13px;">${escapeHtml(section.label)}</span>`;
+    if (sectionTotal > 0) {
+      html += `<span style="margin-left:auto;font-size:10.5px;opacity:0.8;">${sectionTotal} pages</span>`;
+    }
+    html += `</div>`;
+    html += `<div style="padding:8px 12px 10px;">`;
+    html += _navIaPreviewSubtree((section.children || []).filter(c => c.inMenu === 'Y'), pageCounts, redirectCounts, 0);
+    html += `</div></div>`;
+  });
+
+  html += `</div>`;
+  return html;
+}
+
+function _navIaPreviewSubtree(nodes, pageCounts, redirectCounts, depth) {
+  if (nodes.length === 0) return '';
+  let html = `<ul style="list-style:none;margin:0;padding:0;">`;
+  nodes.forEach(node => {
+    const inMenuChildren = (node.children || []).filter(c => c.inMenu === 'Y');
+    const directCount = pageCounts[node.id] || 0;
+    const redirectCount = (redirectCounts || {})[node.id] || 0;
+    const subtreeCount = _navIaSubtreePageCount(node, pageCounts);
+    const isLeaf = inMenuChildren.length === 0;
+    const isHeader = node.nodeType === 'Header';
+    // Truly empty: leaf with no live pages AND no redirect-only pages
+    const isEmpty = isLeaf && directCount === 0 && redirectCount === 0 && !isHeader;
+    // Redirect-only: leaf with no live pages but has Kill/Consolidate pages redirecting through it
+    const isRedirectOnly = isLeaf && directCount === 0 && redirectCount > 0 && !isHeader;
+    const isAlias = !!node.refNodeId;
+    const isBold = depth === 0;
+    const indent = depth * 14;
+
+    const labelColor = (isEmpty || isHeader) ? '#9ca3af' : isRedirectOnly ? '#94a3b8' : isBold ? '#1e293b' : '#475569';
+    html += `<li style="padding:2px 0 2px ${indent}px;border-bottom:1px solid #f1f5f9;display:flex;align-items:baseline;gap:6px;">`;
+    html += `<span style="font-size:${isBold ? 12 : 11.5}px;font-weight:${isBold ? 600 : 400};font-style:${isHeader ? 'italic' : 'normal'};color:${labelColor};">`;
+    html += escapeHtml(node.label);
+    if (isAlias) html += ` <span style="font-size:9.5px;color:#94a3b8;">(→)</span>`;
+    html += `</span>`;
+
+    if (isHeader) {
+      html += `<span style="margin-left:auto;font-size:10px;color:#94a3b8;background:#f8fafc;border:1px solid #e2e8f0;border-radius:3px;padding:0 4px;white-space:nowrap;" title="Menu header — structural grouping, no page content">≡</span>`;
+    } else if (isEmpty) {
+      html += `<span style="margin-left:auto;font-size:10px;color:#ef4444;background:#fef2f2;border:1px solid #fecaca;border-radius:3px;padding:0 4px;white-space:nowrap;">empty</span>`;
+    } else if (isRedirectOnly) {
+      html += `<span style="margin-left:auto;font-size:10px;color:#64748b;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:3px;padding:0 4px;white-space:nowrap;" title="${redirectCount} page${redirectCount !== 1 ? 's' : ''} redirecting through this URL">→</span>`;
+    } else if (directCount > 0) {
+      html += `<span style="margin-left:auto;font-size:10px;color:#94a3b8;white-space:nowrap;">${directCount}p</span>`;
+    } else if (!isLeaf && subtreeCount > 0) {
+      html += `<span style="margin-left:auto;font-size:10px;color:#cbd5e1;white-space:nowrap;">${subtreeCount}↓</span>`;
+    }
+
+    html += `</li>`;
+
+    if (inMenuChildren.length > 0) {
+      html += _navIaPreviewSubtree(inMenuChildren, pageCounts, redirectCounts, depth + 1);
+    }
+  });
+  html += `</ul>`;
+  return html;
+}
+
+// ── Export HTML (full standalone, styled like the reference) ──────────────────
+
+function _navIaExportHtml(sectionNodes, pageCounts, redirectCounts) {
+  const ps = state.projectSettings || {};
+  const clientProject = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
+  const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const totalNodes = (state.navNodes || []).length;
+  const inMenuCount = (state.navNodes || []).filter(n => n.inMenu === 'Y').length;
+  const title = escapeHtml(clientProject ? clientProject + ' — Navigation IA' : 'Navigation IA');
+
+  // Wide card = section with ≥ 6 in-menu L2 children
+  function isWide(section) {
+    return (section.children || []).filter(c => c.inMenu === 'Y').length >= 6;
+  }
+
+  let cardsHtml = '';
+  sectionNodes.forEach((section, i) => {
+    const accent = _NAV_IA_ACCENT_COLORS[i % _NAV_IA_ACCENT_COLORS.length];
+    const wide = isWide(section);
+    const sectionTotal = _navIaSubtreePageCount(section, pageCounts);
+    const l2nodes = (section.children || []).filter(c => c.inMenu === 'Y');
+
+    cardsHtml += `<div class="section-card${wide ? ' wide' : ''}" style="--accent:${accent}">`;
+    cardsHtml += `<div class="section-header">`;
+    cardsHtml += `<span class="section-num">${String(i + 1).padStart(2, '0')}</span>`;
+    cardsHtml += escapeHtml(section.label);
+    if (sectionTotal > 0) cardsHtml += ` <span class="section-total">${sectionTotal} pages</span>`;
+    cardsHtml += `</div>`;
+    cardsHtml += `<div class="section-body${wide ? ' two-col-body' : ''}">`;
+
+    if (wide && l2nodes.length > 0) {
+      const half = Math.ceil(l2nodes.length / 2);
+      cardsHtml += `<div><ul class="tree">${l2nodes.slice(0, half).map(n => _navIaExportL2(n, pageCounts, redirectCounts)).join('')}</ul></div>`;
+      cardsHtml += `<div><ul class="tree">${l2nodes.slice(half).map(n => _navIaExportL2(n, pageCounts, redirectCounts)).join('')}</ul></div>`;
+    } else {
+      cardsHtml += `<ul class="tree">${l2nodes.map(n => _navIaExportL2(n, pageCounts, redirectCounts)).join('')}</ul>`;
+    }
+
+    cardsHtml += `</div></div>`;
+  });
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${title}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root { --page-bg: #F4F5F7; --card-bg: #FFFFFF; --text: #1A1A2E; --muted: #6B7280; --line: #D1D5DB; --radius: 6px; }
+  body { font-family: 'DM Sans', sans-serif; background: var(--page-bg); color: var(--text); padding: 40px 36px 72px; font-size: 13px; line-height: 1.5; }
+  .page-header { margin-bottom: 28px; border-bottom: 2px solid #1D3E6E; padding-bottom: 14px; }
+  .page-header h1 { font-family: 'DM Serif Display', serif; font-size: 21px; color: #1D3E6E; }
+  .page-header .sub { font-size: 11.5px; color: var(--muted); margin-top: 3px; font-weight: 300; }
+  .internal-badge { display: inline-block; background: #FEF3C7; color: #92400E; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 8px; border-radius: 3px; border: 1px solid #FCD34D; margin-top: 7px; }
+  .stats-strip { background: #E8ECF2; border: 1px solid #C8D0DC; border-radius: var(--radius); padding: 9px 14px; margin-bottom: 20px; display: flex; align-items: center; gap: 20px; font-size: 11.5px; color: #374151; flex-wrap: wrap; }
+  .stats-strip strong { color: #1e293b; }
+  .sections-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .section-card.wide { grid-column: span 2; }
+  .section-card { background: var(--card-bg); border-radius: var(--radius); border: 1px solid var(--line); overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .section-header { background: var(--accent); color: white; padding: 9px 13px; font-family: 'DM Serif Display', serif; font-size: 13.5px; display: flex; align-items: center; gap: 7px; }
+  .section-num { font-family: 'DM Sans', sans-serif; font-size: 9.5px; font-weight: 600; letter-spacing: 0.08em; opacity: 0.7; background: rgba(255,255,255,0.15); padding: 1px 5px; border-radius: 3px; }
+  .section-total { margin-left: auto; font-family: 'DM Sans', sans-serif; font-size: 10.5px; font-weight: 400; opacity: 0.75; }
+  .section-body { padding: 11px 13px 13px; }
+  .two-col-body { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
+  .tree { list-style: none; }
+  .tree > li { position: relative; padding-left: 13px; margin-bottom: 1px; }
+  .tree > li::before { content: ''; position: absolute; left: 0; top: 8px; width: 7px; height: 1px; background: var(--accent); opacity: 0.45; }
+  .tree > li::after { content: ''; position: absolute; left: 0; top: 0; bottom: 50%; width: 1px; background: var(--accent); opacity: 0.2; }
+  .tree > li:first-child::after { top: 8px; }
+  .l2-label { font-weight: 600; font-size: 12px; color: var(--text); padding: 2px 0; display: flex; align-items: baseline; gap: 6px; }
+  .subtree { list-style: none; padding-left: 11px; margin: 2px 0 4px; border-left: 1px solid var(--accent); opacity: 0.9; }
+  .subtree > li { padding: 1px 0 1px 9px; position: relative; font-size: 11px; color: #4B5563; display: flex; align-items: baseline; gap: 5px; }
+  .subtree > li::before { content: ''; position: absolute; left: 0; top: 7px; width: 6px; height: 1px; background: currentColor; opacity: 0.3; }
+  .deep-tree { list-style: none; padding-left: 9px; margin: 2px 0; border-left: 1px dotted #CBD5E1; }
+  .deep-tree > li { font-size: 10.5px; color: #6B7280; padding: 1px 0 1px 7px; position: relative; display: flex; align-items: baseline; gap: 5px; }
+  .deep-tree > li::before { content: '·'; position: absolute; left: 0; top: 0; color: #9CA3AF; }
+  .node-count { font-size: 9.5px; color: #94a3b8; margin-left: auto; white-space: nowrap; }
+  .node-empty { font-size: 9.5px; color: #ef4444; background: #fef2f2; border: 1px solid #fecaca; border-radius: 3px; padding: 0 4px; margin-left: auto; white-space: nowrap; line-height: 14px; }
+  .node-redirect { font-size: 9.5px; color: #64748b; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 3px; padding: 0 4px; margin-left: auto; white-space: nowrap; line-height: 14px; }
+  .node-header-badge { font-size: 9.5px; color: #94a3b8; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 3px; padding: 0 4px; margin-left: auto; white-space: nowrap; line-height: 14px; }
+  .node-is-header { color: #9ca3af; font-style: italic; }
+  .node-alias { font-size: 9px; color: #94a3b8; }
+  .page-footer { margin-top: 28px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 10px; color: var(--muted); display: flex; justify-content: space-between; }
+  @media print { body { background: white; padding: 20px; } .section-card { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<div class="page-header">
+  <h1>${title}</h1>
+  <div class="sub">CMS Migration &amp; Consolidation · ${escapeHtml(dateStr)}</div>
+  <div class="internal-badge">Internal — Not for client distribution</div>
+</div>
+<div class="stats-strip">
+  <span><strong>${sectionNodes.length}</strong> mega-menu sections</span>
+  <span><strong>${inMenuCount}</strong> in-menu nodes</span>
+  <span><strong>${totalNodes}</strong> total nodes</span>
+</div>
+<div class="sections-grid">
+${cardsHtml}
+</div>
+<div class="page-footer">
+  <span>${escapeHtml(clientProject || 'Navigation IA')}</span>
+  <span>Generated by Transmission · ${escapeHtml(dateStr)}</span>
+</div>
+</body>
+</html>`;
+}
+
+// Render a single L2 node (with its subtree) for the export HTML
+function _navIaExportL2(node, pageCounts, redirectCounts) {
+  const inMenuChildren = (node.children || []).filter(c => c.inMenu === 'Y');
+  const directCount = pageCounts[node.id] || 0;
+  const isAlias = !!node.refNodeId;
+
+  let html = `<li><span class="l2-label">${escapeHtml(node.label)}`;
+  if (isAlias) html += ` <span class="node-alias">(→)</span>`;
+  if (directCount > 0) html += ` <span class="node-count">${directCount}p</span>`;
+  html += `</span>`;
+
+  if (inMenuChildren.length > 0) {
+    html += `<ul class="subtree">`;
+    inMenuChildren.forEach(child => { html += _navIaExportItem(child, pageCounts, redirectCounts, 1); });
+    html += `</ul>`;
+  }
+  html += `</li>`;
+  return html;
+}
+
+// Render L3+ nodes recursively for the export HTML
+function _navIaExportItem(node, pageCounts, redirectCounts, depth) {
+  const inMenuChildren = (node.children || []).filter(c => c.inMenu === 'Y');
+  const directCount = pageCounts[node.id] || 0;
+  const redirectCount = (redirectCounts || {})[node.id] || 0;
+  const isLeaf = inMenuChildren.length === 0;
+  const isHeader = node.nodeType === 'Header';
+  const isEmpty = isLeaf && directCount === 0 && redirectCount === 0 && !isHeader;
+  const isRedirectOnly = isLeaf && directCount === 0 && redirectCount > 0 && !isHeader;
+  const isAlias = !!node.refNodeId;
+
+  let html = `<li${isHeader ? ' class="node-is-header"' : ''}>${escapeHtml(node.label)}`;
+  if (isAlias) html += ` <span class="node-alias">(→)</span>`;
+  if (isHeader) {
+    html += ` <span class="node-header-badge" title="Menu header — structural grouping, no page content">≡</span>`;
+  } else if (isEmpty) {
+    html += ` <span class="node-empty">empty</span>`;
+  } else if (isRedirectOnly) {
+    html += ` <span class="node-redirect" title="${redirectCount} page${redirectCount !== 1 ? 's' : ''} redirecting through this URL">→</span>`;
+  } else if (directCount > 0) {
+    html += ` <span class="node-count">${directCount}p</span>`;
+  }
+
+  if (inMenuChildren.length > 0) {
+    html += `<ul class="deep-tree">`;
+    inMenuChildren.forEach(child => { html += _navIaExportItem(child, pageCounts, redirectCounts, depth + 1); });
+    html += `</ul>`;
+  }
+  html += `</li>`;
+  return html;
+}
+
+// ─── Redirect Chain Detection ─────────────────────────────────────────────────
+
+/** Find Kill pages whose redirect destination is itself a Kill page (a broken chain). */
+function computeRedirectChains() {
+  const urlCol = state.urlColumn || 'Address';
+  const destCol = 'Redirect_Destination';
+  const urlMap = new Map();
+  state.editedRows.forEach((row, i) => {
+    const url = String(row[urlCol] || '').trim().toLowerCase();
+    if (url) urlMap.set(url, { row, origIndex: i });
+  });
+  const chains = [];
+  state.editedRows.forEach((row, origIndex) => {
+    const dest = String(row[destCol] || '').trim();
+    if (!dest) return;
+    if (String(row[kkeCol()] || '').trim() !== 'Kill') return;
+    const target = urlMap.get(dest.toLowerCase());
+    if (!target) return;
+    if (String(target.row[kkeCol()] || '').trim() === 'Kill') {
+      const targetDest = String(target.row[destCol] || '').trim();
+      chains.push({
+        origIndex,
+        sourceUrl: row[urlCol],
+        destUrl: dest,
+        issue: targetDest ? `Chains to another redirect (→ ${targetDest})` : 'Redirects to a Kill page with no destination'
+      });
+    }
+  });
+  return chains;
+}
+
+function checkRedirectChains() {
+  if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
+
+  const chains = computeRedirectChains();
+
+  if (chains.length === 0) {
+    showToast('No redirect chains detected', 'success');
+    return;
+  }
+
+  // Show results as a simple alert with details
+  let msg = `${chains.length} redirect chain${chains.length !== 1 ? 's' : ''} found:\n\n`;
+  chains.slice(0, 20).forEach(c => {
+    msg += `${c.sourceUrl}\n  → ${c.destUrl}\n  ${c.issue}\n\n`;
+  });
+  if (chains.length > 20) msg += `… and ${chains.length - 20} more.\n`;
+  msg += 'Filter by "Kill" and check the Redirect Editor to fix these.';
+  alertDialog({ title: 'Redirect chains found', message: msg, width: 560 });
+}
+
+// ─── Pre-Handoff Check ───────────────────────────────────────────────────────
+// One command that runs every pre-flight check the app already knows how to do
+// and rolls them into a single pass/issue report you can export before handoff.
+
+function runPreHandoffCheck() {
+  if (!state.editedRows.length) { showToast('Open a file first', 'error'); return; }
+  const urlCol = state.urlColumn || 'Address';
+  const SAMPLE = 12;
+  const u = (r) => escapeHtml(String(r[urlCol] || '(no URL)'));
+  const hasNav = !!(state.navNodes && state.navNodes.length);
+  const checks = [];
+
+  const unreviewed = state.editedRows.filter(r => !String(r[kkeCol()] || '').trim());
+  checks.push({
+    title: 'Every page has a KKE decision',
+    items: unreviewed.map(u),
+    fix: `Filter the sidebar to "Unreviewed" and assign a status (or run a Suggested-KKE pass).`,
+  });
+
+  const noTarget = state.editedRows.filter(rowConsolidateNeedsTarget);
+  checks.push({
+    title: 'Consolidate pages point to a target',
+    items: noTarget.map(u),
+    fix: `Use the "Consolidate (no target)" sidebar filter; click each row's Consolidate button to pick a destination.`,
+  });
+
+  const deadTarget = state.editedRows.filter(rowConsolidateHasDeadTarget);
+  checks.push({
+    title: 'Consolidate targets are live (not Kill/Exclude)',
+    items: deadTarget.map(u),
+    fix: `Use the "Consolidate -> Kill/Exclude target" filter; set the target back to Evolve, or repoint the source.`,
+  });
+
+  const chains = computeRedirectChains();
+  checks.push({
+    title: 'No redirect chains (Kill redirecting to a Kill page)',
+    items: chains.map(c => `${escapeHtml(c.sourceUrl)} &rarr; ${escapeHtml(c.destUrl)} <span style="color:var(--text-muted);">(${escapeHtml(c.issue)})</span>`),
+    fix: `Open the Redirect Editor and repoint these to a live destination.`,
+  });
+
+  if (hasNav) {
+    const dups = detectDuplicateNavIds();
+    checks.push({
+      title: 'No duplicate nav IDs',
+      items: dups.map(d => `ID <code>${escapeHtml(d.id)}</code> &mdash; ${d.nodes.length} nodes`),
+      fix: `Open the Navigation Tree and click the duplicate-ID warning in the stats bar to auto-renumber.`,
+    });
+
+    const pageCounts = {};
+    state.editedRows.forEach(r => { const id = String(r['NavID'] || '').trim(); if (id) pageCounts[id] = (pageCounts[id] || 0) + 1; });
+    const emptyLeaves = state.navNodes.filter(n =>
+      (pageCounts[n.id] || 0) === 0 &&
+      !(n.children && n.children.length) &&
+      !String(n.phase || '').trim() &&
+      !String(n.url || '').trim() &&
+      !String(n.refNodeId || '').trim()
+    );
+    checks.push({
+      title: 'No empty nav leaves',
+      items: emptyLeaves.map(n => escapeHtml(n.breadcrumb || n.label || n.number || '(unnamed)')),
+      fix: `Assign pages to these nodes, mark them Net New, give them a Phase, or remove them before handoff.`,
+    });
+  }
+
+  const issueChecks = checks.filter(c => c.items.length > 0);
+  const passCount = checks.length - issueChecks.length;
+  const totalIssues = issueChecks.reduce((s, c) => s + c.items.length, 0);
+  const allGood = issueChecks.length === 0;
+
+  let body = '';
+  body += `<div style="padding:12px 14px;border-radius:8px;margin-bottom:16px;background:${allGood ? 'var(--accent-dim)' : 'var(--bg-field-bar)'};border:1px solid var(--border);">
+    <div style="font-weight:600;font-size:14px;color:${allGood ? 'var(--accent-text)' : 'var(--text-primary)'};">
+      ${allGood ? '&#10003; Ready for handoff' : `&#9888; ${totalIssues} issue${totalIssues !== 1 ? 's' : ''} across ${issueChecks.length} check${issueChecks.length !== 1 ? 's' : ''}`}
+    </div>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${passCount} of ${checks.length} checks passed${hasNav ? '' : ' &middot; nav-tree checks skipped (no NavStructure)'}</div>
+  </div>`;
+
+  checks.forEach(c => {
+    const ok = c.items.length === 0;
+    const accent = ok ? 'var(--accent)' : 'var(--kke-evolve)';
+    body += `<div style="margin-bottom:14px;border-left:3px solid ${accent};padding-left:10px;">`;
+    body += `<div style="font-weight:600;font-size:13px;">${ok ? '&#10003;' : '&#9888;'} ${escapeHtml(c.title)} <span style="color:${accent};font-weight:500;">&mdash; ${ok ? 'passed' : c.items.length + ' issue' + (c.items.length !== 1 ? 's' : '')}</span></div>`;
+    if (!ok) {
+      body += `<div style="font-size:12px;color:var(--text-muted);margin:3px 0 5px;">${escapeHtml(c.fix)}</div>`;
+      body += `<div style="font-size:12px;font-family:var(--font-mono);line-height:1.5;">`;
+      c.items.slice(0, SAMPLE).forEach(it => { body += `<div style="word-break:break-all;">${it}</div>`; });
+      if (c.items.length > SAMPLE) body += `<div style="color:var(--text-muted);font-family:var(--font-sans);">&hellip; and ${c.items.length - SAMPLE} more</div>`;
+      body += `</div>`;
+    }
+    body += `</div>`;
+  });
+
+  const title = 'Pre-Handoff Check';
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
+}
+
+// ─── KKE vs SME comparison (full view) ───────────────────────────────────────
+// Side-by-side of the auditor's call against the SME's decision, for every row
+// the SME has reviewed. Click a row to jump to it in the audit view.
+
+function openKkeVsSmeView() {
+  if (!state.editedRows.length) { showToast('Open a file first', 'error'); return; }
+  const smeCol = smeDecisionCol(), kCol = kkeCol(), fCol = finalKkeCol();
+  const urlCol = state.urlColumn || 'Address';
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1'
+                 : state.headers.includes('Title') ? 'Title' : null;
+
+  const reviewed = state.editedRows
+    .map((row, origIndex) => ({ row, origIndex }))
+    .filter(t => String(t.row[smeCol] || '').trim());
+
+  const classify = (row) => {
+    const sme = String(row[smeCol] || '').trim();
+    const final_ = String(row[fCol] || '').trim();
+    const agree = /^approve$/i.test(sme);
+    const changed = /^change:/i.test(sme);
+    const changedTo = changed ? sme.replace(/^change:\s*/i, '').trim() : '';
+    return { sme, final_, agree, changed, changedTo, pending: changed && !final_ };
+  };
+
+  const agreeN = reviewed.filter(t => classify(t.row).agree).length;
+  const changedN = reviewed.filter(t => classify(t.row).changed).length;
+  const pendingN = reviewed.filter(t => classify(t.row).pending).length;
+  const unreviewedN = state.editedRows.length - reviewed.length;
+
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:10px;height:78vh;';
+
+  const filterVals = [
+    ['all', `All reviewed (${reviewed.length})`],
+    ['agree', `Agreements (${agreeN})`],
+    ['changed', `Changes (${changedN})`],
+    ['pending', `Pending resolution (${pendingN})`],
+  ];
+  body.innerHTML = `
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;flex-shrink:0;">
+      <div style="font-size:13px;color:var(--text-secondary);">
+        <strong>${reviewed.length}</strong> SME-reviewed
+        &middot; <span style="color:var(--accent-text);">${agreeN} agree</span>
+        &middot; <span style="color:var(--kke-evolve);">${changedN} changed</span>
+        &middot; <span style="color:var(--kke-kill);">${pendingN} pending</span>
+        ${unreviewedN ? `&middot; <span style="color:var(--text-muted);">${unreviewedN} not yet reviewed</span>` : ''}
+      </div>
+      <span style="flex:1"></span>
+      <label style="font-size:12px;color:var(--text-muted);">Show
+        <select id="_kvs-filter" style="font-size:12px;padding:3px 6px;margin-left:4px;">
+          ${filterVals.map(([v, l]) => `<option value="${v}">${escapeHtml(l)}</option>`).join('')}
+        </select>
+      </label>
+    </div>
+    <div id="_kvs-table-wrap" style="flex:1;overflow:auto;border:1px solid var(--border);border-radius:6px;"></div>`;
+
+  const tableWrap = body.querySelector('#_kvs-table-wrap');
+
+  const badge = (val) => val
+    ? `<span class="kke-badge ${String(val).toLowerCase()}">${escapeHtml(val)}</span>`
+    : `<span style="color:var(--text-muted);">—</span>`;
+
+  function render(filter) {
+    let rows = reviewed;
+    if (filter === 'agree')   rows = reviewed.filter(t => classify(t.row).agree);
+    if (filter === 'changed') rows = reviewed.filter(t => classify(t.row).changed);
+    if (filter === 'pending') rows = reviewed.filter(t => classify(t.row).pending);
+
+    if (!rows.length) {
+      tableWrap.innerHTML = `<div style="padding:28px;text-align:center;color:var(--text-muted);font-size:13px;">${reviewed.length ? 'No rows match this filter.' : 'No SME decisions yet. Use SME → Import SME Decisions to bring them in.'}</div>`;
+      return;
+    }
+
+    let html = `<table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr style="position:sticky;top:0;background:var(--bg-surface);box-shadow:0 1px 0 var(--border);">
+        <th style="text-align:left;padding:6px 8px;">Page</th>
+        <th style="text-align:left;padding:6px 8px;width:90px;">Auditor</th>
+        <th style="text-align:left;padding:6px 8px;width:150px;">SME decision</th>
+        <th style="text-align:left;padding:6px 8px;width:90px;">Final</th>
+        <th style="text-align:left;padding:6px 8px;width:120px;">Status</th>
+      </tr></thead><tbody>`;
+
+    rows.forEach(({ row, origIndex }) => {
+      const c = classify(row);
+      const url = String(row[urlCol] || '');
+      const title = titleCol ? String(row[titleCol] || '') : '';
+      let status;
+      if (c.agree) status = `<span style="color:var(--accent-text);font-weight:500;">✓ Agree</span>`;
+      else if (c.changed) status = `<span style="color:${c.pending ? 'var(--kke-kill)' : 'var(--kke-evolve)'};font-weight:500;">${c.pending ? '⚠ Pending' : '↳ Resolved'}</span>`;
+      else status = `<span style="color:var(--text-muted);">${escapeHtml(c.sme)}</span>`;
+
+      const smeCell = c.changed ? badge(c.changedTo) : `<span style="color:var(--text-muted);">${escapeHtml(c.sme)}</span>`;
+
+      html += `<tr data-oi="${origIndex}" style="border-top:1px solid var(--border);cursor:pointer;">
+        <td style="padding:6px 8px;max-width:0;">
+          ${title ? `<div style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(title)}</div>` : ''}
+          <div style="font-family:var(--font-mono);color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(url)}</div>
+        </td>
+        <td style="padding:6px 8px;">${badge(String(row[kCol] || '').trim())}</td>
+        <td style="padding:6px 8px;">${smeCell}</td>
+        <td style="padding:6px 8px;">${badge(String(row[fCol] || '').trim())}</td>
+        <td style="padding:6px 8px;">${status}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    tableWrap.innerHTML = html;
+  }
+
+  render('all');
+
+  const api = openModal({
+    title: 'KKE vs SME',
+    body,
+    width: '94vw',
+    className: 'kvs-modal',
+    buttons: [{ label: 'Done', variant: 'primary', primary: true }],
+  });
+
+  body.querySelector('#_kvs-filter').addEventListener('change', (e) => render(e.target.value));
+  tableWrap.addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-oi]');
+    if (!tr) return;
+    const oi = parseInt(tr.dataset.oi, 10);
+    api.close();
+    returnToAuditView();
+    selectRow(oi);
+  });
+}
+
+// ─── Writer / Builder Brief report ───────────────────────────────────────────
+// A per-person worklist for the build phase. Pages are grouped by Build Pattern;
+// each group leads with its reference brief (the pattern's library default plus any
+// page-specific briefs), and the person's remaining pages are listed under it as
+// "follows this pattern" — no per-row "brief missing" nagging.
+
+async function openAssigneeBriefReport() {
+  if (!state.navNodes || !state.navNodes.length) { showToast('No navigation structure loaded', 'error'); return; }
+  const people = new Set();
+  state.navNodes.forEach(n => {
+    const b = String(n.buildAssignee || '').trim(); if (b) people.add(b);
+    const w = String(n.writeAssignee || '').trim(); if (w) people.add(w);
+    const m = String(n.migrateAssignee || '').trim(); if (m) people.add(m);
+  });
+  (state.assigneeLibrary || []).forEach(p => { if (p) people.add(p); });
+  const list = [...people].sort((a, b) => a.localeCompare(b));
+  if (!list.length) { showToast('No builders, writers, or migrators assigned yet — assign them in the nav node editor', 'info'); return; }
+
+  // Load any custom templates for this report type.
+  let templates = [];
+  try {
+    const r = await window.electronAPI.listReportTemplates('assignee-brief');
+    if (r && r.success) templates = r.templates || [];
+  } catch (e) { /* templates are optional */ }
+
+  const body = document.createElement('div');
+  body.innerHTML = `
+    <div style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">Generate a per-person worklist, grouped by page pattern / target spec.</div>
+    <div style="display:flex;gap:18px;flex-wrap:wrap;">
+      <label style="font-size:12px;color:var(--text-muted);">Role
+        <select id="_abr-role" style="display:block;margin-top:4px;font-size:13px;padding:4px 8px;min-width:130px;">
+          <option value="writer">Writer</option>
+          <option value="builder">Builder</option>
+          <option value="migrator">Migrator</option>
+        </select>
+      </label>
+      <label style="font-size:12px;color:var(--text-muted);">Person
+        <select id="_abr-person" style="display:block;margin-top:4px;font-size:13px;padding:4px 8px;min-width:180px;">
+          ${list.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('')}
+        </select>
+      </label>
+      <label style="font-size:12px;color:var(--text-muted);">Template
+        <select id="_abr-template" style="display:block;margin-top:4px;font-size:13px;padding:4px 8px;min-width:180px;">
+          <option value="">Built-in default</option>
+          ${templates.map(t => `<option value="${escapeHtml(t.path)}">${escapeHtml(t.name)}</option>`).join('')}
+        </select>
+      </label>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:12px;">Custom templates are Markdown files in your Documents → Transmission → templates folder.</div>`;
+
+  openModal({
+    title: 'Migration Direction Brief',
+    body, width: 540,
+    buttons: [
+      { label: 'Templates folder', variant: 'ghost', closeOnClick: false, onClick: () => window.electronAPI.openTemplatesFolder() },
+      { label: 'Cancel', variant: 'ghost', value: null },
+      { label: 'Generate', variant: 'primary', primary: true, onClick: () => {
+          const role = body.querySelector('#_abr-role').value;
+          const person = body.querySelector('#_abr-person').value;
+          const templatePath = body.querySelector('#_abr-template').value;
+          setTimeout(() => buildAssigneeBriefReport(role, person, templatePath), 0);
+        } },
+    ],
+  });
+}
+
+/** Gather the structured data behind a writer/builder brief (renderer-agnostic). */
+function gatherAssigneeBriefData(role, person) {
+  // Three direction kinds, each with its own node assignee + node-level brief field
+  // + spec-level (pattern-library) default. Migrator direction has no per-node brief
+  // field — its reference lives entirely on the Target Spec's migration mapping.
+  const ROLE_MAP = {
+    writer:   { assigneeField: 'writeAssignee',   briefField: 'writerBrief',   patDefField: 'writerBriefDefault',     roleLabel: 'Writer' },
+    builder:  { assigneeField: 'buildAssignee',   briefField: 'buildGuidance', patDefField: 'buildGuidanceDefault',   roleLabel: 'Builder' },
+    migrator: { assigneeField: 'migrateAssignee', briefField: null,            patDefField: 'migrationMappingDefault', roleLabel: 'Migrator' },
+  };
+  const cfg = ROLE_MAP[role] || ROLE_MAP.writer;
+  const assigneeField = cfg.assigneeField;
+  const briefField    = cfg.briefField;      // may be null (migrator)
+  const patDefField   = cfg.patDefField;
+  const roleLabel     = cfg.roleLabel;
+  const briefVal = (n) => briefField ? String(n[briefField] || '').trim() : '';
+
+  const nodes = (state.navNodes || []).filter(n => String(n[assigneeField] || '').trim() === person);
+  if (!nodes.length) { showToast(`No pages assigned to ${person} as ${roleLabel.toLowerCase()}`, 'info'); return null; }
+
+  const pageCounts = {};
+  state.editedRows.forEach(r => {
+    const id = String(r['NavID'] || '').trim();
+    if (!id) return;
+    const kke = String(r[kkeCol()] || '').trim().toLowerCase();
+    if (kke === 'kill' || kke === 'consolidate') return;
+    pageCounts[id] = (pageCounts[id] || 0) + 1;
+  });
+
+  const patternByName = {};
+  (state.patternLibrary || []).forEach(p => { if (p.patternName) patternByName[p.patternName] = p; });
+  const base = String(state.projectSettings.siteDomain || '').replace(/\/$/, '');
+  const nodeUrl = (n) => n.computedPath ? base + n.computedPath : (n.url || '');
+
+  const byPattern = new Map();
+  nodes.forEach(n => {
+    const pat = String(n.buildPattern || '').trim();
+    if (!byPattern.has(pat)) byPattern.set(pat, []);
+    byPattern.get(pat).push(n);
+  });
+
+  const sortedKeys = [...byPattern.keys()].sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)));
+  const groups = sortedKeys.map(pat => {
+    const grp = byPattern.get(pat).slice().sort((a, b) => {
+      const ab = briefVal(a) ? 0 : 1;
+      const bb = briefVal(b) ? 0 : 1;
+      if (ab !== bb) return ab - bb;
+      return String(a.sortID || a.breadcrumb || '').localeCompare(String(b.sortID || b.breadcrumb || ''));
+    });
+    const patName = pat || 'No build pattern';
+    const patDef = pat && patternByName[pat] ? String(patternByName[pat][patDefField] || '').trim() : '';
+    const briefs = grp.filter(n => briefVal(n))
+      .map(n => ({ label: n.breadcrumb || n.label || '(unnamed)', md: briefVal(n) }));
+    return {
+      pattern: patName, count: grp.length, patDef, briefs,
+      pages: grp.map(n => ({
+        breadcrumb: n.breadcrumb || n.label || '(unnamed)',
+        label: n.label || '',
+        url: nodeUrl(n),
+        status: String(n.pageStatus || '').trim(),
+        sourceCount: pageCounts[n.id] || 0,
+        hasBrief: !!briefVal(n),
+        briefMd: briefVal(n),
+      })),
+    };
+  });
+
+  return {
+    roleLabel, person,
+    summary: {
+      pages: nodes.length,
+      sourcePages: nodes.reduce((s, n) => s + (pageCounts[n.id] || 0), 0),
+      patterns: byPattern.size,
+      briefs: nodes.filter(n => briefVal(n)).length,
+    },
+    groups,
+  };
+}
+
+/** Compose a group's reference brief (pattern default + page-specific briefs) as markdown. */
+function _composeReferenceMd(g) {
+  const parts = [];
+  if (g.patDef) parts.push(`**Pattern reference · ${g.pattern}**\n\n${g.patDef}`);
+  g.briefs.forEach(b => parts.push(`**★ ${b.label}**\n\n${b.md}`));
+  return parts.join('\n\n');
+}
+
+/** Built-in (no-template) HTML rendering of the brief. */
+function assigneeBriefBuiltinHtml(data) {
+  const statusColor = (name) => {
+    const e = (state.pageStatusLibrary || []).find(s => s.name === name);
+    return e ? e.color : 'var(--text-muted)';
+  };
+  const s = data.summary;
+  let body = `<div style="padding:12px 14px;border-radius:8px;margin-bottom:16px;background:var(--bg-field-bar);border:1px solid var(--border);">
+    <div style="font-weight:600;font-size:14px;">${data.roleLabel} worklist — ${escapeHtml(data.person)}</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${s.pages} page${s.pages !== 1 ? 's' : ''} · ${s.sourcePages} source page${s.sourcePages !== 1 ? 's' : ''} · ${s.patterns} pattern${s.patterns !== 1 ? 's' : ''} · ${s.briefs} page-specific brief${s.briefs !== 1 ? 's' : ''}</div>
+  </div>`;
+
+  const briefBox = (kicker, md) =>
+    `<div style="border-left:3px solid var(--accent);background:var(--bg-main);padding:8px 12px;margin:6px 0;border-radius:0 6px 6px 0;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-bottom:4px;">${escapeHtml(kicker)}</div>
+      <div style="font-size:13px;line-height:1.55;">${renderMarkdownLite(md)}</div>
+    </div>`;
+
+  data.groups.forEach(g => {
+    body += `<h2 style="font-size:14px;margin:18px 0 6px;border-bottom:1px solid var(--border);padding-bottom:4px;">${escapeHtml(g.pattern)} <span style="font-weight:400;color:var(--text-muted);font-size:12px;">· ${g.count} page${g.count !== 1 ? 's' : ''}</span></h2>`;
+    if (g.patDef) body += briefBox(`Pattern reference · ${g.pattern}`, g.patDef);
+    g.briefs.forEach(b => body += briefBox(`★ ${b.label}`, b.md));
+    if (!g.patDef && g.briefs.length === 0) {
+      body += `<div style="font-size:12px;color:var(--text-muted);margin:4px 0 8px;">No reference brief recorded for this pattern — these pages follow the established ${escapeHtml(g.pattern.toLowerCase())} convention.</div>`;
+    } else if (g.count > g.briefs.length) {
+      body += `<div style="font-size:12px;color:var(--text-muted);margin:2px 0 8px;">Pages below follow the reference brief${(g.patDef && g.briefs.length) ? 's' : ''} above.</div>`;
+    }
+    body += `<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:4px;">
+      <thead><tr style="text-align:left;color:var(--text-muted);">
+        <th style="padding:4px 6px;">Page</th><th style="padding:4px 6px;">URL</th><th style="padding:4px 6px;width:120px;">Status</th><th style="padding:4px 6px;width:70px;">Pages</th>
+      </tr></thead><tbody>`;
+    g.pages.forEach(p => {
+      const pill = p.status
+        ? `<span style="font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid ${statusColor(p.status)};color:${statusColor(p.status)};">${escapeHtml(p.status)}</span>`
+        : '<span style="color:var(--text-muted);">—</span>';
+      body += `<tr style="border-top:1px solid var(--border);">
+        <td style="padding:4px 6px;">${p.hasBrief ? '★ ' : ''}${escapeHtml(p.breadcrumb)}</td>
+        <td style="padding:4px 6px;font-family:var(--font-mono);word-break:break-all;">${escapeHtml(p.url) || '<span style="color:var(--text-muted)">—</span>'}</td>
+        <td style="padding:4px 6px;">${pill}</td>
+        <td style="padding:4px 6px;">${p.sourceCount}</td>
+      </tr>`;
+    });
+    body += `</tbody></table>`;
+  });
+  return body;
+}
+
+/** Build the data context handed to a Mustache/marked template. */
+function assigneeBriefContext(data, title) {
+  const ps = state.projectSettings;
+  return {
+    client: ps.clientName || '',
+    project: ps.projectName || '',
+    date: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+    report: { title },
+    role: data.roleLabel,
+    person: data.person,
+    summary: data.summary,
+    groups: data.groups.map(g => ({
+      pattern: g.pattern,
+      count: g.count,
+      hasReference: !!(g.patDef || g.briefs.length),
+      referenceBrief: _composeReferenceMd(g),
+      briefs: g.briefs,
+      pages: g.pages.map(p => ({
+        breadcrumb: p.breadcrumb, label: p.label, url: p.url,
+        status: p.status, sourceCount: p.sourceCount, hasBrief: p.hasBrief, brief: p.briefMd,
+      })),
+    })),
+  };
+}
+
+async function buildAssigneeBriefReport(role, person, templatePath) {
+  const data = gatherAssigneeBriefData(role, person);
+  if (!data) return; // toast already shown
+  const title = `${data.roleLabel} Brief — ${person}`;
+
+  if (templatePath) {
+    const ctx = assigneeBriefContext(data, title);
+    const res = await window.electronAPI.renderReportTemplate({ templatePath, context: ctx });
+    if (!res || !res.success) {
+      showToast('Template error: ' + ((res && res.error) || 'unknown'), 'error');
+      return;
+    }
+    showReport(title, res.html, (fmt) => exportReport(title, res.html, reportDefaultName(title), fmt, { rawShell: true }));
+  } else {
+    const html = assigneeBriefBuiltinHtml(data);
+    showReport(title, html, (fmt) => exportReport(title, html, reportDefaultName(title), fmt));
+  }
+}
+
+// ─── Nav Coverage Report ─────────────────────────────────────────────────────
+
+function showNavCoverageReport() {
+  if (!state.navNodes || state.navNodes.length === 0) {
+    showToast('No navigation structure loaded', 'error');
+    return;
+  }
+
+  const urlCol = state.urlColumn || 'Address';
+
+  // Count pages per node
+  const pageCounts = {};
+  state.editedRows.forEach(row => {
+    const navID = row['NavID'] || '';
+    if (navID) pageCounts[navID] = (pageCounts[navID] || 0) + 1;
+  });
+
+  // Analyze
+  const emptyLeaves = [];  // nodes with no pages and no children
+  const hubs = [];         // nodes with no pages but children have pages
+  const overloaded = [];   // nodes with many pages
+  const pathMismatches = []; // pages whose URL doesn't match their computed path
+
+  state.navNodes.forEach(node => {
+    // Header / Fragment nodes are intentionally page-less — not coverage gaps.
+    if (node.nodeType === 'Header' || node.nodeType === 'Fragment') return;
+    const count = pageCounts[node.id] || 0;
+    const hasChildren = node.children && node.children.length > 0;
+
+    if (count === 0 && !hasChildren) {
+      emptyLeaves.push(node);
+    } else if (count === 0 && hasChildren) {
+      hubs.push(node);
+    } else if (count > 5) {
+      overloaded.push({ node, count });
+    }
+  });
+
+  // Check path mismatches
+  state.editedRows.forEach((row, origIndex) => {
+    const navID = row['NavID'] || '';
+    if (!navID) return;
+    const computed = String(row['Computed Path'] || '').trim();
+    const url = String(row[urlCol] || '').trim();
+    if (!computed || !url) return;
+    try {
+      const u = new URL(url);
+      const urlPath = u.pathname.replace(/\/+$/, '');
+      if (computed && !urlPath.endsWith(computed)) {
+        pathMismatches.push({ origIndex, url, computed });
+      }
+    } catch (_) {}
+  });
+
+  // Build report
+  const totalNodes = state.navNodes.length;
+  const assignedPages = state.editedRows.filter(r => String(r['NavID'] || '').trim()).length;
+  const unassigned = state.editedRows.length - assignedPages;
+
+  let html = `<div style="padding:16px;font-size:13px;line-height:1.6;">`;
+  html += `<div style="font-weight:600;margin-bottom:12px;">Nav Coverage Report</div>`;
+  html += `<div style="margin-bottom:8px;"><strong>${totalNodes}</strong> nav nodes | <strong>${assignedPages}</strong> pages assigned | <strong>${unassigned}</strong> unassigned</div>`;
+
+  if (emptyLeaves.length > 0) {
+    html += `<div style="margin-top:12px;font-weight:600;color:var(--kke-kill);">Empty Leaves (${emptyLeaves.length})</div>`;
+    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Nodes with no pages and no children — may need content or removal</div>`;
+    emptyLeaves.slice(0, 20).forEach(n => {
+      html += `<div style="font-size:12px;padding:2px 0;">${escapeHtml(n.breadcrumb || n.label)}</div>`;
+    });
+    if (emptyLeaves.length > 20) html += `<div style="font-size:12px;color:var(--text-muted);">… and ${emptyLeaves.length - 20} more</div>`;
+  }
+
+  if (hubs.length > 0) {
+    html += `<div style="margin-top:12px;font-weight:600;color:var(--kke-evolve);">Net New Pages (${hubs.length})</div>`;
+    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Nodes with children assigned from the audit but no page of their own — client needs to develop content</div>`;
+    hubs.slice(0, 20).forEach(n => {
+      html += `<div style="font-size:12px;padding:2px 0;">${escapeHtml(n.breadcrumb || n.label)}</div>`;
+    });
+    if (hubs.length > 20) html += `<div style="font-size:12px;color:var(--text-muted);">… and ${hubs.length - 20} more</div>`;
+  }
+
+  if (overloaded.length > 0) {
+    html += `<div style="margin-top:12px;font-weight:600;">Overloaded Nodes (${overloaded.length})</div>`;
+    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Nodes with more than 5 pages — consider splitting</div>`;
+    overloaded.forEach(({ node, count }) => {
+      html += `<div style="font-size:12px;padding:2px 0;">${escapeHtml(node.breadcrumb || node.label)} — <strong>${count}</strong> pages</div>`;
+    });
+  }
+
+  if (pathMismatches.length > 0) {
+    html += `<div style="margin-top:12px;font-weight:600;color:var(--kke-kill);">Path Mismatches (${pathMismatches.length})</div>`;
+    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Pages whose URL doesn't end with their computed nav path</div>`;
+    pathMismatches.slice(0, 15).forEach(({ url, computed }) => {
+      html += `<div style="font-size:12px;padding:2px 0;"><code>${escapeHtml(computed)}</code> ← ${escapeHtml(url)}</div>`;
+    });
+    if (pathMismatches.length > 15) html += `<div style="font-size:12px;color:var(--text-muted);">… and ${pathMismatches.length - 15} more</div>`;
+  }
+
+  if (emptyLeaves.length === 0 && hubs.length === 0 && overloaded.length === 0 && pathMismatches.length === 0) {
+    html += `<div style="color:var(--kke-keep);margin-top:12px;">All nav nodes have page assignments. No issues detected.</div>`;
+  }
+
+  html += `</div>`;
+
+  // Reuse progress modal for display
+  $('progress-body').innerHTML = html;
+  $('btn-progress-export-pdf').classList.remove('hidden');
+  $('btn-progress-export-pdf').textContent = 'Export PDF';
+  _progressModalExporter = exportNavCoveragePdf;
+  $('progress-overlay').classList.remove('hidden');
+  $('progress-modal').classList.remove('hidden');
+}
+
+async function exportNavCoveragePdf(format) {
+  const bodyHtml = $('progress-body').innerHTML;
+  const title = 'Nav Coverage Report';
+  const defaultName = reportDefaultName(title);
+  await exportReport(title, bodyHtml, defaultName, format || 'pdf');
+}
+
+// ─── SME Review Workflow ──────────────────────────────────────────────────────
+
+function smeExport() {
+  if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
+  showSmeExportModal();
+}
+
+function showSmeExportModal() {
+  const overlay    = $('sme-export-overlay');
+  const modal      = $('sme-export-modal');
+  const filterType = $('sme-export-filter-type');
+  const filterVal  = $('sme-export-filter-value');
+  const preview    = $('sme-export-preview');
+  const btnGo      = $('btn-sme-export-go');
+  const btnCancel  = $('btn-sme-export-cancel');
+  const btnClose   = $('btn-sme-export-close');
+
+  function getFilteredRows() {
+    let rows = state.editedRows;
+    const ft = filterType.value;
+    const fv = filterVal.value;
+    if (ft === 'group' && fv) {
+      rows = rows.filter(r => String(r[groupCol()] || '').trim() === fv);
+    } else if (ft === 'primaryTag' && fv) {
+      rows = rows.filter(r => String(r[primaryTagCol()] || '').trim() === fv);
+    }
+    return rows;
+  }
+
+  function updatePreview() {
+    preview.textContent = `${getFilteredRows().length} rows will be exported`;
+  }
+
+  function populateFilterValues() {
+    filterVal.innerHTML = '';
+    const ft = filterType.value;
+    if (!ft) {
+      filterVal.classList.add('hidden');
+      updatePreview();
+      return;
+    }
+    filterVal.classList.remove('hidden');
+    let values = [];
+    if (ft === 'group') {
+      values = collectGroups();
+    } else if (ft === 'primaryTag') {
+      const tagSet = new Set();
+      state.editedRows.forEach(r => {
+        const v = String(r[primaryTagCol()] || '').trim();
+        if (v) tagSet.add(v);
+      });
+      values = [...tagSet].sort();
+    }
+    const blank = document.createElement('option');
+    blank.value = ''; blank.textContent = '— Select —';
+    filterVal.appendChild(blank);
+    values.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v; opt.textContent = v;
+      filterVal.appendChild(opt);
+    });
+    updatePreview();
+  }
+
+  filterType.addEventListener('change', populateFilterValues);
+  filterVal.addEventListener('change', updatePreview);
+
+  filterType.value = '';
+  filterVal.classList.add('hidden');
+  updatePreview();
+
+  overlay.classList.remove('hidden');
+  modal.classList.remove('hidden');
+
+  function cleanup() {
+    overlay.classList.add('hidden');
+    modal.classList.add('hidden');
+    filterType.removeEventListener('change', populateFilterValues);
+    filterVal.removeEventListener('change', updatePreview);
+    btnGo.removeEventListener('click', onExport);
+    btnCancel.removeEventListener('click', onCancel);
+    btnClose.removeEventListener('click', onCancel);
+    overlay.removeEventListener('click', onCancel);
+  }
+
+  async function onExport() {
+    const rows = getFilteredRows();
+    if (rows.length === 0) { showToast('No rows to export', 'error'); return; }
+
+    const urlCol = state.urlColumn || 'Address';
+    const titleCol = state.headers.includes('Title 1') ? 'Title 1' : 'Title';
+    const exportHeaders = [urlCol, titleCol, kkeCol(), notesCol(), smeDecisionCol(), smeNotesCol(), contentOwnerCol()].filter(h => state.headers.includes(h));
+    const splitByOwner = $('sme-export-split-owner').checked;
+
+    // Build export rows — keep Content_Owner for splitting, blank SME decision/notes
+    const exportRows = rows.map(r => {
+      const row = {};
+      exportHeaders.forEach(h => {
+        if (h === smeDecisionCol() || h === smeNotesCol()) {
+          row[h] = '';
+        } else {
+          row[h] = r[h] ?? '';
+        }
+      });
+      return row;
+    });
+
+    const ps = state.projectSettings;
+    const filterLabel = filterType.value === 'group' ? filterVal.value
+                      : filterType.value === 'primaryTag' ? filterVal.value
+                      : '';
+    const smeOptions = ['Approve', ...allKkeStates().map(s => 'Change: ' + s)];
+
+    cleanup();
+
+    if (splitByOwner) {
+      // Group rows by Content Owner
+      const byOwner = {};
+      exportRows.forEach(row => {
+        const owner = String(row[contentOwnerCol()] || '').trim() || 'Unassigned';
+        if (!byOwner[owner]) byOwner[owner] = [];
+        byOwner[owner].push(row);
+      });
+
+      const files = Object.entries(byOwner).map(([owner, ownerRows]) => ({
+        fileName: [ps.clientName, ps.projectName, 'SME Review', filterLabel, owner].filter(Boolean).join(' - ') + '.xlsx',
+        headers: exportHeaders,
+        rows: ownerRows,
+        smeOptions,
+        smeDecisionCol: smeDecisionCol()
+      }));
+
+      const result = await window.electronAPI.smeExportMulti({ files });
+      if (result.success) {
+        showToast(`Exported ${result.count} files to ${result.dir}`, 'success');
+      } else if (result.error !== 'Cancelled') {
+        showToast('Export failed: ' + result.error, 'error');
+      }
+    } else {
+      const defaultName = [ps.clientName, ps.projectName, 'SME Review', filterLabel].filter(Boolean).join(' - ') + '.xlsx';
+      const result = await window.electronAPI.smeExport({
+        headers: exportHeaders, rows: exportRows, defaultName,
+        smeOptions, smeDecisionCol: smeDecisionCol()
+      });
+      if (result.success) {
+        showToast(`Exported ${result.count} rows for SME review`, 'success');
+      } else if (result.error !== 'Cancelled') {
+        showToast('Export failed: ' + result.error, 'error');
+      }
+    }
+  }
+
+  function onCancel() { cleanup(); }
+
+  btnGo.addEventListener('click', onExport);
+  btnCancel.addEventListener('click', onCancel);
+  btnClose.addEventListener('click', onCancel);
+  overlay.addEventListener('click', onCancel);
+}
+
+async function smeImport() {
+  if (state.editedRows.length === 0) { showToast('Open a file first', 'error'); return; }
+
+  // Reuse the import/merge flow
+  const fileInfo = await window.electronAPI.importAuditMergeOpen();
+  if (!fileInfo) return;
+  if (fileInfo.error) { showToast('Import error: ' + fileInfo.error, 'error'); return; }
+
+  const result = await showImportMergeModal(fileInfo);
+  if (!result) return;
+
+  const { selectedColumns, data } = result;
+  const urlCol = state.urlColumn || 'Address';
+  const impUrlCol = data.headers.find(h => h.toLowerCase() === urlCol.toLowerCase());
+  if (!impUrlCol) {
+    showToast(`Import file missing "${urlCol}" column`, 'error');
+    return;
+  }
+
+  // Ensure selected columns exist in current headers
+  const kkeIdx = state.headers.indexOf(kkeCol());
+  let insertOffset = 0;
+  for (const col of selectedColumns) {
+    if (!state.headers.includes(col)) {
+      const insertAt = kkeIdx >= 0 ? kkeIdx + 1 + insertOffset : state.headers.length;
+      state.headers.splice(insertAt, 0, col);
+      state.editedRows.forEach(row => { row[col] = row[col] || ''; });
+      insertOffset++;
+    }
+  }
+
+  // Build URL lookup
+  const importMap = new Map();
+  data.rows.forEach(row => {
+    const url = String(row[impUrlCol] || '').trim().toLowerCase();
+    if (url) importMap.set(url, row);
+  });
+
+  // Merge
+  let merged = 0, skipped = 0, matched = 0;
+  state.editedRows.forEach(row => {
+    const url = String(row[urlCol] || '').trim().toLowerCase();
+    if (!url) return;
+    const imp = importMap.get(url);
+    if (!imp) return;
+    matched++;
+    for (const col of selectedColumns) {
+      let impVal = String(imp[col] || '').trim();
+      if (impVal === '—' || impVal === '-') impVal = ''; // ignore placeholder
+      const curVal = String(row[col] || '').trim();
+      if (impVal && !curVal) {
+        row[col] = impVal;
+        merged++;
+      } else if (impVal && curVal && impVal !== curVal) {
+        skipped++;
+      }
+    }
+  });
+
+  // Auto-populate Final_KKE from SME decisions
+  let autoPopulated = 0;
+  state.editedRows.forEach(row => {
+    const sme = String(row[smeDecisionCol()] || '').trim();
+    const final_ = String(row[finalKkeCol()] || '').trim();
+    if (!sme || final_) return;
+
+    if (sme === 'Approve') {
+      row[finalKkeCol()] = row[kkeCol()] || '';
+      autoPopulated++;
+    } else if (sme.startsWith('Change:')) {
+      const suggested = sme.replace(/^Change:\s*/, '').trim();
+      if (suggested) {
+        row[finalKkeCol()] = suggested;
+        autoPopulated++;
+      }
+    }
+  });
+
+  setDirty(true);
+  applyFilter();
+  if (state.selectedIndex !== null) {
+    renderMetaFields(state.editedRows[state.selectedIndex]);
+    populateAuditFields(state.editedRows[state.selectedIndex]);
+  }
+
+  const parts = [`${matched} URLs matched`, `${merged} values imported`];
+  if (skipped) parts.push(`${skipped} kept existing`);
+  if (autoPopulated) parts.push(`${autoPopulated} Final KKE auto-set`);
+  showToast(parts.join(', '), 'success');
+
+  // Count unresolved conflicts and offer to resolve
+  const conflicts = state.editedRows.filter(r => {
+    const sme = String(r[smeDecisionCol()] || '').trim();
+    const final_ = String(r[finalKkeCol()] || '').trim();
+    return sme && sme.startsWith('Change:') && !final_;
+  }).length;
+  if (conflicts > 0) {
+    setTimeout(async () => {
+      if (await confirmDialog({ title: 'SME conflicts', message: `${conflicts} SME conflicts need resolution. Open the resolve dialog?`, confirmLabel: 'Open' })) {
+        openSmeResolveDialog();
+      }
+    }, 500);
+  }
+}
+
+function openSmeResolveDialog() {
+  if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
+
+  const overlay = $('sme-resolve-overlay');
+  const modal   = $('sme-resolve-modal');
+  const body    = $('sme-resolve-body');
+  const countEl = $('sme-resolve-count');
+  const btnDone = $('btn-sme-resolve-done');
+  const btnAcceptAll = $('btn-sme-accept-all');
+  const btnKeepAll   = $('btn-sme-keep-all');
+  const btnClose     = $('btn-sme-resolve-close');
+
+  // Collect conflict rows
+  let conflicts = [];
+  state.editedRows.forEach((row, origIndex) => {
+    const sme = String(row[smeDecisionCol()] || '').trim();
+    const final_ = String(row[finalKkeCol()] || '').trim();
+    if (sme && sme.startsWith('Change:') && !final_) {
+      const suggested = sme.replace(/^Change:\s*/, '').trim();
+      conflicts.push({ origIndex, row, suggested });
+    }
+  });
+
+  function renderList() {
+    body.innerHTML = '';
+    countEl.textContent = `${conflicts.length} conflict${conflicts.length !== 1 ? 's' : ''} remaining`;
+
+    if (conflicts.length === 0) {
+      body.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px;">All conflicts resolved.</div>';
+      return;
+    }
+
+    conflicts.forEach((c, idx) => {
+      const el = document.createElement('div');
+      el.className = 'sme-conflict-row';
+
+      const title = document.createElement('span');
+      title.className = 'sme-cr-title';
+      title.textContent = c.row['Title 1'] || c.row['Title'] || '(no title)';
+      title.title = c.row[state.urlColumn] || '';
+      el.appendChild(title);
+
+      const kkeBadge = document.createElement('span');
+      kkeBadge.className = 'sme-cr-kke kke-badge kke-' + String(c.row[kkeCol()] || '').toLowerCase().replace(/[^a-z0-9]/g, '-');
+      kkeBadge.textContent = c.row[kkeCol()] || '';
+      el.appendChild(kkeBadge);
+
+      const arrow = document.createElement('span');
+      arrow.className = 'sme-cr-arrow';
+      arrow.textContent = '→';
+      el.appendChild(arrow);
+
+      const smeText = document.createElement('span');
+      smeText.className = 'sme-cr-sme';
+      smeText.textContent = c.row[smeDecisionCol()] || '';
+      el.appendChild(smeText);
+
+      const finalWrap = document.createElement('span');
+      finalWrap.className = 'sme-cr-final';
+      const select = document.createElement('select');
+      ['', ...allKkeStates()].forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v; opt.textContent = v || '—';
+        if (v === c.suggested) opt.selected = true;
+        select.appendChild(opt);
+      });
+      finalWrap.appendChild(select);
+      el.appendChild(finalWrap);
+
+      const actions = document.createElement('span');
+      actions.className = 'sme-cr-actions';
+      const confirmBtn = document.createElement('button');
+      confirmBtn.textContent = '✓';
+      confirmBtn.title = 'Set Final KKE';
+      confirmBtn.addEventListener('click', () => {
+        const val = select.value;
+        if (!val) { showToast('Select a Final KKE value', 'error'); return; }
+        c.row[finalKkeCol()] = val;
+        setDirty(true);
+        conflicts.splice(idx, 1);
+        renderList();
+      });
+      actions.appendChild(confirmBtn);
+      el.appendChild(actions);
+
+      body.appendChild(el);
+    });
+  }
+
+  overlay.classList.remove('hidden');
+  modal.classList.remove('hidden');
+  renderList();
+
+  function cleanup() {
+    overlay.classList.add('hidden');
+    modal.classList.add('hidden');
+    btnDone.removeEventListener('click', onDone);
+    btnAcceptAll.removeEventListener('click', onAcceptAll);
+    btnKeepAll.removeEventListener('click', onKeepAll);
+    btnClose.removeEventListener('click', onDone);
+    overlay.removeEventListener('click', onDone);
+    applyFilter();
+    renderVisibleRows();
+  }
+
+  function onDone() { cleanup(); }
+
+  async function onAcceptAll() {
+    if (!(await confirmDialog({ title: 'Accept SME suggestions', message: `Set Final KKE to SME's suggestion for all ${conflicts.length} rows?`, confirmLabel: 'Accept all' }))) return;
+    conflicts.forEach(c => {
+      if (c.suggested) c.row[finalKkeCol()] = c.suggested;
+    });
+    setDirty(true);
+    conflicts = [];
+    renderList();
+  }
+
+  async function onKeepAll() {
+    if (!(await confirmDialog({ title: 'Keep original', message: `Set Final KKE to original KKE Recommendation for all ${conflicts.length} rows?`, confirmLabel: 'Keep original' }))) return;
+    conflicts.forEach(c => {
+      c.row[finalKkeCol()] = c.row[kkeCol()] || '';
+    });
+    setDirty(true);
+    conflicts = [];
+    renderList();
+  }
+
+  btnDone.addEventListener('click', onDone);
+  btnAcceptAll.addEventListener('click', onAcceptAll);
+  btnKeepAll.addEventListener('click', onKeepAll);
+  btnClose.addEventListener('click', onDone);
+  overlay.addEventListener('click', onDone);
+}
+
+// ─── Table View (full-width spreadsheet) ──────────────────────────────────────
+
+let _tableViewOpen = false;
+let _tableSort = { col: '', dir: '' };
+let _tableColFilters = {};
+let _tableGlobalFilter = '';
+let _tableColumns = [];
+let _tableFilteredRows = [];
+let _tvColConfigWorking = [];
+
+const TV_ROW_HEIGHT = 28;
+const TV_OVERSCAN = 15;
+
+function setupTableView() {
+  $('btn-table-view-close').addEventListener('click', closeTableView);
+  $('btn-table-columns').addEventListener('click', openTableColumnConfig);
+  $('btn-tv-col-close').addEventListener('click', closeTableColumnConfig);
+  $('btn-tv-col-cancel').addEventListener('click', closeTableColumnConfig);
+  $('tv-col-overlay').addEventListener('click', closeTableColumnConfig);
+  $('btn-tv-col-save').addEventListener('click', saveTableColumnConfig);
+  $('btn-tv-col-reset').addEventListener('click', resetTableColumnDefaults);
+
+  let tvFilterTimer;
+  $('table-view-search').addEventListener('input', e => {
+    clearTimeout(tvFilterTimer);
+    tvFilterTimer = setTimeout(() => {
+      _tableGlobalFilter = e.target.value.toLowerCase().trim();
+      applyTableFilter();
+      renderTableView();
+    }, 150);
+  });
+
+  let tvTicking = false;
+  $('table-view-body-wrap').addEventListener('scroll', () => {
+    $('table-view-header-wrap').scrollLeft = $('table-view-body-wrap').scrollLeft;
+    if (!tvTicking) {
+      requestAnimationFrame(() => {
+        renderTableVisibleRows();
+        tvTicking = false;
+      });
+      tvTicking = true;
+    }
+  });
+
+  // Keyboard navigation in table view
+  document.addEventListener('keydown', e => {
+    if (!_tableViewOpen) return;
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+
+    if (e.key === 'ArrowDown' || e.key === 'j') {
+      e.preventDefault();
+      tvNavigate(1);
+    } else if (e.key === 'ArrowUp' || e.key === 'k') {
+      e.preventDefault();
+      tvNavigate(-1);
+    }
+  });
+}
+
+function tvNavigate(delta) {
+  if (_tableFilteredRows.length === 0) return;
+  const currentPos = state.selectedIndex !== null
+    ? _tableFilteredRows.findIndex(r => r.origIndex === state.selectedIndex)
+    : -1;
+  const newPos = Math.max(0, Math.min(_tableFilteredRows.length - 1,
+    currentPos === -1 ? 0 : currentPos + delta));
+  state.selectedIndex = _tableFilteredRows[newPos].origIndex;
+
+  // Scroll into view
+  const wrap = $('table-view-body-wrap');
+  const rowTop = newPos * TV_ROW_HEIGHT;
+  const rowBottom = rowTop + TV_ROW_HEIGHT;
+  if (rowTop < wrap.scrollTop) wrap.scrollTop = rowTop;
+  else if (rowBottom > wrap.scrollTop + wrap.clientHeight) wrap.scrollTop = rowBottom - wrap.clientHeight;
+
+  renderTableVisibleRows();
+}
+
+function tvDefaultWidth(colName) {
+  const lower = colName.toLowerCase();
+  if (lower.includes('address') || lower.includes('redirect') || lower.includes('href'))
+    return 320;
+  if (lower.includes('url') || lower.includes('link'))
+    return 280;
+  if (lower.includes('title') || lower.includes('description') || lower.includes('breadcrumb'))
+    return 240;
+  if (lower.includes('path') || lower.includes('destination'))
+    return 220;
+  if (lower.includes('notes'))
+    return 180;
+  if (lower.includes('status') || lower.includes('code') || lower === 'kke_recommendation')
+    return 100;
+  if (lower.includes('word') || lower.includes('count') || lower.includes('size') || lower.includes('depth'))
+    return 80;
+  return 150;
+}
+
+// Phase 1: columns added but hidden by default in Table View; user can reveal via column picker
+const TV_HIDDEN_BY_DEFAULT = new Set([
+  'Suggested_KKE_Sources',
+  'Source_CMS_URL',
+  'New_CMS_URL',
+  'Design_Patterns'
+]);
+
+function ensureTableColumns() {
+  if (_tableColumns.length > 0) return;
+
+  if (state.tableColumns) {
+    _tableColumns = state.tableColumns.map(c => ({ ...c }));
+    state.headers.forEach(h => {
+      if (h !== '_rowIndex' && !_tableColumns.find(c => c.name === h)) {
+        const defaultVisible = !TV_HIDDEN_BY_DEFAULT.has(h);
+        _tableColumns.push({ name: h, visible: defaultVisible, width: tvDefaultWidth(h) });
+      }
+    });
+    _tableColumns = _tableColumns.filter(c => state.headers.includes(c.name));
+  } else {
+    _tableColumns = state.headers
+      .filter(h => h !== '_rowIndex' && !h.startsWith('_'))
+      .map(h => ({ name: h, visible: !TV_HIDDEN_BY_DEFAULT.has(h), width: tvDefaultWidth(h) }));
+  }
+}
+
+function toggleTableView() {
+  if (_tableViewOpen) closeTableView();
+  else openTableView();
+}
+
+function openTableView() {
+  if (state.editedRows.length === 0) {
+    showToast('No data loaded', 'error');
+    return;
+  }
+
+  if (_navEditorOpen) closeNavEditor();
+  if (_redirectEditorOpen) closeRedirectEditor();
+
+  _tableViewOpen = true;
+  document.getElementById('app').classList.add('tv-active');
+  $('content-area').classList.add('hidden');
+  $('no-selection').classList.add('hidden');
+  $('table-view').classList.remove('hidden');
+
+  ensureTableColumns();
+  applyTableFilter();
+  renderTableView();
+  if (typeof refreshViewSwitcher === 'function') refreshViewSwitcher();
+}
+
+function closeTableView() {
+  _tableViewOpen = false;
+  $('table-view').classList.add('hidden');
+  document.getElementById('app').classList.remove('tv-active');
+
+  if (state.selectedIndex !== null) {
+    $('content-area').classList.remove('hidden');
+    selectRow(state.selectedIndex);
+  } else {
+    $('no-selection').classList.remove('hidden');
+  }
+  if (typeof refreshViewSwitcher === 'function') refreshViewSwitcher();
+}
+
+function applyTableFilter() {
+  let rows = state.editedRows.map((row, i) => ({ row, origIndex: i }));
+
+  if (_tableGlobalFilter) {
+    rows = rows.filter(({ row }) =>
+      Object.values(row).some(v => String(v).toLowerCase().includes(_tableGlobalFilter))
+    );
+  }
+
+  for (const [col, filterStr] of Object.entries(_tableColFilters)) {
+    if (!filterStr) continue;
+    const q = filterStr.toLowerCase();
+    rows = rows.filter(({ row }) => String(row[col] || '').toLowerCase().includes(q));
+  }
+
+  if (_tableSort.col && _tableSort.dir) {
+    const dir = _tableSort.dir === 'asc' ? 1 : -1;
+    const col = _tableSort.col;
+    rows.sort((a, b) => {
+      const va = String(a.row[col] ?? '').toLowerCase();
+      const vb = String(b.row[col] ?? '').toLowerCase();
+      const na = parseFloat(va), nb = parseFloat(vb);
+      if (!isNaN(na) && !isNaN(nb)) return (na - nb) * dir;
+      return va < vb ? -dir : va > vb ? dir : 0;
+    });
+  }
+
+  _tableFilteredRows = rows;
+}
+
+/** True when any sidebar filter is narrowing the audit list. */
+function hasActiveSidebarFilters() {
+  return !!(state.filterText && state.filterText.trim())
+    || (Array.isArray(state.kkeFilter) && state.kkeFilter.length > 0)
+    || !!(state.groupFilter && state.groupFilter !== '')
+    || (Array.isArray(state.fieldFilters) && state.fieldFilters.length > 0);
+}
+
+function renderTableView() {
+  const visibleCols = _tableColumns.filter(c => c.visible);
+
+  renderTableHeaders(visibleCols);
+  renderTableFilterRow(visibleCols);
+
+  // Table View filters independently of the sidebar. Surface that when the sidebar
+  // is filtered, so the row-count mismatch doesn't read as a bug.
+  const banner = $('table-view-divergence');
+  if (banner) {
+    if (hasActiveSidebarFilters()) {
+      banner.classList.remove('hidden');
+      banner.textContent =
+        `Sidebar filters aren't applied here — Table View filters on its own (showing all ${state.editedRows.length} rows; use the per-column filters below).`;
+    } else {
+      banner.classList.add('hidden');
+    }
+  }
+
+  $('table-view-stats').textContent =
+    `${_tableFilteredRows.length} of ${state.editedRows.length} rows`;
+
+  const body = $('table-view-body');
+  body.style.height = (_tableFilteredRows.length * TV_ROW_HEIGHT) + 'px';
+
+  const totalW = 50 + visibleCols.reduce((sum, c) => sum + c.width, 0);
+  body.style.minWidth = totalW + 'px';
+  $('table-view-col-headers').style.minWidth = totalW + 'px';
+  $('table-view-col-filters').style.minWidth = totalW + 'px';
+
+  renderTableVisibleRows();
+}
+
+function renderTableHeaders(visibleCols) {
+  const container = $('table-view-col-headers');
+  container.innerHTML = '';
+
+  const numHdr = document.createElement('div');
+  numHdr.className = 'tv-col-hdr tv-col-num';
+  numHdr.style.width = '50px';
+  numHdr.textContent = '#';
+  container.appendChild(numHdr);
+
+  visibleCols.forEach(col => {
+    const hdr = document.createElement('div');
+    hdr.className = 'tv-col-hdr';
+    hdr.style.width = col.width + 'px';
+
+    const arrow = _tableSort.col === col.name
+      ? (_tableSort.dir === 'asc' ? ' ▲' : ' ▼')
+      : '';
+    hdr.textContent = col.name + arrow;
+    hdr.title = col.name;
+
+    hdr.addEventListener('click', () => {
+      if (_tableSort.col === col.name) {
+        _tableSort.dir = _tableSort.dir === 'asc' ? 'desc' : _tableSort.dir === 'desc' ? '' : 'asc';
+        if (!_tableSort.dir) _tableSort.col = '';
+      } else {
+        _tableSort.col = col.name;
+        _tableSort.dir = 'asc';
+      }
+      applyTableFilter();
+      renderTableView();
+    });
+
+    const resizer = document.createElement('div');
+    resizer.className = 'tv-col-resize';
+    resizer.addEventListener('mousedown', e => startTvColumnResize(e, col));
+    hdr.appendChild(resizer);
+
+    container.appendChild(hdr);
+  });
+}
+
+function renderTableFilterRow(visibleCols) {
+  const container = $('table-view-col-filters');
+  container.innerHTML = '';
+
+  const numSpacer = document.createElement('div');
+  numSpacer.className = 'tv-filter-cell';
+  numSpacer.style.width = '50px';
+  container.appendChild(numSpacer);
+
+  visibleCols.forEach(col => {
+    const cell = document.createElement('div');
+    cell.className = 'tv-filter-cell';
+    cell.style.width = col.width + 'px';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'tv-filter-input';
+    input.placeholder = '…';
+    input.value = _tableColFilters[col.name] || '';
+
+    let timer;
+    input.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const val = input.value.toLowerCase().trim();
+        if (val) _tableColFilters[col.name] = val;
+        else delete _tableColFilters[col.name];
+        applyTableFilter();
+        // Re-render body but preserve filter row focus
+        $('table-view-stats').textContent =
+          `${_tableFilteredRows.length} of ${state.editedRows.length} rows`;
+        const body = $('table-view-body');
+        body.style.height = (_tableFilteredRows.length * TV_ROW_HEIGHT) + 'px';
+        renderTableVisibleRows();
+      }, 150);
+    });
+
+    cell.appendChild(input);
+    container.appendChild(cell);
+  });
+}
+
+function renderTableVisibleRows() {
+  const body = $('table-view-body');
+
+  if (_tableFilteredRows.length === 0) {
+    body.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px;">No rows match your filters.</div>';
+    return;
+  }
+
+  const visibleCols = _tableColumns.filter(c => c.visible);
+  const wrap = $('table-view-body-wrap');
+  const scrollTop = wrap.scrollTop;
+  const viewHeight = wrap.clientHeight;
+  const startIdx = Math.max(0, Math.floor(scrollTop / TV_ROW_HEIGHT) - TV_OVERSCAN);
+  const endIdx = Math.min(_tableFilteredRows.length, Math.ceil((scrollTop + viewHeight) / TV_ROW_HEIGHT) + TV_OVERSCAN);
+
+  body.querySelectorAll('.tv-row').forEach(el => el.remove());
+
+  const kke = kkeCol();
+
+  for (let i = startIdx; i < endIdx; i++) {
+    const { row, origIndex } = _tableFilteredRows[i];
+
+    const rowEl = document.createElement('div');
+    rowEl.className = 'tv-row' + (state.selectedIndex === origIndex ? ' selected' : '');
+    rowEl.style.top = (i * TV_ROW_HEIGHT) + 'px';
+    rowEl.dataset.origIndex = origIndex;
+
+    const numCell = document.createElement('div');
+    numCell.className = 'tv-cell tv-cell-num';
+    numCell.style.width = '50px';
+    numCell.textContent = origIndex + 1;
+    rowEl.appendChild(numCell);
+
+    const editableCols = new Set([kke, tagsCol(), notesCol(), groupCol(), primaryTagCol(),
+                                   smeDecisionCol(), smeNotesCol(), contentOwnerCol(), finalKkeCol()]);
+
+    visibleCols.forEach(col => {
+      const cell = document.createElement('div');
+      cell.className = 'tv-cell';
+      cell.style.width = col.width + 'px';
+
+      const val = row[col.name] ?? '';
+
+      if (col.name === kke && val) {
+        const badge = document.createElement('span');
+        badge.className = 'kke-badge kke-' + String(val).toLowerCase().replace(/[^a-z0-9]/g, '-');
+        badge.textContent = val;
+        cell.appendChild(badge);
+      } else {
+        cell.textContent = val;
+        cell.title = String(val);
+      }
+
+      if (editableCols.has(col.name)) {
+        cell.classList.add('editable');
+        cell.addEventListener('dblclick', e => {
+          e.stopPropagation();
+          tvStartInlineEdit(cell, col.name, origIndex);
+        });
+      }
+
+      rowEl.appendChild(cell);
+    });
+
+    rowEl.addEventListener('click', () => {
+      state.selectedIndex = origIndex;
+      renderTableVisibleRows();
+    });
+
+    body.appendChild(rowEl);
+  }
+}
+
+function tvStartInlineEdit(cell, colName, origIndex) {
+  const row = state.editedRows[origIndex];
+  const kke = kkeCol();
+  const isKkeType = (colName === kke || colName === finalKkeCol());
+  const isSmeDecision = (colName === smeDecisionCol());
+
+  if (isKkeType || isSmeDecision) {
+    const select = document.createElement('select');
+    select.className = 'tv-inline-select';
+    let options;
+    if (isSmeDecision) {
+      options = ['', 'Approve', ...allKkeStates().map(s => 'Change: ' + s)];
+    } else {
+      options = ['', ...allKkeStates()];
+    }
+    options.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v; opt.textContent = v || '—';
+      if (v === (row[colName] || '')) opt.selected = true;
+      select.appendChild(opt);
+    });
+    cell.textContent = '';
+    cell.classList.add('editing');
+    cell.appendChild(select);
+    select.focus();
+    let committed = false;
+    const commit = async () => {
+      if (committed) return;
+      committed = true;
+      const newVal = select.value;
+      const oldVal = row[colName] || '';
+      if (isKkeType && newVal === 'Kill' && oldVal !== 'Kill') {
+        const ok = await promptKillCleanup(origIndex);
+        if (!ok) { cell.classList.remove('editing'); renderTableVisibleRows(); return; }
+      }
+      // Consolidate requires a target — open picker and let it commit.
+      if (isKkeType && newVal === 'Consolidate' && oldVal !== 'Consolidate') {
+        cell.classList.remove('editing');
+        renderTableVisibleRows();
+        // The picker will set KKE=Consolidate + Consolidate_Into when a target is chosen.
+        // Only applies to the KKE column; for Final_KKE, just record the value.
+        if (colName === kkeCol()) {
+          openConsolidatePicker(origIndex);
+          return;
+        }
+      }
+      row[colName] = newVal;
+      if (oldVal !== newVal) logChange(origIndex, colName, oldVal, newVal);
+      cell.classList.remove('editing');
+      setDirty(true);
+      renderTableVisibleRows();
+      renderVisibleRows();
+    };
+    select.addEventListener('change', commit);
+    select.addEventListener('blur', commit);
+  } else {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'tv-inline-input';
+    input.value = row[colName] || '';
+    cell.textContent = '';
+    cell.classList.add('editing');
+    cell.appendChild(input);
+    input.focus();
+    input.select();
+    const commit = () => {
+      row[colName] = input.value;
+      cell.classList.remove('editing');
+      setDirty(true);
+      renderTableVisibleRows();
+      renderVisibleRows();
+    };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      if (e.key === 'Escape') { cell.classList.remove('editing'); renderTableVisibleRows(); }
+    });
+  }
+}
+
+function startTvColumnResize(e, col) {
+  e.preventDefault();
+  e.stopPropagation();
+
+  const startX = e.clientX;
+  const startWidth = col.width;
+
+  function onMove(e2) {
+    col.width = Math.max(50, startWidth + (e2.clientX - startX));
+    renderTableView();
+  }
+
+  function onUp() {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    window.electronAPI.savePrefs({ tableColumns: _tableColumns });
+  }
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+// ── Table View Column Config ──
+
+const _tvColView = { filter: '', sort: 'order' };
+
+function openTableColumnConfig() {
+  _tvColConfigWorking = _tableColumns.map(c => ({ ...c }));
+  _tvColView.filter = '';
+  _tvColView.sort = 'order';
+
+  // Wire filter input + sort toggle (idempotent)
+  const filterEl = $('tv-col-filter');
+  const sortBtn = $('tv-col-sort');
+  if (filterEl) {
+    filterEl.value = '';
+    if (!filterEl.dataset.wired) {
+      filterEl.dataset.wired = '1';
+      filterEl.addEventListener('input', () => {
+        _tvColView.filter = filterEl.value.trim().toLowerCase();
+        renderTvColConfigList();
+      });
+    }
+  }
+  if (sortBtn) {
+    sortBtn.classList.remove('active');
+    sortBtn.textContent = 'A–Z';
+    if (!sortBtn.dataset.wired) {
+      sortBtn.dataset.wired = '1';
+      sortBtn.addEventListener('click', () => {
+        const next = _tvColView.sort === 'order' ? 'asc' : 'order';
+        _tvColView.sort = next;
+        sortBtn.classList.toggle('active', next === 'asc');
+        sortBtn.textContent = next === 'asc' ? 'Order' : 'A–Z';
+        renderTvColConfigList();
+      });
+    }
+  }
+
+  renderTvColConfigList();
+  $('tv-col-overlay').classList.remove('hidden');
+  $('tv-col-modal').classList.remove('hidden');
+}
+
+function closeTableColumnConfig() {
+  $('tv-col-overlay').classList.add('hidden');
+  $('tv-col-modal').classList.add('hidden');
+}
+
+function saveTableColumnConfig() {
+  _tableColumns = _tvColConfigWorking.map(c => ({ ...c }));
+  window.electronAPI.savePrefs({ tableColumns: _tableColumns });
+  closeTableColumnConfig();
+  applyTableFilter();
+  renderTableView();
+  showToast('Column layout saved');
+}
+
+function resetTableColumnDefaults() {
+  _tvColConfigWorking = state.headers
+    .filter(h => h !== '_rowIndex' && !h.startsWith('_'))
+    .map(h => ({ name: h, visible: true, width: tvDefaultWidth(h) }));
+  renderTvColConfigList();
+}
+
+function renderTvColConfigList() {
+  const body = $('tv-col-body');
+  body.innerHTML = '';
+
+  // Apply filter + sort to the rendered view; keep underlying _tvColConfigWorking order intact
+  let view = _tvColConfigWorking.map((col, idx) => ({ col, idx }));
+  if (_tvColView.filter) {
+    view = view.filter(({ col }) => col.name.toLowerCase().includes(_tvColView.filter));
+  }
+  if (_tvColView.sort === 'asc') {
+    view = [...view].sort((a, b) => a.col.name.localeCompare(b.col.name, undefined, { sensitivity: 'base' }));
+  }
+  const dragEnabled = _tvColView.sort === 'order' && !_tvColView.filter;
+  if (!dragEnabled && _tvColConfigWorking.length > 0) {
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:11px;color:var(--text-muted);padding:6px 12px;font-style:italic;';
+    hint.textContent = 'Reorder disabled while filtering or sorting A–Z. Clear filter / sort to drag.';
+    body.appendChild(hint);
+  }
+
+  view.forEach(({ col, idx: i }) => {
+    const item = document.createElement('div');
+    item.className = 'tv-col-config-item';
+    item.draggable = dragEnabled;
+    item.dataset.index = i;
+
+    const handle = document.createElement('span');
+    handle.className = 'tv-col-drag-handle';
+    handle.textContent = '⠿';
+    item.appendChild(handle);
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = col.visible;
+    cb.addEventListener('change', () => { col.visible = cb.checked; });
+    item.appendChild(cb);
+
+    const label = document.createElement('span');
+    label.className = 'tv-col-config-label';
+    label.textContent = col.name;
+    item.appendChild(label);
+
+    item.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', String(i));
+      item.style.opacity = '0.4';
+    });
+    item.addEventListener('dragend', () => { item.style.opacity = ''; });
+    item.addEventListener('dragover', e => {
+      e.preventDefault();
+      body.querySelectorAll('.tv-col-config-item').forEach(el => el.classList.remove('drag-over'));
+      item.classList.add('drag-over');
+    });
+    item.addEventListener('dragleave', () => { item.classList.remove('drag-over'); });
+    item.addEventListener('drop', e => {
+      e.preventDefault();
+      item.classList.remove('drag-over');
+      const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
+      if (fromIdx === i) return;
+      const [moved] = _tvColConfigWorking.splice(fromIdx, 1);
+      _tvColConfigWorking.splice(i, 0, moved);
+      renderTvColConfigList();
+    });
+
+    body.appendChild(item);
+  });
+}
+
+// ─── Redirect editor ──────────────────────────────────────────────────────────
+
+const _navCollapsed = new Set(); // node IDs that are collapsed in the nav editor
+let _navDragOver = null; // { el: rowEl, zone: 'before'|'after'|'into' } — tracks live drop target to avoid full-DOM scans
+
+let _redirectEditorOpen = false;
+const REDIRECT_DEST_COL = 'Redirect_Destination';
+let _redirectSort = { col: '', dir: '' }; // col: 'status'|'title'|'source'|'dest', dir: ''|'asc'|'desc'
+
+function resyncNavBasedRedirects() {
+  if (!state.navNodes || !state.navNodes.length) {
+    showToast('No nav tree loaded', 'error'); return;
+  }
+  const urlCol = state.urlColumn || 'Address';
+  const baseUrl = getRedirectBaseUrl();
+  const pathToUrl = (p) => {
+    if (!p) return '';
+    return baseUrl ? baseUrl + '/' + p.replace(/^\//, '') : '/' + p.replace(/^\//, '');
+  };
+
+  let updated = 0;
+  let skipped = 0; // rows with NavID but node not found / no computed path
+
+  state.editedRows.forEach((row, origIndex) => {
+    const navID = String(row['NavID'] || '').trim();
+    if (!navID) return;
+
+    const existing = String(row['Redirect_Destination'] || '').trim();
+    if (existing === '404') return; // intentional deindex — never touch
+
+    const node = state.navNodes.find(n => n.id === navID);
+    if (!node || !node.computedPath) { skipped++; return; }
+
+    const kke = String(row[kkeCol()] || '').trim().toLowerCase();
+    let newUrl = '';
+
+    if (kke === 'kill' || kke === 'consolidate') {
+      // Kill/Consolidate: redirect destination is the nav node's new path
+      newUrl = pathToUrl(node.computedPath);
+    } else {
+      // Keep/Evolve/etc.: only needs a redirect if the URL is actually changing
+      const srcUrl = String(row[urlCol] || '').trim();
+      let srcPath = '';
+      try { srcPath = new URL(srcUrl).pathname.replace(/\/+$/, ''); } catch (_) { srcPath = srcUrl.replace(/\/+$/, ''); }
+      const destPath = '/' + node.computedPath.replace(/^\//, '').replace(/\/+$/, '');
+      if (srcPath === destPath) return; // URL not changing — no redirect needed
+      newUrl = pathToUrl(node.computedPath);
+    }
+
+    if (!newUrl || newUrl === existing) return;
+    logChange(origIndex, 'Redirect_Destination', existing, newUrl);
+    row['Redirect_Destination'] = newUrl;
+    updated++;
+  });
+
+  if (updated === 0 && skipped === 0) {
+    showToast('All nav-based redirects are already up to date', 'info');
+    return;
+  }
+  if (updated > 0) {
+    setDirty(true);
+    renderRedirectEditor();
+  }
+  let msg = `Re-derived ${updated} redirect${updated !== 1 ? 's' : ''} from current nav paths`;
+  if (skipped > 0) msg += ` · ${skipped} skipped (no nav path)`;
+  showToast(msg, 'success');
+}
+
+function setupRedirectEditor() {
+  // Audit-bar btn-redirects removed in Chunk iii; view switcher handles entry now.
+  // Keep the click handler conditional in case the element returns later or is restored.
+  const auditBtn = $('btn-redirects');
+  if (auditBtn) auditBtn.addEventListener('click', toggleRedirectEditor);
+  $('btn-redirect-editor-close').addEventListener('click', closeRedirectEditor);
+  $('redirect-status-filter').addEventListener('change', () => renderRedirectEditor());
+  $('redirect-search').addEventListener('input', () => renderRedirectEditor());
+
+  // Find/Replace in destination URLs (searches resolved destinations)
+  let _frMatches = [];   // [{origIndex, resolvedDest}]
+  let _frCurrent = -1;
+
+  $('btn-redirect-resync-nav').addEventListener('click', resyncNavBasedRedirects);
+
+  $('btn-redirect-find-replace').addEventListener('click', () => {
+    const bar = $('redirect-find-replace-bar');
+    bar.classList.toggle('hidden');
+    if (!bar.classList.contains('hidden')) {
+      $('redirect-fr-find').focus();
+      frUpdateMatches();
+    } else {
+      frClearHighlight();
+    }
+  });
+  $('btn-redirect-fr-close').addEventListener('click', () => {
+    $('redirect-find-replace-bar').classList.add('hidden');
+    frClearHighlight();
+  });
+
+  let _frDebounce;
+
+  function frUpdateView() {
+    // Re-render the redirect editor which now applies the find filter
+    clearTimeout(_frDebounce);
+    _frDebounce = setTimeout(() => {
+      renderRedirectEditor();
+      // Update match count from visible rows
+      const visibleRows = $('redirect-editor-body').querySelectorAll('[data-orig-index]');
+      const findVal = $('redirect-fr-find').value.trim();
+      const frBarOpen = !$('redirect-find-replace-bar').classList.contains('hidden');
+      if (findVal && frBarOpen) {
+        $('redirect-fr-count').textContent = `${visibleRows.length} match${visibleRows.length !== 1 ? 'es' : ''}`;
+      } else {
+        $('redirect-fr-count').textContent = '';
+      }
+    }, 150);
+  }
+
+  function frNavigate(delta) {
+    const rows = [...$('redirect-editor-body').querySelectorAll('[data-orig-index]')];
+    if (rows.length === 0) return;
+    frClearHighlight();
+    _frCurrent = (_frCurrent + delta + rows.length) % rows.length;
+    $('redirect-fr-count').textContent = `${_frCurrent + 1} of ${rows.length}`;
+    rows[_frCurrent].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    rows[_frCurrent].classList.add('re-fr-highlight');
+  }
+
+  function frClearHighlight() {
+    $('redirect-editor-body').querySelectorAll('.re-fr-highlight').forEach(el => el.classList.remove('re-fr-highlight'));
+  }
+
+  function frReplaceCurrent() {
+    const rows = [...$('redirect-editor-body').querySelectorAll('[data-orig-index]')];
+    if (_frCurrent < 0 || _frCurrent >= rows.length) { showToast('Navigate to a match first (use ▶)', 'error'); return; }
+    const findVal = $('redirect-fr-find').value.trim();
+    const replaceVal = $('redirect-fr-replace').value;
+    const exact = $('redirect-fr-exact').checked;
+    const origIndex = parseInt(rows[_frCurrent].dataset.origIndex);
+    const row = state.editedRows[origIndex];
+
+    // Get the resolved dest for this row (read from the dest input in the DOM)
+    const destInput = rows[_frCurrent].querySelector('input[type="text"]');
+    const resolved = destInput ? destInput.value : (row[REDIRECT_DEST_COL] || '');
+    const newDest = exact ? replaceVal : resolved.split(findVal).join(replaceVal);
+    row[REDIRECT_DEST_COL] = newDest;
+    setDirty(true);
+
+    // Re-render and adjust position
+    renderRedirectEditor();
+    const newRows = [...$('redirect-editor-body').querySelectorAll('[data-orig-index]')];
+    const findActive = !$('redirect-find-replace-bar').classList.contains('hidden') && findVal;
+    $('redirect-fr-count').textContent = findActive ? `${newRows.length} match${newRows.length !== 1 ? 'es' : ''}` : '';
+    _frCurrent = Math.min(_frCurrent, newRows.length - 1);
+    if (_frCurrent >= 0 && newRows[_frCurrent]) {
+      newRows[_frCurrent].scrollIntoView({ behavior: 'smooth', block: 'center' });
+      newRows[_frCurrent].classList.add('re-fr-highlight');
+    }
+  }
+
+  function frReplaceAll() {
+    const findVal = $('redirect-fr-find').value.trim();
+    if (!findVal) { showToast('Enter a value to find', 'error'); return; }
+    const replaceVal = $('redirect-fr-replace').value;
+    const exact = $('redirect-fr-exact').checked;
+
+    // Get all currently visible rows (already filtered by find)
+    const rows = [...$('redirect-editor-body').querySelectorAll('[data-orig-index]')];
+    if (rows.length === 0) { showToast('No matches to replace', 'info'); return; }
+
+    const count = rows.length;
+    rows.forEach(el => {
+      const origIndex = parseInt(el.dataset.origIndex);
+      const row = state.editedRows[origIndex];
+      const destInput = el.querySelector('input[type="text"]');
+      const resolved = destInput ? destInput.value : (row[REDIRECT_DEST_COL] || '');
+      row[REDIRECT_DEST_COL] = exact ? replaceVal : resolved.split(findVal).join(replaceVal);
+    });
+
+    setDirty(true);
+    renderRedirectEditor();
+    const newRows = $('redirect-editor-body').querySelectorAll('[data-orig-index]');
+    $('redirect-fr-count').textContent = `${newRows.length} match${newRows.length !== 1 ? 'es' : ''}`;
+    _frCurrent = -1;
+    showToast(`Replaced ${count} destination${count !== 1 ? 's' : ''}`, 'success');
+  }
+
+  $('redirect-fr-find').addEventListener('input', frUpdateView);
+  $('redirect-fr-exact').addEventListener('change', frUpdateView);
+  $('btn-redirect-fr-next').addEventListener('click', () => frNavigate(1));
+  $('btn-redirect-fr-prev').addEventListener('click', () => frNavigate(-1));
+  $('btn-redirect-fr-one').addEventListener('click', frReplaceCurrent);
+  $('btn-redirect-fr-apply').addEventListener('click', frReplaceAll);
+
+  $('redirect-fr-find').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); frNavigate(1); }
+  });
+}
+
+/** Return the base URL (origin) for redirect destinations.
+ *  Priority: explicit siteDomain setting > auto-detected from first row URL. */
+function getRedirectBaseUrl() {
+  const siteDomain = (state.projectSettings.siteDomain || '').replace(/\/+$/, '');
+  if (siteDomain) return siteDomain;
+  const urlCol = state.urlColumn || 'Address';
+  for (const row of state.editedRows) {
+    const u = String(row[urlCol] || '').trim();
+    if (u.startsWith('http')) {
+      try { return new URL(u).origin; } catch (_) {}
+    }
+  }
+  return '';
+}
+
+/** When the site domain changes, update any redirect destinations that used the old domain. */
+function onSiteDomainChange() {
+  const newBase = getRedirectBaseUrl();
+  const urlCol = state.urlColumn || 'Address';
+  // Determine the old auto-detected base for comparison
+  let autoBase = '';
+  for (const row of state.editedRows) {
+    const u = String(row[urlCol] || '').trim();
+    if (u.startsWith('http')) {
+      try { autoBase = new URL(u).origin; } catch (_) {}
+      break;
+    }
+  }
+
+  // Re-evaluate existing redirect destinations:
+  // If a destination starts with a known old base URL (auto-detected or previous siteDomain),
+  // rewrite it with the new base.
+  for (const row of state.editedRows) {
+    const dest = String(row[REDIRECT_DEST_COL] || '').trim();
+    if (!dest) continue;
+    if (autoBase && dest.startsWith(autoBase + '/')) {
+      const pathPart = dest.slice(autoBase.length);
+      row[REDIRECT_DEST_COL] = newBase ? newBase + pathPart : pathPart;
+      setDirty(true);
+    }
+  }
+
+  setDirty(true);
+  if (_redirectEditorOpen) renderRedirectEditor();
+}
+
+function toggleRedirectEditor() {
+  if (_redirectEditorOpen) {
+    closeRedirectEditor();
+  } else {
+    openRedirectEditor(state.selectedIndex);
+  }
+}
+
+function openRedirectEditor(scrollToOrigIndex) {
+  if (state.editedRows.length === 0) {
+    showToast('No data loaded', 'error');
+    return;
+  }
+
+  // Ensure Redirect_Destination column exists
+  if (!state.headers.includes(REDIRECT_DEST_COL)) {
+    state.headers.push(REDIRECT_DEST_COL);
+    state.editedRows.forEach(r => { if (!(REDIRECT_DEST_COL in r)) r[REDIRECT_DEST_COL] = ''; });
+  }
+
+  // Close other full-panel views
+  if (_navEditorOpen) closeNavEditor();
+  if (_redirectEditorOpen) closeRedirectEditor();
+  if (_tableViewOpen) closeTableView();
+
+  _redirectEditorOpen = true;
+  document.getElementById('app').classList.add('tv-active');
+  $('content-area').classList.add('hidden');
+  $('no-selection').classList.add('hidden');
+  $('redirect-editor').classList.remove('hidden');
+  if ($('btn-redirects')) {
+    $('btn-redirects').classList.add('redirect-editor-active');
+    $('btn-redirects').textContent = 'Redirects ✓';
+  }
+
+  renderRedirectEditor();
+  if (typeof refreshViewSwitcher === 'function') refreshViewSwitcher();
+
+  // Scroll to and highlight the target row
+  if (scrollToOrigIndex !== undefined) {
+    setTimeout(() => {
+      const targetRow = $('redirect-editor-body').querySelector(`[data-orig-index="${scrollToOrigIndex}"]`);
+      if (targetRow) {
+        targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        targetRow.style.outline = '2px solid var(--accent)';
+        setTimeout(() => { targetRow.style.outline = ''; }, 2000);
+      }
+    }, 100);
+  }
+}
+
+function closeRedirectEditor() {
+  _redirectEditorOpen = false;
+  document.getElementById('app').classList.remove('tv-active');
+  $('redirect-editor').classList.add('hidden');
+  const btn = $('btn-redirects');
+  if (btn) {
+    btn.classList.remove('redirect-editor-active');
+    // Rebuild button: label text node + (optional) redirect badge for the currently selected row.
+    // Using textContent here would nuke the badge — set the label as a child text node instead.
+    btn.innerHTML = '';
+    btn.appendChild(document.createTextNode('Redirects'));
+    if (state.selectedIndex !== null) {
+      updateRedirectBadge(state.editedRows[state.selectedIndex]);
+    }
+  }
+
+  if (state.selectedIndex !== null) {
+    $('content-area').classList.remove('hidden');
+  } else {
+    $('no-selection').classList.remove('hidden');
+  }
+  if (typeof refreshViewSwitcher === 'function') refreshViewSwitcher();
+}
+
+function renderRedirectEditor() {
+  const urlCol = state.urlColumn || 'Address';
+  const kke = kkeCol();
+
+  // Default destination from project settings
+  const defaultRedirectUrl = (state.projectSettings.defaultRedirectUrl || '').trim();
+
+  // Base URL for constructing redirect destinations (site domain or auto-detected)
+  const baseUrl = getRedirectBaseUrl();
+
+  // Collect rows that need redirects:
+  // 1. Kill pages (always need a redirect)
+  // 2. Pages with a computed nav path that differs from current URL
+  const redirectEntries = [];
+
+  for (let i = 0; i < state.editedRows.length; i++) {
+    const row = state.editedRows[i];
+    const sourceUrl = String(row[urlCol] || '').trim();
+    if (!sourceUrl) continue;
+    // Fragments / embeddable content objects have no public URL — never need a redirect.
+    if (isFragmentRow(row)) continue;
+
+    const status = String(row[kke] || '').trim();
+    const computedPath = String(row['Computed Path'] || '').trim();
+    const existingDest = String(row[REDIRECT_DEST_COL] || '').trim();
+
+    // Consolidate pages — destination chases the target's final URL
+    if (status.toLowerCase() === 'consolidate') {
+      const target = String(row[CONSOLIDATE_COL] || '').trim();
+      let resolvedDest = '';
+      if (target) {
+        // Inline chase: if target is in inventory and has Computed Path, use that;
+        // fall back to target's explicit Redirect_Destination; otherwise target URL as-is.
+        const targetRow = state.editedRows.find(r => String(r[urlCol] || '').trim() === target);
+        if (targetRow) {
+          const tComp = String(targetRow['Computed Path'] || '').trim();
+          const tExplicit = String(targetRow[REDIRECT_DEST_COL] || '').trim();
+          if (tComp) resolvedDest = baseUrl ? baseUrl + '/' + tComp.replace(/^\//, '') : '/' + tComp.replace(/^\//, '');
+          else if (tExplicit && tExplicit !== '404') resolvedDest = tExplicit;
+          else resolvedDest = target;
+        } else {
+          resolvedDest = target;
+        }
+      }
+      // Use freshly derived URL for display unless the existing value is a genuine manual
+      // override (i.e., it differs from the raw Consolidate_Into target URL).
+      const isManualOverride = existingDest && existingDest !== target;
+      const finalDest = isManualOverride ? existingDest : resolvedDest;
+      redirectEntries.push({
+        origIndex: i,
+        row,
+        sourceUrl,
+        status: 'Consolidate',
+        defaultDest: resolvedDest,
+        currentDest: finalDest,
+        reason: 'consolidate'
+      });
+      continue;
+    }
+
+    // Kill pages
+    if (status.toLowerCase() === 'kill') {
+      // Priority: explicit > Consolidate target > nav node path > default destination > blank (retired/404)
+      let resolvedDest = '';
+      const consTarget = String(row[CONSOLIDATE_COL] || '').trim();
+      if (consTarget) {
+        const targetRow = state.editedRows.find(r => String(r[urlCol] || '').trim() === consTarget);
+        if (targetRow) {
+          const tComp = String(targetRow['Computed Path'] || '').trim();
+          const tExplicit = String(targetRow[REDIRECT_DEST_COL] || '').trim();
+          if (tComp) resolvedDest = baseUrl ? baseUrl + '/' + tComp.replace(/^\//, '') : '/' + tComp.replace(/^\//, '');
+          else if (tExplicit && tExplicit !== '404') resolvedDest = tExplicit;
+          else resolvedDest = consTarget;
+        } else {
+          resolvedDest = consTarget;
+        }
+      }
+      if (!resolvedDest) {
+        const navID = row['NavID'] || '';
+        if (navID && state.navNodes.length > 0) {
+          const node = state.navNodes.find(n => n.id === navID);
+          if (node && node.computedPath) {
+            resolvedDest = baseUrl ? baseUrl + '/' + node.computedPath.replace(/^\//, '') : '/' + node.computedPath.replace(/^\//, '');
+          }
+        }
+      }
+      if (!resolvedDest && defaultRedirectUrl) resolvedDest = defaultRedirectUrl;
+      // explicit per-row overrides everything
+      const finalDest = existingDest || resolvedDest;
+      redirectEntries.push({
+        origIndex: i,
+        row,
+        sourceUrl,
+        status: 'Kill',
+        defaultDest: resolvedDest,
+        currentDest: finalDest,
+        reason: 'kill'
+      });
+      continue;
+    }
+
+    // Pages whose URL changed via nav mapping
+    if (computedPath) {
+      const destUrl = baseUrl ? baseUrl + '/' + computedPath.replace(/^\//, '') : '/' + computedPath.replace(/^\//, '');
+      let sourcePath = '';
+      try { sourcePath = new URL(sourceUrl).pathname.replace(/\/+$/, ''); } catch (_) { sourcePath = sourceUrl.replace(/\/+$/, ''); }
+      const destPath = '/' + computedPath.replace(/^\//, '').replace(/\/+$/, '');
+      if (sourcePath !== destPath) {
+        redirectEntries.push({
+          origIndex: i,
+          row,
+          sourceUrl,
+          status: status || '—',
+          defaultDest: destUrl,
+          currentDest: existingDest || destUrl,
+          reason: 'url-changed'
+        });
+      }
+    }
+  }
+
+  // Populate status filter options from the actual statuses present
+  const statusFilterEl = $('redirect-status-filter');
+  const currentFilter = statusFilterEl.value;
+  const statusesPresent = [...new Set(redirectEntries.map(e => e.status))].sort();
+  const prevValue = currentFilter;
+  statusFilterEl.innerHTML = '';
+  const allOpt = document.createElement('option');
+  allOpt.value = ''; allOpt.textContent = 'All';
+  statusFilterEl.appendChild(allOpt);
+  for (const s of statusesPresent) {
+    const opt = document.createElement('option');
+    opt.value = s; opt.textContent = s;
+    statusFilterEl.appendChild(opt);
+  }
+  // Also add "URL changed" as a filter for moved pages
+  if (redirectEntries.some(e => e.reason === 'url-changed')) {
+    const opt = document.createElement('option');
+    opt.value = '_url-changed'; opt.textContent = 'URL Changed';
+    statusFilterEl.appendChild(opt);
+  }
+  // Restore previous selection if still valid
+  if (prevValue && [...statusFilterEl.options].some(o => o.value === prevValue)) {
+    statusFilterEl.value = prevValue;
+  }
+
+  // Apply status filter
+  const filterVal = statusFilterEl.value;
+  let filteredEntries = filterVal
+    ? (filterVal === '_url-changed'
+        ? redirectEntries.filter(e => e.reason === 'url-changed')
+        : redirectEntries.filter(e => e.status === filterVal))
+    : redirectEntries;
+
+  // Apply text search filter
+  const searchText = ($('redirect-search').value || '').trim().toLowerCase();
+  if (searchText) {
+    filteredEntries = filteredEntries.filter(e => {
+      const title = (e.row['Title 1'] || e.row['Title'] || '').toLowerCase();
+      const dest = String(e.row[REDIRECT_DEST_COL] || '').toLowerCase();
+      return e.sourceUrl.toLowerCase().includes(searchText)
+        || title.includes(searchText)
+        || dest.includes(searchText);
+    });
+  }
+
+  // Find/Replace destination filter
+  const frFindVal = $('redirect-fr-find') ? $('redirect-fr-find').value.trim() : '';
+  const frExact = $('redirect-fr-exact') ? $('redirect-fr-exact').checked : false;
+  if (frFindVal && !$('redirect-find-replace-bar').classList.contains('hidden')) {
+    filteredEntries = filteredEntries.filter(e => {
+      return frExact ? e.currentDest === frFindVal : e.currentDest.includes(frFindVal);
+    });
+  }
+
+  // Sort
+  if (_redirectSort.col && _redirectSort.dir) {
+    const dir = _redirectSort.dir === 'asc' ? 1 : -1;
+    const getVal = (e) => {
+      switch (_redirectSort.col) {
+        case 'status': return e.status.toLowerCase();
+        case 'title':  return (e.row['Title 1'] || e.row['Title'] || '').toLowerCase();
+        case 'source': return e.sourceUrl.toLowerCase();
+        case 'dest':   return e.currentDest.toLowerCase();
+        default: return '';
+      }
+    };
+    filteredEntries.sort((a, b) => {
+      const va = getVal(a), vb = getVal(b);
+      return va < vb ? -dir : va > vb ? dir : 0;
+    });
+  }
+
+  // Render column headers
+  const colHeaders = $('redirect-editor-col-headers');
+  colHeaders.innerHTML = '';
+  const cols = [
+    { key: 'status', label: 'Status',          cls: 're-col-hdr re-col-status' },
+    { key: 'title',  label: 'Title',            cls: 're-col-hdr re-col-title' },
+    { key: 'source', label: 'Current URL',      cls: 're-col-hdr re-col-source' },
+    { key: '',       label: '',                  cls: 're-col-hdr re-col-arrow' },
+    { key: 'dest',   label: 'Destination URL',   cls: 're-col-hdr re-col-dest' },
+    { key: '',       label: '',                  cls: 're-col-hdr re-col-actions' }
+  ];
+  cols.forEach(({ key, label, cls }) => {
+    const span = document.createElement('span');
+    span.className = cls;
+    if (key) {
+      span.classList.add('re-col-sortable');
+      const arrow = _redirectSort.col === key
+        ? (_redirectSort.dir === 'asc' ? ' ▲' : ' ▼')
+        : '';
+      span.textContent = label + arrow;
+      span.addEventListener('click', () => {
+        if (_redirectSort.col === key) {
+          _redirectSort.dir = _redirectSort.dir === 'asc' ? 'desc' : _redirectSort.dir === 'desc' ? '' : 'asc';
+          if (!_redirectSort.dir) _redirectSort.col = '';
+        } else {
+          _redirectSort.col = key;
+          _redirectSort.dir = 'asc';
+        }
+        renderRedirectEditor();
+      });
+    } else {
+      span.textContent = label;
+    }
+    colHeaders.appendChild(span);
+  });
+
+  // Stats
+  const killCount = redirectEntries.filter(e => e.reason === 'kill').length;
+  const movedCount = redirectEntries.filter(e => e.reason === 'url-changed').length;
+  const customCount = redirectEntries.filter(e => {
+    const dest = String(e.row[REDIRECT_DEST_COL] || '').trim();
+    return dest && dest !== e.defaultDest;
+  }).length;
+  let statsText = `${redirectEntries.length} redirects · ${killCount} kill · ${movedCount} moved`;
+  if (customCount > 0) statsText += ` · ${customCount} custom`;
+  if (filterVal) statsText += ` · showing ${filteredEntries.length}`;
+  $('redirect-editor-stats').textContent = statsText;
+
+  const body = $('redirect-editor-body');
+  body.innerHTML = '';
+
+  if (filteredEntries.length === 0) {
+    const msg = filterVal
+      ? 'No redirects match the selected filter.'
+      : 'No redirects needed — no Kill pages or URL changes found.';
+    body.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px;">${msg}</div>`;
+    return;
+  }
+
+  for (const entry of filteredEntries) {
+    body.appendChild(renderRedirectRow(entry, baseUrl));
+  }
+}
+
+function renderRedirectRow(entry, baseUrl) {
+  const div = document.createElement('div');
+  div.className = 're-row';
+  div.dataset.origIndex = entry.origIndex;
+
+  // KKE status badge
+  const statusCell = document.createElement('span');
+  statusCell.className = 're-cell re-col-status';
+  const badge = document.createElement('span');
+  badge.className = 're-kke-badge ' + entry.status.toLowerCase();
+  badge.textContent = entry.status;
+  statusCell.appendChild(badge);
+  div.appendChild(statusCell);
+
+  // Title (clickable → navigate to audit view)
+  const titleCell = document.createElement('span');
+  titleCell.className = 're-cell re-col-title re-cell-title';
+  titleCell.textContent = entry.row['Title 1'] || entry.row['Title'] || '(no title)';
+  titleCell.title = 'Click to view in audit mode';
+  titleCell.style.cursor = 'pointer';
+  titleCell.style.textDecoration = 'underline';
+  titleCell.style.textDecorationColor = 'var(--border)';
+  titleCell.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeRedirectEditor();
+    selectRow(entry.origIndex);
+  });
+  div.appendChild(titleCell);
+
+  // Source URL
+  const sourceCell = document.createElement('span');
+  sourceCell.className = 're-cell re-col-source re-cell-url';
+  sourceCell.textContent = entry.sourceUrl;
+  sourceCell.title = entry.sourceUrl;
+  div.appendChild(sourceCell);
+
+  // Arrow
+  const arrowCell = document.createElement('span');
+  arrowCell.className = 're-cell re-col-arrow re-cell-arrow';
+  arrowCell.textContent = '→';
+  div.appendChild(arrowCell);
+
+  // Destination URL (editable input)
+  const destCell = document.createElement('span');
+  destCell.className = 're-cell re-col-dest';
+  const destInput = document.createElement('input');
+  destInput.type = 'text';
+  destInput.value = entry.currentDest;
+  destInput.placeholder = entry.defaultDest;
+  if (entry.currentDest && entry.currentDest !== entry.defaultDest) {
+    destInput.classList.add('has-value');
+  }
+  if (entry.currentDest === '404') {
+    destInput.classList.add('redirect-dest-404');
+  }
+  destInput.addEventListener('input', () => {
+    const val = destInput.value.trim();
+    entry.row[REDIRECT_DEST_COL] = val;
+    destInput.classList.toggle('has-value', val && val !== entry.defaultDest);
+    destInput.classList.toggle('redirect-dest-404', val === '404');
+    setDirty(true);
+  });
+  destCell.appendChild(destInput);
+  div.appendChild(destCell);
+
+  // Actions: nav picker button (if nav tree is loaded) + 404 toggle
+  const actionsCell = document.createElement('span');
+  actionsCell.className = 're-cell re-col-actions';
+  if (state.navTree && state.navNodes.length > 0) {
+    const navBtn = document.createElement('button');
+    navBtn.className = 're-nav-btn';
+    navBtn.title = 'Pick from navigation tree';
+    navBtn.textContent = '🗂';
+    navBtn.addEventListener('click', () => {
+      showRedirectNavPicker(entry, destInput, baseUrl);
+    });
+    actionsCell.appendChild(navBtn);
+  }
+  // 404 toggle — explicit "let it 404" sentinel
+  const fourBtn = document.createElement('button');
+  fourBtn.className = 're-404-btn' + (entry.currentDest === '404' ? ' active' : '');
+  fourBtn.title = 'Mark as intentional 404 (no redirect rule will be written)';
+  fourBtn.textContent = '404';
+  fourBtn.addEventListener('click', () => {
+    const isCurrently404 = destInput.value.trim() === '404';
+    const newVal = isCurrently404 ? '' : '404';
+    destInput.value = newVal;
+    entry.row[REDIRECT_DEST_COL] = newVal;
+    destInput.classList.toggle('has-value', newVal && newVal !== entry.defaultDest);
+    destInput.classList.toggle('redirect-dest-404', newVal === '404');
+    fourBtn.classList.toggle('active', newVal === '404');
+    setDirty(true);
+  });
+  actionsCell.appendChild(fourBtn);
+  div.appendChild(actionsCell);
+
+  return div;
+}
+
+function showRedirectNavPicker(entry, destInput, baseUrl) {
+  // Build a simple dropdown of all nav nodes
+  const existing = document.querySelector('.re-nav-dropdown');
+  if (existing) existing.remove();
+
+  const dropdown = document.createElement('div');
+  dropdown.className = 're-nav-dropdown';
+  dropdown.style.cssText = 'position:fixed;z-index:600;background:var(--bg-surface);border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.2);max-height:400px;overflow-y:auto;width:600px;padding:4px 0;';
+
+  // Search input
+  const searchWrap = document.createElement('div');
+  searchWrap.style.cssText = 'padding:4px 8px;border-bottom:1px solid var(--border);';
+  const searchInput = document.createElement('input');
+  searchInput.type = 'text';
+  searchInput.placeholder = 'Search nav nodes…';
+  searchInput.style.cssText = 'width:100%;border:1px solid var(--border);border-radius:3px;padding:4px 8px;font-size:12px;outline:none;background:var(--bg-surface);color:var(--text-primary);';
+  searchWrap.appendChild(searchInput);
+  dropdown.appendChild(searchWrap);
+
+  const listWrap = document.createElement('div');
+  listWrap.style.cssText = 'max-height:250px;overflow-y:auto;';
+
+  function renderList(filter) {
+    listWrap.innerHTML = '';
+    const sorted = [...state.navNodes].sort((a, b) => (a.sortID || a.number || '').localeCompare(b.sortID || b.number || ''));
+    const nodes = filter
+      ? sorted.filter(n => n.label.toLowerCase().includes(filter) || (n.breadcrumb || '').toLowerCase().includes(filter))
+      : sorted;
+
+    for (const node of nodes) {
+      const item = document.createElement('div');
+      item.style.cssText = 'padding:5px 12px;font-size:12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:16px;';
+      item.innerHTML = `<span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(node.breadcrumb || node.label)}</span><span style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);flex-shrink:0;white-space:nowrap;">${escapeHtml(node.computedPath || '')}</span>`;
+      item.addEventListener('mouseenter', () => { item.style.background = 'var(--bg-hover)'; });
+      item.addEventListener('mouseleave', () => { item.style.background = ''; });
+      item.addEventListener('click', () => {
+        const destUrl = node.computedPath
+          ? (baseUrl ? baseUrl + '/' + node.computedPath.replace(/^\//, '') : '/' + node.computedPath.replace(/^\//, ''))
+          : '';
+        destInput.value = destUrl;
+        entry.row[REDIRECT_DEST_COL] = destUrl;
+        destInput.classList.toggle('has-value', destUrl !== entry.defaultDest);
+        setDirty(true);
+        dropdown.remove();
+        cleanup();
+      });
+      listWrap.appendChild(item);
+    }
+  }
+
+  renderList('');
+  dropdown.appendChild(listWrap);
+
+  // Position near the button
+  const rect = destInput.getBoundingClientRect();
+  dropdown.style.right = '8px';
+  dropdown.style.top = Math.min(rect.bottom + 4, window.innerHeight - 410) + 'px';
+
+  document.body.appendChild(dropdown);
+  searchInput.focus();
+
+  searchInput.addEventListener('input', () => {
+    renderList(searchInput.value.trim().toLowerCase());
+  });
+
+  // Close on outside click
+  function onOutsideClick(e) {
+    if (!dropdown.contains(e.target)) {
+      dropdown.remove();
+      cleanup();
+    }
+  }
+  function cleanup() {
+    document.removeEventListener('click', onOutsideClick, true);
+  }
+  setTimeout(() => document.addEventListener('click', onOutsideClick, true), 0);
+}
+
+// ─── Redirect map export ──────────────────────────────────────────────────────
+
+async function exportRedirectMap() {
+  if (state.editedRows.length === 0) { showToast('No data to export', 'error'); return; }
+
+  const urlCol = state.urlColumn || 'Address';
+  const kke = kkeCol();
+  const redirectRows = [];
+
+  // Base URL for constructing redirect destinations (site domain or auto-detected)
+  const baseUrl = getRedirectBaseUrl();
+
+  // Use default redirect URL from editor input if available
+  const defaultRedirectUrl = (state.projectSettings.defaultRedirectUrl || '').trim();
+
+  for (const row of state.editedRows) {
+    const sourceUrl = String(row[urlCol] || '').trim();
+    if (!sourceUrl) continue;
+
+    const status = String(row[kke] || '').trim().toLowerCase();
+    const computedPath = String(row['Computed Path'] || '').trim();
+
+    // 1. Kill pages → priority: explicit > nav node path > default > blank (retired)
+    if (status === 'kill') {
+      const customDest = String(row[REDIRECT_DEST_COL] || '').trim();
+      let dest = '';
+      if (customDest) {
+        dest = customDest;
+      } else {
+        // Check for nav node assignment
+        const navID = row['NavID'] || '';
+        if (navID && state.navNodes.length > 0) {
+          const node = state.navNodes.find(n => n.id === navID);
+          if (node && node.computedPath) {
+            dest = baseUrl ? baseUrl + '/' + node.computedPath.replace(/^\//, '') : '/' + node.computedPath.replace(/^\//, '');
+          }
+        }
+        if (!dest && defaultRedirectUrl) dest = defaultRedirectUrl;
+      }
+      redirectRows.push({
+        'Source URL': sourceUrl,
+        'Destination URL': dest,
+        'Status Code': '301',
+        'Reason': 'Page marked Kill'
+      });
+      continue;
+    }
+
+    // 2. Pages with a computed nav path that differs from the current URL
+    if (computedPath) {
+      const destinationUrl = baseUrl ? baseUrl + '/' + computedPath.replace(/^\//, '') : '/' + computedPath.replace(/^\//, '');
+      // Compare path portions, normalizing trailing slashes
+      let sourcePath = '';
+      try {
+        sourcePath = new URL(sourceUrl).pathname.replace(/\/+$/, '');
+      } catch (_) {
+        sourcePath = sourceUrl.replace(/\/+$/, '');
+      }
+      const destPath = '/' + computedPath.replace(/^\//, '').replace(/\/+$/, '');
+      if (sourcePath !== destPath) {
+        const customDest = String(row[REDIRECT_DEST_COL] || '').trim();
+        redirectRows.push({
+          'Source URL': sourceUrl,
+          'Destination URL': customDest || destinationUrl,
+          'Status Code': '301',
+          'Reason': 'URL changed by navigation mapping'
+        });
+      }
+    }
+  }
+
+  if (redirectRows.length === 0) {
+    showToast('No redirects needed — no Kill pages or URL mismatches found', 'error');
+    return;
+  }
+
+  const result = await window.electronAPI.exportRedirects({ rows: redirectRows });
+  if (result.success) showToast(`Exported ${result.count} redirects`, 'success');
+  else if (result.error !== 'Cancelled') showToast('Export failed: ' + result.error, 'error');
+}
+
+// ─── Import/merge audit decisions (Phase 7.2) ────────────────────────────────
+
+async function importMergeAudit() {
+  if (state.editedRows.length === 0) { showToast('Open a file first', 'error'); return; }
+
+  // Step 1: Open file and get sheet names
+  const fileInfo = await window.electronAPI.importAuditMergeOpen();
+  if (!fileInfo) return;
+  if (fileInfo.error) { showToast('Import error: ' + fileInfo.error, 'error'); return; }
+
+  // Step 2: Show modal — user picks sheet (if multiple) + columns
+  const result = await showImportMergeModal(fileInfo);
+  if (!result) return;
+
+  const { selectedColumns, data } = result;
+  const urlCol = state.urlColumn || 'Address';
+  const impUrlCol = data.headers.find(h => h.toLowerCase() === urlCol.toLowerCase());
+  if (!impUrlCol) {
+    showToast(`Selected sheet missing "${urlCol}" column`, 'error');
+    return;
+  }
+
+  // Ensure each selected column exists in current headers
+  const kkeIdx = state.headers.indexOf(kkeCol());
+  let insertOffset = 0;
+  for (const col of selectedColumns) {
+    if (!state.headers.includes(col)) {
+      const insertAt = kkeIdx >= 0 ? kkeIdx + 1 + insertOffset : state.headers.length;
+      state.headers.splice(insertAt, 0, col);
+      state.editedRows.forEach(row => { row[col] = row[col] || ''; });
+      insertOffset++;
+    }
+  }
+
+  // Build lookup from imported data by URL
+  const importMap = new Map();
+  data.rows.forEach(row => {
+    const url = String(row[impUrlCol] || '').trim().toLowerCase();
+    if (url) importMap.set(url, row);
+  });
+
+  // Merge selected columns by URL match
+  let merged = 0;
+  let skipped = 0;
+  let matched = 0;
+
+  state.editedRows.forEach(row => {
+    const url = String(row[urlCol] || '').trim().toLowerCase();
+    if (!url) return;
+    const imp = importMap.get(url);
+    if (!imp) return;
+    matched++;
+    for (const col of selectedColumns) {
+      const impVal = String(imp[col] || '').trim();
+      const curVal = String(row[col] || '').trim();
+      if (impVal && !curVal) {
+        row[col] = impVal;
+        merged++;
+      } else if (impVal && curVal && impVal !== curVal) {
+        skipped++;
+      }
+    }
+  });
+
+  // Add new URLs that don't exist in current file
+  let added = 0;
+  const addNew = $('import-merge-add-new')?.checked;
+  if (addNew) {
+    // Build set of current URLs for fast lookup
+    const currentUrls = new Set();
+    state.editedRows.forEach(row => {
+      const url = String(row[urlCol] || '').trim().toLowerCase();
+      if (url) currentUrls.add(url);
+    });
+
+    data.rows.forEach(impRow => {
+      const url = String(impRow[impUrlCol] || '').trim().toLowerCase();
+      if (!url || currentUrls.has(url)) return;
+
+      // Create new row with all current headers initialized
+      const newRow = {};
+      state.headers.forEach(h => { newRow[h] = ''; });
+
+      // Copy URL
+      newRow[urlCol] = impRow[impUrlCol] || '';
+
+      // Copy all imported columns
+      data.headers.forEach(h => {
+        // Map imported header to current header (case-insensitive)
+        const match = state.headers.find(sh => sh.toLowerCase() === h.toLowerCase());
+        if (match && impRow[h]) {
+          let val = String(impRow[h] || '').trim();
+          if (val === '—' || val === '-') val = '';
+          if (val) newRow[match] = val;
+        }
+      });
+
+      state.rows.push(newRow);
+      state.editedRows.push(newRow);
+      currentUrls.add(url);
+      added++;
+    });
+  }
+
+  setDirty(true);
+  applyFilter();
+  if (state.selectedIndex !== null) {
+    renderMetaFields(state.editedRows[state.selectedIndex]);
+    populateAuditFields(state.editedRows[state.selectedIndex]);
+  }
+  const parts = [`${matched} URLs matched`, `${merged} values imported`];
+  if (skipped) parts.push(`${skipped} kept existing`);
+  if (added) parts.push(`${added} new rows added`);
+  showToast(parts.join(', '), 'success');
+}
+
+function showImportMergeModal(fileInfo) {
+  return new Promise(resolve => {
+    const overlay    = document.getElementById('import-merge-overlay');
+    const modal      = document.getElementById('import-merge-modal');
+    const colList    = document.getElementById('import-merge-col-list');
+    const info       = document.getElementById('import-merge-file-info');
+    const sheetRow   = document.getElementById('import-merge-sheet-row');
+    const sheetSel   = document.getElementById('import-merge-sheet-select');
+    const btnApply   = document.getElementById('btn-import-merge-apply');
+    const btnCancel  = document.getElementById('btn-import-merge-cancel');
+    const btnClose   = document.getElementById('btn-import-merge-close');
+
+    const fileName = fileInfo.filePath ? fileInfo.filePath.split('/').pop() : 'imported file';
+    const { sheetNames, filePath } = fileInfo;
+    let currentData = null; // holds { headers, rows } for selected sheet
+
+    // Sheet picker — show only if multiple sheets
+    if (sheetNames.length > 1) {
+      sheetRow.classList.remove('hidden');
+      sheetSel.innerHTML = '';
+      sheetNames.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        sheetSel.appendChild(opt);
+      });
+    } else {
+      sheetRow.classList.add('hidden');
+    }
+
+    // Load a sheet's data and populate the column list
+    async function loadSheet(sheetName) {
+      colList.innerHTML = '<div style="padding:10px;color:var(--text-muted);font-size:12px;">Loading...</div>';
+      btnApply.disabled = true;
+      const data = await window.electronAPI.importAuditMergeReadSheet({ filePath, sheetName });
+      if (data.error) {
+        colList.innerHTML = `<div style="padding:10px;color:var(--kke-kill);font-size:12px;">${data.error}</div>`;
+        currentData = null;
+        return;
+      }
+      currentData = data;
+      info.textContent = `${fileName} → ${sheetName} — ${data.rows.length} rows, ${data.headers.length} columns`;
+      populateColList(data.headers);
+      btnApply.disabled = false;
+    }
+
+    function populateColList(headers) {
+      const urlCol = state.urlColumn || 'Address';
+      colList.innerHTML = '';
+      headers.forEach(h => {
+        if (h.toLowerCase() === urlCol.toLowerCase()) return;
+        const label = document.createElement('label');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = h;
+        label.appendChild(cb);
+        const span = document.createElement('span');
+        span.textContent = h;
+        label.appendChild(span);
+        const exists = state.headers.includes(h);
+        const badge = document.createElement('span');
+        badge.textContent = exists ? 'exists' : 'new';
+        badge.className = exists ? 'import-col-badge' : 'import-col-badge import-col-badge-new';
+        label.appendChild(badge);
+        colList.appendChild(label);
+      });
+    }
+
+    // Wire sheet change
+    sheetSel.addEventListener('change', onSheetChange);
+    function onSheetChange() { loadSheet(sheetSel.value); }
+
+    overlay.classList.remove('hidden');
+    modal.classList.remove('hidden');
+
+    // Load first sheet immediately
+    loadSheet(sheetNames[0]);
+
+    function cleanup() {
+      overlay.classList.add('hidden');
+      modal.classList.add('hidden');
+      sheetSel.removeEventListener('change', onSheetChange);
+      btnApply.removeEventListener('click', onApply);
+      btnCancel.removeEventListener('click', onCancel);
+      btnClose.removeEventListener('click', onCancel);
+      overlay.removeEventListener('click', onCancel);
+    }
+
+    function onApply() {
+      if (!currentData) { showToast('No sheet data loaded', 'error'); return; }
+      const checked = [...colList.querySelectorAll('input[type="checkbox"]:checked')].map(cb => cb.value);
+      if (checked.length === 0) { showToast('Select at least one column', 'error'); return; }
+      cleanup();
+      resolve({ selectedColumns: checked, data: currentData });
+    }
+
+    function onCancel() {
+      cleanup();
+      resolve(null);
+    }
+
+    btnApply.addEventListener('click', onApply);
+    btnCancel.addEventListener('click', onCancel);
+    btnClose.addEventListener('click', onCancel);
+    overlay.addEventListener('click', onCancel);
+  });
+}
+
+// ─── Batch actions ────────────────────────────────────────────────────────────
+
+// ─── Unified multi-row action bar ─────────────────────────────────────────────
+//
+// Single bar that applies an action to either:
+//   - the rows the user has multi-selected (Cmd-click / Shift-click), or
+//   - the rows currently visible after filters (when nothing's selected and a filter narrows the list)
+// Replaces the old separate "batch-bar" (filtered) and "bulk-bar" (selected) pair.
+
+function setupMultiBar() {
+  const action = $('multi-action');
+  const valueSel = $('multi-value');
+  const applyBtn = $('btn-multi-apply');
+  const clearSelBtn = $('btn-multi-clear-selection');
+
+  action.addEventListener('change', () => {
+    const a = action.value;
+    valueSel.innerHTML = '';
+    valueSel.classList.add('hidden');
+    applyBtn.classList.add('hidden');
+    if (!a) return;
+
+    const addOpts = (items, opts = {}) => {
+      if (opts.blank) {
+        const o = document.createElement('option');
+        o.value = ''; o.textContent = '— Clear';
+        valueSel.appendChild(o);
+      }
+      items.forEach(v => {
+        const o = document.createElement('option');
+        o.value = v; o.textContent = v;
+        valueSel.appendChild(o);
+      });
+    };
+
+    if (a === 'kke') {
+      addOpts(allKkeStates(), { blank: true });
+    } else if (a === 'published') {
+      addOpts(['Published', 'Unpublished', 'Draft', '404'], { blank: true });
+    } else if (a === 'page-type') {
+      addOpts((state.pageTypeLibrary || []).slice().sort(), { blank: true });
+    } else if (a === 'content-theme') {
+      const fromData = new Set();
+      state.editedRows.forEach(r => { const v = String(r['Content_Theme'] || '').trim(); if (v) fromData.add(v); });
+      const lib = Array.from(new Set([...(state.contentThemeLibrary || []), ...fromData])).sort();
+      addOpts(lib, { blank: true });
+    } else if (a === 'group') {
+      addOpts(collectGroups().sort(), { blank: true });
+    } else if (a === 'primary-tag') {
+      addOpts((state.tagLibrary || []).slice().sort(), { blank: true });
+    } else if (a === 'add-tag') {
+      addOpts((state.tagLibrary || []).slice().sort());
+    }
+    valueSel.classList.remove('hidden');
+    applyBtn.classList.remove('hidden');
+  });
+
+  applyBtn.addEventListener('click', async () => {
+    const a = action.value;
+    const v = valueSel.value;
+    if (!a) return;
+    // Determine target rows
+    const targets = getMultiBarTargets();
+    if (!targets || targets.length === 0) {
+      showToast('Nothing to apply to', 'error');
+      return;
+    }
+    const using = state.multiSelected.size > 0 ? 'selected' : 'filtered';
+    const verb = a === 'add-tag' ? 'Add tag' : (v ? 'Set' : 'Clear');
+    const valLabel = v || '(blank)';
+    if (!(await confirmDialog({ title: 'Apply to rows', message: `${verb} "${valLabel}" — apply to ${targets.length} ${using} row${targets.length !== 1 ? 's' : ''}?`, confirmLabel: verb }))) return;
+    let touched = 0;
+    for (const origIndex of targets) {
+      const row = state.editedRows[origIndex];
+      if (await applyMultiAction(row, origIndex, a, v)) touched++;
+    }
+    setDirty(true);
+    if (state.multiSelected.size > 0) {
+      state.multiSelected.clear();
+      updateMultiBar();
+    }
+    applyFilter();
+    if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+    showToast(`Updated ${touched} row${touched !== 1 ? 's' : ''}`, 'success');
+    action.value = '';
+    valueSel.innerHTML = '';
+    valueSel.classList.add('hidden');
+    applyBtn.classList.add('hidden');
+  });
+
+  clearSelBtn.addEventListener('click', () => {
+    state.multiSelected.clear();
+    updateMultiBar();
+    renderVisibleRows();
+  });
+}
+
+/** Returns array of origIndex values to operate on. Multi-selected wins;
+ *  otherwise the visible filter results. */
+function getMultiBarTargets() {
+  if (state.multiSelected.size > 0) return Array.from(state.multiSelected);
+  if (Array.isArray(state.filteredRows) && state.filteredRows.length > 0
+      && state.filteredRows.length < state.editedRows.length) {
+    return state.filteredRows.map(r => r.origIndex);
+  }
+  return [];
+}
+
+async function applyMultiAction(row, origIndex, action, value) {
+  if (action === 'kke') {
+    const old = String(row[kkeCol()] || '');
+    if (old === value) return false;
+    row[kkeCol()] = value;
+    logChange(origIndex, kkeCol(), old, value);
+    return true;
+  }
+  if (action === 'published') {
+    const old = String(row['Published_Status'] || '');
+    if (old === value) return false;
+    row['Published_Status'] = value;
+    logChange(origIndex, 'Published_Status', old, value);
+    return true;
+  }
+  if (action === 'page-type') {
+    const old = String(row['Page_Type'] || '');
+    if (old === value) return false;
+    row['Page_Type'] = value;
+    logChange(origIndex, 'Page_Type', old, value);
+    return true;
+  }
+  if (action === 'content-theme') {
+    const old = String(row['Content_Theme'] || '');
+    if (old === value) return false;
+    row['Content_Theme'] = value;
+    logChange(origIndex, 'Content_Theme', old, value);
+    return true;
+  }
+  if (action === 'group') {
+    const old = String(row[groupCol()] || '');
+    if (old === value) return false;
+    row[groupCol()] = value;
+    logChange(origIndex, groupCol(), old, value);
+    return true;
+  }
+  if (action === 'primary-tag') {
+    const old = String(row[primaryTagCol()] || '');
+    if (old === value) return false;
+    row[primaryTagCol()] = value;
+    logChange(origIndex, primaryTagCol(), old, value);
+    return true;
+  }
+  if (action === 'add-tag') {
+    const existing = String(row[tagsCol()] || '').split(',').map(t => t.trim()).filter(Boolean);
+    if (existing.includes(value)) return false;
+    existing.push(value);
+    const newVal = existing.join(', ');
+    logChange(origIndex, tagsCol(), row[tagsCol()] || '', newVal);
+    row[tagsCol()] = newVal;
+    return true;
+  }
+  return false;
+}
+
+function updateMultiBar() {
+  const bar = $('multi-bar');
+  const label = $('multi-bar-label');
+  const clearSelBtn = $('btn-multi-clear-selection');
+  if (!bar) return;
+  const selCount = state.multiSelected.size;
+  const filtCount = (state.filteredRows && state.filteredRows.length) || 0;
+  const totalCount = state.editedRows.length;
+  const filterIsNarrowing = filtCount > 0 && filtCount < totalCount;
+
+  if (selCount > 0) {
+    bar.classList.remove('hidden');
+    label.textContent = `Apply to ${selCount} selected:`;
+    clearSelBtn.classList.remove('hidden');
+  } else if (filterIsNarrowing) {
+    bar.classList.remove('hidden');
+    label.textContent = `Apply to ${filtCount} filtered:`;
+    clearSelBtn.classList.add('hidden');
+  } else {
+    bar.classList.add('hidden');
+  }
+}
+
+// Backwards-compat shims so existing call sites keep working
+function updateBulkBar() { updateMultiBar(); }
+function updateBatchBar() { updateMultiBar(); }
+
+// ─── Duplicate detection ──────────────────────────────────────────────────────
+
+function detectDuplicates() {
+  _duplicateSet.clear();
+  const dupFields = ['Title 1', 'H1-1', 'Meta Description 1'].filter(f => state.headers.includes(f));
+  if (dupFields.length === 0) return;
+
+  // Build fingerprints: concat of all dup fields
+  const fingerprints = new Map(); // fingerprint → [origIndex, ...]
+  state.editedRows.forEach((row, i) => {
+    const fp = dupFields.map(f => String(row[f] || '').trim().toLowerCase()).join('||');
+    if (!fp || fp === dupFields.map(() => '').join('||')) return; // skip empty
+    if (!fingerprints.has(fp)) fingerprints.set(fp, []);
+    fingerprints.get(fp).push(i);
+  });
+
+  fingerprints.forEach((indices) => {
+    if (indices.length > 1) {
+      indices.forEach(i => _duplicateSet.add(i));
+    }
+  });
+}
+
+// ─── Row flagging ─────────────────────────────────────────────────────────────
+
+function toggleFlag(origIndex) {
+  const row = state.editedRows[origIndex];
+  const current = String(row['_Flagged'] || '').trim();
+  row['_Flagged'] = current === '1' ? '' : '1';
+  setDirty(true);
+  renderVisibleRows();
+}
+
+// ─── Utils ────────────────────────────────────────────────────────────────────
+
+function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
+
+// ─── Go ───────────────────────────────────────────────────────────────────────
+
+init();
