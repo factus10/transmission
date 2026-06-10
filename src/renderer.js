@@ -15049,10 +15049,23 @@ function exportFileStamp() {
 
 function builtinExportProfiles() {
   const urlCol = state.urlColumn || 'Address';
-  const clientCols = [urlCol, 'Title 1', 'Page_Type', 'Content_Theme', groupCol(), kkeCol(),
-                      'Final_KKE', tagsCol(), notesCol(), 'Redirect_Destination'];
+  // Generous candidate list — only columns present in this file get checked,
+  // so name variants and optional columns cost nothing.
+  const clientCols = [
+    // Identity / base page info
+    urlCol, 'Title 1', 'Title', 'Page Name', 'Page Title', 'H1-1', 'H1',
+    'Meta Description 1', 'Meta Description',
+    // Page vitals a client recognizes
+    'Status Code', 'Word Count', 'Crawl Depth', 'Published_Status',
+    // Classification
+    'Page_Type', 'Content_Theme', groupCol(), primaryTagCol(),
+    // Decisions + rationale
+    kkeCol(), 'Final_KKE', tagsCol(), notesCol(),
+    // Where content is going
+    'Consolidate_Into', 'Redirect_Destination'
+  ];
   return [
-    { name: 'Client Summary', builtin: true, columns: clientCols.filter(h => state.headers.includes(h)) },
+    { name: 'Client Summary', builtin: true, columns: [...new Set(clientCols)].filter(h => state.headers.includes(h)) },
     { name: 'Full (all columns)', builtin: true, columns: state.headers.filter(h => h !== '_rowIndex') }
   ];
 }
