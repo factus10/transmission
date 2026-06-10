@@ -42,6 +42,7 @@ The list below is a feature catalog, not a how-to.
 ### Guidance & onboarding
 - **Welcome dialog + 5-step Product Tour** — a spotlight walkthrough on first launch; re-openable from the Help menu
 - **Keyboard cheat-sheet** — press `?` anywhere (or Help → Keyboard Shortcuts, `Cmd+/`)
+- **Searchable help** — the Help window has a sticky search box (Cmd+F focuses it) that filters sections live
 - **Pre-Handoff Check** (Migration menu) — one command runs every pre-flight check (unreviewed rows, consolidate targets, redirect chains, duplicate nav IDs, empty nav leaves) into a single exportable pass/issue report
 - **AI Suggest for Unreviewed** (Project menu) — fills `Suggested_KKE` for undecided pages via the rubric + Claude (requires your API key); never touches your human KKE
 - **Compare KKE vs SME** (SME menu) — full-screen side-by-side of auditor vs SME decisions, click-through to any row
@@ -76,7 +77,7 @@ The unified Export dialog (`File → Export…`) is a single chooser for: Filter
 - Resizable columns via drag handles
 - **Columns...** button opens a column config dialog to choose which columns are visible
 - **Frozen row number column** — the # column stays frozen when scrolling horizontally
-- **Inline editing** — double-click audit columns (KKE, Tags, Notes, Group, Primary Tag, SME Decision, SME Notes, Content Owner, Final KKE) to edit inline. KKE-type columns show a dropdown, text columns show a text input. Commit on blur or Enter, cancel with Escape.
+- **Inline editing** — double-click audit columns (KKE, Tags, Notes, Group, Primary Tag, SME Decision, SME Notes, Content Owner, Final KKE) to edit inline. KKE-type columns show a dropdown, text columns show a text input. Commit on blur or Enter, cancel with Escape. **Tab / Shift+Tab** commits and moves to the adjacent editable column on the same row.
 - **Keyboard navigation** — Arrow Up/Down and j/k navigate rows when no input is focused; the selected row scrolls into view automatically
 - Independent sort and filter state from the sidebar — switching back preserves both
 - Row selection syncs between Table View and the sidebar
@@ -169,7 +170,7 @@ A dedicated **SME** top-level menu for subject-matter-expert review:
 
 - **Saved filters** — capture text search + KKE filter + group filter + field filters as a named bundle in the file's `KKE_Settings` sheet. Select "+ Save current filter..." in the dropdown to save; restore any saved filter to instantly re-apply all four dimensions.
 - **Sortable URL column** — click the header to sort ascending/descending
-- **Multi-select** — Cmd+click to toggle, Shift+click for range
+- **Multi-select** — Cmd+click to toggle, Shift+click for range; the checkbox in the **#** column header selects every visible (filtered) row at once (indeterminate when only some are selected)
 
 ### Row Flagging
 - Star icon in every sidebar row — click or press `F` to flag
@@ -284,6 +285,7 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - **Broken link check** — scan page links and report broken ones (click `🔗`)
 - **Screenshot capture** — save the current view as PNG (click `📷`)
 - **Open in browser** — open the current URL in the system browser
+- **Load-error card** — when a page fails to load, the pane shows the URL + error with Retry / Open-in-browser buttons (instead of a silent blank view); a dead page is audit information, not an app failure
 
 ### Audit Bar
 The audit bar is structured as a **vertical flow of labeled cluster cards**. Each cluster has a colored uppercase pill on its left edge identifying the activity, and the pill is clickable to collapse the cluster to a summary line. Cluster visibility persists per-user.

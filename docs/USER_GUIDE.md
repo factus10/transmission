@@ -451,6 +451,7 @@ You have two ways to point the Multi-bar at the right pages:
 
 - **Filter only.** Narrow the list with search, the KKE filter, or field filters (see [Finding the Work](#4-finding-the-work)) and let the Multi-bar act on the whole result. Best when the rule is expressible — "all 404s," "everything tagged thin-content."
 - **Multi-select.** **Cmd+click** toggles individual rows and **Shift+click** selects a range. Best when the rule is in your head — "these five, not those two."
+- **Select all visible.** The checkbox at the left of the column header strip selects every row the current filter shows — then Cmd+click to drop the exceptions and apply. It shows a dash (indeterminate) when only some visible rows are selected, and clicking it again clears the selection.
 
 If you've both selected rows and applied a filter, your **selection wins**.
 
@@ -1444,7 +1445,7 @@ Hidden from the data-sheet picker; they carry project state and travel with the 
 
 ## Table View
 
-**View → Table** or **Cmd+T** — a full-width spreadsheet view (sidebar hidden). All columns shown. **Sort** any header (asc/desc/none); per-column **text filters** (independent of the sidebar; a banner reminds you Table View filters on its own); **resize** by dragging header edges; **Columns…** toggles visibility + reorder. Selecting a row preserves it when you switch back to Audit. The **#** column is frozen when scrolling horizontally. **Inline editing**: double-click any audit column (KKE-type → dropdown; others → text); Enter/blur commits, Escape cancels. **Keyboard**: Arrow Up/Down or j/k navigate when no input is focused.
+**View → Table** or **Cmd+T** — a full-width spreadsheet view (sidebar hidden). All columns shown. **Sort** any header (asc/desc/none); per-column **text filters** (independent of the sidebar; a banner reminds you Table View filters on its own); **resize** by dragging header edges; **Columns…** toggles visibility + reorder. Selecting a row preserves it when you switch back to Audit. The **#** column is frozen when scrolling horizontally. **Inline editing**: double-click any audit column (KKE-type → dropdown; others → text); Enter/blur commits, Escape cancels, and **Tab / Shift+Tab** commits and hops to the adjacent editable column — so you can work across a row without re-clicking. **Keyboard**: Arrow Up/Down or j/k navigate when no input is focused.
 
 ## Preferences (persisted)
 

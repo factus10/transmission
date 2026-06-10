@@ -2646,11 +2646,34 @@ function applySort() {
 function renderColHeaders() {
   els.colHeaderStrip.innerHTML = '';
 
+  // Select-all-visible checkbox (replaces the "#" label's dead space).
+  // Checked = every filtered row is multi-selected; click toggles the set.
   const numCell = document.createElement('div');
   numCell.className = 'col-header-cell';
-  numCell.style.cssText = 'width:36px;flex:none;';
-  numCell.textContent = '#';
+  numCell.style.cssText = 'width:36px;flex:none;display:flex;align-items:center;gap:3px;';
+  const selAll = document.createElement('input');
+  selAll.type = 'checkbox';
+  selAll.id = 'select-all-visible';
+  selAll.title = 'Select all visible rows (then uncheck a few, or apply a bulk action)';
+  selAll.style.cssText = 'margin:0;cursor:pointer;';
+  selAll.addEventListener('click', e => {
+    e.stopPropagation();
+    const allSelected = state.filteredRows.length > 0 &&
+      state.filteredRows.every(fr => state.multiSelected.has(fr.origIndex));
+    if (allSelected) {
+      state.multiSelected.clear();
+    } else {
+      state.filteredRows.forEach(fr => state.multiSelected.add(fr.origIndex));
+    }
+    renderVisibleRows();
+    updateBulkBar();
+  });
+  numCell.appendChild(selAll);
+  const numLabel = document.createElement('span');
+  numLabel.textContent = '#';
+  numCell.appendChild(numLabel);
   els.colHeaderStrip.appendChild(numCell);
+  syncSelectAllCheckbox();
 
   // URL column (clickable to sort)
   if (state.urlColumn) {
@@ -4953,8 +4976,12 @@ function setupThumbnailPreview() {
 
 function setupWebviewEvents() {
   const wv = els.webview;
+  const errPanel = document.getElementById('webview-error');
+  const errDetail = document.getElementById('webview-error-detail');
+  const hideError = () => errPanel?.classList.add('hidden');
 
   wv.addEventListener('did-start-loading', () => {
+    hideError();
     els.webviewLoading.classList.remove('hidden');
   });
 
@@ -4968,9 +4995,27 @@ function setupWebviewEvents() {
     scheduleThumbCapture();
   });
 
+  // Persistent in-pane error card instead of a transient toast — a blank
+  // webview with no explanation reads as "the app broke", when a dead page is
+  // actually useful audit information. -3/-2 are navigation races, not errors.
   wv.addEventListener('did-fail-load', e => {
     els.webviewLoading.classList.add('hidden');
-    if (e.errorCode !== -3 && e.errorCode !== -2) showToast(`Page load failed (${e.errorDescription})`, 'error');
+    if (e.errorCode === -3 || e.errorCode === -2 || !e.isMainFrame) return;
+    if (errPanel && errDetail) {
+      errDetail.textContent = `${e.validatedURL || ''}\n${e.errorDescription || ''} (${e.errorCode})`;
+      errPanel.classList.remove('hidden');
+    }
+  });
+
+  document.getElementById('wv-error-retry')?.addEventListener('click', () => {
+    hideError();
+    try { wv.reload(); } catch (e) { /* no-op */ }
+  });
+  document.getElementById('wv-error-external')?.addEventListener('click', () => {
+    try {
+      const url = wv.getURL() || (state.selectedIndex !== null ? state.editedRows[state.selectedIndex][state.urlColumn] : '');
+      if (url) window.electronAPI.openExternal(url);
+    } catch (e) { /* no-op */ }
   });
 
   wv.addEventListener('new-window', e => {
@@ -18658,6 +18703,7 @@ function renderTableVisibleRows() {
       const cell = document.createElement('div');
       cell.className = 'tv-cell';
       cell.style.width = col.width + 'px';
+      cell.dataset.col = col.name;
 
       const val = row[col.name] ?? '';
 
@@ -18689,6 +18735,23 @@ function renderTableVisibleRows() {
 
     body.appendChild(rowEl);
   }
+}
+
+/** Tab/Shift+Tab from an inline edit: open the adjacent editable cell on the
+ *  same row (wrapping). Cells are re-rendered after a commit, so the target is
+ *  re-found by data attributes; bails silently if it scrolled out of the DOM. */
+function tvEditAdjacent(colName, origIndex, dir) {
+  const visibleCols = _tableColumns.filter(c => c.visible);
+  const editableCols = new Set([kkeCol(), tagsCol(), notesCol(), groupCol(), primaryTagCol(),
+                                smeDecisionCol(), smeNotesCol(), contentOwnerCol(), finalKkeCol()]);
+  const editables = visibleCols.map(c => c.name).filter(n => editableCols.has(n));
+  if (editables.length < 2) return;
+  const cur = editables.indexOf(colName);
+  if (cur === -1) return;
+  const next = editables[(cur + dir + editables.length) % editables.length];
+  const sel = `.tv-row[data-orig-index="${origIndex}"] .tv-cell[data-col="${CSS.escape(next)}"]`;
+  const target = document.querySelector(sel);
+  if (target) tvStartInlineEdit(target, next, origIndex);
 }
 
 function tvStartInlineEdit(cell, colName, origIndex) {
@@ -18746,6 +18809,13 @@ function tvStartInlineEdit(cell, colName, origIndex) {
     };
     select.addEventListener('change', commit);
     select.addEventListener('blur', commit);
+    select.addEventListener('keydown', e => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const dir = e.shiftKey ? -1 : 1;
+        Promise.resolve(commit()).then(() => tvEditAdjacent(colName, origIndex, dir));
+      }
+    });
   } else {
     const input = document.createElement('input');
     input.type = 'text';
@@ -18756,7 +18826,10 @@ function tvStartInlineEdit(cell, colName, origIndex) {
     cell.appendChild(input);
     input.focus();
     input.select();
+    let committed = false;
     const commit = () => {
+      if (committed) return;
+      committed = true;
       row[colName] = input.value;
       cell.classList.remove('editing');
       setDirty(true);
@@ -18766,7 +18839,12 @@ function tvStartInlineEdit(cell, colName, origIndex) {
     input.addEventListener('blur', commit);
     input.addEventListener('keydown', e => {
       if (e.key === 'Enter') { e.preventDefault(); commit(); }
-      if (e.key === 'Escape') { cell.classList.remove('editing'); renderTableVisibleRows(); }
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        commit();
+        tvEditAdjacent(colName, origIndex, e.shiftKey ? -1 : 1);
+      }
+      if (e.key === 'Escape') { committed = true; cell.classList.remove('editing'); renderTableVisibleRows(); }
     });
   }
 }
@@ -20144,7 +20222,20 @@ async function applyMultiAction(row, origIndex, action, value) {
   return false;
 }
 
+/** Keep the header select-all checkbox in sync with the current selection:
+ *  checked = all filtered rows selected, indeterminate = some, blank = none. */
+function syncSelectAllCheckbox() {
+  const cb = document.getElementById('select-all-visible');
+  if (!cb) return;
+  const filtered = state.filteredRows || [];
+  const selectedInFiltered = filtered.filter(fr => state.multiSelected.has(fr.origIndex)).length;
+  cb.disabled = filtered.length === 0;
+  cb.checked = filtered.length > 0 && selectedInFiltered === filtered.length;
+  cb.indeterminate = selectedInFiltered > 0 && selectedInFiltered < filtered.length;
+}
+
 function updateMultiBar() {
+  syncSelectAllCheckbox();
   const bar = $('multi-bar');
   const label = $('multi-bar-label');
   const clearSelBtn = $('btn-multi-clear-selection');
