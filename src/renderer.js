@@ -5922,14 +5922,22 @@ function setupSettings() {
       primaryTag: els.mapPrimaryTag.value
     };
     state.columnMap = newMap;
+    // File-level mapping (KKE_Settings / project DB) so it travels between
+    // auditors; per-user prefs kept as a fallback for files not yet saved.
+    state.projectSettings.columnMap = newMap;
     await window.electronAPI.saveColumnMap({ columnMap: newMap });
+
+    // Persist settings + any in-session edits BEFORE reloading, so the reload
+    // can't discard unsaved work and reads back the new mapping.
+    setDirty(true);
+    await saveFile();
 
     // Reload the file with the new mapping
     const data = await window.electronAPI.reloadSheet({ sheetName: els.sheetSelect?.value || null });
     if (data) {
       closeSettingsPopover();
       loadData(data);
-      showToast('Column mapping applied', 'success');
+      showToast('Column mapping applied — saved with the file', 'success');
     }
   });
 

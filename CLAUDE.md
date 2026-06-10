@@ -238,6 +238,8 @@ A `.transmission` file is a **SQLite database** (better-sqlite3, WAL mode) that 
 
 Column mapping entries in `state.columnMap` include: `smeDecision`, `smeNotes`, `contentOwner`, `finalKke` (in addition to existing mappings).
 
+**Column mapping persistence:** `computeColumnMap(headers, filePath, projectMap)` resolves per key: `projectSettings.columnMap` (file-level — travels with the project/workbook between auditors) > `prefs.columnMappings[basename]` (per-user, legacy) > auto-detect; saved names are honored only if still present in headers. Applying a mapping in App Settings writes BOTH tiers and saves the file before reloading (so the reload can't discard unsaved edits).
+
 `state.projectSettings.glossary` = `{ tags: { name: markdownNotes }, groups: { name: markdownNotes } }` — persisted in the `KKE_Glossary` sheet.
 
 `state.projectSettings.contentThemeLibrary` = array of theme strings — persisted in the `KKE_Settings` sheet as JSON.
