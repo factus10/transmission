@@ -48,6 +48,21 @@ That has one wonderfully freeing consequence: **one file is the whole project.**
 
 > If you've run content audits before, you may know this pattern as a *content inventory* or a *rationalization* spreadsheet. Transmission keeps that familiar single-file deliverable — it just gives you a far better cockpit for filling it in.
 
+### Project files: the faster way to work
+
+Working directly in the `.xlsx` is fine for small files, but every save rebuilds the whole workbook — and on a few thousand rows you'll feel that pause. The fix is one menu item: **File → Save As Project…** (**Cmd+Shift+S**). That converts your open spreadsheet — including everything you've done so far this session — into a **Transmission project file** (`.transmission`), and the app switches over to it on the spot.
+
+A project file keeps the "one file is the whole project" promise — rows, decisions, nav tree, settings, glossary, libraries, and the full change history all live inside it — but saves become **instant**. Edits are committed within a couple of seconds of making them, with no workbook rebuild and no pause, no matter how big the crawl. Put the file wherever the project lives (`Documents/Alpha/Alpha.transmission`, say); double-clicking it in Finder opens it in Transmission, and it shows up in **Open Recent** like any other file.
+
+Excel doesn't disappear — it just becomes the *deliverable* format instead of the *working* format:
+
+- **File → Export Full Workbook (.xlsx)…** writes a complete spreadsheet (all audit columns and structural sheets, plus the entire change history) whenever you need one — for a client, a colleague without Transmission, or your own archive. An exported workbook can be opened (or re-imported) by Transmission later, so nothing is one-way.
+- All the other exports (filtered rows, audit decisions, redirect map, Migration Tracker, SME export) work exactly the same from a project as from a spreadsheet.
+
+**Handing a project to another auditor** is the same as it ever was: send them the `.transmission` file. Quit Transmission (or open a different file) first so the file is a complete, self-contained snapshot, then share it however you like. Their decisions land in the same change history, attributed to their username.
+
+> **Good to know:** Transmission also keeps a rolling safety copy of each project (in its own application-support folder) every time you open it, so even a mangled file has a recent fallback.
+
 ### Install and first launch
 
 1. Open the **`.dmg`** you were given and drag **Transmission** into your **Applications** folder.
@@ -58,7 +73,7 @@ That has one wonderfully freeing consequence: **one file is the whole project.**
 
 ### Open your first file
 
-1. Choose **File → Open Spreadsheet…** (or press **Cmd+O**) and pick your crawl export.
+1. Choose **File → Open…** (or press **Cmd+O**) and pick your crawl export.
 2. If the workbook has **more than one data sheet**, a **sheet picker** appears at the top of the sidebar — choose the one you want to audit. (Transmission works on one data sheet at a time.)
 3. Transmission finds your **URL column** automatically by looking for headers like `Address`, `URL`, or `Link`. If it can't tell which column holds the URLs, it'll ask you to point it out.
 
@@ -88,7 +103,7 @@ These behind-the-scenes sheets hold project state and travel with the file:
 
 ### Which file types work
 
-Transmission opens **`.xlsx`** (Excel 2007+), **`.xls`** (97–2003), **`.xlsm`** (macro-enabled), **`.ods`** (OpenDocument), and **`.csv`**. It's tuned for Screaming Frog exports, but any spreadsheet with a URL column will do.
+Transmission opens its own **`.transmission`** project files plus **`.xlsx`** (Excel 2007+), **`.xls`** (97–2003), **`.xlsm`** (macro-enabled), **`.ods`** (OpenDocument), and **`.csv`**. It's tuned for Screaming Frog exports, but any spreadsheet with a URL column will do.
 
 ### Reopening recent files
 
@@ -106,7 +121,7 @@ Accepting a banner adds that library to your project, and — like every change 
 
 ### Saving, and picking up where you left off
 
-You'll rarely have to think about saving. Transmission **auto-saves about two seconds** after your last edit, and you can force a save anytime with **Cmd+S**. The title bar always tells you where things stand: **● Unsaved changes** while you're working, **⟳ Saving…** during a write, and **✓ All changes saved** once it's safely on disk.
+You'll rarely have to think about saving. Transmission **auto-saves about two seconds** after your last edit, and you can force a save anytime with **Cmd+S**. The title bar always tells you where things stand: **● Unsaved changes** while you're working, **⟳ Saving…** during a write, and **✓ All changes saved** once it's safely on disk. (In a `.transmission` project the write itself takes milliseconds; saving an `.xlsx` rebuilds the workbook, which is where the pause on large files comes from — see [Project files](#project-files-the-faster-way-to-work).)
 
 Close the file, reopen it (it'll be waiting in **Open Recent**), and you land exactly where you left off — Transmission even shows a friendly nudge like *"Resuming: 47 reviewed, 312 to go — press ] for the next unreviewed."*
 
@@ -1376,6 +1391,7 @@ Internal (hidden from the field bar, saved in the file): `_Flagged`, `_AssessedA
 |----------|--------|
 | **Cmd+O** | Open file |
 | **Cmd+S** | Save |
+| **Cmd+Shift+S** | Save As Project (convert to `.transmission`) |
 | **Cmd+F** | Global Search |
 | **Cmd+1** | Audit view |
 | **Cmd+T** | Table view |

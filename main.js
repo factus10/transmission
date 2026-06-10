@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const XLSX = require('xlsx');
 const ExcelJS = require('exceljs');
+const { ProjectStore, PROJECT_EXT } = require('./project-store');
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -11,6 +12,11 @@ let helpWindow = null;
 let currentFilePath = null;
 let currentSheetName = null;
 let navSheetInfo = null;  // { sheetName, columns: { id, breadcrumb, computedPath, sortID } }
+
+// SQLite persistence for .transmission project files. Open whenever the current
+// file is a project; xlsx files continue through the legacy SheetJS path.
+const projectStore = new ProjectStore();
+const isProjectFile = (fp) => typeof fp === 'string' && fp.toLowerCase().endsWith(PROJECT_EXT);
 
 const userDataPath = app.getPath('userData');
 const prefsPath    = path.join(userDataPath, 'prefs.json');
@@ -61,6 +67,75 @@ function detectAuditCol(headers, candidates) {
     if (idx >= 0) return headers[idx];
   }
   return null;
+}
+
+// Determine column mapping: saved prefs override auto-detection ONLY when the saved name
+// still exists in the current file's headers. A stale savedMap value for a column the file
+// doesn't have any more would otherwise get re-injected as a duplicate.
+// Shared by the xlsx reader and the .transmission project reader.
+function computeColumnMap(headers, filePath) {
+  const prefs = loadPrefs();
+  const fileName = path.basename(filePath);
+  const savedMap = prefs.columnMappings?.[fileName] || null;
+  const honorSaved = (key) => {
+    const v = savedMap?.[key];
+    return v && headers.includes(v) ? v : null;
+  };
+
+  return {
+    kke:   honorSaved('kke')   || detectAuditCol(headers, KKE_CANDIDATES)  || 'KKE_Recommendation',
+    tags:  honorSaved('tags')  || detectAuditCol(headers, TAGS_CANDIDATES) || 'Tags',
+    notes: honorSaved('notes') || detectAuditCol(headers, NOTES_CANDIDATES) || 'Notes',
+    group:        honorSaved('group')        || detectAuditCol(headers, GROUP_CANDIDATES)          || 'Group',
+    primaryTag:   honorSaved('primaryTag')   || detectAuditCol(headers, PRIMARY_TAG_CANDIDATES)   || 'Primary Tag',
+    smeDecision:  honorSaved('smeDecision')  || detectAuditCol(headers, SME_DECISION_CANDIDATES)  || 'SME_Decision',
+    smeNotes:     honorSaved('smeNotes')     || detectAuditCol(headers, SME_NOTES_CANDIDATES)     || 'SME_Notes',
+    contentOwner: honorSaved('contentOwner') || detectAuditCol(headers, CONTENT_OWNER_CANDIDATES) || 'Content_Owner',
+    finalKke:     honorSaved('finalKke')     || detectAuditCol(headers, FINAL_KKE_CANDIDATES)     || 'Final_KKE'
+  };
+}
+
+// Inject missing audit columns (blank values) and reorder: KKE first, then
+// Tags/Notes/Group/Primary Tag right after the URL column. Mutates headers +
+// rows in place. Shared by the xlsx reader and the .transmission project
+// reader — running it on project open is what lets a new app version add new
+// audit columns to projects created by an older version.
+function injectAndOrderAuditColumns(headers, rows, columnMap) {
+  const auditCols = [columnMap.kke, columnMap.tags, columnMap.notes, columnMap.group, columnMap.primaryTag,
+                     columnMap.smeDecision, columnMap.smeNotes, columnMap.contentOwner, columnMap.finalKke,
+                     '_Flagged', '_AssessedAt', '_AssessmentResult', 'Redirect_Destination', 'Consolidate_Into',
+                     'Published_Status', 'Page_Type', 'Content_Theme',
+                     // Phase 1: classification + delivery + suggestion + CMS links
+                     'Content_Nature', 'Migration_Track', 'Suggested_KKE', 'Suggested_KKE_Sources',
+                     'Source_CMS_URL', 'New_CMS_URL',
+                     // Content-type crosswalk: target (new-CMS) content type, auto-mapped from Page_Type
+                     'Target_Content_Type',
+                     // Design pattern inventory
+                     'Design_Patterns'];
+  auditCols.forEach(col => {
+    if (!headers.includes(col)) {
+      headers.push(col);
+      rows.forEach(r => { r[col] = ''; });
+    }
+  });
+
+  function moveCol(col, targetIdx) {
+    const curIdx = headers.indexOf(col);
+    if (curIdx === -1 || curIdx === targetIdx) return;
+    headers.splice(curIdx, 1);
+    headers.splice(targetIdx, 0, col);
+  }
+
+  // KKE goes to position 0
+  moveCol(columnMap.kke, 0);
+
+  // Tags, Notes, Group, Primary Tag go right after Address (in that order)
+  const urlCol = detectUrlColumn(headers);
+  const afterUrl = urlCol ? headers.indexOf(urlCol) + 1 : 1;
+  const postUrlCols = [columnMap.tags, columnMap.notes, columnMap.group, columnMap.primaryTag];
+  postUrlCols.forEach((col, i) => {
+    moveCol(col, afterUrl + i);
+  });
 }
 
 // ─── Preferences ─────────────────────────────────────────────────────────────
@@ -192,7 +267,17 @@ async function openRecentFile(filePath) {
     buildMenu();
     return;
   }
-  const data = readWorkbook(filePath);
+  openAnyPath(filePath);
+}
+
+// Open either kind of file (xlsx/csv spreadsheet or .transmission project) and
+// ship it to the renderer. Single entry point for the open dialog, recents,
+// and Finder double-click.
+function openAnyPath(filePath, targetSheet) {
+  if (!isProjectFile(filePath) && projectStore.isOpen) projectStore.close();
+  const data = isProjectFile(filePath)
+    ? readProject(filePath)
+    : readWorkbook(filePath, targetSheet);
   if (data) {
     currentFilePath = filePath;
     currentSheetName = data.sheetName;
@@ -200,6 +285,7 @@ async function openRecentFile(filePath) {
     recordRecentFile(filePath);
     mainWindow?.webContents.send('file-opened', { filePath, ...data });
   }
+  return data;
 }
 
 function buildMenu() {
@@ -233,9 +319,10 @@ function buildMenu() {
     {
       label: 'File',
       submenu: [
-        { label: 'Open Spreadsheet…', accelerator: 'CmdOrCtrl+O', click: () => openFileDialog() },
+        { label: 'Open…', accelerator: 'CmdOrCtrl+O', click: () => openFileDialog() },
         { label: 'Open Recent', submenu: buildRecentFilesSubmenu() },
         { label: 'Save', accelerator: 'CmdOrCtrl+S', click: send('menu-save') },
+        { label: 'Save As Project…', accelerator: 'CmdOrCtrl+Shift+S', click: send('menu-save-as-project') },
         { type: 'separator' },
         { label: 'Import/Merge Audit Decisions…', click: send('menu-import-merge') },
         { label: 'Merge Auditor Decisions…',      click: send('menu-merge-auditor') },
@@ -244,6 +331,7 @@ function buildMenu() {
         { label: 'Load Audit Template…', click: send('menu-load-template') },
         { type: 'separator' },
         { label: 'Export…', accelerator: 'CmdOrCtrl+Shift+E', click: send('menu-export-dialog') },
+        { label: 'Export Full Workbook (.xlsx)…', click: send('menu-export-workbook') },
         // Windows/Linux: Preferences sits here (macOS has it in the app menu)
         ...(!isMac ? [{ type: 'separator' }, preferencesItem] : []),
         { type: 'separator' },
@@ -367,23 +455,17 @@ function buildMenu() {
 
 async function openFileDialog() {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Open Excel Spreadsheet',
+    title: 'Open Project or Spreadsheet',
     filters: [
+      { name: 'All Supported', extensions: ['transmission', 'xlsx', 'xls', 'xlsm', 'ods', 'csv'] },
+      { name: 'Transmission Project', extensions: ['transmission'] },
       { name: 'Excel Files', extensions: ['xlsx', 'xls', 'xlsm', 'ods', 'csv'] }
     ],
     properties: ['openFile']
   });
 
   if (!result.canceled && result.filePaths.length > 0) {
-    const filePath = result.filePaths[0];
-    const data = readWorkbook(filePath);
-    if (data) {
-      currentFilePath = filePath;
-      currentSheetName = data.sheetName;
-      savePrefs({ lastFile: filePath, lastSheet: data.sheetName });
-      recordRecentFile(filePath);
-      mainWindow?.webContents.send('file-opened', { filePath, ...data });
-    }
+    openAnyPath(result.filePaths[0]);
   }
 }
 
@@ -470,28 +552,7 @@ function readWorkbook(filePath, targetSheet) {
       console.warn('Dedup applied:', dedupReport);
     }
 
-    // Determine column mapping: saved prefs override auto-detection ONLY when the saved name
-    // still exists in the current file's headers. A stale savedMap value for a column the file
-    // doesn't have any more would otherwise get re-injected as a duplicate.
-    const prefs = loadPrefs();
-    const fileName = path.basename(filePath);
-    const savedMap = prefs.columnMappings?.[fileName] || null;
-    const honorSaved = (key) => {
-      const v = savedMap?.[key];
-      return v && headers.includes(v) ? v : null;
-    };
-
-    const columnMap = {
-      kke:   honorSaved('kke')   || detectAuditCol(headers, KKE_CANDIDATES)  || 'KKE_Recommendation',
-      tags:  honorSaved('tags')  || detectAuditCol(headers, TAGS_CANDIDATES) || 'Tags',
-      notes: honorSaved('notes') || detectAuditCol(headers, NOTES_CANDIDATES) || 'Notes',
-      group:        honorSaved('group')        || detectAuditCol(headers, GROUP_CANDIDATES)          || 'Group',
-      primaryTag:   honorSaved('primaryTag')   || detectAuditCol(headers, PRIMARY_TAG_CANDIDATES)   || 'Primary Tag',
-      smeDecision:  honorSaved('smeDecision')  || detectAuditCol(headers, SME_DECISION_CANDIDATES)  || 'SME_Decision',
-      smeNotes:     honorSaved('smeNotes')     || detectAuditCol(headers, SME_NOTES_CANDIDATES)     || 'SME_Notes',
-      contentOwner: honorSaved('contentOwner') || detectAuditCol(headers, CONTENT_OWNER_CANDIDATES) || 'Content_Owner',
-      finalKke:     honorSaved('finalKke')     || detectAuditCol(headers, FINAL_KKE_CANDIDATES)     || 'Final_KKE'
-    };
+    const columnMap = computeColumnMap(headers, filePath);
 
     // Build row objects keyed by original header positions BEFORE reordering
     const origHeaders = [...headers];
@@ -501,43 +562,7 @@ function readWorkbook(filePath, targetSheet) {
       return obj;
     });
 
-    // Inject missing audit columns with empty values
-    const auditCols = [columnMap.kke, columnMap.tags, columnMap.notes, columnMap.group, columnMap.primaryTag,
-                       columnMap.smeDecision, columnMap.smeNotes, columnMap.contentOwner, columnMap.finalKke,
-                       '_Flagged', '_AssessedAt', '_AssessmentResult', 'Redirect_Destination', 'Consolidate_Into',
-                       'Published_Status', 'Page_Type', 'Content_Theme',
-                       // Phase 1: classification + delivery + suggestion + CMS links
-                       'Content_Nature', 'Migration_Track', 'Suggested_KKE', 'Suggested_KKE_Sources',
-                       'Source_CMS_URL', 'New_CMS_URL',
-                       // Content-type crosswalk: target (new-CMS) content type, auto-mapped from Page_Type
-                       'Target_Content_Type',
-                       // Design pattern inventory
-                       'Design_Patterns'];
-    auditCols.forEach(col => {
-      if (!headers.includes(col)) {
-        headers.push(col);
-        rows.forEach(r => { r[col] = ''; });
-      }
-    });
-
-    // Reorder: KKE first, then remaining audit cols after Address
-    function moveCol(col, targetIdx) {
-      const curIdx = headers.indexOf(col);
-      if (curIdx === -1 || curIdx === targetIdx) return;
-      headers.splice(curIdx, 1);
-      headers.splice(targetIdx, 0, col);
-    }
-
-    // KKE goes to position 0
-    moveCol(columnMap.kke, 0);
-
-    // Tags, Notes, Group, Primary Tag go right after Address (in that order)
-    const urlCol = detectUrlColumn(headers);
-    const afterUrl = urlCol ? headers.indexOf(urlCol) + 1 : 1;
-    const postUrlCols = [columnMap.tags, columnMap.notes, columnMap.group, columnMap.primaryTag];
-    postUrlCols.forEach((col, i) => {
-      moveCol(col, afterUrl + i);
-    });
+    injectAndOrderAuditColumns(headers, rows, columnMap);
 
     // Check for NavStructure sheet
     let navTree = null;
@@ -597,6 +622,78 @@ function readWorkbook(filePath, targetSheet) {
     return { headers, rows, sheetName, urlColumn, navTree, dataSheets, columnMap, projectSettings, dedupReport };
   } catch (err) {
     dialog.showErrorBox('Error Reading File', `Could not open the spreadsheet:\n\n${err.message}`);
+    return null;
+  }
+}
+
+// ─── .transmission project files (SQLite) ─────────────────────────────────────
+
+// Header name → flat-node property, as saved by the renderer's
+// flattenNavTreeForSave(). Used to rebuild a worksheet-shaped structure so
+// parseNavSheet() can reconstruct the tree with identical semantics to the
+// xlsx path (sibling order from row order, etc.).
+const NAV_HEADER_TO_KEY = {
+  'Number': 'number', 'Label': 'label', 'Path': 'path', 'SortID': 'sortID',
+  'ParentNumber': 'parentNumber', 'Breadcrumb': 'breadcrumb', 'Computed Path': 'computedPath',
+  'ID': 'id', 'RefNodeID': 'refNodeId', 'InMenu': 'inMenu', 'URL': 'url',
+  'Notes': 'notes', 'Phase': 'phase', 'Node_Type': 'nodeType', 'Nav_Layer': 'navLayer',
+  'Build_Pattern': 'buildPattern', 'Build_Guidance': 'buildGuidance', 'Writer_Brief': 'writerBrief',
+  'Page_Status': 'pageStatus', 'Build_Assignee': 'buildAssignee', 'Write_Assignee': 'writeAssignee',
+  'Migrate_Assignee': 'migrateAssignee'
+};
+
+function navTreeFromFlatNodes(flatNodes) {
+  if (!flatNodes || flatNodes.length === 0) return null;
+  const headerNames = Object.keys(NAV_HEADER_TO_KEY);
+  const aoa = [headerNames];
+  for (const n of flatNodes) {
+    aoa.push(headerNames.map(h => n[NAV_HEADER_TO_KEY[h]] ?? ''));
+  }
+  return parseNavSheet(XLSX.utils.aoa_to_sheet(aoa));
+}
+
+function readProject(filePath) {
+  try {
+    projectStore.open(filePath);
+    const { headers, rows, navNodes, projectSettings, sheetName } = projectStore.readAll();
+
+    if (headers.length === 0) {
+      throw new Error('Project file contains no data.');
+    }
+
+    // Same post-processing as the xlsx path: column mapping (honoring saved
+    // per-file overrides) + injection of any audit columns added since the
+    // project was last saved.
+    const columnMap = computeColumnMap(headers, filePath);
+    injectAndOrderAuditColumns(headers, rows, columnMap);
+    rows.forEach((r, i) => { r._rowIndex = i + 1; });
+
+    let navTree = null;
+    if (navNodes.length > 0) {
+      navTree = navTreeFromFlatNodes(navNodes);
+      if (navTree) {
+        NAV_COLUMNS.forEach(col => {
+          if (!headers.includes(col)) headers.push(col);
+        });
+      }
+    }
+    // No xlsx behind a project — exports build NavStructure from scratch.
+    navSheetInfo = null;
+
+    // Default library keys, matching readWorkbook
+    projectSettings.contentTypeRegistry = projectSettings.contentTypeRegistry || [];
+    projectSettings.patternLibrary = projectSettings.patternLibrary || [];
+    projectSettings.designPatternLibrary = projectSettings.designPatternLibrary || [];
+
+    const urlColumn = detectUrlColumn(headers);
+
+    // Rolling backup (SQLite online backup API — consistent even mid-session).
+    projectStore.backupTo(path.join(userDataPath, 'backups')).catch(() => { /* non-fatal */ });
+
+    return { headers, rows, sheetName, urlColumn, navTree, dataSheets: [sheetName], columnMap, projectSettings, dedupReport: null };
+  } catch (err) {
+    projectStore.close();
+    dialog.showErrorBox('Error Opening Project', `Could not open the project:\n\n${err.message}`);
     return null;
   }
 }
@@ -1260,7 +1357,7 @@ function detectUrlColumn(headers) {
   return null;
 }
 
-function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projectSettings, changeLog) {
+function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projectSettings, changeLog, opts = {}) {
   try {
     const aoa = [headers];
     for (const row of rows) {
@@ -1398,16 +1495,23 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
 
         workbook.Sheets[nsName] = XLSX.utils.aoa_to_sheet(rebuilt);
       } else {
-        // Create new NavStructure sheet
+        // Create new NavStructure sheet — full column set, so projects (which
+        // always export from scratch) round-trip notes/phase/build metadata.
         const nsName = 'NavStructure';
-        const nsHeaders = ['ID', 'Number', 'ParentNumber', 'Label', 'Path', 'SortID', 'Computed Path', 'Breadcrumb', 'RefNodeID', 'InMenu', 'URL'];
+        const nsHeaders = ['ID', 'Number', 'ParentNumber', 'Label', 'Path', 'SortID', 'Computed Path', 'Breadcrumb',
+                           'RefNodeID', 'InMenu', 'URL', 'Notes', 'Phase', 'Node_Type', 'Nav_Layer',
+                           'Build_Pattern', 'Build_Guidance', 'Writer_Brief', 'Page_Status',
+                           'Build_Assignee', 'Write_Assignee', 'Migrate_Assignee'];
         const rebuilt = [nsHeaders];
         for (const node of allNavNodes) {
           rebuilt.push([
             node.id, node.number, node.parentNumber || '',
             node.label, node.path || '', node.sortID || '',
             node.computedPath || '', node.breadcrumb || '',
-            node.refNodeId || '', node.inMenu || '', node.url || ''
+            node.refNodeId || '', node.inMenu || '', node.url || '',
+            node.notes || '', node.phase || '', node.nodeType || '', node.navLayer || '',
+            node.buildPattern || '', node.buildGuidance || '', node.writerBrief || '', node.pageStatus || '',
+            node.buildAssignee || '', node.writeAssignee || '', node.migrateAssignee || ''
           ]);
         }
         workbook.Sheets[nsName] = XLSX.utils.aoa_to_sheet(rebuilt);
@@ -1489,13 +1593,14 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
       }
     }
 
-    // Append to change log sheet
+    // Append to change log sheet (or replace it wholesale when the caller is
+    // exporting a project's full history — re-exporting would otherwise duplicate)
     if (changeLog && changeLog.length > 0) {
       const clName = 'KKE_ChangeLog';
       sheetsWeEdit.add(clName);
       const clHeaders = ['Timestamp', 'Row', 'URL', 'Field', 'Old Value', 'New Value'];
       let existingRows = [];
-      if (workbook.Sheets[clName]) {
+      if (!opts.replaceChangeLog && workbook.Sheets[clName]) {
         const existing = XLSX.utils.sheet_to_json(workbook.Sheets[clName], { header: 1, defval: '' });
         if (existing.length > 1) existingRows = existing.slice(1); // skip header
       }
@@ -1533,7 +1638,9 @@ ipcMain.handle('open-file-dialog', async () => { await openFileDialog(); });
 ipcMain.handle('get-last-file', async () => {
   const prefs = loadPrefs();
   if (prefs.lastFile && fs.existsSync(prefs.lastFile)) {
-    const data = readWorkbook(prefs.lastFile, prefs.lastSheet || null);
+    const data = isProjectFile(prefs.lastFile)
+      ? readProject(prefs.lastFile)
+      : readWorkbook(prefs.lastFile, prefs.lastSheet || null);
     if (data) {
       currentFilePath = prefs.lastFile;
       currentSheetName = data.sheetName;
@@ -1546,7 +1653,9 @@ ipcMain.handle('get-last-file', async () => {
 
 ipcMain.handle('reload-sheet', async (event, { sheetName }) => {
   if (!currentFilePath) return null;
-  const data = readWorkbook(currentFilePath, sheetName || currentSheetName);
+  const data = isProjectFile(currentFilePath)
+    ? readProject(currentFilePath)  // projects are single-sheet; ignore sheetName
+    : readWorkbook(currentFilePath, sheetName || currentSheetName);
   if (data) {
     currentSheetName = data.sheetName;
     savePrefs({ lastSheet: data.sheetName });
@@ -1567,9 +1676,76 @@ ipcMain.handle('save-file', async (event, { headers, rows, newNavNodes, allNavNo
     savePrefs({ lastFile: currentFilePath });
   }
 
+  // .transmission projects save to SQLite — a single transaction, no workbook rebuild.
+  if (isProjectFile(currentFilePath)) {
+    try {
+      if (!projectStore.isOpen) projectStore.open(currentFilePath);
+      const result = projectStore.saveAll({ headers, rows, allNavNodes, projectSettings, changeLog, sheetName: currentSheetName });
+      if (result.success) mainWindow?.webContents.send('save-success', currentFilePath);
+      return result;
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
   const result = writeWorkbook(currentFilePath, headers, rows, newNavNodes, allNavNodes, projectSettings, changeLog);
   if (result.success) mainWindow?.webContents.send('save-success', currentFilePath);
   return result;
+});
+
+// Convert the currently-open spreadsheet (plus all in-session edits) into a
+// .transmission project file and switch the session over to it.
+ipcMain.handle('save-as-project', async (event, payload) => {
+  const base = currentFilePath
+    ? path.basename(currentFilePath).replace(/\.[^.]+$/, '')
+    : 'audit';
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save As Transmission Project',
+    defaultPath: base + '.transmission',
+    filters: [{ name: 'Transmission Project', extensions: ['transmission'] }]
+  });
+  if (result.canceled) return { success: false, error: 'Cancelled' };
+
+  try {
+    projectStore.create(result.filePath);
+    projectStore.saveAll({ ...payload, sheetName: currentSheetName || 'Data' });
+    currentFilePath = result.filePath;
+    navSheetInfo = null;
+    savePrefs({ lastFile: currentFilePath, lastSheet: null });
+    recordRecentFile(currentFilePath);
+    mainWindow?.webContents.send('save-success', currentFilePath);
+    return { success: true, filePath: currentFilePath };
+  } catch (err) {
+    projectStore.close();
+    return { success: false, error: err.message };
+  }
+});
+
+// Full xlsx export — the round-trip path back to Excel for projects (and a
+// Save As for spreadsheets). For projects, the DB's change log is the log of
+// record, so the export carries the full history.
+ipcMain.handle('export-workbook', async (event, { headers, rows, allNavNodes, projectSettings, changeLog }) => {
+  const base = currentFilePath
+    ? path.basename(currentFilePath).replace(/\.[^.]+$/, '')
+    : 'audit';
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Export Full Workbook',
+    defaultPath: base + '.xlsx',
+    filters: [{ name: 'Excel', extensions: ['xlsx'] }]
+  });
+  if (result.canceled) return { success: false, error: 'Cancelled' };
+
+  let log = changeLog;
+  let replaceChangeLog = false;
+  if (isProjectFile(currentFilePath) && projectStore.isOpen) {
+    try {
+      log = projectStore.readChangeLog();
+      replaceChangeLog = true; // full history, not an append — avoids duplicates on re-export
+    } catch (e) { /* fall back to session log */ }
+  }
+  const res = writeWorkbook(result.filePath, headers, rows, undefined, allNavNodes, projectSettings, log, { replaceChangeLog });
+  if (res.success) res.filePath = result.filePath;
+  return res;
 });
 
 ipcMain.handle('get-current-path', () => currentFilePath);
@@ -3157,6 +3333,32 @@ app.whenReady().then(() => {
   });
 });
 
+// Finder double-click / dock drop of a .transmission (or xlsx) file.
+// May fire before the window exists; stash and open once ready.
+let pendingOpenPath = null;
+app.on('open-file', (event, filePath) => {
+  event.preventDefault();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    openAnyPath(filePath);
+  } else {
+    pendingOpenPath = filePath;
+  }
+});
+app.on('browser-window-created', () => {
+  if (pendingOpenPath) {
+    const p = pendingOpenPath;
+    pendingOpenPath = null;
+    // Let the renderer finish loading before shipping the file
+    setTimeout(() => openAnyPath(p), 800);
+  }
+});
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+// Checkpoint + close the project DB cleanly on quit so the .transmission file
+// is a complete single-file snapshot (no stale -wal/-shm sidecars).
+app.on('before-quit', () => {
+  try { projectStore.close(); } catch (e) { /* best effort */ }
 });

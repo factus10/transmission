@@ -236,3 +236,22 @@ Transmission has no built-in crawler by design; crawl exports come from external
 
 - [ ] **SiteOne Crawler** (https://github.com/janreges/siteone-crawler) — free/open-source, CLI + desktop app. Untested. Evaluate: export format (xlsx/csv?), column names vs SF (`Address`, `Status Code`, `Title 1`, …), whether URL auto-detection picks up its URL column, metadata coverage (titles/descriptions/H1s/indexability), redirect reporting.
 - [ ] For any alternative: import a real export, confirm audit columns inject correctly, sidebar/filtering/field bar behave, and round-trip save preserves all original columns.
+
+## 19. Project Files (.transmission)
+
+**Setup:** An xlsx crawl export open in the app with some decisions, tags, a nav tree, and project settings.
+
+- [ ] File → Save As Project… (Cmd+Shift+S) → dialog defaults to `<name>.transmission` → file created
+- [ ] Titlebar switches to the project name; toast confirms; sheet picker hidden
+- [ ] Make edits → titlebar flips to ⟳ Saving… and back almost instantly (no multi-second pause)
+- [ ] Quit + relaunch → project reopens via last-file with all state (decisions, nav tree, settings, glossary, libraries)
+- [ ] No `-wal` / `-shm` sidecar files next to the project after quit
+- [ ] Open Recent lists the project; Finder double-click opens it (packaged build)
+- [ ] File → Export Full Workbook (.xlsx)… → exported file opens in Excel; data sheet + NavStructure (incl. Notes/Phase/build metadata columns) + KKE_Settings + KKE_ChangeLog all present
+- [ ] Re-export over the same xlsx → KKE_ChangeLog entries are NOT duplicated
+- [ ] Exported workbook re-opens in Transmission cleanly (round trip)
+- [ ] Open an old project after an app update that adds audit columns → new columns appear (injection on open)
+- [ ] Rolling backup exists in `~/Library/Application Support/Transmission/backups/` after opening a project
+- [ ] Changelog entries in the project carry the auditor's username (check exported KKE_ChangeLog or DB)
+- [ ] Opening a project with a future schema version shows the "update the app" error (set `PRAGMA user_version` higher to simulate)
+- [ ] Switching from a project to an xlsx file and back works; saves route to the right format each time
