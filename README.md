@@ -18,8 +18,14 @@ The list below is a feature catalog, not a how-to.
 
 ## Features
 
+### Project Files (.transmission)
+- **SQLite-backed project files** — **File → Save As Project…** (`Cmd+Shift+S`) converts the open spreadsheet (with all in-session edits) into a single `.transmission` file and switches the session to it. Saves become instant (milliseconds, no workbook rebuild) regardless of file size; the existing 2-second autosave does the rest.
+- **One file is still the whole project** — rows, decisions, nav tree, settings, glossary, libraries, and the full change history (now with an auditor name per entry) travel inside it. Put it wherever the project lives; Finder double-click opens it.
+- **Excel becomes the deliverable format** — **File → Export Full Workbook (.xlsx)…** writes a complete spreadsheet (all structural sheets + full change history) for clients, colleagues without Transmission, or archive. Exports round-trip: an exported workbook can be re-opened and re-converted later.
+- **Hand-off** — send the `.transmission` file to another auditor (quit the app first so the file is a complete snapshot). A rolling safety copy of each project is kept in the app's support folder on every open.
+
 ### Core Audit Workflow
-- **Open any spreadsheet** (.xlsx, .xls, .xlsm, .ods, .csv) — designed for Screaming Frog exports
+- **Open any spreadsheet** (.xlsx, .xls, .xlsm, .ods, .csv) or a `.transmission` project — designed for Screaming Frog exports
 - **File → Open Recent** — submenu of the 10 most recent files (newest first), with "Clear Recent Files" at the bottom. Files that have moved/been deleted show with `(missing)` and are disabled. Useful when juggling multiple projects.
 - **Two-panel layout** — filterable row list on the left, embedded browser on the right
 - **KKE decisions** — Keep, Kill, Evolve, Exclude (plus custom states you define)
@@ -52,7 +58,7 @@ The View menu mirrors these and adds **Audit Progress…** (`Cmd+P`), zoom contr
 
 ### Menu organization
 - **App menu (macOS) / File (Win/Linux)** — Preferences (`Cmd+,`)
-- **File** — Open · Open Recent · Save · Import/Merge · Merge Auditor Decisions · Save/Load Template · **Export…** (unified Cmd+Shift+E)
+- **File** — Open · Open Recent · Save · **Save As Project…** (`Cmd+Shift+S`) · Import/Merge · Merge Auditor Decisions · Save/Load Template · **Export…** (unified Cmd+Shift+E) · **Export Full Workbook (.xlsx)…**
 - **View** — view switcher mirrors + Audit Progress + zoom
 - **Project** — Project Settings · Glossary · Content Type Registry · Target Spec Library · Component Library · **AI Suggest for Unreviewed** · Run Rubric · Refresh GA KKE · Recompute Suggested KKE · Triage Non-200 Pages
 - **Migration** (export & validation tools) — **Pre-Handoff Check** · Migration Tracker · Export Redirect Map (CSV) · Redirect Chain Check

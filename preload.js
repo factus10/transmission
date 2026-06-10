@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFileDialog: ()        => ipcRenderer.invoke('open-file-dialog'),
   getLastFile:    ()        => ipcRenderer.invoke('get-last-file'),
   saveFile:       (payload) => ipcRenderer.invoke('save-file', payload),
+  saveAsProject:  (payload) => ipcRenderer.invoke('save-as-project', payload),
+  exportWorkbook: (payload) => ipcRenderer.invoke('export-workbook', payload),
   getCurrentPath: ()        => ipcRenderer.invoke('get-current-path'),
   openExternal:   (url)     => ipcRenderer.invoke('open-external', url),
 
@@ -52,6 +54,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Events: main → renderer ──────────────────────────────────────────────
   onFileOpened:        (cb) => ipcRenderer.on('file-opened',           (e, d) => cb(d)),
   onMenuSave:          (cb) => ipcRenderer.on('menu-save',             ()     => cb()),
+  onMenuSaveAsProject: (cb) => ipcRenderer.on('menu-save-as-project',  ()     => cb()),
+  onMenuExportWorkbook: (cb) => ipcRenderer.on('menu-export-workbook', ()     => cb()),
   onSaveSuccess:       (cb) => ipcRenderer.on('save-success',          (e, d) => cb(d)),
   onMenuExportFiltered:(cb) => ipcRenderer.on('menu-export-filtered',  ()     => cb()),
   onMenuExportAudit:   (cb) => ipcRenderer.on('menu-export-audit',     ()     => cb()),

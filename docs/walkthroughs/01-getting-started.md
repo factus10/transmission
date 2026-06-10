@@ -25,7 +25,7 @@ How to install the app, open your first crawl export, and understand what the fi
 
 ## 2. Open a crawl export
 
-1. **File → Open Spreadsheet…** (**Cmd+O**), or the **Open a file** button on the empty state.
+1. **File → Open…** (**Cmd+O**), or the **Open a file** button on the empty state.
 2. The app reads the first **data** sheet (structural sheets are skipped). If the file has **more than one data sheet**, a **sheet picker** appears in the titlebar — switch sheets there.
 3. **URL detection:** it auto-detects the URL column by header name (`Address`, `URL`, `Link`, …; `Address` is the Screaming Frog default). If it can't find one, a **column picker** asks you to choose which column holds the URL.
 
