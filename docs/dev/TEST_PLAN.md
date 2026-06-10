@@ -256,3 +256,26 @@ Transmission has no built-in crawler by design; crawl exports come from external
 - [ ] Changelog entries in the project carry the auditor's username (check exported KKE_ChangeLog or DB)
 - [ ] Opening a project with a future schema version shows the "update the app" error (set `PRAGMA user_version` higher to simulate)
 - [ ] Switching from a project to an xlsx file and back works; saves route to the right format each time
+
+## 20. Client Export Profiles & Package for Handoff
+
+**Setup:** A `.transmission` project open with decisions and an active sidebar filter.
+
+### Client Export
+- [ ] File → Export… → Client Export opens the profile dialog
+- [ ] "Client Summary" pre-selected; only its columns checked; count readout correct
+- [ ] "Full (all columns)" checks everything except `_rowIndex`
+- [ ] Rows radios show correct counts; "Filtered" pre-selected when a filter is active, disabled at 0 matches
+- [ ] Column search narrows the grid; All/None respect the current search
+- [ ] Export → xlsx contains exactly the checked columns, in header order, with the chosen row scope
+- [ ] Save as profile… → named profile appears under "This project"; survives save + reopen (stored in project)
+- [ ] Re-saving with the same name overwrites rather than duplicating
+- [ ] Delete enabled only for saved profiles; confirm dialog; built-ins not deletable
+- [ ] Profiles travel: package/handoff the project to another machine/user → profiles still listed
+
+### Package for Handoff
+- [ ] File → Package for Handoff… with an xlsx open → friendly error suggesting Save As Project
+- [ ] With a dirty project → saves first, then opens the zip save dialog (default `{name}-handoff-YYYY-MM-DD.zip`)
+- [ ] Zip is revealed in Finder; contains the `.transmission` + README.txt
+- [ ] Unzip → double-click the project → opens with full state (rows, nav, settings, changelog)
+- [ ] Original project keeps working after packaging (checkpoint doesn't disturb the open session)

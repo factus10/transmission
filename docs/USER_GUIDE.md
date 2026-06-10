@@ -59,7 +59,9 @@ Excel doesn't disappear — it just becomes the *deliverable* format instead of 
 - **File → Export Full Workbook (.xlsx)…** writes a complete spreadsheet (all audit columns and structural sheets, plus the entire change history) whenever you need one — for a client, a colleague without Transmission, or your own archive. An exported workbook can be opened (or re-imported) by Transmission later, so nothing is one-way.
 - All the other exports (filtered rows, audit decisions, redirect map, Migration Tracker, SME export) work exactly the same from a project as from a spreadsheet.
 
-**Handing a project to another auditor** is the same as it ever was: send them the `.transmission` file. Quit Transmission (or open a different file) first so the file is a complete, self-contained snapshot, then share it however you like. Their decisions land in the same change history, attributed to their username.
+**Handing a project to another auditor** is one command: **File → Package for Handoff…** saves your latest edits, folds the project into a complete single-file snapshot, and zips it (with a short README telling the recipient what to do) — then shows you the zip in Finder, ready to send. The other person unzips, double-clicks, and picks up exactly where you left off; their decisions land in the same change history, attributed to their username.
+
+**Client-facing exports** don't need every Screaming Frog column. **File → Export… → Client Export** lets you pick exactly the columns an audience should see — start from the built-in **Client Summary** (URL, title, content type, decisions, notes, redirect) or **Full**, tick or untick columns, and export the filtered or full row set. **Save as profile…** names your selection and stores it *in the project*, so "Phase 2 stakeholder review" is one click next month — and travels with the file in a handoff.
 
 > **Good to know:** Transmission also keeps a rolling safety copy of each project (in its own application-support folder) every time you open it, so even a mangled file has a recent fallback.
 

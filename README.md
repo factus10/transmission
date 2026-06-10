@@ -22,7 +22,8 @@ The list below is a feature catalog, not a how-to.
 - **SQLite-backed project files** — **File → Save As Project…** (`Cmd+Shift+S`) converts the open spreadsheet (with all in-session edits) into a single `.transmission` file and switches the session to it. Saves become instant (milliseconds, no workbook rebuild) regardless of file size; the existing 2-second autosave does the rest.
 - **One file is still the whole project** — rows, decisions, nav tree, settings, glossary, libraries, and the full change history (now with an auditor name per entry) travel inside it. Put it wherever the project lives; Finder double-click opens it.
 - **Excel becomes the deliverable format** — **File → Export Full Workbook (.xlsx)…** writes a complete spreadsheet (all structural sheets + full change history) for clients, colleagues without Transmission, or archive. Exports round-trip: an exported workbook can be re-opened and re-converted later.
-- **Hand-off** — send the `.transmission` file to another auditor (quit the app first so the file is a complete snapshot). A rolling safety copy of each project is kept in the app's support folder on every open.
+- **Package for Handoff** — **File → Package for Handoff…** saves, checkpoints, and zips the project (with a README for the recipient) in one step, then reveals the zip in Finder. The other auditor unzips and double-clicks; their edits join the same change history under their username. A rolling safety copy of each project is also kept in the app's support folder on every open.
+- **Client Export profiles** — **File → Export… → Client Export** exports just the columns an audience needs (filtered or all rows). Ships with **Client Summary** and **Full** built-ins; save your own named profiles and they travel with the project.
 
 ### Core Audit Workflow
 - **Open any spreadsheet** (.xlsx, .xls, .xlsm, .ods, .csv) or a `.transmission` project — designed for Screaming Frog exports
@@ -66,7 +67,7 @@ The View menu mirrors these and adds **Audit Progress…** (`Cmd+P`), zoom contr
 - **SME** — Export · Import · **Compare KKE vs SME** · Resolve Conflicts
 - **Help** — Getting Started · Product Tour · Keyboard Shortcuts (`Cmd+/`) · Help
 
-The unified Export dialog (`File → Export…`) is a single chooser for: Filtered Rows (xlsx) · Audit Decisions (CSV/JSON) · Redirect Map (CSV) · Migration Tracker (xlsx multi-sheet).
+The unified Export dialog (`File → Export…`) is a single chooser for: Filtered Rows (xlsx) · Audit Decisions (CSV/JSON) · Redirect Map (CSV) · Migration Tracker (xlsx multi-sheet) · Client Export (column profiles, xlsx).
 
 ### Table View
 - **Cmd+T** (or **View > Table View**) toggles a full-width spreadsheet view that hides the sidebar
