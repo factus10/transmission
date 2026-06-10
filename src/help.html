@@ -291,9 +291,10 @@
 
     <h2 id="getting-started">1. Getting Started</h2>
     <section class="help-section">
-      <p class="help-mm"><strong>Mental model —</strong> the app is a viewer/editor for <em>your spreadsheet</em>; it has no separate database. Your <code>.xlsx</code> is the project. On open it injects audit columns and structural sheets, and everything saves back into that one portable file.</p>
+      <p class="help-mm"><strong>Mental model —</strong> one portable file is the whole project. Start from a crawl spreadsheet, then convert it to a <code>.transmission</code> <strong>project file</strong> (<strong>File &rarr; Save As Project…</strong>, <code>Cmd+Shift+S</code>) — same single-file promise, but saves are instant at any size. Excel becomes the import/export format: <strong>File &rarr; Export Full Workbook (.xlsx)…</strong> produces a complete spreadsheet (all sheets + change history) whenever you need a deliverable.</p>
       <ul>
-        <li><strong>Open:</strong> <code>Cmd+O</code> (or the welcome dialog's <em>Open a file</em>). Formats: <code>.xlsx</code>, <code>.xls</code>, <code>.xlsm</code>, <code>.ods</code>, <code>.csv</code>. <strong>File &rarr; Open Recent</strong> lists the 10 latest.</li>
+        <li><strong>Open:</strong> <code>Cmd+O</code> (or the welcome dialog's <em>Open a file</em>). Formats: <code>.transmission</code>, <code>.xlsx</code>, <code>.xls</code>, <code>.xlsm</code>, <code>.ods</code>, <code>.csv</code>. <strong>File &rarr; Open Recent</strong> lists the 10 latest. Project files also open by double-click in Finder.</li>
+        <li><strong>Hand-off:</strong> send the <code>.transmission</code> file itself (quit the app first so it's a complete snapshot). Change-log entries record each auditor's username. A rolling safety copy is kept in the app's support folder on every open.</li>
         <li><strong>Sheet &amp; URL:</strong> multi-sheet files show a picker (structural sheets hidden); the URL column auto-detects (<code>Address</code>, <code>URL</code>, …) or you pick it.</li>
         <li><strong>Seed banners:</strong> one-time offers of starter libraries (Content Type Registry, Target Spec Library, Component Library). Seeding stages data &mdash; <strong>save</strong> to commit.</li>
         <li><strong>Help:</strong> <strong>Help &rarr; Getting Started</strong> (welcome), <strong>Product Tour</strong> (5-step), <strong>Keyboard Shortcuts</strong> (<code>Cmd+/</code> or <code>?</code>).</li>
@@ -710,8 +711,9 @@
       <table class="help-table">
         <tr><th>Shortcut</th><th>Action</th></tr>
         <tr><td colspan="2" style="font-weight:600; color:var(--text-primary); padding-top:8px;">File</td></tr>
-        <tr><td><code>Cmd+O</code></td><td>Open spreadsheet</td></tr>
+        <tr><td><code>Cmd+O</code></td><td>Open project or spreadsheet</td></tr>
         <tr><td><code>Cmd+S</code></td><td>Save</td></tr>
+        <tr><td><code>Cmd+Shift+S</code></td><td>Save As Project (convert to <code>.transmission</code>)</td></tr>
         <tr><td><code>Cmd+Shift+E</code></td><td>Open unified Export dialog</td></tr>
         <tr><td><code>Cmd+,</code></td><td>Open Preferences</td></tr>
         <tr><td><code>Cmd+F</code></td><td>Global Search (searches nav nodes when the Nav Tree is open)</td></tr>

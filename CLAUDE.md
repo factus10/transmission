@@ -7,7 +7,8 @@ Electron app for macOS (universal ARM + Intel). Designed primarily for **Screami
 ## Commands
 
 ```bash
-npm install          # first-time setup
+npm install          # first-time setup (postinstall runs electron-rebuild for better-sqlite3)
+npm run rebuild      # rebuild better-sqlite3 against Electron (after Electron version bumps)
 npm run dev          # run with DevTools open
 npm start            # run normally
 npm run build        # universal .dmg → dist/
@@ -68,6 +69,7 @@ The **sidebar toolbar** is two rows: Row 1 is a full-width search input with cle
 
 ```
 main.js          — Main process: file I/O, IPC, menus, prefs
+project-store.js — SQLite persistence for .transmission project files (better-sqlite3)
 preload.js       — contextBridge: exposes window.electronAPI
 src/
   index.html     — DOM structure (no inline scripts/styles)
@@ -78,6 +80,20 @@ assets/
   icon.icns      — App icon (provide before building)
 package.json     — Dependencies + Electron Builder config
 ```
+
+---
+
+## Project files (.transmission)
+
+A `.transmission` file is a **SQLite database** (better-sqlite3, WAL mode) that replaces xlsx as the working format. XLSX remains import/export only. `ProjectStore` in `project-store.js` is the only module that touches the DB.
+
+- **Schema v1** (versioned via `PRAGMA user_version`; bump `SCHEMA_VERSION` + add a `_migrate()` step for changes): `meta` (key/value: sheetName, createdAt, savedAt), `headers` (pos, name), `rows` (idx, JSON per row — preserves arbitrary crawl columns losslessly), `nav_nodes` (idx, JSON per flat node in renderer save shape), `settings` (key, JSON value — the whole `projectSettings` object), `changelog` (timestamp, **auditor** = `os.userInfo().username`, row, url, field, old/new value).
+- **The renderer is unchanged architecturally** — `state.editedRows` stays in memory; only persistence is swapped. `save-file` IPC routes by extension: `.transmission` → `projectStore.saveAll()` (one transaction, ~5ms at 4k rows); anything else → legacy `writeWorkbook`. The existing 2s debounced autosave therefore becomes effectively instant for projects.
+- **Open** routes through `openAnyPath(filePath)` (open dialog, recents, `get-last-file`, macOS `open-file` event for Finder double-click — `fileAssociations` registered in package.json). `readProject()` loads the DB, then runs the same post-processing as the xlsx path via shared helpers `computeColumnMap()` + `injectAndOrderAuditColumns()` (extracted from `readWorkbook`) — so audit columns added by app updates get injected into old projects on open. The nav tree is rebuilt by `navTreeFromFlatNodes()`, which renders the flat nodes into an in-memory sheet and feeds the real `parseNavSheet()` (identical tree semantics, zero duplicated logic).
+- **File → Save As Project…** (Cmd+Shift+S, `menu-save-as-project` → renderer `saveAsProject()` → `save-as-project` IPC) converts the open spreadsheet + in-session edits into a project and switches the session to it. This is the migration path: "open spreadsheet → Save As Project."
+- **File → Export Full Workbook (.xlsx)…** (`menu-export-workbook` → `exportFullWorkbook()` → `export-workbook` IPC) writes a complete xlsx (data + all structural sheets) to a chosen path. For projects it exports the **full** changelog from the DB with `opts.replaceChangeLog` so re-exports don't duplicate entries. The from-scratch NavStructure branch in `writeWorkbook` now writes the full column set (Notes/Phase/Node_Type/build metadata), since projects always export from scratch (`navSheetInfo = null`).
+- **Safety:** `before-quit` checkpoints + closes the DB (no stale `-wal`/`-shm` sidecars); a rolling backup per project is written to `userData/backups/` on open via SQLite's online backup API. Opening a project created by a newer schema version fails with a clear "update the app" error.
+- `buildSavePayload({ fullNav, drainLog })` in renderer.js builds the save/export payload; `fullNav` forces the complete nav tree (Save As Project, exports), `drainLog:false` leaves `_sessionChangeLog` intact (exports). Failed saves restore drained changelog entries.
 
 ---
 
@@ -105,7 +121,11 @@ package.json     — Dependencies + Electron Builder config
 |-----------------|--------------------|-----------------------------------------------|
 | renderer → main | `open-file-dialog` | none                                          |
 | renderer → main | `get-last-file`    | → `FileData \| null`                          |
-| renderer → main | `save-file`        | `{ headers, rows, allNavNodes?, projectSettings? }` → `{ success, error? }`  |
+| renderer → main | `save-file`        | `{ headers, rows, allNavNodes?, projectSettings? }` → `{ success, error? }` — routes to SQLite for `.transmission`, SheetJS otherwise  |
+| renderer → main | `save-as-project`  | same payload as `save-file` (+ full nav) → `{ success, filePath?, error? }` — creates a `.transmission` project, switches session to it |
+| renderer → main | `export-workbook`  | same payload as `save-file` (+ full nav) → `{ success, filePath?, error? }` — writes a complete xlsx to a chosen path |
+| main → renderer | `menu-save-as-project` | none — File → Save As Project… (Cmd+Shift+S) |
+| main → renderer | `menu-export-workbook` | none — File → Export Full Workbook (.xlsx)… |
 | renderer → main | `get-current-path` | → string \| null                             |
 | renderer → main | `open-external`    | url string                                    |
 | renderer → main | `get-prefs`        | → `{ visibleFields, tagLibrary, autoAdvance, groupLibrary, sidebarWidth, sortOrder, filterText, rubricDir, claudeApiKey, sidebarColumns, customKkeStates, tableColumns, extraKkeCols, kkeFilter, showSmeFields }` |
