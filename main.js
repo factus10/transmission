@@ -1693,6 +1693,32 @@ ipcMain.handle('save-file', async (event, { headers, rows, newNavNodes, allNavNo
   return result;
 });
 
+// Read a workbook's KKE_ChangeLog sheet as changelog entries, so Save As
+// Project can carry the spreadsheet's accumulated history into the DB.
+// (The app always writes the sheet as 'KKE_ChangeLog', so the exact-name
+// `sheets` filter keeps this read cheap — no need to parse the data sheets.)
+function readWorkbookChangeLog(filePath) {
+  try {
+    const wb = XLSX.readFile(filePath, { type: 'file', sheets: 'KKE_ChangeLog' });
+    const ws = wb.Sheets['KKE_ChangeLog'];
+    if (!ws) return [];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    return rows.slice(1)
+      .filter(r => r.some(c => String(c).trim() !== ''))
+      .map(r => ({
+        timestamp: String(r[0] ?? ''),
+        row: r[1] === '' ? null : r[1],
+        url: String(r[2] ?? ''),
+        field: String(r[3] ?? ''),
+        from: String(r[4] ?? ''),
+        to: String(r[5] ?? ''),
+        auditor: ''  // unknown — xlsx history predates per-auditor logging
+      }));
+  } catch (e) {
+    return [];
+  }
+}
+
 // Convert the currently-open spreadsheet (plus all in-session edits) into a
 // .transmission project file and switch the session over to it.
 ipcMain.handle('save-as-project', async (event, payload) => {
@@ -1707,8 +1733,16 @@ ipcMain.handle('save-as-project', async (event, payload) => {
   if (result.canceled) return { success: false, error: 'Cancelled' };
 
   try {
+    // Carry the source workbook's accumulated change history into the project
+    const sourceLog = (currentFilePath && !isProjectFile(currentFilePath) && fs.existsSync(currentFilePath))
+      ? readWorkbookChangeLog(currentFilePath)
+      : [];
     projectStore.create(result.filePath);
-    projectStore.saveAll({ ...payload, sheetName: currentSheetName || 'Data' });
+    projectStore.saveAll({
+      ...payload,
+      changeLog: [...sourceLog, ...(payload.changeLog || [])],
+      sheetName: currentSheetName || 'Data'
+    });
     currentFilePath = result.filePath;
     navSheetInfo = null;
     savePrefs({ lastFile: currentFilePath, lastSheet: null });

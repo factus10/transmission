@@ -248,6 +248,7 @@ Transmission has no built-in crawler by design; crawl exports come from external
 - [ ] No `-wal` / `-shm` sidecar files next to the project after quit
 - [ ] Open Recent lists the project; Finder double-click opens it (packaged build)
 - [ ] File → Export Full Workbook (.xlsx)… → exported file opens in Excel; data sheet + NavStructure (incl. Notes/Phase/build metadata columns) + KKE_Settings + KKE_ChangeLog all present
+- [ ] Save As Project from an xlsx with existing KKE_ChangeLog history → exported workbook contains the FULL history (pre-conversion entries included)
 - [ ] Re-export over the same xlsx → KKE_ChangeLog entries are NOT duplicated
 - [ ] Exported workbook re-opens in Transmission cleanly (round trip)
 - [ ] Open an old project after an app update that adds audit columns → new columns appear (injection on open)

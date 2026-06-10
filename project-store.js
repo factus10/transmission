@@ -176,7 +176,10 @@ class ProjectStore {
 
       if (changeLog && changeLog.length > 0) {
         for (const e of changeLog) {
-          insLog.run(e.timestamp || '', auditor, e.row ?? null, e.url || '', e.field || '', e.from ?? '', e.to ?? '');
+          // Entries imported from an xlsx KKE_ChangeLog carry their own auditor
+          // ('' = unknown); entries logged in this session get the current user.
+          insLog.run(e.timestamp || '', e.auditor !== undefined ? e.auditor : auditor,
+                     e.row ?? null, e.url || '', e.field || '', e.from ?? '', e.to ?? '');
         }
       }
 
