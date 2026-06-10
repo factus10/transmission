@@ -1743,8 +1743,20 @@ ipcMain.handle('save-as-project', async (event, payload) => {
       changeLog: [...sourceLog, ...(payload.changeLog || [])],
       sheetName: currentSheetName || 'Data'
     });
+    // Saved column mappings are keyed by basename (incl. extension), so a
+    // mapping fixed on the source xlsx wouldn't apply to the new project —
+    // the wrong-auto-detected-column problem would silently return. Carry it.
+    const sourcePath = currentFilePath;
     currentFilePath = result.filePath;
     navSheetInfo = null;
+    if (sourcePath) {
+      const prefs = loadPrefs();
+      const oldMap = prefs.columnMappings?.[path.basename(sourcePath)];
+      const newName = path.basename(currentFilePath);
+      if (oldMap && !prefs.columnMappings[newName]) {
+        savePrefs({ columnMappings: { ...prefs.columnMappings, [newName]: oldMap } });
+      }
+    }
     savePrefs({ lastFile: currentFilePath, lastSheet: null });
     recordRecentFile(currentFilePath);
     mainWindow?.webContents.send('save-success', currentFilePath);
