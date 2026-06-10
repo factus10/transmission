@@ -398,6 +398,12 @@ async function init() {
 function bindIPCListeners() {
   window.electronAPI.onFileOpened(data => loadData(data));
   window.electronAPI.onMenuSave(() => saveFile());
+  if (window.electronAPI.onMenuSaveAsProject) {
+    window.electronAPI.onMenuSaveAsProject(() => saveAsProject());
+  }
+  if (window.electronAPI.onMenuExportWorkbook) {
+    window.electronAPI.onMenuExportWorkbook(() => exportFullWorkbook());
+  }
   window.electronAPI.onSaveSuccess(() => {
     showToast('Saved ✓', 'success');
     setDirty(false);
@@ -4972,27 +4978,24 @@ function setupWebviewEvents() {
 // ─── Save / dirty ─────────────────────────────────────────────────────────────
 
 let autosaveTimer = null;
-const AUTOSAVE_DELAY = 2000; // ms after last edit
+const AUTOSAVE_DELAY = 2000;        // ms after last edit (xlsx — full workbook rebuild)
+const AUTOSAVE_DELAY_PROJECT = 400; // ms after last edit (.transmission — ~ms transaction)
 
-async function saveFile() {
-  if (!state.filePath) return;
-  showSavingStatus();
-
-  // Update Consolidate_Into values to use the target's new computed URL where possible.
-  // This catches rows set up before a target had a nav assignment.
-  resolveConsolidateIntoUrls();
-
-  // Resolve redirect destinations before saving so the Excel file is complete
-  resolveRedirectDestinations();
-
+// Build the save-file IPC payload from current state.
+// fullNav: include the full nav tree even when it isn't dirty — needed when the
+//   destination has no prior copy (Save As Project, full workbook export).
+// drainLog: move session changelog entries into the payload (restored on a
+//   failed save by the caller). Exports pass false so the session log still
+//   belongs to the working file's next save.
+function buildSavePayload({ fullNav = false, drainLog = true } = {}) {
   const payload = {
     headers: state.headers,
     rows: state.editedRows.map(({ _rowIndex, ...rest }) => rest),
     newNavNodes: state.newNavNodes.length > 0 ? state.newNavNodes : undefined
   };
 
-  // If nav tree was edited, send all nodes for full sheet rewrite
-  if (state.navTreeDirty && state.navNodes.length > 0) {
+  // If nav tree was edited (or a full snapshot is requested), send all nodes
+  if ((state.navTreeDirty || fullNav) && state.navNodes.length > 0) {
     // Write rows in tree (DFS pre-order) order, NOT flat-array order — parseNavSheet
     // rebuilds sibling order from row order, so persisting the visual/tree order is
     // what makes a manual drag-reorder survive a reload.
@@ -5029,29 +5032,97 @@ async function saveFile() {
     payload.projectSettings = ps;
   }
 
-  // Append session change log
+  // Session change log
   if (_sessionChangeLog.length > 0) {
-    payload.changeLog = _sessionChangeLog.splice(0); // drain the log
+    payload.changeLog = drainLog ? _sessionChangeLog.splice(0) : [..._sessionChangeLog];
   }
+
+  return payload;
+}
+
+async function saveFile() {
+  if (!state.filePath) return;
+  showSavingStatus();
+
+  // Update Consolidate_Into values to use the target's new computed URL where possible.
+  // This catches rows set up before a target had a nav assignment.
+  resolveConsolidateIntoUrls();
+
+  // Resolve redirect destinations before saving so the Excel file is complete
+  resolveRedirectDestinations();
+
+  const payload = buildSavePayload();
 
   const result = await window.electronAPI.saveFile(payload);
   if (result.success) {
     if (state.newNavNodes.length > 0) state.newNavNodes = [];
     state.navTreeDirty = false;
-    state.projectSettings = ps;
+    if (payload.projectSettings) state.projectSettings = payload.projectSettings;
   }
   if (!result.success) {
+    // Put drained changelog entries back so they aren't lost on a failed save
+    if (payload.changeLog) _sessionChangeLog.unshift(...payload.changeLog);
     showToast(`Save failed: ${result.error}`, 'error');
     setDirty(true); // restore the "unsaved" indicator so the saving spinner doesn't stick
+  }
+}
+
+/** File → Save As Project…: convert the open spreadsheet (with all in-session
+ *  edits) into a .transmission SQLite project and switch the session to it. */
+async function saveAsProject() {
+  if (!state.filePath && state.editedRows.length === 0) {
+    showToast('Open a spreadsheet first', 'error');
+    return;
+  }
+  showSavingStatus();
+  resolveConsolidateIntoUrls();
+  resolveRedirectDestinations();
+
+  const payload = buildSavePayload({ fullNav: true });
+
+  const result = await window.electronAPI.saveAsProject(payload);
+  if (result.success) {
+    state.filePath = result.filePath;
+    if (state.newNavNodes.length > 0) state.newNavNodes = [];
+    state.navTreeDirty = false;
+    if (payload.projectSettings) state.projectSettings = payload.projectSettings;
+    els.fileName.textContent = result.filePath.split('/').pop();
+    els.sheetPicker.classList.add('hidden'); // projects are single-sheet
+    setDirty(false);
+    showToast('Project created — changes now save instantly to the project file', 'success');
+  } else {
+    if (payload.changeLog) _sessionChangeLog.unshift(...payload.changeLog);
+    if (result.error !== 'Cancelled') showToast(`Could not create project: ${result.error}`, 'error');
+    setDirty(state.isDirty);
+  }
+}
+
+/** File → Export Full Workbook…: write the complete dataset (all sheets) to a
+ *  fresh xlsx — the round-trip path back to Excel for project files. */
+async function exportFullWorkbook() {
+  if (!state.filePath) return;
+  resolveConsolidateIntoUrls();
+  resolveRedirectDestinations();
+
+  const payload = buildSavePayload({ fullNav: true, drainLog: false });
+
+  const result = await window.electronAPI.exportWorkbook(payload);
+  if (result.success) {
+    showToast(`Workbook exported: ${result.filePath.split('/').pop()}`, 'success');
+  } else if (result.error !== 'Cancelled') {
+    showToast(`Export failed: ${result.error}`, 'error');
   }
 }
 
 function scheduleAutosave() {
   if (!state.filePath) return;
   clearTimeout(autosaveTimer);
+  // Project saves are a ~ms SQLite transaction, so persist almost immediately;
+  // xlsx saves rebuild the whole workbook, so keep the longer debounce.
+  const delay = /\.transmission$/i.test(state.filePath) ? AUTOSAVE_DELAY_PROJECT : AUTOSAVE_DELAY;
   autosaveTimer = setTimeout(() => {
     if (state.isDirty) saveFile();
-  }, AUTOSAVE_DELAY);
+  }, delay);
 }
 
 function setDirty(dirty) {
