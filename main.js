@@ -69,18 +69,21 @@ function detectAuditCol(headers, candidates) {
   return null;
 }
 
-// Determine column mapping: saved prefs override auto-detection ONLY when the saved name
-// still exists in the current file's headers. A stale savedMap value for a column the file
-// doesn't have any more would otherwise get re-injected as a duplicate.
+// Determine column mapping. Priority per key: the file's own saved mapping
+// (projectSettings.columnMap — travels with the project/workbook between
+// auditors) > per-user prefs keyed by file name (legacy) > auto-detection.
+// A saved name is honored ONLY when it still exists in the current headers —
+// a stale value would otherwise get re-injected as a duplicate column.
 // Shared by the xlsx reader and the .transmission project reader.
-function computeColumnMap(headers, filePath) {
+function computeColumnMap(headers, filePath, projectMap) {
   const prefs = loadPrefs();
   const fileName = path.basename(filePath);
   const savedMap = prefs.columnMappings?.[fileName] || null;
-  const honorSaved = (key) => {
-    const v = savedMap?.[key];
+  const honor = (map, key) => {
+    const v = map?.[key];
     return v && headers.includes(v) ? v : null;
   };
+  const honorSaved = (key) => honor(projectMap, key) || honor(savedMap, key);
 
   return {
     kke:   honorSaved('kke')   || detectAuditCol(headers, KKE_CANDIDATES)  || 'KKE_Recommendation',
@@ -553,7 +556,17 @@ function readWorkbook(filePath, targetSheet) {
       console.warn('Dedup applied:', dedupReport);
     }
 
-    const columnMap = computeColumnMap(headers, filePath);
+    // Early peek at KKE_Settings for a file-level column mapping (the full
+    // settings parse happens further down; this small sheet is cheap to read twice)
+    let projectColumnMap = null;
+    const earlySettingsSheet = allSheetNames.find(s => s.toLowerCase() === 'kke_settings');
+    if (earlySettingsSheet) {
+      try {
+        const early = parseSettingsSheet(workbook.Sheets[earlySettingsSheet]);
+        if (early.columnMap && typeof early.columnMap === 'object') projectColumnMap = early.columnMap;
+      } catch (e) { /* fall back to prefs/auto-detect */ }
+    }
+    const columnMap = computeColumnMap(headers, filePath, projectColumnMap);
 
     // Build row objects keyed by original header positions BEFORE reordering
     const origHeaders = [...headers];
@@ -662,10 +675,11 @@ function readProject(filePath) {
       throw new Error('Project file contains no data.');
     }
 
-    // Same post-processing as the xlsx path: column mapping (honoring saved
-    // per-file overrides) + injection of any audit columns added since the
-    // project was last saved.
-    const columnMap = computeColumnMap(headers, filePath);
+    // Same post-processing as the xlsx path: column mapping (honoring the
+    // project's own saved mapping, then per-user overrides) + injection of any
+    // audit columns added since the project was last saved.
+    const columnMap = computeColumnMap(headers, filePath,
+      (projectSettings.columnMap && typeof projectSettings.columnMap === 'object') ? projectSettings.columnMap : null);
     injectAndOrderAuditColumns(headers, rows, columnMap);
     rows.forEach((r, i) => { r._rowIndex = i + 1; });
 
