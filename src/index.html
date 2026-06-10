@@ -358,6 +358,17 @@
           <div id="webview-container">
             <div id="webview-wrap">
               <div id="webview-loading" class="hidden"><div class="spinner"></div></div>
+              <div id="webview-error" class="hidden">
+                <div class="wv-error-card">
+                  <div class="wv-error-title">Page failed to load</div>
+                  <div class="wv-error-detail" id="webview-error-detail"></div>
+                  <div class="wv-error-actions">
+                    <button class="btn btn-sm btn-ghost" id="wv-error-retry">Retry</button>
+                    <button class="btn btn-sm btn-ghost" id="wv-error-external">Open in browser ↗</button>
+                  </div>
+                  <div class="wv-error-hint">If the page is genuinely gone, that's useful audit information — consider Kill (2) with a redirect.</div>
+                </div>
+              </div>
               <webview id="webview" allowpopups></webview>
             </div>
             <div id="webview-compare" class="hidden">
