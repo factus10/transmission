@@ -5059,5 +5059,45 @@ body.dragging-modal, body.dragging-modal * { cursor: grabbing !important; }
   color: #92400e;
 }
 
+/* ── Unified Export dialog option cards ───────────────────────────────────── */
+.xpd-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.xpd-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input, #fff);
+  cursor: pointer;
+  font: inherit;
+  color: var(--text);
+  transition: border-color 0.12s, background 0.12s;
+}
+.xpd-option:hover {
+  border-color: var(--accent);
+  background: var(--bg-hover, #f8fafc);
+}
+.xpd-option-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.xpd-option-desc {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.45;
+}
+.xpd-option-format {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-top: 4px;
+}
+
 /* ── Utilities ────────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
