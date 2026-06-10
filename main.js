@@ -332,6 +332,7 @@ function buildMenu() {
         { type: 'separator' },
         { label: 'Export…', accelerator: 'CmdOrCtrl+Shift+E', click: send('menu-export-dialog') },
         { label: 'Export Full Workbook (.xlsx)…', click: send('menu-export-workbook') },
+        { label: 'Package for Handoff…', click: send('menu-package-handoff') },
         // Windows/Linux: Preferences sits here (macOS has it in the app menu)
         ...(!isMac ? [{ type: 'separator' }, preferencesItem] : []),
         { type: 'separator' },
@@ -1767,6 +1768,52 @@ ipcMain.handle('save-as-project', async (event, payload) => {
   }
 });
 
+// Package the open project for handoff to another auditor: checkpoint the WAL
+// so the .transmission file is a complete single-file snapshot, then zip it
+// with a short README. The recipient unzips and double-clicks.
+ipcMain.handle('package-handoff', async () => {
+  if (!isProjectFile(currentFilePath) || !projectStore.isOpen) {
+    return { success: false, error: 'Open a .transmission project first (File → Save As Project…).' };
+  }
+  const base = path.basename(currentFilePath).replace(/\.transmission$/i, '');
+  const stamp = new Date().toISOString().slice(0, 10);
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Package for Handoff',
+    defaultPath: `${base}-handoff-${stamp}.zip`,
+    filters: [{ name: 'Zip Archive', extensions: ['zip'] }]
+  });
+  if (result.canceled) return { success: false, error: 'Cancelled' };
+
+  try {
+    projectStore.checkpoint();
+    const JSZip = require('jszip');
+    const zip = new JSZip();
+    zip.file(path.basename(currentFilePath), fs.readFileSync(currentFilePath));
+    zip.file('README.txt', [
+      'Transmission project handoff',
+      '============================',
+      `Project:  ${path.basename(currentFilePath)}`,
+      `Packaged: ${new Date().toISOString()}`,
+      `By:       ${require('os').userInfo().username}`,
+      '',
+      'To continue this audit:',
+      '  1. Install Transmission.',
+      '  2. Unzip, then double-click the .transmission file (or File → Open…).',
+      '',
+      'Everything travels inside the project file: rows and decisions, the',
+      'navigation tree, project settings, glossary and libraries, and the full',
+      'change history. Edits you make are attributed to your username in the',
+      'change log.'
+    ].join('\n'));
+    const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    fs.writeFileSync(result.filePath, buf);
+    shell.showItemInFolder(result.filePath);
+    return { success: true, filePath: result.filePath };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // Full xlsx export — the round-trip path back to Excel for projects (and a
 // Save As for spreadsheets). For projects, the DB's change log is the log of
 // record, so the export carries the full history.
@@ -2892,9 +2939,9 @@ ipcMain.handle('export-redirects', async (event, { rows }) => {
 // Renderer builds an array of `{ name, aoa }` sheets (aoa = array-of-arrays in SheetJS shape).
 // Main writes them to xlsx and returns the path. No formula evaluation needed; this is a
 // pure data deliverable for engineering.
-ipcMain.handle('export-migration-tracker', async (event, { defaultName, sheets }) => {
+ipcMain.handle('export-migration-tracker', async (event, { defaultName, sheets, title }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
-    title: 'Export Migration Tracker',
+    title: title || 'Export Migration Tracker',
     defaultPath: defaultName || 'migration-tracker.xlsx',
     filters: [{ name: 'Excel', extensions: ['xlsx'] }]
   });

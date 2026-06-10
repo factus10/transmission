@@ -40,7 +40,7 @@ Note: **Table View** (Cmd+T), **Navigation Tree** (Cmd+Shift+T), and **Redirect 
 
 **Menu organization (post-reorg):**
 - **App menu (macOS) / File (Win/Linux)** — Preferences (Cmd+,)
-- **File** — Open · Open Recent · Save · Import/Merge · Merge Auditor · Save/Load Template · Export… (unified dialog `openUnifiedExportDialog()`)
+- **File** — Open · Open Recent · Save · Save As Project… (Cmd+Shift+S) · Import/Merge · Merge Auditor · Save/Load Template · Export… (unified dialog `openUnifiedExportDialog()`) · Export Full Workbook (.xlsx)… · Package for Handoff…
 - **Edit** — standard
 - **View** — Audit (Cmd+1) · Table (Cmd+T) · Nav Tree (Cmd+Shift+T) · Redirects (Cmd+Shift+R) · Audit Progress (Cmd+P) · zoom · fullscreen · (dev items in source builds)
 - **Project** — Project Settings · Glossary · Content Type Registry · Target Spec Library · Component Library · Run Rubric · Refresh GA KKE · Recompute Suggested KKE · Triage Non-200 Pages
@@ -51,7 +51,7 @@ Note: **Table View** (Cmd+T), **Navigation Tree** (Cmd+Shift+T), and **Redirect 
 
 Platform-conditional Preferences placement: `process.platform === 'darwin'` → app menu; otherwise → File menu. `buildMenu()` uses a `send(channel)` factory to reduce boilerplate.
 
-The unified Export dialog (`File → Export…`, Cmd+Shift+E) opens via `menu-export-dialog` and offers four destinations: Filtered Rows (xlsx) · Audit Decisions (CSV/JSON) · Redirect Map (CSV) · Migration Tracker (xlsx multi-sheet).
+The unified Export dialog (`File → Export…`, Cmd+Shift+E) opens via `menu-export-dialog` and offers five destinations: Filtered Rows (xlsx) · Audit Decisions (CSV/JSON) · Redirect Map (CSV) · Migration Tracker (xlsx multi-sheet) · Client Export (column profiles, xlsx).
 
 **Removed in Chunk iii:** the `Tree` and `Redirects` buttons that lived in the audit bar's Decide cluster. Those views are now reached via the view switcher. Lingering references to `#btn-navtree` / `#btn-redirects` in renderer code are null-safe.
 
@@ -94,6 +94,8 @@ A `.transmission` file is a **SQLite database** (better-sqlite3, WAL mode) that 
 - **File → Export Full Workbook (.xlsx)…** (`menu-export-workbook` → `exportFullWorkbook()` → `export-workbook` IPC) writes a complete xlsx (data + all structural sheets) to a chosen path. For projects it exports the **full** changelog from the DB with `opts.replaceChangeLog` so re-exports don't duplicate entries. The from-scratch NavStructure branch in `writeWorkbook` now writes the full column set (Notes/Phase/Node_Type/build metadata), since projects always export from scratch (`navSheetInfo = null`).
 - **Safety:** `before-quit` checkpoints + closes the DB (no stale `-wal`/`-shm` sidecars); a rolling backup per project is written to `userData/backups/` on open via SQLite's online backup API. Opening a project created by a newer schema version fails with a clear "update the app" error.
 - `buildSavePayload({ fullNav, drainLog })` in renderer.js builds the save/export payload; `fullNav` forces the complete nav tree (Save As Project, exports), `drainLog:false` leaves `_sessionChangeLog` intact (exports). Failed saves restore drained changelog entries.
+- **Export profiles:** `openProfileExportDialog()` (unified Export dialog → "Client Export") exports a chosen column subset over filtered/all rows via the generic `export-migration-tracker` IPC (which accepts an optional `title`). Built-ins (`builtinExportProfiles()`: Client Summary, Full) are computed from current headers; user profiles persist in `projectSettings.exportProfiles` = `[{name, columns}]` (travels with the project).
+- **Package for Handoff:** File → Package for Handoff… (`menu-package-handoff` → renderer `packageForHandoff()` saves if dirty → `package-handoff` IPC). Main checkpoints the WAL (`ProjectStore.checkpoint()`), zips the `.transmission` + a README.txt via JSZip, writes to a chosen path, and reveals in Finder.
 
 ---
 
@@ -126,6 +128,8 @@ A `.transmission` file is a **SQLite database** (better-sqlite3, WAL mode) that 
 | renderer → main | `export-workbook`  | same payload as `save-file` (+ full nav) → `{ success, filePath?, error? }` — writes a complete xlsx to a chosen path |
 | main → renderer | `menu-save-as-project` | none — File → Save As Project… (Cmd+Shift+S) |
 | main → renderer | `menu-export-workbook` | none — File → Export Full Workbook (.xlsx)… |
+| renderer → main | `package-handoff`  | none → `{ success, filePath?, error? }` — checkpoint + zip the open project for handoff |
+| main → renderer | `menu-package-handoff` | none — File → Package for Handoff… |
 | renderer → main | `get-current-path` | → string \| null                             |
 | renderer → main | `open-external`    | url string                                    |
 | renderer → main | `get-prefs`        | → `{ visibleFields, tagLibrary, autoAdvance, groupLibrary, sidebarWidth, sortOrder, filterText, rubricDir, claudeApiKey, sidebarColumns, customKkeStates, tableColumns, extraKkeCols, kkeFilter, showSmeFields }` |

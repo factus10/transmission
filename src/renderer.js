@@ -404,6 +404,9 @@ function bindIPCListeners() {
   if (window.electronAPI.onMenuExportWorkbook) {
     window.electronAPI.onMenuExportWorkbook(() => exportFullWorkbook());
   }
+  if (window.electronAPI.onMenuPackageHandoff) {
+    window.electronAPI.onMenuPackageHandoff(() => packageForHandoff());
+  }
   window.electronAPI.onSaveSuccess(() => {
     showToast('Saved ✓', 'success');
     setDirty(false);
@@ -5094,6 +5097,23 @@ async function saveAsProject() {
     if (payload.changeLog) _sessionChangeLog.unshift(...payload.changeLog);
     if (result.error !== 'Cancelled') showToast(`Could not create project: ${result.error}`, 'error');
     setDirty(state.isDirty);
+  }
+}
+
+/** File → Package for Handoff…: save, checkpoint, and zip the project file
+ *  (with a README) for sending to another auditor. */
+async function packageForHandoff() {
+  if (!state.filePath) { showToast('No file open', 'error'); return; }
+  if (!/\.transmission$/i.test(state.filePath)) {
+    showToast('Handoff packaging works on project files — File → Save As Project… first', 'error');
+    return;
+  }
+  if (state.isDirty) await saveFile();
+  const result = await window.electronAPI.packageHandoff();
+  if (result.success) {
+    showToast(`Handoff package created — ${result.filePath.split('/').pop()}`, 'success');
+  } else if (result.error !== 'Cancelled') {
+    showToast(`Packaging failed: ${result.error}`, 'error');
   }
 }
 
@@ -15015,6 +15035,197 @@ async function recalculateComputedColumns() {
 
 // ─── Unified Export dialog (Chunk i — replaces the old separate menu items) ──
 
+// ─── Export profiles (client-facing column subsets) ──────────────────────────
+// A profile is a named column list, saved per-project in
+// projectSettings.exportProfiles so it travels with the file. Built-ins are
+// computed from the current file's headers and can't be deleted.
+
+function exportFileStamp() {
+  const ps = state.projectSettings || {};
+  const slug = (ps.projectName || ps.clientName || 'project')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return { slug: slug || 'project', stamp: new Date().toISOString().slice(0, 10) };
+}
+
+function builtinExportProfiles() {
+  const urlCol = state.urlColumn || 'Address';
+  const clientCols = [urlCol, 'Title 1', 'Page_Type', 'Content_Theme', groupCol(), kkeCol(),
+                      'Final_KKE', tagsCol(), notesCol(), 'Redirect_Destination'];
+  return [
+    { name: 'Client Summary', builtin: true, columns: clientCols.filter(h => state.headers.includes(h)) },
+    { name: 'Full (all columns)', builtin: true, columns: state.headers.filter(h => h !== '_rowIndex') }
+  ];
+}
+
+function userExportProfiles() {
+  const arr = state.projectSettings.exportProfiles;
+  return Array.isArray(arr) ? arr : [];
+}
+
+function openProfileExportDialog() {
+  if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
+  const allHeaders = state.headers.filter(h => h !== '_rowIndex');
+  const filteredCount = state.filteredRows.length;
+  const totalCount = state.editedRows.length;
+  const filterActive = filteredCount !== totalCount;
+
+  const profileOptionsHtml = () => {
+    const userProfiles = userExportProfiles();
+    return `
+      <optgroup label="Built-in">
+        ${builtinExportProfiles().map((p, i) => `<option value="b:${i}">${escapeHtml(p.name)}</option>`).join('')}
+      </optgroup>
+      ${userProfiles.length ? `<optgroup label="This project">
+        ${userProfiles.map((p, i) => `<option value="u:${i}">${escapeHtml(p.name)}</option>`).join('')}
+      </optgroup>` : ''}`;
+  };
+
+  const gridHtml = allHeaders.map(h => `
+    <label class="xpp-col" data-col="${escapeHtml(h)}" style="display:flex;gap:6px;align-items:center;font-size:12px;padding:2px 4px;cursor:pointer;">
+      <input type="checkbox" value="${escapeHtml(h)}"> <span>${escapeHtml(h)}</span>
+    </label>`).join('');
+
+  const body = `
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;">
+      <label style="font-size:12px;color:var(--text-muted);">Profile</label>
+      <select id="_xpp-profile" style="flex:1;">${profileOptionsHtml()}</select>
+      <button class="btn btn-sm btn-ghost" id="_xpp-delete" title="Delete the selected saved profile" disabled>Delete</button>
+    </div>
+    <div style="display:flex;gap:14px;align-items:center;margin-bottom:10px;font-size:12px;">
+      <span style="color:var(--text-muted);">Rows</span>
+      <label style="display:flex;gap:5px;align-items:center;cursor:pointer;">
+        <input type="radio" name="_xpp-scope" value="filtered" ${filterActive ? 'checked' : ''} ${filteredCount === 0 ? 'disabled' : ''}>
+        Filtered (${filteredCount})
+      </label>
+      <label style="display:flex;gap:5px;align-items:center;cursor:pointer;">
+        <input type="radio" name="_xpp-scope" value="all" ${filterActive ? '' : 'checked'}>
+        All (${totalCount})
+      </label>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+      <input type="text" id="_xpp-search" placeholder="Find column…" style="flex:1;font-size:12px;padding:3px 6px;">
+      <button class="btn btn-sm btn-ghost" id="_xpp-all">All</button>
+      <button class="btn btn-sm btn-ghost" id="_xpp-none">None</button>
+      <span id="_xpp-count" style="font-size:11px;color:var(--text-muted);"></span>
+    </div>
+    <div id="_xpp-grid" style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));">
+      ${gridHtml}
+    </div>`;
+
+  const m = openModal({
+    title: 'Client Export',
+    body,
+    width: 'min(720px, 80vw)',
+    buttons: [
+      { label: 'Save as profile…', closeOnClick: false, onClick: () => saveCurrentAsProfile() },
+      { label: 'Cancel' },
+      { label: 'Export', variant: 'primary', primary: true, closeOnClick: false, onClick: () => doExport() }
+    ]
+  });
+
+  const dlg = m.dialog;
+  const profileSel = dlg.querySelector('#_xpp-profile');
+  const grid = dlg.querySelector('#_xpp-grid');
+  const countEl = dlg.querySelector('#_xpp-count');
+  const deleteBtn = dlg.querySelector('#_xpp-delete');
+  const boxes = () => [...grid.querySelectorAll('input[type="checkbox"]')];
+
+  const refreshCount = () => {
+    const n = boxes().filter(b => b.checked).length;
+    countEl.textContent = `${n} of ${allHeaders.length} columns`;
+  };
+
+  const applyProfile = () => {
+    const v = profileSel.value;
+    const [kind, idx] = v.split(':');
+    const p = kind === 'b' ? builtinExportProfiles()[+idx] : userExportProfiles()[+idx];
+    if (!p) return;
+    const sel = new Set(p.columns);
+    boxes().forEach(b => { b.checked = sel.has(b.value); });
+    deleteBtn.disabled = kind !== 'u';
+    refreshCount();
+  };
+
+  profileSel.addEventListener('change', applyProfile);
+  grid.addEventListener('change', refreshCount);
+  dlg.querySelector('#_xpp-all').addEventListener('click', () => {
+    boxes().forEach(b => { if (!b.closest('.xpp-col').classList.contains('hidden')) b.checked = true; });
+    refreshCount();
+  });
+  dlg.querySelector('#_xpp-none').addEventListener('click', () => {
+    boxes().forEach(b => { if (!b.closest('.xpp-col').classList.contains('hidden')) b.checked = false; });
+    refreshCount();
+  });
+  dlg.querySelector('#_xpp-search').addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase();
+    grid.querySelectorAll('.xpp-col').forEach(l => {
+      l.classList.toggle('hidden', q && !l.dataset.col.toLowerCase().includes(q));
+    });
+  });
+  deleteBtn.addEventListener('click', async () => {
+    const [kind, idx] = profileSel.value.split(':');
+    if (kind !== 'u') return;
+    const p = userExportProfiles()[+idx];
+    const ok = await confirmDialog({ title: 'Delete profile', message: `Delete the export profile "${p.name}"?`, confirmLabel: 'Delete', danger: true });
+    if (!ok) return;
+    state.projectSettings.exportProfiles = userExportProfiles().filter((_, i) => i !== +idx);
+    setDirty(true);
+    profileSel.innerHTML = profileOptionsHtml();
+    profileSel.value = 'b:0';
+    applyProfile();
+  });
+
+  async function saveCurrentAsProfile() {
+    const columns = boxes().filter(b => b.checked).map(b => b.value);
+    if (columns.length === 0) { showToast('Select at least one column', 'error'); return; }
+    const name = await showPrompt('Profile name', 'e.g. Client Summary — Phase 2');
+    if (!name || !name.trim()) return;
+    const profiles = [...userExportProfiles()];
+    const existing = profiles.findIndex(p => p.name.toLowerCase() === name.trim().toLowerCase());
+    if (existing >= 0) profiles[existing] = { name: name.trim(), columns };
+    else profiles.push({ name: name.trim(), columns });
+    state.projectSettings.exportProfiles = profiles;
+    setDirty(true);
+    profileSel.innerHTML = profileOptionsHtml();
+    profileSel.value = 'u:' + (existing >= 0 ? existing : profiles.length - 1);
+    deleteBtn.disabled = false;
+    showToast(`Profile "${name.trim()}" saved with the project`, 'success');
+  }
+
+  async function doExport() {
+    const columns = boxes().filter(b => b.checked).map(b => b.value);
+    if (columns.length === 0) { showToast('Select at least one column', 'error'); return; }
+    const scope = dlg.querySelector('input[name="_xpp-scope"]:checked')?.value || 'all';
+    const sourceRows = scope === 'filtered' ? state.filteredRows.map(fr => fr.row) : state.editedRows;
+    if (sourceRows.length === 0) { showToast('No rows to export', 'error'); return; }
+
+    const aoa = [columns];
+    for (const row of sourceRows) aoa.push(columns.map(h => row[h] ?? ''));
+    const cols = columns.map(h => ({ wch: Math.min(42, Math.max(12, h.length + 4)) }));
+
+    const [kind, idx] = profileSel.value.split(':');
+    const profName = (kind === 'b' ? builtinExportProfiles()[+idx] : userExportProfiles()[+idx])?.name || 'export';
+    const profSlug = profName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const { slug, stamp } = exportFileStamp();
+
+    const result = await window.electronAPI.exportMigrationTracker({
+      defaultName: `${slug}-${profSlug || 'export'}-${stamp}.xlsx`,
+      title: 'Client Export',
+      sheets: [{ name: profName.slice(0, 31) || 'Export', aoa, cols }]
+    });
+    if (result?.success) {
+      m.close();
+      showToast(`Exported ${sourceRows.length} rows × ${columns.length} columns — ${result.filePath.split('/').pop()}`, 'success');
+    } else if (result?.error && result.error !== 'Cancelled') {
+      showToast('Export failed: ' + result.error, 'error');
+    }
+  }
+
+  // Start on Client Summary
+  profileSel.value = 'b:0';
+  applyProfile();
+}
+
 function openUnifiedExportDialog() {
   if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
   document.getElementById('_xpd-overlay')?.remove();
@@ -15072,6 +15283,11 @@ function openUnifiedExportDialog() {
           <div class="xpd-option-desc">Nav-tree-centric deliverable for engineering. Multi-sheet xlsx (Nav Plan · Source Pages · Redirects · Archive).</div>
           <div class="xpd-option-format">→ xlsx</div>
         </button>
+        <button type="button" class="xpd-option" data-kind="profile">
+          <div class="xpd-option-title">Client Export (column profile)</div>
+          <div class="xpd-option-desc">Just the columns the audience needs — pick a saved profile or choose columns, then export filtered or all rows. Profiles are saved with the project.</div>
+          <div class="xpd-option-format">→ xlsx</div>
+        </button>
       </div>
     </div>
   `;
@@ -15095,6 +15311,7 @@ function openUnifiedExportDialog() {
         case 'decisions': exportAuditDecisions(); break;
         case 'redirects': exportRedirectMap(); break;
         case 'migration': openMigrationTrackerExportDialog(); break;
+        case 'profile':   openProfileExportDialog(); break;
       }
     });
   });

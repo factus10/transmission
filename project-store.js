@@ -217,6 +217,12 @@ class ProjectStore {
       .map(e => ({ timestamp: e.timestamp, auditor: e.auditor, row: e.row, url: e.url, field: e.field, from: e.old_value, to: e.new_value }));
   }
 
+  /** Fold the WAL into the main DB file so it's a complete standalone snapshot
+   *  (used before zipping for handoff). Safe to call while the DB stays open. */
+  checkpoint() {
+    if (this.db) this.db.pragma('wal_checkpoint(TRUNCATE)');
+  }
+
   // ─── Backup ─────────────────────────────────────────────────────────────────
 
   /**
