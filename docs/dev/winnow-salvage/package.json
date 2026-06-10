@@ -1,0 +1,77 @@
+{
+  "name": "winnow",
+  "version": "0.1.0",
+  "description": "Content audit workbench — built-in crawler, SQLite-backed data model, GA4 integration, AI assessment",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "build": "electron-builder --mac --universal",
+    "build:arm": "electron-builder --mac --arm64",
+    "build:intel": "electron-builder --mac --x64"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "better-sqlite3": "^11.10.0",
+    "cheerio": "^1.0.0",
+    "googleapis": "^140.0.0",
+    "p-queue": "^6.6.0",
+    "robots-parser": "^3.0.0",
+    "sharp": "^0.33.0",
+    "syllable": "^4.1.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.0.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "io.github.factus10.winnow",
+    "productName": "Winnow",
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "icon": "assets/icon.icns"
+    },
+    "dmg": {
+      "title": "Winnow",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "assets/**/*",
+      "rubrics/**/*",
+      "node_modules/**/*",
+      "!node_modules/*/{CHANGELOG.md,README.md,readme.md,*.d.ts}",
+      "!node_modules/.cache"
+    ]
+  }
+}
