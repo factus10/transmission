@@ -351,7 +351,7 @@
         <li><strong>Search</strong> with a scope selector: All fields / URL / Title.</li>
         <li><strong>KKE filter</strong> is a checkbox dropdown (multi-select, OR-ed) including special filters: Unreviewed, Flagged, Duplicates, SME conflicts/pending, Consolidate (no/dead target), Shared nav, Needs placement, Suggested disagrees / &ne; your call.</li>
         <li><strong>Field filters</strong> (<strong>+ Field filter</strong>) on any column: is blank / is not blank / contains / equals / starts with / ends with. <strong>Unclassified</strong> is a shortcut for <code>Content Nature is blank</code>.</li>
-        <li><strong>Save</strong> a combination (text + scope + KKE + group + field filters) and recall it; <strong>Cmd+F</strong> Global Search finds &amp; navigates across all rows.</li>
+        <li><strong>Save</strong> a combination (text + scope + KKE + group + field filters) and recall it; <strong>Cmd+F</strong> Global Search finds &amp; navigates across all rows. In the <strong>Navigation Tree</strong>, <strong>Cmd+F</strong> searches the nav nodes instead (label, breadcrumb, number, path, notes, pattern, assignees) and the ◀/▶ buttons jump &amp; scroll to each match, expanding collapsed branches as needed.</li>
       </ul>
       <h4>Good end-state</h4>
       <ul class="help-check">
@@ -518,7 +518,7 @@
         <li><strong>Project &rarr; Target Spec Library…</strong> &mdash; each spec is a <strong>Page Template</strong> or <strong>Content Model</strong> (field schema) with three direction defaults: Writer brief · Build guidance · Migration mapping. Matched by exact name; 12 seedable defaults.</li>
         <li><strong>Annotate nodes</strong> in the editor's Build / Write / Migrate sections (Pattern, Page status, Builder, Build guidance, Writer, Writer brief, Migrator). Applying a Pattern fills blank briefs (a Keep/Append/Replace diff dialog guards populated ones).</li>
         <li><strong>Vocab:</strong> Project Settings &rarr; Migration (Page Statuses + the shared Builder/Writer/Migrator Assignees pool). Fragments are typed via <strong>Node type</strong>.</li>
-        <li><strong>Worklists:</strong> <strong>Reports &rarr; Migration Direction Brief…</strong> &mdash; Role (Writer / Builder / Migrator) + Person, grouped by spec.</li>
+        <li><strong>Worklists:</strong> <strong>Reports &rarr; Migration Direction Brief…</strong> &mdash; Role (Writer / Builder / Migrator) + Person, grouped by spec. Each node lists the <strong>source page(s)</strong> assigned to it, and any page absorbing others shows a <strong>merges N</strong> flag (the old pages being consolidated into it).</li>
       </ul>
       <h4>Good end-state</h4>
       <ul class="help-check">
@@ -569,6 +569,8 @@
       <ul>
         <li><strong>Migration &rarr; Migration Tracker…</strong> &mdash; toggle sheets/options, then export (<code>{project}-migration-tracker-YYYY-MM-DD.xlsx</code>).</li>
         <li><strong>Sheets:</strong> <strong>Nav Plan</strong> (build metadata per node) · <strong>Source Pages</strong> (audit rows joined to nodes) · <strong>Redirects</strong> (Kill + URL changes; <code>404</code> as intentional deindex) · <strong>Archive</strong> (Kill rows + notes/tags).</li>
+        <li><strong>Scope the Nav Plan:</strong> pick which columns appear, and tick <strong>Only nodes matching the active Build filter</strong> to export just the nodes that match the Build filter you set in the Nav Tree (e.g. one assignee, one status).</li>
+        <li><strong>Quick one-sheet export:</strong> in the Nav Tree, set a <strong>Build</strong> (and/or Phase) filter, then <strong>Export &rarr; Filtered nodes → Excel…</strong> &mdash; choose columns and export just those rows to a single sheet (<code>{project}-nav-nodes-YYYY-MM-DD.xlsx</code>).</li>
       </ul>
       <h4>Good end-state</h4>
       <ul class="help-check">
@@ -712,7 +714,7 @@
         <tr><td><code>Cmd+S</code></td><td>Save</td></tr>
         <tr><td><code>Cmd+Shift+E</code></td><td>Open unified Export dialog</td></tr>
         <tr><td><code>Cmd+,</code></td><td>Open Preferences</td></tr>
-        <tr><td><code>Cmd+F</code></td><td>Global Search</td></tr>
+        <tr><td><code>Cmd+F</code></td><td>Global Search (searches nav nodes when the Nav Tree is open)</td></tr>
         <tr><td colspan="2" style="font-weight:600; color:var(--text-primary); padding-top:8px;">Views</td></tr>
         <tr><td><code>Cmd+1</code></td><td>Audit View (default)</td></tr>
         <tr><td><code>Cmd+T</code></td><td>Toggle Table View</td></tr>
