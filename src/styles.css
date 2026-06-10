@@ -690,6 +690,8 @@ body.resizing-sidebar iframe {
 
 #main-panel {
   flex: 1;
+  min-width: 0; /* allow shrinking below the webview's intrinsic width — prevents the
+                   audit bar from overflowing the window and clipping fields (e.g. Tags) */
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -884,7 +886,11 @@ body.resizing-sidebar iframe {
 
 .audit-group-tags {
   flex: 1;
-  min-width: 0;
+  /* Real min-width so that when the selects fill the row, this group wraps to its
+     own full-width line (flex-wrap) instead of being squeezed to a sliver and
+     stacking its label/chips/button vertically — which inflated the cluster height
+     and clipped the "Tags" label at the right edge. */
+  min-width: 220px;
 }
 
 .audit-label {
@@ -3637,6 +3643,11 @@ body.dragging-popover iframe { pointer-events: none !important; }
 .ne-row.ne-row-highlight {
   background: var(--accent-dim);
   box-shadow: inset 3px 0 0 var(--accent);
+}
+/* Current Cmd+F match in the nav tree — a persistent ring while cycling matches. */
+.ne-row.ne-row-search-current {
+  background: var(--accent-dim);
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 .ne-row .ne-cell {
