@@ -210,10 +210,41 @@
     ul.help-check { list-style: none; padding-left: 2px; }
     ul.help-check li { padding-left: 2px; }
     ul.help-check li::before { content: "\2713\00a0"; color: var(--text-muted); font-weight: 600; }
+
+    /* Search bar */
+    #help-search-wrap {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 0;
+      background: var(--bg, #fff);
+      border-bottom: 1px solid var(--border-light, #e5e5e5);
+      margin-bottom: 12px;
+    }
+    #help-search {
+      flex: 1;
+      max-width: 420px;
+      padding: 6px 10px;
+      font: inherit;
+      font-size: 13px;
+      border: 1px solid var(--border-light, #d4d4d4);
+      border-radius: 6px;
+      outline: none;
+    }
+    #help-search:focus { border-color: var(--accent, #2563eb); }
+    #help-search-count { font-size: 12px; color: var(--text-muted); }
   </style>
 </head>
 <body>
   <div id="help-body">
+
+    <div id="help-search-wrap">
+      <input id="help-search" type="search" placeholder="Search help… (consolidate, redirects, shortcuts…)" aria-label="Search help">
+      <span id="help-search-count"></span>
+    </div>
 
     <!-- ============================================================ -->
     <!-- INTRODUCTION                                                  -->
@@ -830,5 +861,60 @@
     </section>
 
   </div>
+  <script>
+    // Section-level help search: each h2 + its following siblings form a group;
+    // a query hides non-matching groups (and the TOC/phase dividers, which
+    // only make sense in full-page order). Cmd/Ctrl+F focuses the box.
+    (function () {
+      const body = document.getElementById('help-body');
+      const input = document.getElementById('help-search');
+      const countEl = document.getElementById('help-search-count');
+      if (!body || !input) return;
+
+      const skip = (el) => el.id === 'help-search-wrap';
+      const isAux = (el) => el.classList && (el.classList.contains('help-phase') || el.classList.contains('help-toc'));
+
+      const groups = [];
+      const aux = [];
+      let cur = null;
+      Array.from(body.children).forEach(el => {
+        if (skip(el)) return;
+        if (isAux(el)) { aux.push(el); return; }
+        if (el.tagName === 'H2') { cur = { els: [el], text: '' }; groups.push(cur); }
+        else if (cur) { cur.els.push(el); }
+      });
+      groups.forEach(g => { g.text = g.els.map(e => e.textContent).join(' ').toLowerCase(); });
+
+      input.addEventListener('input', () => {
+        const q = input.value.trim().toLowerCase();
+        if (!q) {
+          groups.forEach(g => g.els.forEach(e => { e.style.display = ''; }));
+          aux.forEach(e => { e.style.display = ''; });
+          countEl.textContent = '';
+          return;
+        }
+        let hits = 0;
+        groups.forEach(g => {
+          const hit = g.text.includes(q);
+          if (hit) hits++;
+          g.els.forEach(e => { e.style.display = hit ? '' : 'none'; });
+        });
+        aux.forEach(e => { e.style.display = 'none'; });
+        countEl.textContent = hits === 0 ? 'No matches' : hits + ' section' + (hits === 1 ? '' : 's');
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+          e.preventDefault();
+          input.focus();
+          input.select();
+        }
+        if (e.key === 'Escape' && document.activeElement === input && input.value) {
+          input.value = '';
+          input.dispatchEvent(new Event('input'));
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
