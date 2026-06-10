@@ -1046,7 +1046,7 @@ Once any node has a status, the stats line appends **status tallies** (`5 built 
 3. Optionally pick a **Template** (custom Markdown templates live in *Documents → Transmission → templates*; **Built-in default** needs no setup).
 4. **Generate**, then export **PDF** or **HTML**.
 
-The report groups that person's pages by spec, leads each group with the reference direction (the spec default plus any page-specific briefs), and lists the rest as followers.
+The report groups that person's pages by spec, leads each group with the reference direction (the spec default plus any page-specific briefs), and lists the rest as followers. Under each nav node it also lists the **source page(s)** currently assigned to it; if other pages are being **consolidated into** one of those pages, that page gets a **merges N** flag so the writer knows the new page is absorbing content from N old ones. The summary line totals the consolidations folded in.
 
 ### Hand off
 
@@ -1196,9 +1196,13 @@ The Migration Tracker is *the* engineering deliverable — one `.xlsx` with four
 
 Open **Migration → Migration Tracker…**. A dialog lets you toggle which sheets and options to include (for example, whether Kill/Exclude rows appear in Source Pages, and whether phased nodes are included), then exports. The default filename is `{project-slug}-migration-tracker-YYYY-MM-DD.xlsx`. (You can also reach it via **File → Export…**.)
 
+Two controls let you scope the **Nav Plan** sheet: a **column picker** (tick exactly which columns to include) and **Only nodes matching the active Build filter** — when you've set a Build filter in the Nav Tree (say, one assignee or one page status), this exports just the nodes that match it. The toggle shows the active filter and how many nodes match.
+
+**Just want the nav nodes, not the whole workbook?** In the Nav Tree, set a **Build** (and/or Phase) filter, then use **Export → Filtered nodes → Excel…**. Pick **Rows** (the matching nodes, or all nodes) and **Columns**, and it writes a single sheet — `{project-slug}-nav-nodes-YYYY-MM-DD.xlsx`.
+
 ### What each sheet carries
 
-- **Nav Plan** — one row per nav node, with all the build metadata: page status, build pattern, builder/writer/migrator, guidance and briefs, source-page count, net-new flag, phase, in-menu, and external URL. The build team's master plan.
+- **Nav Plan** — one row per nav node, with all the build metadata: page status, build pattern, builder/writer/migrator, guidance and briefs, source-page count, the assigned **source-page URL(s)**, the **consolidated-in URL(s)** (any old pages being merged into those assigned pages), net-new flag, phase, in-menu, and external URL. The build team's master plan.
 - **Source Pages** — your audit rows joined to their nav node: KKE / Final / Suggested calls, Content Type / Renders As / Target, Group, Primary Tag, and the target breadcrumb, path, pattern, and status. The "where does each old page go" map.
 - **Redirects** — Kill rows plus URL changes; an intentional `404` surfaces as "(404) — intentional deindex."
 - **Archive** — the Kill rows with their notes and tags, for client reference.

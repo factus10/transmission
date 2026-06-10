@@ -1161,8 +1161,11 @@ function setupGlobalSearch() {
     if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
       e.preventDefault();
       bar.classList.remove('hidden');
+      input.placeholder = _navEditorOpen ? 'Search nav nodes…' : 'Search all columns…';
       input.focus();
       input.select();
+      // If reopened over existing text, re-run so matches reflect the current view.
+      if (input.value.trim()) globalSearchUpdate();
     }
     if (e.key === 'Escape' && !bar.classList.contains('hidden')) {
       closeGlobalSearch();
@@ -1195,15 +1198,22 @@ function globalSearchUpdate() {
   _globalSearchMatches = [];
   _globalSearchCurrent = -1;
 
-  if (!query || state.editedRows.length === 0) {
+  if (!query) {
     $('global-search-count').textContent = '';
+    clearNavSearchHighlight();
     return;
   }
 
-  state.editedRows.forEach((row, origIndex) => {
-    const match = Object.values(row).some(v => String(v).toLowerCase().includes(query));
-    if (match) _globalSearchMatches.push({ origIndex, row });
-  });
+  // In the Nav Tree, search the nav nodes (not the audit rows) and jump to each.
+  if (_navEditorOpen) {
+    _globalSearchMatches = navSearchMatches(query);
+  } else {
+    if (state.editedRows.length === 0) { $('global-search-count').textContent = ''; return; }
+    state.editedRows.forEach((row, origIndex) => {
+      const match = Object.values(row).some(v => String(v).toLowerCase().includes(query));
+      if (match) _globalSearchMatches.push({ origIndex, row });
+    });
+  }
 
   if (_globalSearchMatches.length > 0) {
     _globalSearchCurrent = -1; // so first navigate(1) goes to index 0
@@ -1211,7 +1221,54 @@ function globalSearchUpdate() {
     globalSearchNavigate(1); // go to first match
   } else {
     $('global-search-count').textContent = 'No matches';
+    clearNavSearchHighlight();
   }
+}
+
+/** Build the Nav Tree search match list (in visual/navigation order). Only nodes
+ *  currently present in the DOM are eligible — so active Phase/Build/Depth filters
+ *  are honored automatically (filtered-out nodes can't be scrolled to). */
+function navSearchMatches(query) {
+  const body = $('nav-editor-body');
+  if (!body) return [];
+  const present = new Set([...body.querySelectorAll('[data-node-id]')].map(e => e.dataset.nodeId));
+  const matches = [];
+  sortNodesForNavigation(state.navNodes).forEach(node => {
+    if (!present.has(node.id)) return;
+    const hay = [
+      node.label, node.breadcrumb, node.number, node.computedPath, node.path,
+      node.url, node.notes, node.buildPattern, node.pageStatus,
+      node.buildAssignee, node.writeAssignee, node.migrateAssignee,
+    ].map(v => String(v == null ? '' : v).toLowerCase()).join('  ');
+    if (hay.includes(query)) matches.push({ nodeId: node.id });
+  });
+  return matches;
+}
+
+/** Expand any collapsed ancestors, then scroll the node's row into view and flash it. */
+function scrollToNavNode(nodeId) {
+  const node = state.navNodes.find(n => n.id === nodeId);
+  if (!node) return;
+  // Expand collapsed ancestors so the row is visible.
+  let cur = node.parentNumber ? state.navNodes.find(n => n.number === node.parentNumber) : null;
+  let needsRerender = false;
+  while (cur) {
+    if (_navCollapsed.has(cur.id)) { _navCollapsed.delete(cur.id); needsRerender = true; }
+    cur = cur.parentNumber ? state.navNodes.find(n => n.number === cur.parentNumber) : null;
+  }
+  if (needsRerender) renderNavEditor();
+
+  const body = $('nav-editor-body');
+  const el = body && body.querySelector(`[data-node-id="${nodeId}"] > .ne-row`);
+  if (!el) return;
+  clearNavSearchHighlight();
+  el.classList.add('ne-row-highlight', 'ne-row-search-current');
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+function clearNavSearchHighlight() {
+  document.querySelectorAll('#nav-editor-body .ne-row-search-current, #nav-editor-body .ne-row-highlight')
+    .forEach(e => e.classList.remove('ne-row-search-current', 'ne-row-highlight'));
 }
 
 function globalSearchNavigate(delta) {
@@ -1220,6 +1277,12 @@ function globalSearchNavigate(delta) {
   $('global-search-count').textContent = `${_globalSearchCurrent + 1} of ${_globalSearchMatches.length}`;
 
   const match = _globalSearchMatches[_globalSearchCurrent];
+
+  // Nav Tree: matches are nav nodes — scroll/flash the node's row.
+  if (_navEditorOpen) {
+    if (match && match.nodeId) scrollToNavNode(match.nodeId);
+    return;
+  }
 
   // If in audit view, select the row directly (without clearing filters)
   if (!_tableViewOpen && !_navEditorOpen && !_redirectEditorOpen) {
@@ -1273,6 +1336,7 @@ function closeGlobalSearch() {
   _globalSearchMatches = [];
   _globalSearchCurrent = -1;
   $('global-search-count').textContent = '';
+  clearNavSearchHighlight();
 }
 
 function applySmeFieldsVisibility() {
@@ -10094,6 +10158,11 @@ function setupNavTree() {
     exportMenu.classList.add('hidden');
     exportNavTree('flat');
   });
+  const filteredExportBtn = $('btn-nav-export-filtered');
+  if (filteredExportBtn) filteredExportBtn.addEventListener('click', () => {
+    exportMenu.classList.add('hidden');
+    openNavNodesExportDialog();
+  });
 
   // Column resize handles
   setupNavEditorColumnResize();
@@ -10460,6 +10529,20 @@ function renderNavEditor() {
   const dupNavIds = detectDuplicateNavIds();
   const statsEl = $('nav-editor-stats');
   statsEl.textContent = statsText;
+
+  // Build-filter match count — when a Build filter is active, show how many nodes
+  // actually match it (vs. ancestors kept only to preserve the path to a match).
+  const buildFilterValEl = document.getElementById('nav-build-filter');
+  const buildFilterVal = buildFilterValEl ? buildFilterValEl.value : '';
+  if (buildFilterVal) {
+    const matchCount = state.navNodes.filter(n => matchesNavBuildFilter(n, buildFilterVal)).length;
+    const fl = buildFilterValEl.options[buildFilterValEl.selectedIndex]?.textContent || 'filter';
+    const bf = document.createElement('span');
+    bf.textContent = ` · ${matchCount} match${matchCount === 1 ? 'es' : ''} build filter`;
+    bf.style.cssText = 'color:var(--accent);font-weight:600;';
+    bf.title = `${matchCount} node${matchCount !== 1 ? 's' : ''} match "${fl}"`;
+    statsEl.appendChild(bf);
+  }
 
   // Clickable "N need placement" — jumps to the audit view filtered to those rows.
   if (needsPlacement > 0) {
@@ -15902,6 +15985,11 @@ function openMigrationTrackerExportDialog() {
   const refNodes = state.navNodes.filter(n => n.refNodeId).length;
   const assignedRows = state.editedRows.filter(r => String(r['NavID'] || '').trim()).length;
   const killRows = state.editedRows.filter(r => String((r[finalKkeCol()] || r[kkeCol()]) || '').trim() === 'Kill').length;
+  // Active Build filter (from the Nav Tree toolbar) — lets the Nav Plan sheet be scoped to it.
+  const _bfSel = document.getElementById('nav-build-filter');
+  const buildFilter = _bfSel ? _bfSel.value : '';
+  const buildLabel = (_bfSel && _bfSel.selectedIndex >= 0) ? _bfSel.options[_bfSel.selectedIndex].text : '';
+  const buildMatchCount = buildFilter ? state.navNodes.filter(n => matchesNavBuildFilter(n, buildFilter)).length : 0;
 
   modal.innerHTML = `
     <div class="modal-header">
@@ -15925,6 +16013,20 @@ function openMigrationTrackerExportDialog() {
         <div class="mte-section-title">Nav Plan options</div>
         <label class="mte-opt"><input type="checkbox" id="_mte-include-phased" ${phasedNodes > 0 ? '' : 'disabled'}> Include phased nodes <span class="mte-count">${phasedNodes} Future / Stretch / Archived</span></label>
         <label class="mte-opt"><input type="checkbox" id="_mte-include-refs" ${refNodes > 0 ? '' : 'disabled'}> Include reference nodes <span class="mte-count">${refNodes} alias node${refNodes !== 1 ? 's' : ''}</span></label>
+        <label class="mte-opt"><input type="checkbox" id="_mte-build-filter" ${buildFilter ? '' : 'disabled'}> Only nodes matching the active Build filter <span class="mte-count">${buildFilter ? escapeHtml(buildLabel) + ' · ' + buildMatchCount + ' match' + (buildMatchCount === 1 ? '' : 'es') : 'no Build filter set'}</span></label>
+      </div>
+
+      <div class="mte-section">
+        <div class="mte-section-title" style="display:flex;align-items:center;justify-content:space-between;">
+          <span>Nav Plan columns</span>
+          <span style="display:flex;gap:6px;">
+            <button type="button" id="_mte-col-all" class="btn btn-sm btn-ghost">All</button>
+            <button type="button" id="_mte-col-none" class="btn btn-sm btn-ghost">None</button>
+          </span>
+        </div>
+        <div id="_mte-cols" style="display:flex;flex-wrap:wrap;gap:1px 14px;max-height:170px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:8px 10px;">
+          ${navExportColumnsHtml('_mte', navExportDefaultColumnKeys())}
+        </div>
       </div>
 
       <div class="mte-section">
@@ -15951,6 +16053,10 @@ function openMigrationTrackerExportDialog() {
   modal.querySelector('#_mte-close').addEventListener('click', close);
   modal.querySelector('#_mte-cancel').addEventListener('click', close);
 
+  const mteCols = modal.querySelector('#_mte-cols');
+  modal.querySelector('#_mte-col-all').addEventListener('click', () => mteCols.querySelectorAll('._mte-col').forEach(c => { c.checked = true; }));
+  modal.querySelector('#_mte-col-none').addEventListener('click', () => mteCols.querySelectorAll('._mte-col').forEach(c => { c.checked = false; }));
+
   modal.querySelector('#_mte-export').addEventListener('click', async () => {
     const opts = {
       sheets: {
@@ -15960,8 +16066,11 @@ function openMigrationTrackerExportDialog() {
         archive:   modal.querySelector('#_mte-sheet-archive').checked
       },
       plan: {
-        includePhased: modal.querySelector('#_mte-include-phased').checked,
-        includeRefs:   modal.querySelector('#_mte-include-refs').checked
+        includePhased:      modal.querySelector('#_mte-include-phased').checked,
+        includeRefs:        modal.querySelector('#_mte-include-refs').checked,
+        respectBuildFilter: modal.querySelector('#_mte-build-filter').checked,
+        buildFilter:        buildFilter,
+        columns:            readNavExportColumns(modal, '_mte')
       },
       sources: {
         includeKill:    modal.querySelector('#_mte-source-include-kill').checked,
@@ -16003,67 +16112,254 @@ async function runMigrationTrackerExport(opts) {
   }
 }
 
-function buildNavPlanSheet(planOpts) {
-  invalidateNavPageCountsCache();
-  const pageCounts = _navPageCountsCache();
-  const ordered = sortNodesForNavigation(state.navNodes);
+/** Checkbox grid (HTML string) for choosing nav-export columns. `idPrefix` namespaces
+ *  the checkbox class so multiple pickers can coexist (dialog + Migration Tracker). */
+function navExportColumnsHtml(idPrefix, selectedKeys) {
+  const sel = new Set(selectedKeys && selectedKeys.length ? selectedKeys : navExportDefaultColumnKeys());
+  return navExportColumnDefs().map(d =>
+    `<label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;min-width:155px;padding:2px 0;cursor:pointer;">
+      <input type="checkbox" class="${idPrefix}-col" value="${d.key}" ${sel.has(d.key) ? 'checked' : ''}> ${escapeHtml(d.label)}
+    </label>`).join('');
+}
+/** Read the checked column keys from a picker rendered by navExportColumnsHtml. */
+function readNavExportColumns(root, idPrefix) {
+  return [...root.querySelectorAll('.' + idPrefix + '-col')].filter(c => c.checked).map(c => c.value);
+}
 
-  const filtered = ordered.filter(n => {
-    if (!planOpts.includeRefs && n.refNodeId) return false;
-    if (!planOpts.includePhased && String(n.phase || '').trim()) return false;
-    return true;
+/** Nav Tree → "Filtered nodes → Excel" dialog: pick row scope (current filters vs all)
+ *  and which columns to include, then export a one-sheet xlsx. */
+function openNavNodesExportDialog() {
+  if (!state.navNodes || state.navNodes.length === 0) {
+    showToast('No navigation tree to export', 'error');
+    return;
+  }
+  const buildSel = document.getElementById('nav-build-filter');
+  const phaseSel = document.getElementById('nav-phase-filter');
+  const buildFilter = buildSel ? buildSel.value : '';
+  const phaseFilter = phaseSel ? phaseSel.value : '';
+  const buildLabel = (buildSel && buildSel.selectedIndex >= 0) ? buildSel.options[buildSel.selectedIndex].text : '';
+  const phaseLabel = (phaseSel && phaseSel.selectedIndex >= 0) ? phaseSel.options[phaseSel.selectedIndex].text : '';
+  const filterActive = !!(buildFilter || phaseFilter);
+
+  const filteredNodes = getNavNodesForExport({ includePhased: true, includeRefs: true, respectBuildFilter: !!buildFilter, buildFilter, phaseFilter });
+  const allNodes = getNavNodesForExport({ includePhased: true, includeRefs: true });
+
+  const activeBits = [];
+  if (buildFilter) activeBits.push(`Build: <strong>${escapeHtml(buildLabel)}</strong>`);
+  if (phaseFilter) activeBits.push(`Phase: <strong>${escapeHtml(phaseLabel)}</strong>`);
+
+  const body = document.createElement('div');
+  body.innerHTML = `
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">
+      Export nav nodes to a one-sheet Excel file. ${filterActive ? 'Your active Nav Tree filter is pre-selected below.' : 'No Nav Tree filter is active — all nodes will be exported.'}
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-weight:600;font-size:12px;margin-bottom:6px;">Rows to export</div>
+      <label style="display:flex;gap:7px;align-items:flex-start;font-size:13px;margin-bottom:6px;${filterActive ? '' : 'opacity:.5;'}">
+        <input type="radio" name="_nne-scope" value="filtered" ${filterActive ? 'checked' : 'disabled'} style="margin-top:2px;">
+        <span>Only nodes matching current filters <span style="color:var(--text-muted);">(${filteredNodes.length})</span>${activeBits.length ? `<br><span style="font-size:11px;color:var(--text-muted);">${activeBits.join(' · ')}</span>` : ''}</span>
+      </label>
+      <label style="display:flex;gap:7px;align-items:center;font-size:13px;">
+        <input type="radio" name="_nne-scope" value="all" ${filterActive ? '' : 'checked'} style="margin-top:2px;">
+        <span>All nodes <span style="color:var(--text-muted);">(${allNodes.length})</span></span>
+      </label>
+    </div>
+    <div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <div style="font-weight:600;font-size:12px;">Columns</div>
+        <div style="display:flex;gap:6px;">
+          <button type="button" id="_nne-col-all" class="btn btn-sm btn-ghost">All</button>
+          <button type="button" id="_nne-col-none" class="btn btn-sm btn-ghost">None</button>
+        </div>
+      </div>
+      <div id="_nne-cols" style="display:flex;flex-wrap:wrap;gap:1px 14px;max-height:230px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:8px 10px;">
+        ${navExportColumnsHtml('_nne', navExportDefaultColumnKeys())}
+      </div>
+    </div>`;
+
+  openModal({
+    title: 'Export nav nodes → Excel',
+    body, width: 560,
+    buttons: [
+      { label: 'Cancel', variant: 'ghost', value: null },
+      { label: 'Export…', variant: 'primary', primary: true, closeOnClick: false, onClick: (api) => {
+          const scope = (body.querySelector('input[name="_nne-scope"]:checked') || {}).value || 'all';
+          const cols = readNavExportColumns(body, '_nne');
+          if (!cols.length) { showToast('Select at least one column', 'error'); return; }
+          const nodes = scope === 'filtered'
+            ? getNavNodesForExport({ includePhased: true, includeRefs: true, respectBuildFilter: !!buildFilter, buildFilter, phaseFilter })
+            : getNavNodesForExport({ includePhased: true, includeRefs: true });
+          if (!nodes.length) { showToast('No nodes match — nothing to export', 'error'); return; }
+          api.close();
+          setTimeout(() => runNavNodesExport(nodes, cols), 0);
+        } },
+    ],
   });
 
-  // Determine net-new flag at export time
+  const colWrap = body.querySelector('#_nne-cols');
+  body.querySelector('#_nne-col-all').addEventListener('click', () => colWrap.querySelectorAll('._nne-col').forEach(c => { c.checked = true; }));
+  body.querySelector('#_nne-col-none').addEventListener('click', () => colWrap.querySelectorAll('._nne-col').forEach(c => { c.checked = false; }));
+}
+
+/** Ship a flat nav-node export (single sheet) to main for xlsx writing. */
+async function runNavNodesExport(nodes, colKeys) {
+  const sheet = buildNavNodesSheet(nodes, colKeys, 'Nav Nodes');
+  const ps = state.projectSettings || {};
+  const slug = (ps.projectName || ps.clientName || 'project')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const stamp = new Date().toISOString().slice(0, 10);
+  const defaultName = `${slug || 'project'}-nav-nodes-${stamp}.xlsx`;
+  try {
+    const result = await window.electronAPI.exportMigrationTracker({ defaultName, sheets: [sheet] });
+    if (result?.success) {
+      showToast(`Exported ${nodes.length} node${nodes.length !== 1 ? 's' : ''} — ${result.filePath.split('/').pop()}`, 'success');
+    } else if (result?.error && result.error !== 'Cancelled') {
+      showToast('Export failed: ' + result.error, 'error');
+    }
+  } catch (e) {
+    showToast('Export failed: ' + e.message, 'error');
+  }
+}
+
+/** Column catalog for nav-node exports — shared by the Nav Plan sheet (Migration
+ *  Tracker) and the Nav Tree "Filtered nodes → Excel" export. Each entry:
+ *  { key, label (header), wch (width), get(node, ctx) }. Order here is the export order. */
+function navExportColumnDefs() {
+  return [
+    { key: 'sort',         label: 'Sort',               wch: 10, get: (n)    => n.sortID || '' },
+    { key: 'number',       label: 'Number',             wch: 8,  get: (n)    => n.number || '' },
+    { key: 'breadcrumb',   label: 'Breadcrumb',         wch: 40, get: (n)    => n.breadcrumb || '' },
+    { key: 'label',        label: 'Label',              wch: 30, get: (n)    => n.label || '' },
+    { key: 'url',          label: 'URL',                wch: 50, get: (n, c) => c.nodeUrl(n) },
+    { key: 'pageStatus',   label: 'Page Status',        wch: 14, get: (n)    => n.pageStatus || '' },
+    { key: 'buildPattern', label: 'Build Pattern',      wch: 18, get: (n)    => n.buildPattern || '' },
+    { key: 'builder',      label: 'Builder',            wch: 16, get: (n)    => n.buildAssignee || '' },
+    { key: 'writer',       label: 'Writer',             wch: 16, get: (n)    => n.writeAssignee || '' },
+    { key: 'migrator',     label: 'Migrator',           wch: 16, get: (n)    => n.migrateAssignee || '' },
+    { key: 'buildGuidance',label: 'Build Guidance',     wch: 60, get: (n)    => n.buildGuidance || '' },
+    { key: 'writerBrief',  label: 'Writer Brief',       wch: 60, get: (n)    => n.writerBrief || '' },
+    { key: 'notes',        label: 'Migration Notes',    wch: 40, get: (n)    => n.notes || '' },
+    { key: 'sourceCount',  label: 'Source Page Count',  wch: 8,  get: (n, c) => c.pageCounts[n.id] || 0 },
+    { key: 'sourceUrls',   label: 'Source Page URL(s)', wch: 50, get: (n, c) => (c.assignedUrls[n.id] || []).join(' | ') },
+    { key: 'consolidatedUrls', label: 'Consolidated-In URL(s)', wch: 50, get: (n, c) => (c.consolidatedUrls[n.id] || []).join(' | ') },
+    { key: 'netNew',       label: 'Net New',            wch: 8,  get: (n, c) => c.isNetNew(n) ? 'Y' : '' },
+    { key: 'phase',        label: 'Phase',              wch: 10, get: (n)    => n.phase || '' },
+    { key: 'inMenu',       label: 'In Menu',            wch: 8,  get: (n)    => n.inMenu || '' },
+    { key: 'externalUrl',  label: 'External URL',       wch: 30, get: (n)    => n.url || '' },
+    { key: 'readiness',    label: 'Readiness Warnings', wch: 30, get: (n)    => computeNodeReadinessWarnings(n).join(' · ') },
+  ];
+}
+
+/** All nav-export column keys, in order (the default selection). */
+function navExportDefaultColumnKeys() { return navExportColumnDefs().map(d => d.key); }
+
+/** Shared context object the column getters need (page counts, URL builder, net-new test). */
+function navExportContext() {
+  invalidateNavPageCountsCache();
+  const pageCounts = _navPageCountsCache();
+  const baseUrl = getRedirectBaseUrl ? getRedirectBaseUrl() : '';
+  const nodeUrl = (n) => {
+    const cp = String(n.computedPath || '').replace(/^\//, '');
+    return baseUrl ? baseUrl + '/' + cp : '/' + cp;
+  };
   const isNetNew = (n) => {
     const c = pageCounts[n.id] || 0;
     const hc = n.children && n.children.length > 0;
     return c === 0 && hc && hasDescendantPages(n, pageCounts);
   };
-
-  const baseUrl = getRedirectBaseUrl ? getRedirectBaseUrl() : '';
-  const aoa = [[
-    'Sort', 'Number', 'Breadcrumb', 'Label', 'URL', 'Page Status', 'Build Pattern',
-    'Builder', 'Writer', 'Migrator', 'Build Guidance', 'Writer Brief', 'Migration Notes',
-    'Source Page Count', 'Net New', 'Phase', 'In Menu', 'External URL', 'Readiness Warnings'
-  ]];
-  filtered.forEach(n => {
-    const cp = String(n.computedPath || '').replace(/^\//, '');
-    const url = baseUrl ? baseUrl + '/' + cp : '/' + cp;
-    const warnings = computeNodeReadinessWarnings(n);
-    aoa.push([
-      n.sortID || '',
-      n.number || '',
-      n.breadcrumb || '',
-      n.label || '',
-      url,
-      n.pageStatus || '',
-      n.buildPattern || '',
-      n.buildAssignee || '',
-      n.writeAssignee || '',
-      n.migrateAssignee || '',
-      n.buildGuidance || '',
-      n.writerBrief || '',
-      n.notes || '',
-      pageCounts[n.id] || 0,
-      isNetNew(n) ? 'Y' : '',
-      n.phase || '',
-      n.inMenu || '',
-      n.url || '',
-      warnings.join(' · ')
-    ]);
+  // Source-page URL(s) assigned to each node — same Kill/Consolidate exclusion as the
+  // page count, so the URL list matches the Source Page Count column. Also keep the
+  // assigned rows per node so we can resolve consolidations into them below.
+  const urlCol = state.urlColumn || 'Address';
+  const assignedUrls = {};
+  const assignedRowsByNode = {};
+  (state.editedRows || []).forEach(r => {
+    const id = String(r['NavID'] || '').trim();
+    if (!id) return;
+    const eff = String(r[finalKkeCol()] || r[kkeCol()] || '').trim().toLowerCase();
+    if (eff === 'kill' || eff === 'consolidate') return;
+    (assignedRowsByNode[id] = assignedRowsByNode[id] || []).push(r);
+    const u = String(r[urlCol] || '').trim();
+    if (u) (assignedUrls[id] = assignedUrls[id] || []).push(u);
   });
 
-  return {
-    name: 'Nav Plan',
-    aoa,
-    cols: [
-      { wch: 10 }, { wch: 8 }, { wch: 40 }, { wch: 30 }, { wch: 50 },
-      { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 16 },
-      { wch: 60 }, { wch: 60 }, { wch: 40 },
-      { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 8 }, { wch: 30 }, { wch: 30 }
-    ]
-  };
+  // Pages being consolidated INTO another page, keyed by the stored target URL.
+  const consolidateInto = new Map();
+  (state.editedRows || []).forEach(r => {
+    if (!rowIsConsolidate(r)) return;
+    const tgt = String(r[CONSOLIDATE_COL] || '').trim();
+    if (!tgt) return;
+    if (!consolidateInto.has(tgt)) consolidateInto.set(tgt, []);
+    consolidateInto.get(tgt).push(r);
+  });
+  // For each node, the URLs of pages consolidating into its assigned page(s). Match on
+  // each assigned page's current URL AND its effective/new-site URL (Consolidate_Into
+  // may hold either); dedupe across the node's pages.
+  const consolidatedUrls = {};
+  Object.keys(assignedRowsByNode).forEach(id => {
+    const seen = new Set();
+    const urls = [];
+    assignedRowsByNode[id].forEach(row => {
+      const keys = new Set();
+      const cur = String(row[urlCol] || '').trim();
+      const e2 = effectiveConsolidateUrl(row);
+      if (cur) keys.add(cur);
+      if (e2) keys.add(e2);
+      keys.forEach(k => (consolidateInto.get(k) || []).forEach(src => {
+        const su = String(src[urlCol] || '').trim();
+        if (su && !seen.has(su)) { seen.add(su); urls.push(su); }
+      }));
+    });
+    if (urls.length) consolidatedUrls[id] = urls;
+  });
+
+  return { pageCounts, nodeUrl, isNetNew, assignedUrls, consolidatedUrls };
+}
+
+/**
+ * Return nav nodes (in tree/navigation order) filtered for export.
+ *  opts: { includePhased, includeRefs, respectBuildFilter, buildFilter, phaseFilter }
+ *  - respectBuildFilter: when true, keep only nodes that DIRECTLY match `buildFilter`
+ *    (the same predicate the on-screen Build filter and its match count use).
+ *  - phaseFilter: '__current__' (empty phase only) / '__nonblank__' (phased only) / '' (any).
+ */
+function getNavNodesForExport(opts = {}) {
+  const ordered = sortNodesForNavigation(state.navNodes);
+  const bf = opts.respectBuildFilter ? String(opts.buildFilter || '').trim() : '';
+  const pf = String(opts.phaseFilter || '').trim();
+  return ordered.filter(n => {
+    if (!opts.includeRefs && n.refNodeId) return false;
+    if (!opts.includePhased && String(n.phase || '').trim()) return false;
+    if (bf && !matchesNavBuildFilter(n, bf)) return false;
+    if (pf) {
+      const phased = !!String(n.phase || '').trim();
+      if (pf === '__current__' && phased) return false;
+      if (pf === '__nonblank__' && !phased) return false;
+    }
+    return true;
+  });
+}
+
+/** Build one xlsx sheet ({name, aoa, cols}) from a node list + selected column keys. */
+function buildNavNodesSheet(nodes, colKeys, sheetName) {
+  const defs = navExportColumnDefs();
+  const chosen = (colKeys && colKeys.length)
+    ? defs.filter(d => colKeys.includes(d.key))
+    : defs;
+  const ctx = navExportContext();
+  const aoa = [chosen.map(d => d.label)];
+  nodes.forEach(n => aoa.push(chosen.map(d => d.get(n, ctx))));
+  return { name: sheetName || 'Nav Plan', aoa, cols: chosen.map(d => ({ wch: d.wch })) };
+}
+
+function buildNavPlanSheet(planOpts) {
+  const nodes = getNavNodesForExport({
+    includePhased:      planOpts.includePhased,
+    includeRefs:        planOpts.includeRefs,
+    respectBuildFilter: !!planOpts.respectBuildFilter,
+    buildFilter:        planOpts.buildFilter || '',
+  });
+  return buildNavNodesSheet(nodes, planOpts.columns, 'Nav Plan');
 }
 
 function buildSourcePagesSheet(sourceOpts) {
@@ -16949,14 +17245,47 @@ function gatherAssigneeBriefData(role, person) {
   const nodes = (state.navNodes || []).filter(n => String(n[assigneeField] || '').trim() === person);
   if (!nodes.length) { showToast(`No pages assigned to ${person} as ${roleLabel.toLowerCase()}`, 'info'); return null; }
 
+  const urlCol = state.urlColumn || 'Address';
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
+
+  // Live source pages assigned to each nav node (exclude Kill/Consolidate — those are going away).
   const pageCounts = {};
+  const assignedByNav = new Map();
   state.editedRows.forEach(r => {
     const id = String(r['NavID'] || '').trim();
     if (!id) return;
-    const kke = String(r[kkeCol()] || '').trim().toLowerCase();
-    if (kke === 'kill' || kke === 'consolidate') return;
+    const eff = String(r[finalKkeCol()] || r[kkeCol()] || '').trim().toLowerCase();
+    if (eff === 'kill' || eff === 'consolidate') return;
     pageCounts[id] = (pageCounts[id] || 0) + 1;
+    if (!assignedByNav.has(id)) assignedByNav.set(id, []);
+    assignedByNav.get(id).push(r);
   });
+
+  // Pages being consolidated INTO another page, keyed by the stored target URL.
+  // Lets each surviving page show how many old pages it absorbs ("merges N").
+  const consolidateInto = new Map();
+  state.editedRows.forEach(r => {
+    if (!rowIsConsolidate(r)) return;
+    const tgt = String(r[CONSOLIDATE_COL] || '').trim();
+    if (!tgt) return;
+    if (!consolidateInto.has(tgt)) consolidateInto.set(tgt, []);
+    consolidateInto.get(tgt).push(r);
+  });
+  // Count distinct pages merging into a given live page (match on its current URL and
+  // its effective/new-site URL, since Consolidate_Into may hold either).
+  const mergeCountFor = (row) => {
+    const keys = new Set();
+    const cur = String(row[urlCol] || '').trim();
+    const e2 = effectiveConsolidateUrl(row);
+    if (cur) keys.add(cur);
+    if (e2) keys.add(e2);
+    const seen = new Set();
+    keys.forEach(k => (consolidateInto.get(k) || []).forEach(src => {
+      const sid = String(src[urlCol] || '') || String(src['NavID'] || '');
+      if (!seen.has(sid)) seen.add(sid);
+    }));
+    return seen.size;
+  };
 
   const patternByName = {};
   (state.patternLibrary || []).forEach(p => { if (p.patternName) patternByName[p.patternName] = p; });
@@ -16984,17 +17313,32 @@ function gatherAssigneeBriefData(role, person) {
       .map(n => ({ label: n.breadcrumb || n.label || '(unnamed)', md: briefVal(n) }));
     return {
       pattern: patName, count: grp.length, patDef, briefs,
-      pages: grp.map(n => ({
-        breadcrumb: n.breadcrumb || n.label || '(unnamed)',
-        label: n.label || '',
-        url: nodeUrl(n),
-        status: String(n.pageStatus || '').trim(),
-        sourceCount: pageCounts[n.id] || 0,
-        hasBrief: !!briefVal(n),
-        briefMd: briefVal(n),
-      })),
+      pages: grp.map(n => {
+        const sourcePages = (assignedByNav.get(n.id) || []).map(r => {
+          const mc = mergeCountFor(r);
+          return {
+            url: String(r[urlCol] || '').trim(),
+            title: titleCol ? String(r[titleCol] || '').trim() : '',
+            mergeCount: mc,
+          };
+        }).sort((a, b) => (b.mergeCount - a.mergeCount) || String(a.title || a.url).localeCompare(String(b.title || b.url)));
+        return {
+          breadcrumb: n.breadcrumb || n.label || '(unnamed)',
+          label: n.label || '',
+          url: nodeUrl(n),
+          status: String(n.pageStatus || '').trim(),
+          sourceCount: pageCounts[n.id] || 0,
+          sourcePages,
+          mergeTotal: sourcePages.reduce((s, sp) => s + sp.mergeCount, 0),
+          hasBrief: !!briefVal(n),
+          briefMd: briefVal(n),
+        };
+      }),
     };
   });
+
+  let consolidatedIn = 0;
+  groups.forEach(g => g.pages.forEach(p => { consolidatedIn += p.mergeTotal; }));
 
   return {
     roleLabel, person,
@@ -17003,6 +17347,7 @@ function gatherAssigneeBriefData(role, person) {
       sourcePages: nodes.reduce((s, n) => s + (pageCounts[n.id] || 0), 0),
       patterns: byPattern.size,
       briefs: nodes.filter(n => briefVal(n)).length,
+      consolidatedIn,
     },
     groups,
   };
@@ -17025,8 +17370,12 @@ function assigneeBriefBuiltinHtml(data) {
   const s = data.summary;
   let body = `<div style="padding:12px 14px;border-radius:8px;margin-bottom:16px;background:var(--bg-field-bar);border:1px solid var(--border);">
     <div style="font-weight:600;font-size:14px;">${data.roleLabel} worklist — ${escapeHtml(data.person)}</div>
-    <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${s.pages} page${s.pages !== 1 ? 's' : ''} · ${s.sourcePages} source page${s.sourcePages !== 1 ? 's' : ''} · ${s.patterns} pattern${s.patterns !== 1 ? 's' : ''} · ${s.briefs} page-specific brief${s.briefs !== 1 ? 's' : ''}</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${s.pages} page${s.pages !== 1 ? 's' : ''} · ${s.sourcePages} source page${s.sourcePages !== 1 ? 's' : ''} · ${s.patterns} pattern${s.patterns !== 1 ? 's' : ''} · ${s.briefs} page-specific brief${s.briefs !== 1 ? 's' : ''}${s.consolidatedIn ? ` · ${s.consolidatedIn} consolidated in` : ''}</div>
   </div>`;
+
+  const mergePill = (n) => n > 0
+    ? `<span title="${n} page${n !== 1 ? 's' : ''} consolidated into this page" style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:9px;background:var(--kke-evolve-bg,#fff7ed);color:var(--kke-evolve,#b45309);border:1px solid var(--kke-evolve,#fcd9a8);white-space:nowrap;">merges ${n}</span>`
+    : '';
 
   const briefBox = (kicker, md) =>
     `<div style="border-left:3px solid var(--accent);background:var(--bg-main);padding:8px 12px;margin:6px 0;border-radius:0 6px 6px 0;">
@@ -17051,12 +17400,25 @@ function assigneeBriefBuiltinHtml(data) {
       const pill = p.status
         ? `<span style="font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid ${statusColor(p.status)};color:${statusColor(p.status)};">${escapeHtml(p.status)}</span>`
         : '<span style="color:var(--text-muted);">—</span>';
+      const countCell = `${p.sourceCount}${p.mergeTotal ? ` <span style="color:var(--kke-evolve,#b45309);" title="${p.mergeTotal} consolidated in across these pages">(+${p.mergeTotal})</span>` : ''}`;
       body += `<tr style="border-top:1px solid var(--border);">
         <td style="padding:4px 6px;">${p.hasBrief ? '★ ' : ''}${escapeHtml(p.breadcrumb)}</td>
         <td style="padding:4px 6px;font-family:var(--font-mono);word-break:break-all;">${escapeHtml(p.url) || '<span style="color:var(--text-muted)">—</span>'}</td>
         <td style="padding:4px 6px;">${pill}</td>
-        <td style="padding:4px 6px;">${p.sourceCount}</td>
+        <td style="padding:4px 6px;white-space:nowrap;">${countCell}</td>
       </tr>`;
+      // Assigned source page(s) for this nav node, each flagged if other pages consolidate into it.
+      if (p.sourcePages && p.sourcePages.length) {
+        const items = p.sourcePages.map(sp => {
+          const name = sp.title || sp.url || '(untitled)';
+          const urlBit = sp.url ? ` <span style="color:var(--text-muted);font-family:var(--font-mono);font-size:11px;word-break:break-all;">${escapeHtml(sp.url)}</span>` : '';
+          return `<li style="margin:1px 0;">${escapeHtml(name)}${urlBit}${mergePill(sp.mergeCount)}</li>`;
+        }).join('');
+        body += `<tr><td colspan="4" style="padding:0 6px 8px 22px;border-top:0;">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin:2px 0;">Source page${p.sourcePages.length !== 1 ? 's' : ''}</div>
+          <ul style="margin:0;padding-left:14px;list-style:disc;font-size:12px;">${items}</ul>
+        </td></tr>`;
+      }
     });
     body += `</tbody></table>`;
   });
@@ -17083,6 +17445,8 @@ function assigneeBriefContext(data, title) {
       pages: g.pages.map(p => ({
         breadcrumb: p.breadcrumb, label: p.label, url: p.url,
         status: p.status, sourceCount: p.sourceCount, hasBrief: p.hasBrief, brief: p.briefMd,
+        mergeTotal: p.mergeTotal,
+        sourcePages: p.sourcePages,
       })),
     })),
   };
