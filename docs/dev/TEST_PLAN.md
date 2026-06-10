@@ -229,3 +229,10 @@ Features added in the current session. Test with a Screaming Frog crawl export (
 - [ ] Shows: SME Reviewed (X of Y, Z%), Approved count, Changed count
 - [ ] Shows: Final KKE Resolved (X of Y, Z%), Pending count
 - [ ] If no SME data: section doesn't appear
+
+## 18. Crawler Source Alternatives (evaluation backlog)
+
+Transmission has no built-in crawler by design; crawl exports come from external tools. Screaming Frog is the reference source. Alternatives to evaluate for import compatibility:
+
+- [ ] **SiteOne Crawler** (https://github.com/janreges/siteone-crawler) — free/open-source, CLI + desktop app. Untested. Evaluate: export format (xlsx/csv?), column names vs SF (`Address`, `Status Code`, `Title 1`, …), whether URL auto-detection picks up its URL column, metadata coverage (titles/descriptions/H1s/indexability), redirect reporting.
+- [ ] For any alternative: import a real export, confirm audit columns inject correctly, sidebar/filtering/field bar behave, and round-trip save preserves all original columns.
