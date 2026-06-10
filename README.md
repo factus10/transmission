@@ -33,7 +33,7 @@ The list below is a feature catalog, not a how-to.
 - **Tags** — freeform chip input, stored as comma-separated values
 - **Notes** — per-page rationale in a popover
 - **Groups & Primary Tag** — categorize pages into groups with a primary tag
-- **Auto-save** — changes save automatically after 2 seconds of inactivity, with a clear title-bar state (● Unsaved → ⟳ Saving… → ✓ All changes saved)
+- **Auto-save** — changes save automatically after a short idle (≈0.4s in `.transmission` projects, 2s in spreadsheets), with a clear title-bar state (● Unsaved → ⟳ Saving… → ✓ All changes saved)
 - **Jump to next unreviewed** — press `]` to skip to the next page without a KKE decision
 - **Note snippets** — save reusable rationale text and insert it into any Notes popover
 - **Session resume cue** — reopening a partly-done audit shows where you left off

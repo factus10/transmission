@@ -121,7 +121,7 @@ Accepting a banner adds that library to your project, and — like every change 
 
 ### Saving, and picking up where you left off
 
-You'll rarely have to think about saving. Transmission **auto-saves about two seconds** after your last edit, and you can force a save anytime with **Cmd+S**. The title bar always tells you where things stand: **● Unsaved changes** while you're working, **⟳ Saving…** during a write, and **✓ All changes saved** once it's safely on disk. (In a `.transmission` project the write itself takes milliseconds; saving an `.xlsx` rebuilds the workbook, which is where the pause on large files comes from — see [Project files](#project-files-the-faster-way-to-work).)
+You'll rarely have to think about saving. Transmission auto-saves after your last edit — **almost immediately (about half a second) in a project file**, or after about two seconds in a spreadsheet — and you can force a save anytime with **Cmd+S**. The title bar always tells you where things stand: **● Unsaved changes** while you're working, **⟳ Saving…** during a write, and **✓ All changes saved** once it's safely on disk. (In a `.transmission` project the write itself takes milliseconds; saving an `.xlsx` rebuilds the workbook, which is why both the debounce and the write are slower there — see [Project files](#project-files-the-faster-way-to-work).)
 
 Close the file, reopen it (it'll be waiting in **Open Recent**), and you land exactly where you left off — Transmission even shows a friendly nudge like *"Resuming: 47 reviewed, 312 to go — press ] for the next unreviewed."*
 

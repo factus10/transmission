@@ -4978,7 +4978,8 @@ function setupWebviewEvents() {
 // ─── Save / dirty ─────────────────────────────────────────────────────────────
 
 let autosaveTimer = null;
-const AUTOSAVE_DELAY = 2000; // ms after last edit
+const AUTOSAVE_DELAY = 2000;        // ms after last edit (xlsx — full workbook rebuild)
+const AUTOSAVE_DELAY_PROJECT = 400; // ms after last edit (.transmission — ~ms transaction)
 
 // Build the save-file IPC payload from current state.
 // fullNav: include the full nav tree even when it isn't dirty — needed when the
@@ -5116,9 +5117,12 @@ async function exportFullWorkbook() {
 function scheduleAutosave() {
   if (!state.filePath) return;
   clearTimeout(autosaveTimer);
+  // Project saves are a ~ms SQLite transaction, so persist almost immediately;
+  // xlsx saves rebuild the whole workbook, so keep the longer debounce.
+  const delay = /\.transmission$/i.test(state.filePath) ? AUTOSAVE_DELAY_PROJECT : AUTOSAVE_DELAY;
   autosaveTimer = setTimeout(() => {
     if (state.isDirty) saveFile();
-  }, AUTOSAVE_DELAY);
+  }, delay);
 }
 
 function setDirty(dirty) {
