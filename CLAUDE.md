@@ -537,7 +537,9 @@ Toggled via **Cmd+Shift+M**, the **Menus** view-switcher tab, or View → Menus 
 
 **Reference integrity:** `findMenuOrphans()` returns `{menu,item}` for every `ref` item whose `nodeId` no longer matches a live node (deleted/renumbered). `renderMenusView()` shows a red `⚠ N broken refs` toolbar button (`#btn-menu-check`, hidden at 0) → `openMenuOrphansDialog()` lists each broken item with **Re-pick…** (reuses `showMenuNodePicker`) and **Remove** (`removeMenuItem`); the list re-renders live as you resolve them. Each broken item also shows `(missing page)` inline in the tree.
 
-**Page breadcrumb in exports:** the breadcrumb axis surfaces in deliverables via a `pageBreadcrumb` column (`pageBreadcrumbOf(node)`) — added to `navExportColumnDefs()` (so it flows into the Migration Tracker **Nav Plan** sheet and the Nav Tree's *Filtered nodes → Excel* column picker) and to the menu export (xlsx `Page Breadcrumb` column + JSON `pageBreadcrumb` on `ref` items). **Not yet built (later phases):** per-menu sitemap.
+**Page breadcrumb in exports:** the breadcrumb axis surfaces in deliverables via a `pageBreadcrumb` column (`pageBreadcrumbOf(node)`) — added to `navExportColumnDefs()` (so it flows into the Migration Tracker **Nav Plan** sheet and the Nav Tree's *Filtered nodes → Excel* column picker) and to the menu export (xlsx `Page Breadcrumb` column + JSON `pageBreadcrumb` on `ref` items).
+
+**Per-menu sitemap (`btn-menu-sitemap` → `generateMenuSitemap()`):** renders each menu as a box-tree through the shared `render-sitemap-d3` IPC (same `{name, menu, pattern, phase, pageCount, hasHiddenChildren, children}` shape as the nav sitemap). One tree per menu (synthetic root = the menu name); items colored by **kind** via a `{Page, Link, Header}` colorMap (`pattern` = kind label), with `header` items dashed (`menu:false`). Wide `openModal`, one card per menu, scroll-zoom / drag-pan (`_menuSitemapZoom`), and a per-card **SVG** download via `save-text-file`. No main-process changes (reuses the existing D3 renderer). **Backlog (later):** backport the menu DnD engine to the nav tree.
 
 ---
 
