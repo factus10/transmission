@@ -364,6 +364,7 @@ async function init() {
   setupClusterCollapse();
   setupClusterQuickToggles();
   setupViewSwitcher();
+  setupMenusView();
   setupMigrationFieldsHandlers();
   setupProgress();
   // setupMultiBar is wired separately near the bulk-bar handler block
@@ -460,6 +461,7 @@ function bindIPCListeners() {
   window.electronAPI.onMenuTableView(() => { toggleTableView(); refreshViewSwitcher(); });
   window.electronAPI.onMenuNavTree(() => { toggleNavEditor(); refreshViewSwitcher(); });
   window.electronAPI.onMenuRedirectEditor(() => { toggleRedirectEditor(); refreshViewSwitcher(); });
+  window.electronAPI.onMenuMenus(() => { toggleMenusView(); refreshViewSwitcher(); });
   window.electronAPI.onMenuSmeExport(() => smeExport());
   window.electronAPI.onMenuSmeImport(() => smeImport());
   window.electronAPI.onMenuSmeResolve(() => openSmeResolveDialog());
@@ -2227,6 +2229,7 @@ function returnToAuditView() {
   if (_tableViewOpen) closeTableView();
   if (_navEditorOpen) closeNavEditor();
   if (_redirectEditorOpen) closeRedirectEditor();
+  if (_menusViewOpen) closeMenusView();
   refreshViewSwitcher();
 }
 
@@ -3551,6 +3554,7 @@ function setupViewSwitcher() {
         case 'table':     if (!_tableViewOpen) toggleTableView(); break;
         case 'nav-tree':  if (!_navEditorOpen) toggleNavEditor(); break;
         case 'redirects': if (!_redirectEditorOpen) toggleRedirectEditor(); break;
+        case 'menus':     if (!_menusViewOpen) toggleMenusView(); break;
       }
       refreshViewSwitcher();
     });
@@ -3569,6 +3573,7 @@ function refreshViewSwitcher() {
   if (_tableViewOpen)         active = 'table';
   else if (_navEditorOpen)    active = 'nav-tree';
   else if (_redirectEditorOpen) active = 'redirects';
+  else if (_menusViewOpen)    active = 'menus';
   strip.querySelectorAll('.view-tab').forEach(btn => {
     const isActive = btn.dataset.view === active;
     btn.classList.toggle('active', isActive);
@@ -10381,6 +10386,7 @@ function openNavEditor() {
   // Close other full-panel views
   if (_redirectEditorOpen) closeRedirectEditor();
   if (_tableViewOpen) closeTableView();
+  if (_menusViewOpen) closeMenusView();
 
   _navEditorOpen = true;
   document.getElementById('app').classList.add('tv-active');
@@ -10443,6 +10449,610 @@ function closeNavEditor() {
     $('no-selection').classList.remove('hidden');
   }
   if (typeof refreshViewSwitcher === 'function') refreshViewSwitcher();
+}
+
+// ─── Menus subsystem (Phase 1) ──────────────────────────────────────────────
+// Independent navigation structures that REFERENCE content-tree nodes. Canonical
+// data lives in state.projectSettings.menus + .menuPlacementLibrary, so it
+// persists for free through the existing projectSettings plumbing (KKE_Settings
+// sheet for .xlsx, settings table for .transmission).
+//
+//   menu = { id, name, placement, description, items: [ MenuItem ] }
+//   MenuItem = { id, parentId, kind: 'ref'|'link'|'header',
+//                nodeId, externalUrl, label }   // label '' on a ref = inherit node label
+// Hierarchy is by parentId; sibling order is array order. A node may be
+// referenced by any number of items, in any number of menus, at any depth.
+
+let _menusViewOpen = false;
+let _menuSelectedId = null;
+let _menuDragOver = null;     // { el, zone } — item-tree drag
+let _menuListDragOver = null; // { el, zone } — menu-list (left panel) drag
+
+const DEFAULT_MENU_PLACEMENTS = ['Top bar', 'Mega (hover)', 'Utility', 'Footer', 'Overlay / Fly-out', 'Sidebar', 'In-page'];
+
+function getMenus() {
+  if (!Array.isArray(state.projectSettings.menus)) state.projectSettings.menus = [];
+  return state.projectSettings.menus;
+}
+function getMenuPlacementLibrary() {
+  if (!Array.isArray(state.projectSettings.menuPlacementLibrary) || state.projectSettings.menuPlacementLibrary.length === 0) {
+    state.projectSettings.menuPlacementLibrary = DEFAULT_MENU_PLACEMENTS.slice();
+  }
+  return state.projectSettings.menuPlacementLibrary;
+}
+function genMenuId() {
+  let max = 0;
+  getMenus().forEach(m => { const n = parseInt(String(m.id).replace(/\D/g, ''), 10); if (n > max) max = n; });
+  return 'menu-' + String(max + 1).padStart(3, '0');
+}
+function genMenuItemId(menu) {
+  let max = 0;
+  (menu.items || []).forEach(it => { const n = parseInt(String(it.id).replace(/\D/g, ''), 10); if (n > max) max = n; });
+  return 'mi-' + String(max + 1).padStart(4, '0');
+}
+function menuItemLabel(item) {
+  if (item.label) return item.label;
+  if (item.kind === 'ref') { const n = state.navNodes.find(x => x.id === item.nodeId); return n ? n.label : ''; }
+  return '';
+}
+
+function toggleMenusView() { if (_menusViewOpen) closeMenusView(); else openMenusView(); }
+
+function openMenusView() {
+  if (_navEditorOpen) closeNavEditor();
+  if (_redirectEditorOpen) closeRedirectEditor();
+  if (_tableViewOpen) closeTableView();
+  _menusViewOpen = true;
+  document.getElementById('app').classList.add('tv-active');
+  $('content-area').classList.add('hidden');
+  $('no-selection').classList.add('hidden');
+  $('menus-view').classList.remove('hidden');
+  const menus = getMenus();
+  if (!_menuSelectedId || !menus.some(m => m.id === _menuSelectedId)) {
+    _menuSelectedId = menus.length ? menus[0].id : null;
+  }
+  renderMenusView();
+  if (typeof refreshViewSwitcher === 'function') refreshViewSwitcher();
+}
+
+function closeMenusView() {
+  _menusViewOpen = false;
+  document.getElementById('app').classList.remove('tv-active');
+  $('menus-view').classList.add('hidden');
+  if (state.selectedIndex !== null) $('content-area').classList.remove('hidden');
+  else $('no-selection').classList.remove('hidden');
+  if (typeof refreshViewSwitcher === 'function') refreshViewSwitcher();
+}
+
+function setupMenusView() {
+  const add = $('btn-menu-add'); if (add) add.addEventListener('click', addMenu);
+  const seed = $('btn-menu-seed'); if (seed) seed.addEventListener('click', seedMenuFromContentTree);
+  const close = $('btn-menus-view-close'); if (close) close.addEventListener('click', () => returnToAuditView());
+}
+
+async function addMenu() {
+  const name = await showPrompt('New menu', 'Menu name (e.g. Primary, Footer, Utility)');
+  if (!name || !name.trim()) return;
+  const menu = { id: genMenuId(), name: sanitizeText(name).trim(), placement: '', description: '', items: [] };
+  getMenus().push(menu);
+  _menuSelectedId = menu.id;
+  setDirty(true);
+  renderMenusView();
+  showToast('Menu created', 'success');
+}
+
+async function deleteMenu(menuId) {
+  const menu = getMenus().find(m => m.id === menuId);
+  if (!menu) return;
+  const n = (menu.items || []).length;
+  if (!(await confirmDialog({ title: 'Delete menu', message: `Delete "${menu.name}" and its ${n} item${n !== 1 ? 's' : ''}? The content pages it references are not affected.`, confirmLabel: 'Delete', danger: true }))) return;
+  state.projectSettings.menus = getMenus().filter(m => m.id !== menuId);
+  if (_menuSelectedId === menuId) { const m = getMenus(); _menuSelectedId = m.length ? m[0].id : null; }
+  setDirty(true);
+  renderMenusView();
+  showToast('Menu deleted', 'success');
+}
+
+function renderMenusView() {
+  renderMenusList();
+  renderMenuDetail();
+  const menus = getMenus();
+  const totalItems = menus.reduce((s, m) => s + (m.items ? m.items.length : 0), 0);
+  const statsEl = $('menus-view-stats');
+  if (statsEl) statsEl.textContent = `${menus.length} menu${menus.length !== 1 ? 's' : ''} · ${totalItems} item${totalItems !== 1 ? 's' : ''}`;
+}
+
+function renderMenusList() {
+  const list = $('menus-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const menus = getMenus();
+  if (menus.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'menu-list-empty';
+    empty.textContent = 'No menus yet. Create one with “+ New Menu”, or “Seed from content tree” to start from your in-menu nav nodes.';
+    list.appendChild(empty);
+    return;
+  }
+  menus.forEach(menu => {
+    const item = document.createElement('div');
+    item.className = 'menu-list-item' + (menu.id === _menuSelectedId ? ' active' : '');
+    item.title = 'Drag to reorder';
+    const name = document.createElement('div');
+    name.className = 'mli-name';
+    name.textContent = menu.name || '(untitled)';
+    item.appendChild(name);
+    const meta = document.createElement('div');
+    meta.className = 'mli-meta';
+    const bits = [];
+    if (menu.placement) bits.push(menu.placement);
+    bits.push(`${(menu.items || []).length} item${(menu.items || []).length !== 1 ? 's' : ''}`);
+    meta.textContent = bits.join(' · ');
+    item.appendChild(meta);
+    item.addEventListener('click', () => { _menuSelectedId = menu.id; renderMenusView(); });
+
+    // Drag to reorder the menu list (flat order — before/after only)
+    item.draggable = true;
+    item.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/menu-id', menu.id);
+      e.dataTransfer.effectAllowed = 'move';
+      requestAnimationFrame(() => item.classList.add('menu-dragging'));
+    });
+    item.addEventListener('dragend', () => { item.classList.remove('menu-dragging'); clearMenuListDropIndicators(); });
+    item.addEventListener('dragover', (e) => {
+      if (!e.dataTransfer.types.includes('text/menu-id')) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const rect = item.getBoundingClientRect();
+      const zone = (e.clientY - rect.top) < rect.height / 2 ? 'before' : 'after';
+      if (_menuListDragOver && _menuListDragOver.el === item && _menuListDragOver.zone === zone) return;
+      clearMenuListDropIndicators();
+      item.classList.add('menu-drop-' + zone);
+      _menuListDragOver = { el: item, zone };
+    });
+    item.addEventListener('drop', (e) => {
+      if (!e.dataTransfer.types.includes('text/menu-id')) return;
+      e.preventDefault();
+      const zone = (_menuListDragOver && _menuListDragOver.el === item) ? _menuListDragOver.zone : 'after';
+      clearMenuListDropIndicators();
+      const draggedId = e.dataTransfer.getData('text/menu-id');
+      if (draggedId && draggedId !== menu.id) reorderMenus(draggedId, menu.id, zone);
+    });
+
+    list.appendChild(item);
+  });
+}
+
+function clearMenuListDropIndicators() {
+  document.querySelectorAll('.menu-list-item').forEach(r => r.classList.remove('menu-drop-before', 'menu-drop-after'));
+  _menuListDragOver = null;
+}
+
+function reorderMenus(draggedId, targetId, zone) {
+  const menus = getMenus();
+  const dragged = menus.find(m => m.id === draggedId);
+  const target = menus.find(m => m.id === targetId);
+  if (!dragged || !target || draggedId === targetId) return;
+  const without = menus.filter(m => m.id !== draggedId);
+  const tIdx = without.findIndex(m => m.id === targetId);
+  const insertIdx = (zone === 'before') ? tIdx : tIdx + 1;
+  without.splice(insertIdx, 0, dragged);
+  state.projectSettings.menus = without;
+  setDirty(true);
+  renderMenusView();
+}
+
+function _menuMetaLabel(text) { const l = document.createElement('label'); l.textContent = text; return l; }
+function _menuAddBtn(text, fn, extra) {
+  const b = document.createElement('button');
+  b.className = 'btn btn-sm ' + (extra || 'btn-ghost');
+  b.textContent = text;
+  b.addEventListener('click', fn);
+  return b;
+}
+
+function renderMenuDetail() {
+  const detail = $('menus-detail');
+  if (!detail) return;
+  detail.innerHTML = '';
+  const menu = getMenus().find(m => m.id === _menuSelectedId);
+  if (!menu) {
+    const empty = document.createElement('div');
+    empty.className = 'menu-detail-empty';
+    empty.textContent = 'Select a menu on the left, or create one.';
+    detail.appendChild(empty);
+    return;
+  }
+
+  // ── Meta grid (name / placement / description) ──
+  const grid = document.createElement('div');
+  grid.className = 'menu-meta-grid';
+
+  grid.appendChild(_menuMetaLabel('Name'));
+  const nameInp = document.createElement('input');
+  nameInp.type = 'text';
+  nameInp.value = menu.name || '';
+  const commitName = () => { menu.name = nameInp.value; setDirty(true); renderMenusList(); };
+  nameInp.addEventListener('input', commitName);
+  attachSanitizer(nameInp, commitName);
+  grid.appendChild(nameInp);
+
+  grid.appendChild(_menuMetaLabel('Placement'));
+  const placeWrap = document.createElement('div');
+  placeWrap.style.cssText = 'display:flex;align-items:center;gap:6px;';
+  grid.appendChild(placeWrap);
+  const placeSel = buildInlineAddSelect({
+    wrapEl: placeWrap,
+    selectId: '_menu-placement-select',
+    options: getMenuPlacementLibrary(),
+    currentValue: menu.placement || '',
+    placeholder: '— placement / behavior —',
+    newPromptTitle: 'New placement type',
+    onNewValue: (val) => {
+      const clean = sanitizeText(val).trim();
+      if (!clean) return null;
+      const lib = getMenuPlacementLibrary();
+      if (!lib.includes(clean)) lib.push(clean);
+      menu.placement = clean; setDirty(true); renderMenusList();
+      return clean;
+    }
+  });
+  if (placeSel) placeSel.addEventListener('change', () => {
+    if (placeSel.value === '__new__') return; // handled by the helper
+    menu.placement = placeSel.value; setDirty(true); renderMenusList();
+  });
+
+  grid.appendChild(_menuMetaLabel('Description'));
+  const descWrap = document.createElement('div');
+  const desc = document.createElement('textarea');
+  desc.rows = 2;
+  desc.value = menu.description || '';
+  desc.placeholder = 'What is this menu / how does it behave? (e.g. “opens from the search icon; curated popular links”)';
+  desc.addEventListener('input', () => { menu.description = desc.value; setDirty(true); });
+  attachSanitizer(desc, () => { menu.description = desc.value; setDirty(true); });
+  descWrap.appendChild(desc);
+  grid.appendChild(descWrap);
+
+  detail.appendChild(grid);
+
+  // ── Items header + add controls ──
+  const head = document.createElement('div');
+  head.className = 'menu-items-head';
+  const title = document.createElement('span');
+  title.className = 'mih-title';
+  title.textContent = 'Menu items — drag ⋮⋮ to reorder or nest';
+  head.appendChild(title);
+  head.appendChild(_menuAddBtn('+ Page', () => addMenuItemRef(menu)));
+  head.appendChild(_menuAddBtn('+ Link', () => addMenuItemLink(menu)));
+  head.appendChild(_menuAddBtn('+ Header', () => addMenuItemHeader(menu)));
+  head.appendChild(_menuAddBtn('Delete menu', () => deleteMenu(menu.id)));
+  detail.appendChild(head);
+
+  // ── Item tree ──
+  const tree = document.createElement('div');
+  tree.id = 'menu-item-tree';
+  detail.appendChild(tree);
+  renderMenuItemTree(menu, tree);
+}
+
+function renderMenuItemTree(menu, container) {
+  const items = menu.items || [];
+  if (items.length === 0) {
+    const e = document.createElement('div');
+    e.className = 'menu-items-empty';
+    e.textContent = 'No items yet. Add a page reference, an external link, or a grouping header.';
+    container.appendChild(e);
+    return;
+  }
+  const childrenOf = (pid) => items.filter(it => (it.parentId || '') === (pid || ''));
+  const renderLevel = (pid, depth) => {
+    childrenOf(pid).forEach(it => {
+      container.appendChild(buildMenuItemRow(menu, it, depth));
+      renderLevel(it.id, depth + 1);
+    });
+  };
+  renderLevel('', 0);
+}
+
+function buildMenuItemRow(menu, item, depth) {
+  const row = document.createElement('div');
+  row.className = 'mi-row';
+  row.style.marginLeft = (depth * 22) + 'px';
+  row.dataset.itemId = item.id;
+
+  const grip = document.createElement('span');
+  grip.className = 'mi-grip';
+  grip.textContent = '⋮⋮';
+  grip.title = 'Drag to reorder / nest';
+  grip.draggable = true;
+  grip.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/menu-item-id', item.id);
+    e.dataTransfer.effectAllowed = 'move';
+    requestAnimationFrame(() => row.classList.add('mi-dragging'));
+  });
+  grip.addEventListener('dragend', () => { row.classList.remove('mi-dragging'); clearMenuDropIndicators(); });
+  row.appendChild(grip);
+
+  const kind = document.createElement('select');
+  kind.className = 'mi-kind mi-kind-select mi-kind-' + item.kind;
+  kind.title = 'Change item type';
+  [['ref', 'page'], ['link', 'link'], ['header', 'header']].forEach(([val, text]) => {
+    const o = document.createElement('option');
+    o.value = val;
+    o.textContent = text;
+    if (val === item.kind) o.selected = true;
+    kind.appendChild(o);
+  });
+  kind.addEventListener('change', () => changeMenuItemKind(menu, item, kind.value));
+  row.appendChild(kind);
+
+  const label = document.createElement('input');
+  label.className = 'mi-label-input' + (item.kind === 'header' ? ' mi-label-header' : '');
+  label.value = menuItemLabel(item);
+  label.placeholder = item.kind === 'ref' ? '(inherits page label)' : 'Label';
+  const commitLabel = () => { item.label = label.value; setDirty(true); renderMenusList(); };
+  label.addEventListener('input', commitLabel);
+  attachSanitizer(label, commitLabel);
+  row.appendChild(label);
+
+  if (item.kind === 'ref') {
+    const node = state.navNodes.find(n => n.id === item.nodeId);
+    const sub = document.createElement('span');
+    sub.className = 'mi-sub' + (node ? '' : ' mi-broken');
+    sub.textContent = node ? ('/' + (node.computedPath || '')) : '(missing page — click to re-pick)';
+    if (node) sub.title = node.breadcrumb || '';
+    sub.style.cursor = 'pointer';
+    sub.addEventListener('click', () => pickMenuItemRef(menu, item));
+    row.appendChild(sub);
+  } else if (item.kind === 'link') {
+    const url = document.createElement('input');
+    url.className = 'mi-sub';
+    url.style.cssText = 'border:1px solid var(--border);border-radius:3px;padding:2px 5px;width:240px;flex-shrink:0;';
+    url.value = item.externalUrl || '';
+    url.placeholder = 'https://…';
+    url.addEventListener('input', () => { item.externalUrl = url.value.trim(); setDirty(true); });
+    row.appendChild(url);
+  }
+
+  const del = document.createElement('span');
+  del.className = 'mi-del';
+  del.textContent = '✕';
+  del.title = 'Remove item';
+  del.addEventListener('click', () => removeMenuItem(menu, item.id));
+  row.appendChild(del);
+
+  attachMenuItemDnD(row, menu, item);
+  return row;
+}
+
+function addMenuItemRef(menu) { pickMenuItemRef(menu, null); }
+
+function pickMenuItemRef(menu, existingItem) {
+  showMenuNodePicker((node) => {
+    if (existingItem) {
+      existingItem.nodeId = node.id;
+    } else {
+      menu.items.push({ id: genMenuItemId(menu), parentId: '', kind: 'ref', nodeId: node.id, externalUrl: '', label: '' });
+    }
+    setDirty(true);
+    renderMenusView();
+  });
+}
+
+async function addMenuItemLink(menu) {
+  const label = await showPrompt('New link', 'Link label (e.g. Login, MyPSU)');
+  if (label === null) return;
+  menu.items.push({ id: genMenuItemId(menu), parentId: '', kind: 'link', nodeId: '', externalUrl: '', label: sanitizeText(label || '').trim() });
+  setDirty(true); renderMenusView();
+}
+
+async function addMenuItemHeader(menu) {
+  const label = await showPrompt('New header', 'Header / group label (label-only, no link)');
+  if (label === null) return;
+  menu.items.push({ id: genMenuItemId(menu), parentId: '', kind: 'header', nodeId: '', externalUrl: '', label: sanitizeText(label || '').trim() });
+  setDirty(true); renderMenusView();
+}
+
+function changeMenuItemKind(menu, item, newKind) {
+  if (item.kind === newKind) return;
+  // Preserve a visible label when leaving 'ref' (it may have been inheriting the node's label)
+  if (item.kind === 'ref' && !item.label) {
+    const node = state.navNodes.find(n => n.id === item.nodeId);
+    if (node && node.label) item.label = node.label;
+  }
+  item.kind = newKind;
+  if (newKind === 'ref') {
+    item.externalUrl = '';
+    setDirty(true);
+    renderMenusView();
+    if (!item.nodeId) pickMenuItemRef(menu, item); // a ref needs a target — prompt for one
+    return;
+  }
+  if (newKind === 'link') {
+    item.nodeId = '';
+  } else if (newKind === 'header') {
+    item.nodeId = '';
+    item.externalUrl = '';
+  }
+  setDirty(true);
+  renderMenusView();
+}
+
+function removeMenuItem(menu, itemId) {
+  const removed = (menu.items || []).find(it => it.id === itemId);
+  if (!removed) return;
+  const newParent = removed.parentId || '';
+  menu.items.forEach(it => { if (it.parentId === itemId) it.parentId = newParent; });
+  menu.items = menu.items.filter(it => it.id !== itemId);
+  setDirty(true);
+  renderMenusView();
+}
+
+function clearMenuDropIndicators() {
+  document.querySelectorAll('.mi-row').forEach(r => r.classList.remove('mi-drop-before', 'mi-drop-after', 'mi-drop-into'));
+  _menuDragOver = null;
+}
+
+function attachMenuItemDnD(row, menu, item) {
+  row.addEventListener('dragover', (e) => {
+    if (!e.dataTransfer.types.includes('text/menu-item-id')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const rect = row.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const zone = y < rect.height * 0.30 ? 'before' : y > rect.height * 0.70 ? 'after' : 'into';
+    if (_menuDragOver && _menuDragOver.el === row && _menuDragOver.zone === zone) return;
+    clearMenuDropIndicators();
+    row.classList.add('mi-drop-' + zone);
+    _menuDragOver = { el: row, zone };
+  });
+  row.addEventListener('dragleave', (e) => { if (row.contains(e.relatedTarget)) return; });
+  row.addEventListener('drop', (e) => {
+    if (!e.dataTransfer.types.includes('text/menu-item-id')) return;
+    e.preventDefault();
+    const zone = (_menuDragOver && _menuDragOver.el === row) ? _menuDragOver.zone : 'after';
+    clearMenuDropIndicators();
+    const draggedId = e.dataTransfer.getData('text/menu-item-id');
+    if (!draggedId || draggedId === item.id) return;
+    moveMenuItem(menu, draggedId, item.id, zone);
+  });
+}
+
+function moveMenuItem(menu, draggedId, targetId, zone) {
+  const items = menu.items;
+  const dragged = items.find(it => it.id === draggedId);
+  const target = items.find(it => it.id === targetId);
+  if (!dragged || !target) return;
+  // Prevent moving an item into itself or its own subtree
+  const isInDraggedSubtree = (id) => {
+    let cur = items.find(it => it.id === id);
+    const seen = new Set();
+    while (cur && cur.parentId && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      if (cur.parentId === draggedId) return true;
+      cur = items.find(it => it.id === cur.parentId);
+    }
+    return false;
+  };
+  if (targetId === draggedId || isInDraggedSubtree(targetId)) {
+    showToast('Can’t move an item into its own subtree', 'error');
+    return;
+  }
+  dragged.parentId = (zone === 'into') ? target.id : (target.parentId || '');
+  const without = items.filter(it => it.id !== draggedId);
+  const tIdx = without.findIndex(it => it.id === targetId);
+  const insertIdx = (zone === 'before') ? tIdx : tIdx + 1;
+  without.splice(insertIdx, 0, dragged);
+  menu.items = without;
+  setDirty(true);
+  renderMenusView();
+}
+
+function showMenuNodePicker(onPick) {
+  if (!state.navNodes || state.navNodes.length === 0) {
+    showToast('No content tree yet — build the nav tree first', 'error');
+    return;
+  }
+  const prior = document.querySelector('.menu-node-picker');
+  if (prior) prior.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'menu-node-picker';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:950;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);';
+  const dialog = document.createElement('div');
+  dialog.style.cssText = 'background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:16px;width:760px;max-width:90vw;max-height:72vh;display:flex;flex-direction:column;box-shadow:0 16px 48px rgba(0,0,0,0.3);';
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:14px;font-weight:600;margin-bottom:8px;';
+  title.textContent = 'Add page reference';
+  dialog.appendChild(title);
+  const search = document.createElement('input');
+  search.type = 'text';
+  search.placeholder = 'Search by label, breadcrumb, number, path…';
+  search.style.cssText = 'width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;margin-bottom:8px;';
+  dialog.appendChild(search);
+  const listWrap = document.createElement('div');
+  listWrap.style.cssText = 'flex:1;overflow-y:auto;border:1px solid var(--border);border-radius:4px;';
+  dialog.appendChild(listWrap);
+  const footer = document.createElement('div');
+  footer.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:10px;';
+  const cancel = document.createElement('button');
+  cancel.className = 'btn btn-sm';
+  cancel.textContent = 'Cancel';
+  footer.appendChild(cancel);
+  dialog.appendChild(footer);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  const ordered = sortNodesForNavigation(state.navNodes);
+  const close = () => overlay.remove();
+  cancel.addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  document.addEventListener('keydown', function esc(e) {
+    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); }
+  });
+
+  const renderList = (filter) => {
+    listWrap.innerHTML = '';
+    const f = (filter || '').trim().toLowerCase();
+    const matches = ordered.filter(n => !f || [n.label, n.breadcrumb, n.number, n.computedPath, n.path].some(v => String(v || '').toLowerCase().includes(f)));
+    if (matches.length === 0) {
+      const e = document.createElement('div');
+      e.style.cssText = 'padding:12px;color:var(--text-muted);font-size:12px;';
+      e.textContent = 'No matching nodes';
+      listWrap.appendChild(e);
+      return;
+    }
+    matches.forEach(n => {
+      const depth = String(n.number || '').split('.').length - 1;
+      const opt = document.createElement('div');
+      opt.style.cssText = `padding:5px 10px;padding-left:${10 + depth * 16}px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border-light);`;
+      opt.innerHTML = `<span style="font-family:var(--font-mono);color:var(--text-muted);">${escapeHtml(n.number)}</span> ${escapeHtml(n.label || '')} <span style="color:var(--text-muted);font-family:var(--font-mono);">/${escapeHtml(n.computedPath || '')}</span>`;
+      opt.addEventListener('mouseenter', () => opt.style.background = 'var(--bg-field-bar)');
+      opt.addEventListener('mouseleave', () => opt.style.background = '');
+      opt.addEventListener('click', () => { close(); onPick(n); });
+      listWrap.appendChild(opt);
+    });
+  };
+  search.addEventListener('input', () => renderList(search.value));
+  renderList('');
+  setTimeout(() => search.focus(), 0);
+}
+
+async function seedMenuFromContentTree() {
+  if (!state.navNodes || state.navNodes.length === 0) {
+    showToast('No content tree to seed from', 'error');
+    return;
+  }
+  const ordered = sortNodesForNavigation(state.navNodes);
+  const inMenuNodes = ordered.filter(n => (n.inMenu === 'Y' || n.inMenu === 'y' || n.inMenu === 'true'));
+  let source = inMenuNodes;
+  if (source.length === 0) {
+    const proceed = await confirmDialog({ title: 'Seed menu', message: 'No nodes are marked “in menu”. Seed from ALL content nodes instead?', confirmLabel: 'Use all nodes' });
+    if (!proceed) return;
+    source = ordered;
+  }
+  const name = await showPrompt('Seed menu from content tree', 'Menu name', 'Primary');
+  if (!name || !name.trim()) return;
+
+  const menu = { id: genMenuId(), name: sanitizeText(name).trim(), placement: 'Top bar', description: 'Seeded from the content tree’s in-menu nodes. Edit freely — it’s now independent of the tree.', items: [] };
+  const inSource = new Set(source.map(n => n.number));
+  const nodeByNumber = {};
+  state.navNodes.forEach(n => { nodeByNumber[n.number] = n; });
+  const itemIdByNumber = {};
+  source.forEach((n, i) => { itemIdByNumber[n.number] = 'mi-' + String(i + 1).padStart(4, '0'); });
+  source.forEach(n => {
+    let pid = '';
+    let cur = n.parentNumber ? nodeByNumber[n.parentNumber] : null;
+    while (cur) {
+      if (inSource.has(cur.number)) { pid = itemIdByNumber[cur.number]; break; }
+      cur = cur.parentNumber ? nodeByNumber[cur.parentNumber] : null;
+    }
+    menu.items.push({ id: itemIdByNumber[n.number], parentId: pid, kind: 'ref', nodeId: n.id, externalUrl: '', label: '' });
+  });
+  getMenus().push(menu);
+  _menuSelectedId = menu.id;
+  setDirty(true);
+  renderMenusView();
+  showToast(`Seeded “${menu.name}” with ${menu.items.length} item${menu.items.length !== 1 ? 's' : ''}`, 'success');
 }
 
 async function exportNavTree(format) {
@@ -18539,6 +19149,7 @@ function openTableView() {
 
   if (_navEditorOpen) closeNavEditor();
   if (_redirectEditorOpen) closeRedirectEditor();
+  if (_menusViewOpen) closeMenusView();
 
   _tableViewOpen = true;
   document.getElementById('app').classList.add('tv-active');
@@ -19327,6 +19938,7 @@ function openRedirectEditor(scrollToOrigIndex) {
   if (_navEditorOpen) closeNavEditor();
   if (_redirectEditorOpen) closeRedirectEditor();
   if (_tableViewOpen) closeTableView();
+  if (_menusViewOpen) closeMenusView();
 
   _redirectEditorOpen = true;
   document.getElementById('app').classList.add('tv-active');

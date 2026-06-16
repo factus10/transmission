@@ -253,6 +253,16 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - Drag rows from the sidebar onto tree nodes to assign navigation
 - Full NavStructure sheet rewrite on save (preserves all extension columns including Phase, Notes, RefNodeID, InMenu, URL)
 
+### Menus
+- Open the **Menus** tab (or `Cmd+Shift+M`) — a full-width view for building **independent navigation menus** that *reference* content-tree pages, decoupled from where pages live in the hierarchy
+- **Multiple, arbitrary menus** (Primary, Mega, Utility, Footer, search fly-out, …) — drag the left-panel list to reorder them
+- **Three item kinds**, switchable in place via a dropdown: **page** (references a content node — live label/path, flags broken refs), **link** (external URL), **header** (label-only grouping)
+- **Drag-and-drop** items (⋮⋮ grip) to reorder and nest; each menu can be flat or arbitrarily deep
+- A page can appear in **any number of menus** at any depth (many-to-many; the content node isn't modified)
+- **Per-menu metadata** — a **Placement** (per-project controlled vocabulary: Top bar, Footer, Overlay / Fly-out, … with inline add) and a free-text **Description**
+- **Seed from content tree** — generate a starter menu mirroring the in-menu nav nodes, then edit independently
+- Menus travel with the file (both `.transmission` and `.xlsx`)
+
 ### Visual Sitemap
 - The **Sitemap** button in the nav editor generates a D3 visualization of the navigation structure
 - **Box-style nodes** — each node is a 160×34px rectangle with rounded corners, not circles
