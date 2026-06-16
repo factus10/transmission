@@ -231,7 +231,6 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - **Clone branch** (⧉) — deep-clone a node and all its children as a sibling (structure only, no page assignments; top-level clone gets "(copy)" suffix)
 - **Fold state memory** — collapsed/expanded state persists across re-renders (add, delete, move, edit)
 - **Menu item toggle** — InMenu column to mark nodes as visible/hidden in navigation menus
-- **Bulk page assignment** — multi-select rows in the sidebar and drag-drop onto tree nodes
 - **Duplicate slug detection** — slugs that conflict with siblings are highlighted in red
 - **Slug validation** — slugs are validated on assignment to prevent duplicates
 - **Duplicate NavID detection** — when 2+ nav nodes share the same `ID`, the toolbar shows a red ⚠ link with the count. Click → confirms → renumbers duplicates with new unique IDs (the first node in each group keeps the original). Pages assigned to the shared ID stay with the first node; the rest may need manual reassignment via the nav picker.
@@ -250,7 +249,6 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - **Sanitizer on label/slug edits** — paste handlers strip mojibake (`‚Äô` → `'`), HTML entities, NBSP, zero-width chars, vertical tabs, etc. Multi-character mojibake patterns only — bare accented characters (`é`, `ü`, `ñ`) are left alone.
 - **IA Report** — toolbar button generates a per-node status report directly in the nav editor. Each node is classified into one of four states: **Empty** (red — no pages and no redirect), **→** (slate — no direct pages but has redirect-destination rows assigned), **Np** (grey — node has N live pages), or **≡** (italic header row — structural node with no own content). Useful for spotting gaps and orphans before handing off.
 - Page counts per node with gap detection (empty nodes highlighted)
-- Drag rows from the sidebar onto tree nodes to assign navigation
 - **URL override** — a node can publish at an address independent of its place in the menu (`Url_Path`); the override re-roots its sub-pages too. Containment and URL are separate axes.
 - **Breadcrumb parent** — set an arbitrary on-page breadcrumb top, independent of both the tree and the URL: mark a node a *breadcrumb root* or re-root it onto any other node (`Breadcrumb_Parent`); sub-pages inherit. Optional project "Home" prefix and advisory max-depth flag live in Project Settings → Identity. A deep `College of Business > Departments > Accounting` page can read simply **Home > Accounting**. The rendered page breadcrumb is exported as a column in the Migration Tracker Nav Plan, the Nav Tree column-picker export, and the menu export.
 - Full NavStructure sheet rewrite on save (preserves all extension columns including Phase, Notes, RefNodeID, InMenu, URL, Url_Path, Breadcrumb_Parent)

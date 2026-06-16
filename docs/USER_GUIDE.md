@@ -912,7 +912,6 @@ Your goal is to drive **need placement** in the stats line down to **0**.
 
 1. In the audit view, set the **KKE filter** to **Keep + Evolve**, then add a field filter for `NavID is blank` and **Apply** — that's exactly the pages still needing a home.
 2. For each one, click **Nav** in the Decide cluster, drill to the right node, and click **Assign**. Use **+ Child** in the picker to create a new node inline if no good home exists yet.
-3. To place many similar pages at once, multi-select them in the sidebar and **drag the selection onto a node**.
 
 > **Tip:** the stats line's **"N need placement"** is a clickable link — it jumps you straight to those rows. Consolidate pages don't need placement; they fold into their target.
 
