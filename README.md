@@ -252,7 +252,7 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - Page counts per node with gap detection (empty nodes highlighted)
 - Drag rows from the sidebar onto tree nodes to assign navigation
 - **URL override** — a node can publish at an address independent of its place in the menu (`Url_Path`); the override re-roots its sub-pages too. Containment and URL are separate axes.
-- **Breadcrumb parent** — set an arbitrary on-page breadcrumb top, independent of both the tree and the URL: mark a node a *breadcrumb root* or re-root it onto any other node (`Breadcrumb_Parent`); sub-pages inherit. Optional project "Home" prefix and advisory max-depth flag live in Project Settings → Identity. A deep `College of Business > Departments > Accounting` page can read simply **Home > Accounting**.
+- **Breadcrumb parent** — set an arbitrary on-page breadcrumb top, independent of both the tree and the URL: mark a node a *breadcrumb root* or re-root it onto any other node (`Breadcrumb_Parent`); sub-pages inherit. Optional project "Home" prefix and advisory max-depth flag live in Project Settings → Identity. A deep `College of Business > Departments > Accounting` page can read simply **Home > Accounting**. The rendered page breadcrumb is exported as a column in the Migration Tracker Nav Plan, the Nav Tree column-picker export, and the menu export.
 - Full NavStructure sheet rewrite on save (preserves all extension columns including Phase, Notes, RefNodeID, InMenu, URL, Url_Path, Breadcrumb_Parent)
 
 ### Menus

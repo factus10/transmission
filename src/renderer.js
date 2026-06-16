@@ -11121,6 +11121,7 @@ function menuToJsonTree(menu) {
       o.url = menuExportTargetUrl(it);
       o.path = node ? (node.computedPath || '') : '';
       o.breadcrumb = node ? (node.breadcrumb || '') : '';
+      o.pageBreadcrumb = node ? pageBreadcrumbOf(node) : '';
       if (!node) o.missing = true;
     } else if (it.kind === 'link') {
       o.url = it.externalUrl || '';
@@ -11133,7 +11134,7 @@ function menuToJsonTree(menu) {
 }
 
 function buildMenuExportSheet(menusToExport) {
-  const headers = ['Menu', 'Placement', 'Description', 'Depth', 'Trail', 'Label', 'Kind', 'Target URL', 'Target Page', 'Node ID', 'Item ID', 'Parent Item ID'];
+  const headers = ['Menu', 'Placement', 'Description', 'Depth', 'Trail', 'Label', 'Kind', 'Target URL', 'Target Page', 'Page Breadcrumb', 'Node ID', 'Item ID', 'Parent Item ID'];
   const aoa = [headers];
   menusToExport.forEach(menu => {
     const items = menu.items || [];
@@ -11153,6 +11154,7 @@ function buildMenuExportSheet(menusToExport) {
           it.kind === 'ref' ? 'page' : it.kind,
           menuExportTargetUrl(it),
           node ? (node.breadcrumb || node.label || '') : (it.kind === 'ref' ? '(missing page)' : ''),
+          node ? pageBreadcrumbOf(node) : '',
           it.kind === 'ref' ? (it.nodeId || '') : '',
           it.id,
           it.parentId || ''
@@ -11163,7 +11165,7 @@ function buildMenuExportSheet(menusToExport) {
     };
     walk('', 0, []);
   });
-  const cols = [{ wch: 18 }, { wch: 16 }, { wch: 30 }, { wch: 6 }, { wch: 30 }, { wch: 24 }, { wch: 7 }, { wch: 42 }, { wch: 28 }, { wch: 10 }, { wch: 10 }, { wch: 12 }];
+  const cols = [{ wch: 18 }, { wch: 16 }, { wch: 30 }, { wch: 6 }, { wch: 30 }, { wch: 24 }, { wch: 7 }, { wch: 42 }, { wch: 28 }, { wch: 40 }, { wch: 10 }, { wch: 10 }, { wch: 12 }];
   return { name: 'Menus', aoa, cols };
 }
 
@@ -17627,6 +17629,7 @@ function navExportColumnDefs() {
     { key: 'sort',         label: 'Sort',               wch: 10, get: (n)    => n.sortID || '' },
     { key: 'number',       label: 'Number',             wch: 8,  get: (n)    => n.number || '' },
     { key: 'breadcrumb',   label: 'Breadcrumb',         wch: 40, get: (n)    => n.breadcrumb || '' },
+    { key: 'pageBreadcrumb', label: 'Page Breadcrumb',  wch: 40, get: (n)    => pageBreadcrumbOf(n) },
     { key: 'label',        label: 'Label',              wch: 30, get: (n)    => n.label || '' },
     { key: 'url',          label: 'URL',                wch: 50, get: (n, c) => c.nodeUrl(n) },
     { key: 'pageStatus',   label: 'Page Status',        wch: 14, get: (n)    => n.pageStatus || '' },
