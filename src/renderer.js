@@ -3024,19 +3024,6 @@ function renderVisibleRows() {
       item.appendChild(extraBadge);
     });
 
-    // Drag support for nav assignment (carries multi-selection if active)
-    item.draggable = true;
-    item.addEventListener('dragstart', (e) => {
-      let indices;
-      if (state.multiSelected.size > 0 && state.multiSelected.has(origIndex)) {
-        indices = [...state.multiSelected];
-      } else {
-        indices = [origIndex];
-      }
-      e.dataTransfer.setData('text/plain', JSON.stringify(indices));
-      e.dataTransfer.effectAllowed = 'move';
-    });
-
     item.addEventListener('click', (e) => handleRowClick(e, origIndex, i));
     els.rowList.appendChild(item);
   }
@@ -10486,7 +10473,75 @@ function closeNavEditor() {
 
 let _menusViewOpen = false;
 let _menuSelectedId = null;
-let _menuDragOver = null;     // { el, zone } — item-tree drag
+// ─── Shared tree drag-and-drop engine ───────────────────────────────────────
+// Used by BOTH the menu item tree and the nav editor. Tracks one active drop
+// target, paints clean inset-shadow indicators (.tree-drop-*), and routes the
+// drop to the caller's onReorder (tree mutation stays in moveMenuItem /
+// moveNavNode). A `foreign` hook lets the nav tree keep accepting sidebar-row
+// drops (text/plain) on the same rows.
+let _treeDragOver = null; // { el, zone }
+function clearTreeDropIndicators() {
+  if (_treeDragOver) {
+    _treeDragOver.el.classList.remove('tree-drop-before', 'tree-drop-after', 'tree-drop-into');
+    _treeDragOver = null;
+  }
+  // Safety sweep — cleans up anything missed (e.g. after a re-render mid-drag)
+  document.querySelectorAll('.tree-drop-before, .tree-drop-after, .tree-drop-into')
+    .forEach(el => el.classList.remove('tree-drop-before', 'tree-drop-after', 'tree-drop-into'));
+}
+function _setTreeDropZone(row, zone) {
+  if (_treeDragOver && _treeDragOver.el === row && _treeDragOver.zone === zone) return;
+  if (_treeDragOver) _treeDragOver.el.classList.remove('tree-drop-before', 'tree-drop-after', 'tree-drop-into');
+  row.classList.add('tree-drop-' + zone);
+  _treeDragOver = { el: row, zone };
+}
+/** Make `grip` start a tree drag carrying (mime → id); marks `row` while dragging. */
+function makeTreeDragHandle(grip, row, mime, id, opts = {}) {
+  grip.draggable = true;
+  grip.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData(mime, id);
+    e.dataTransfer.effectAllowed = 'move';
+    if (opts.dragImage) e.dataTransfer.setDragImage(row, 24, Math.floor(row.offsetHeight / 2));
+    requestAnimationFrame(() => row.classList.add('tree-row-dragging'));
+  });
+  grip.addEventListener('dragend', () => { row.classList.remove('tree-row-dragging'); clearTreeDropIndicators(); });
+}
+/** Wire `row` as a drop target. opts: { mime, onReorder(draggedId, zone),
+ *  foreign?: { types:[], onDrop(e, zone) } }. Reorder drags use 30% before/after
+ *  zones plus into; foreign drags (e.g. sidebar rows) always land "into". */
+function attachTreeRowDropTarget(row, opts) {
+  const matchesForeign = (e) => opts.foreign && opts.foreign.types.some(t => e.dataTransfer.types.includes(t));
+  row.addEventListener('dragover', (e) => {
+    if (e.dataTransfer.types.includes(opts.mime)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const rect = row.getBoundingClientRect();
+      const y = e.clientY - rect.top, h = rect.height;
+      _setTreeDropZone(row, y < h * 0.30 ? 'before' : y > h * 0.70 ? 'after' : 'into');
+    } else if (matchesForeign(e)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      _setTreeDropZone(row, 'into');
+    }
+  });
+  row.addEventListener('dragleave', (e) => {
+    // dragleave fires when crossing child elements; only clear when truly leaving the row
+    if (row.contains(e.relatedTarget)) return;
+    if (_treeDragOver && _treeDragOver.el === row) clearTreeDropIndicators();
+  });
+  row.addEventListener('drop', (e) => {
+    const zone = (_treeDragOver && _treeDragOver.el === row) ? _treeDragOver.zone : 'into';
+    if (e.dataTransfer.types.includes(opts.mime)) {
+      e.preventDefault();
+      clearTreeDropIndicators();
+      opts.onReorder(e.dataTransfer.getData(opts.mime), zone);
+    } else if (matchesForeign(e)) {
+      e.preventDefault();
+      clearTreeDropIndicators();
+      opts.foreign.onDrop(e, zone);
+    }
+  });
+}
 let _menuListDragOver = null; // { el, zone } — menu-list (left panel) drag
 
 const DEFAULT_MENU_PLACEMENTS = ['Top bar', 'Mega (hover)', 'Utility', 'Footer', 'Overlay / Fly-out', 'Sidebar', 'In-page'];
@@ -10802,13 +10857,7 @@ function buildMenuItemRow(menu, item, depth) {
   grip.className = 'mi-grip';
   grip.textContent = '⋮⋮';
   grip.title = 'Drag to reorder / nest';
-  grip.draggable = true;
-  grip.addEventListener('dragstart', (e) => {
-    e.dataTransfer.setData('text/menu-item-id', item.id);
-    e.dataTransfer.effectAllowed = 'move';
-    requestAnimationFrame(() => row.classList.add('mi-dragging'));
-  });
-  grip.addEventListener('dragend', () => { row.classList.remove('mi-dragging'); clearMenuDropIndicators(); });
+  makeTreeDragHandle(grip, row, 'text/menu-item-id', item.id);
   row.appendChild(grip);
 
   const kind = document.createElement('select');
@@ -10926,33 +10975,13 @@ function removeMenuItem(menu, itemId) {
   renderMenusView();
 }
 
-function clearMenuDropIndicators() {
-  document.querySelectorAll('.mi-row').forEach(r => r.classList.remove('mi-drop-before', 'mi-drop-after', 'mi-drop-into'));
-  _menuDragOver = null;
-}
-
 function attachMenuItemDnD(row, menu, item) {
-  row.addEventListener('dragover', (e) => {
-    if (!e.dataTransfer.types.includes('text/menu-item-id')) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    const rect = row.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const zone = y < rect.height * 0.30 ? 'before' : y > rect.height * 0.70 ? 'after' : 'into';
-    if (_menuDragOver && _menuDragOver.el === row && _menuDragOver.zone === zone) return;
-    clearMenuDropIndicators();
-    row.classList.add('mi-drop-' + zone);
-    _menuDragOver = { el: row, zone };
-  });
-  row.addEventListener('dragleave', (e) => { if (row.contains(e.relatedTarget)) return; });
-  row.addEventListener('drop', (e) => {
-    if (!e.dataTransfer.types.includes('text/menu-item-id')) return;
-    e.preventDefault();
-    const zone = (_menuDragOver && _menuDragOver.el === row) ? _menuDragOver.zone : 'after';
-    clearMenuDropIndicators();
-    const draggedId = e.dataTransfer.getData('text/menu-item-id');
-    if (!draggedId || draggedId === item.id) return;
-    moveMenuItem(menu, draggedId, item.id, zone);
+  attachTreeRowDropTarget(row, {
+    mime: 'text/menu-item-id',
+    onReorder: (draggedId, zone) => {
+      if (!draggedId || draggedId === item.id) return;
+      moveMenuItem(menu, draggedId, item.id, zone);
+    }
   });
 }
 
@@ -12209,19 +12238,7 @@ function renderNavEditorNode(node, pageCounts, depth, dupSlugs, depthFilter) {
   const grip = document.createElement('span');
   grip.className = 'ne-grip';
   grip.textContent = '⠿';
-  grip.draggable = true;
-  grip.addEventListener('dragstart', (e) => {
-    e.dataTransfer.setData('text/nav-node-id', node.id);
-    e.dataTransfer.effectAllowed = 'move';
-    // Use the full row as the drag image so the user sees what they're moving
-    e.dataTransfer.setDragImage(row, 24, Math.floor(row.offsetHeight / 2));
-    // Defer opacity change so setDragImage captures the row at full opacity
-    requestAnimationFrame(() => row.classList.add('ne-row-dragging'));
-  });
-  grip.addEventListener('dragend', () => {
-    row.classList.remove('ne-row-dragging');
-    clearNavDropIndicators();
-  });
+  makeTreeDragHandle(grip, row, 'text/nav-node-id', node.id, { dragImage: true });
   leftSection.appendChild(grip);
 
   // Toggle
@@ -12583,78 +12600,15 @@ function renderNavEditorNode(node, pageCounts, depth, dupSlugs, depthFilter) {
   wrapper.appendChild(row);
 
   // Drop zone on the row for reordering / reparenting
-  row.addEventListener('dragover', (e) => {
-    // Only handle nav node drags
-    if (!e.dataTransfer.types.includes('text/nav-node-id')) {
-      // Could be sidebar row drag — handle that separately
-      if (e.dataTransfer.types.includes('text/plain')) {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        if (!_navDragOver || _navDragOver.el !== row || _navDragOver.zone !== 'into') {
-          if (_navDragOver) _navDragOver.el.classList.remove('ne-drop-before', 'ne-drop-after', 'ne-drop-into');
-          row.classList.add('ne-drop-into');
-          _navDragOver = { el: row, zone: 'into' };
-        }
-      }
-      return;
+  attachTreeRowDropTarget(row, {
+    mime: 'text/nav-node-id',
+    onReorder: (draggedId, zone) => {
+      if (!draggedId || draggedId === node.id) return;
+      const draggedNode = state.navNodes.find(n => n.id === draggedId);
+      if (!draggedNode) return;
+      if (isNavDescendantOf(node, draggedNode)) return; // can't drop onto own descendant
+      moveNavNode(draggedNode, node, zone);
     }
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-
-    const rect = row.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const h = rect.height;
-    // Wider before/after zones (top/bottom 30%) for easier precise placement
-    const newZone = y < h * 0.30 ? 'before' : y > h * 0.70 ? 'after' : 'into';
-
-    // Only update DOM when target row or zone actually changes — avoids full-DOM scans
-    if (_navDragOver && _navDragOver.el === row && _navDragOver.zone === newZone) return;
-    if (_navDragOver) _navDragOver.el.classList.remove('ne-drop-before', 'ne-drop-after', 'ne-drop-into');
-    row.classList.add(`ne-drop-${newZone}`);
-    _navDragOver = { el: row, zone: newZone };
-  });
-
-  row.addEventListener('dragleave', (e) => {
-    // dragleave fires when moving between child elements within the same row —
-    // ignore those events; only clear when the cursor actually leaves the row.
-    if (row.contains(e.relatedTarget)) return;
-    if (_navDragOver && _navDragOver.el === row) {
-      row.classList.remove('ne-drop-before', 'ne-drop-after', 'ne-drop-into');
-      _navDragOver = null;
-    }
-  });
-
-  row.addEventListener('drop', (e) => {
-    e.preventDefault();
-    const zone = row.classList.contains('ne-drop-before') ? 'before'
-               : row.classList.contains('ne-drop-after') ? 'after'
-               : 'into';
-    clearNavDropIndicators();
-
-    // Handle sidebar row drop (assign nav — single or bulk)
-    if (!e.dataTransfer.types.includes('text/nav-node-id') && e.dataTransfer.types.includes('text/plain')) {
-      const raw = e.dataTransfer.getData('text/plain');
-      let indices;
-      try { indices = JSON.parse(raw); } catch (_) { indices = null; }
-      if (Array.isArray(indices) && indices.length > 1) {
-        bulkAssignNavToRows(indices, node);
-      } else {
-        const idx = Array.isArray(indices) ? indices[0] : parseInt(raw, 10);
-        if (!isNaN(idx)) assignNavToRow(idx, node);
-      }
-      return;
-    }
-
-    // Handle nav node reorder/reparent
-    const draggedId = e.dataTransfer.getData('text/nav-node-id');
-    if (!draggedId || draggedId === node.id) return;
-    const draggedNode = state.navNodes.find(n => n.id === draggedId);
-    if (!draggedNode) return;
-
-    // Prevent dropping onto own descendant
-    if (isNavDescendantOf(node, draggedNode)) return;
-
-    moveNavNode(draggedNode, node, zone);
   });
 
   // Children container (skip if depth filter limits visibility)
@@ -12737,18 +12691,6 @@ function toggleNavPageList(wrapper, node, depth) {
   // Insert after the row but before children container
   const rowEl = wrapper.querySelector('.ne-row');
   rowEl.after(list);
-}
-
-function clearNavDropIndicators() {
-  // Fast path: clear only the tracked element
-  if (_navDragOver) {
-    _navDragOver.el.classList.remove('ne-drop-before', 'ne-drop-after', 'ne-drop-into');
-    _navDragOver = null;
-  }
-  // Safety fallback — cleans up anything the fast path missed (e.g. after a re-render mid-drag)
-  document.querySelectorAll('.ne-drop-before, .ne-drop-after, .ne-drop-into').forEach(el => {
-    el.classList.remove('ne-drop-before', 'ne-drop-after', 'ne-drop-into');
-  });
 }
 
 // ─── Nav editor: inline editing ────────────────────────────────────────────
@@ -14766,105 +14708,6 @@ function executeDeleteNavNode(node, mode, assignAction, reassignTarget) {
 }
 
 // ─── Nav tree: legacy modal open/close for old overlay references ──────
-
-function assignNavToRow(origIndex, node) {
-  // If assigning to a reference node, redirect to the target
-  if (node.refNodeId) {
-    const target = state.navNodes.find(n => n.id === node.refNodeId);
-    if (target) {
-      showToast(`${node.label} is a reference — assigning to ${target.label} instead`, 'info');
-      node = target;
-    }
-  }
-  const row = state.editedRows[origIndex];
-  row['NavID']           = node.id;
-  row['Nav Destination'] = node.breadcrumb || node.label;
-  row['Nav_SortID']      = node.sortID || '';
-  row['Computed Path']   = node.computedPath || '';
-
-  ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'].forEach(col => {
-    if (!state.headers.includes(col)) state.headers.push(col);
-  });
-
-  setDirty(true);
-  renderVisibleRows();
-  if (_navEditorOpen) renderNavEditor();
-  showToast(`Assigned row ${origIndex + 1} to ${node.label}`, 'success');
-}
-
-/** Bulk-assign multiple sidebar rows to a nav node, creating child nodes with slug from URL. */
-function bulkAssignNavToRows(origIndices, node) {
-  // If assigning to a reference node, redirect to the target
-  if (node.refNodeId) {
-    const target = state.navNodes.find(n => n.id === node.refNodeId);
-    if (target) {
-      showToast(`${node.label} is a reference — assigning to ${target.label} instead`, 'info');
-      node = target;
-    }
-  }
-
-  const urlCol = state.urlColumn || 'Address';
-  ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'].forEach(col => {
-    if (!state.headers.includes(col)) state.headers.push(col);
-  });
-
-  const oldPaths = snapshotNavPaths();
-  let assigned = 0;
-  let dupes = 0;
-
-  for (const origIndex of origIndices) {
-    const row = state.editedRows[origIndex];
-    if (!row) continue;
-
-    // Derive slug from the page URL (last path segment)
-    const url = row[urlCol] || '';
-    let slug = '';
-    try {
-      const u = new URL(url);
-      const segments = u.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
-      slug = segments.length > 0 ? segments[segments.length - 1] : '';
-    } catch (_) {
-      const segments = url.replace(/\/+$/, '').split('/').filter(Boolean);
-      slug = segments.length > 0 ? segments[segments.length - 1] : '';
-    }
-
-    // Use title from the row (Title 1 or first title-like header)
-    const title = row['Title 1'] || row['Title'] || slug || 'untitled';
-
-    // Check for duplicate slug
-    if (slug && navSlugExistsInBranch(node, slug)) {
-      dupes++;
-      continue;
-    }
-
-    if (slug) {
-      // Create a child node
-      const childNode = createNavChildForPage(node, slug, title);
-      row['NavID']           = childNode.id;
-      row['Nav Destination'] = childNode.breadcrumb;
-      row['Nav_SortID']      = childNode.sortID;
-      row['Computed Path']   = childNode.computedPath;
-    } else {
-      // No slug — assign directly to the node
-      row['NavID']           = node.id;
-      row['Nav Destination'] = node.breadcrumb || node.label;
-      row['Nav_SortID']      = node.sortID || '';
-      row['Computed Path']   = node.computedPath || '';
-    }
-    assigned++;
-  }
-
-  cascadeNavChangesToRows(oldPaths);
-  setDirty(true);
-  state.navTreeDirty = true;
-  state.multiSelected.clear();
-  renderVisibleRows();
-  if (_navEditorOpen) renderNavEditor();
-
-  const parts = [`${assigned} pages assigned to ${node.label}`];
-  if (dupes) parts.push(`${dupes} skipped (duplicate slugs)`);
-  showToast(parts.join(', '), 'success');
-}
 
 function closeNavTree() {
   $('navtree-overlay').classList.add('hidden');
@@ -20179,7 +20022,6 @@ function renderTvColConfigList() {
 // ─── Redirect editor ──────────────────────────────────────────────────────────
 
 const _navCollapsed = new Set(); // node IDs that are collapsed in the nav editor
-let _navDragOver = null; // { el: rowEl, zone: 'before'|'after'|'into' } — tracks live drop target to avoid full-DOM scans
 
 let _redirectEditorOpen = false;
 const REDIRECT_DEST_COL = 'Redirect_Destination';
