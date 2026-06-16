@@ -5005,6 +5005,23 @@ body.dragging-modal, body.dragging-modal * { cursor: grabbing !important; }
   border-radius: 3px;
   user-select: none;
 }
+/* Read-only context block at the top of the nav-node editor — tinted panel so it
+   visually reads as reference info, distinct from the editable sections below. */
+.nne-context-panel {
+  background: var(--bg-field-bar);
+  border: 1px solid var(--border-light, #eee);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.nne-context-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
 .page-status-swatch {
   display: inline-block;
   width: 12px;
