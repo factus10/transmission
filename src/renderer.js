@@ -5065,6 +5065,7 @@ function buildSavePayload({ fullNav = false, drainLog = true } = {}) {
       inMenu: n.inMenu || '',
       url: n.url || '',
       urlOverride: n.urlOverride || '',
+      breadcrumbParentId: n.breadcrumbParentId || '',
       notes: n.notes || '',
       phase: n.phase || '',
       // Phase 2, Chunk α — preserve reserved + build/write metadata
@@ -6056,6 +6057,24 @@ function setupSettings() {
     }, 600);
   });
 
+  // Breadcrumb axis settings (optional cosmetics — Home prefix + advisory depth cap)
+  const _bcHome = $('ps-breadcrumb-home');
+  if (_bcHome) _bcHome.addEventListener('input', () => {
+    const val = _bcHome.value.trim();
+    if (val) state.projectSettings.breadcrumbHomeLabel = val;
+    else delete state.projectSettings.breadcrumbHomeLabel;
+    setDirty(true);
+    if (_navEditorOpen) renderNavEditor();
+  });
+  const _bcMax = $('ps-breadcrumb-maxdepth');
+  if (_bcMax) _bcMax.addEventListener('input', () => {
+    const n = parseInt(_bcMax.value, 10);
+    if (Number.isFinite(n) && n > 0) state.projectSettings.breadcrumbMaxDepth = n;
+    else delete state.projectSettings.breadcrumbMaxDepth;
+    setDirty(true);
+    if (_navEditorOpen) renderNavEditor();
+  });
+
   // Custom KKE states (project-level)
   $('btn-add-custom-kke').addEventListener('click', () => {
     const label = $('custom-kke-label').value.trim();
@@ -6401,6 +6420,8 @@ function toggleProjectSettingsPopover() {
   $('ps-project-name').value = ps.projectName || '';
   $('ps-site-domain').value = ps.siteDomain || '';
   $('ps-default-redirect').value = ps.defaultRedirectUrl || '';
+  if ($('ps-breadcrumb-home')) $('ps-breadcrumb-home').value = ps.breadcrumbHomeLabel || '';
+  if ($('ps-breadcrumb-maxdepth')) $('ps-breadcrumb-maxdepth').value = ps.breadcrumbMaxDepth || '';
   // KKE States tab
   renderCustomKkeList();
   renderRogueKkeList();
@@ -10948,11 +10969,12 @@ function moveMenuItem(menu, draggedId, targetId, zone) {
   renderMenusView();
 }
 
-function showMenuNodePicker(onPick) {
+function showMenuNodePicker(onPick, opts = {}) {
   if (!state.navNodes || state.navNodes.length === 0) {
     showToast('No content tree yet — build the nav tree first', 'error');
     return;
   }
+  const excludeIds = opts.excludeIds instanceof Set ? opts.excludeIds : new Set();
   const prior = document.querySelector('.menu-node-picker');
   if (prior) prior.remove();
   const overlay = document.createElement('div');
@@ -10962,7 +10984,7 @@ function showMenuNodePicker(onPick) {
   dialog.style.cssText = 'background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:16px;width:760px;max-width:90vw;max-height:72vh;display:flex;flex-direction:column;box-shadow:0 16px 48px rgba(0,0,0,0.3);';
   const title = document.createElement('div');
   title.style.cssText = 'font-size:14px;font-weight:600;margin-bottom:8px;';
-  title.textContent = 'Add page reference';
+  title.textContent = opts.title || 'Add page reference';
   dialog.appendChild(title);
   const search = document.createElement('input');
   search.type = 'text';
@@ -10993,7 +11015,7 @@ function showMenuNodePicker(onPick) {
   const renderList = (filter) => {
     listWrap.innerHTML = '';
     const f = (filter || '').trim().toLowerCase();
-    const matches = ordered.filter(n => !f || [n.label, n.breadcrumb, n.number, n.computedPath, n.path].some(v => String(v || '').toLowerCase().includes(f)));
+    const matches = ordered.filter(n => !excludeIds.has(n.id) && (!f || [n.label, n.breadcrumb, n.number, n.computedPath, n.path].some(v => String(v || '').toLowerCase().includes(f))));
     if (matches.length === 0) {
       const e = document.createElement('div');
       e.style.cssText = 'padding:12px;color:var(--text-muted);font-size:12px;';
@@ -11263,6 +11285,10 @@ function renderNavEditor() {
   if (fragmentCount > 0) statsText += ` · ${fragmentCount} fragment${fragmentCount !== 1 ? 's' : ''}`;
   const urlOverrideCount = state.navNodes.filter(n => normalizeUrlOverride(n.urlOverride)).length;
   if (urlOverrideCount > 0) statsText += ` · ${urlOverrideCount} URL override${urlOverrideCount !== 1 ? 's' : ''}`;
+  const bcOverrideCount = state.navNodes.filter(n => hasBreadcrumbOverride(n)).length;
+  if (bcOverrideCount > 0) statsText += ` · ${bcOverrideCount} breadcrumb override${bcOverrideCount !== 1 ? 's' : ''}`;
+  const bcOverCapCount = getBreadcrumbMaxDepth() > 0 ? state.navNodes.filter(n => breadcrumbExceedsCap(n)).length : 0;
+  if (bcOverCapCount > 0) statsText += ` · ⚠ ${bcOverCapCount} over depth ${getBreadcrumbMaxDepth()}`;
   // "need placement" is rendered as a clickable link below (after statsEl text is set).
 
   // Phase 2, Chunk δ: build-phase tally — only show when at least one node has a status
@@ -12008,10 +12034,22 @@ function renderNavEditorNode(node, pageCounts, depth, dupSlugs, depthFilter) {
   }
   row.appendChild(pathCell);
 
-  // Breadcrumb (read-only)
+  // Breadcrumb (read-only). Mark nodes whose on-page breadcrumb is re-rooted off
+  // the physical hierarchy, and flag any that exceed the project depth cap.
   const bcCell = document.createElement('span');
   bcCell.className = 'ne-cell ne-col-breadcrumb ne-cell-text';
-  bcCell.textContent = node.breadcrumb || '';
+  if (hasBreadcrumbOverride(node)) {
+    bcCell.textContent = '↰ ' + node.breadcrumb;
+    bcCell.style.color = 'var(--accent)';
+    bcCell.title = 'Breadcrumb re-rooted → ' + pageBreadcrumbOf(node);
+  } else {
+    bcCell.textContent = node.breadcrumb || '';
+  }
+  if (breadcrumbExceedsCap(node)) {
+    bcCell.textContent = '⚠ ' + bcCell.textContent;
+    bcCell.style.color = 'var(--kke-kill, #c0392b)';
+    bcCell.title = `Breadcrumb is ${breadcrumbDepthOf(node)} levels — exceeds the project cap of ${getBreadcrumbMaxDepth()}. ${pageBreadcrumbOf(node)}`;
+  }
   bcCell.dataset.field = 'breadcrumb';
   row.appendChild(bcCell);
 
@@ -12445,6 +12483,61 @@ function computeNodeUrlPath(node) {
   const tail = slugs.join('/');
   if (base) return tail ? base + '/' + tail : base;
   return tail;
+}
+
+// ─── Breadcrumb axis ─────────────────────────────────────────────────────────
+// The on-page breadcrumb is decoupled from physical containment. node.breadcrumb
+// stays the full label chain (IA context / Nav Destination); the *page* breadcrumb
+// walks node.breadcrumbParentId where set (default = physical parent), letting a
+// page set an arbitrary breadcrumb top regardless of where it sits in the tree.
+//   breadcrumbParentId: ''       → inherit physical parent (default)
+//                       '__root__' → breadcrumb root (trail starts here, after the optional Home prefix)
+//                       <nodeId>   → use that node as the breadcrumb parent (continues up its own chain)
+// 'Home' prefix and max-depth are OPTIONAL per-project cosmetics, not the mechanism.
+
+const BREADCRUMB_ROOT = '__root__';
+
+function getBreadcrumbHomeLabel() { return String(state.projectSettings.breadcrumbHomeLabel || '').trim(); }
+function getBreadcrumbMaxDepth() {
+  const n = parseInt(state.projectSettings.breadcrumbMaxDepth, 10);
+  return Number.isFinite(n) && n > 0 ? n : 0; // 0 = no cap
+}
+
+/** Walk the breadcrumb-parent chain to build the rendered on-page breadcrumb labels.
+ *  opts.overrideLabel / opts.overrideBp let the editor preview a pending edit on `node`. */
+function computePageBreadcrumbLabels(node, opts = {}) {
+  const labels = [];
+  const seen = new Set();
+  let cur = node;
+  let firstIter = true;
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    labels.unshift((firstIter && opts.overrideLabel != null) ? opts.overrideLabel : cur.label);
+    const bp = (firstIter && opts.overrideBp !== undefined) ? opts.overrideBp : cur.breadcrumbParentId;
+    firstIter = false;
+    if (bp === BREADCRUMB_ROOT) break;
+    let next = null;
+    if (bp) {
+      // explicit breadcrumb parent; if it dangles (deleted node), fall back to physical parent
+      next = state.navNodes.find(n => n.id === bp) || (cur.parentNumber ? state.navNodes.find(n => n.number === cur.parentNumber) : null);
+    } else {
+      next = cur.parentNumber ? state.navNodes.find(n => n.number === cur.parentNumber) : null;
+    }
+    cur = next;
+  }
+  const home = getBreadcrumbHomeLabel();
+  if (home && labels[0] !== home) labels.unshift(home);
+  return labels;
+}
+function pageBreadcrumbOf(node) { return computePageBreadcrumbLabels(node).join(' > '); }
+function breadcrumbDepthOf(node) { return computePageBreadcrumbLabels(node).length; }
+function breadcrumbExceedsCap(node) {
+  const cap = getBreadcrumbMaxDepth();
+  return cap > 0 && breadcrumbDepthOf(node) > cap;
+}
+function hasBreadcrumbOverride(node) {
+  const bp = node.breadcrumbParentId;
+  return bp === BREADCRUMB_ROOT || (!!bp && bp !== '');
 }
 
 function recalcDerivedFields(node) {
@@ -13407,6 +13500,8 @@ function openNavNodeEditor(node) {
 
   const parent = node.parentNumber ? state.navNodes.find(n => n.number === node.parentNumber) : null;
   const refTarget = node.refNodeId ? state.navNodes.find(n => n.id === node.refNodeId) : null;
+  const bcParentNode = (node.breadcrumbParentId && node.breadcrumbParentId !== BREADCRUMB_ROOT)
+    ? state.navNodes.find(n => n.id === node.breadcrumbParentId) : null;
   const pageCount = state.editedRows.filter(r => String(r['NavID'] || '') === node.id).length;
 
   if (!reusing) {
@@ -13441,16 +13536,18 @@ function openNavNodeEditor(node) {
     </div>
     <div style="flex:1;overflow-y:auto;padding:14px 18px;">
 
-      <div style="display:grid;grid-template-columns:90px 1fr;gap:6px 12px;align-items:center;font-size:12px;margin-bottom:14px;">
+      <div style="display:grid;grid-template-columns:130px 1fr;gap:6px 12px;align-items:center;font-size:12px;margin-bottom:14px;">
         <div style="color:var(--text-muted);">Parent</div>
         <div>${parent ? escapeHtml(parent.number + ' · ' + parent.label) : '<em>(root)</em>'}</div>
         <div style="color:var(--text-muted);">Breadcrumb</div>
         <div id="_nne-bc" style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${escapeHtml(node.breadcrumb || '')}</div>
         <div style="color:var(--text-muted);">Computed Path</div>
         <div id="_nne-cp" style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${escapeHtml(node.computedPath || '')}</div>
+        <div style="color:var(--text-muted);">Page breadcrumb</div>
+        <div id="_nne-pbc" style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);"></div>
       </div>
 
-      <div style="display:grid;grid-template-columns:90px 1fr;gap:8px 12px;align-items:center;margin-bottom:10px;">
+      <div style="display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center;margin-bottom:10px;">
         <label for="_nne-label" style="font-size:12px;color:var(--text-secondary);">Label</label>
         <input id="_nne-label" type="text" value="${escapeHtml(node.label || '')}" style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;">
 
@@ -13470,6 +13567,18 @@ function openNavNodeEditor(node) {
         <div>
           <input id="_nne-urlpath" type="text" value="${escapeHtml(node.urlOverride || '')}" placeholder="e.g. careers  (blank = follow hierarchy)" style="width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono);">
           <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Sets this page's URL path independently of where it sits in the menu. Re-roots its sub-pages too. Leave blank to inherit the hierarchy.</div>
+        </div>
+
+        <label for="_nne-bcparent" style="font-size:12px;color:var(--text-secondary);">Breadcrumb parent</label>
+        <div>
+          <select id="_nne-bcparent" style="width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;">
+            <option value="" ${!node.breadcrumbParentId ? 'selected' : ''}>Inherit — physical parent${parent ? ': ' + escapeHtml(parent.label) : ' (none / root)'}</option>
+            <option value="${BREADCRUMB_ROOT}" ${node.breadcrumbParentId === BREADCRUMB_ROOT ? 'selected' : ''}>Breadcrumb root (top level)</option>
+            ${bcParentNode ? `<option value="${escapeHtml(bcParentNode.id)}" selected>→ ${escapeHtml(bcParentNode.label)}</option>`
+              : (node.breadcrumbParentId && node.breadcrumbParentId !== BREADCRUMB_ROOT ? `<option value="${escapeHtml(node.breadcrumbParentId)}" selected>→ (missing node)</option>` : '')}
+            <option value="__pick__">Choose a node…</option>
+          </select>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Sets the on-page breadcrumb's parent independently of the tree. “Root” starts the trail here (after any Home prefix); pick a node to re-root onto it. Sub-pages inherit.</div>
         </div>
 
         <label style="font-size:12px;color:var(--text-secondary);">Reference</label>
@@ -13517,7 +13626,7 @@ function openNavNodeEditor(node) {
           <span class="nne-section-pill" style="background:#dbeafe;color:#1e40af;">Build</span>
           <span style="font-size:11px;color:var(--text-muted);">For the person constructing this page in the new CMS.</span>
         </div>
-        <div style="display:grid;grid-template-columns:90px 1fr;gap:8px 12px;align-items:center;margin-top:8px;">
+        <div style="display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center;margin-top:8px;">
           <label for="_nne-pattern" style="font-size:12px;color:var(--text-secondary);">Pattern</label>
           <div id="_nne-pattern-wrap" style="display:flex;align-items:center;gap:6px;"></div>
 
@@ -13540,7 +13649,7 @@ function openNavNodeEditor(node) {
           <span class="nne-section-pill" style="background:#f3e8ff;color:#6b21a8;">Write</span>
           <span style="font-size:11px;color:var(--text-muted);">For the content writer. Especially important for net-new pages.</span>
         </div>
-        <div style="display:grid;grid-template-columns:90px 1fr;gap:8px 12px;align-items:center;margin-top:8px;">
+        <div style="display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center;margin-top:8px;">
           <label for="_nne-wassignee" style="font-size:12px;color:var(--text-secondary);">Writer</label>
           <div id="_nne-wassignee-wrap" style="display:flex;align-items:center;gap:6px;"></div>
         </div>
@@ -13557,7 +13666,7 @@ function openNavNodeEditor(node) {
           <span class="nne-section-pill" style="background:#fef3c7;color:#92400e;">Migrate</span>
           <span style="font-size:11px;color:var(--text-muted);">For the person mapping source content into the new CMS.</span>
         </div>
-        <div style="display:grid;grid-template-columns:90px 1fr;gap:8px 12px;align-items:center;margin-top:8px;">
+        <div style="display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center;margin-top:8px;">
           <label for="_nne-massignee" style="font-size:12px;color:var(--text-secondary);">Migrator</label>
           <div id="_nne-massignee-wrap" style="display:flex;align-items:center;gap:6px;"></div>
         </div>
@@ -13588,6 +13697,9 @@ function openNavNodeEditor(node) {
   const cpEl = dialog.querySelector('#_nne-cp');
 
   const urlPathInp = dialog.querySelector('#_nne-urlpath');
+  const bcParentSel = dialog.querySelector('#_nne-bcparent');
+  const pbcEl = dialog.querySelector('#_nne-pbc');
+  let _bcParentPrev = node.breadcrumbParentId || ''; // last committed-to-the-select value (for picker cancel revert)
 
   // Live preview of breadcrumb / computed path as user types
   function refreshDerivedPreview() {
@@ -13611,10 +13723,55 @@ function openNavNodeEditor(node) {
       cpEl.textContent = parentPath ? (newSlug ? parentPath + '/' + newSlug : parentPath) : newSlug;
       cpEl.title = '';
     }
+    // Page breadcrumb preview honors the pending breadcrumb-parent selection + live label
+    if (pbcEl) {
+      const pendingBp = bcParentSel ? (bcParentSel.value === '__pick__' ? (node.breadcrumbParentId || '') : bcParentSel.value) : (node.breadcrumbParentId || '');
+      const labelsP = computePageBreadcrumbLabels(node, { overrideLabel: newLabel || node.label, overrideBp: pendingBp });
+      pbcEl.textContent = labelsP.join(' > ');
+      const cap = getBreadcrumbMaxDepth();
+      if (cap > 0 && labelsP.length > cap) {
+        pbcEl.textContent += `  ⚠ ${labelsP.length}/${cap}`;
+        pbcEl.style.color = 'var(--kke-kill, #c0392b)';
+        pbcEl.title = `Breadcrumb is ${labelsP.length} levels — exceeds the project cap of ${cap}`;
+      } else {
+        pbcEl.style.color = 'var(--text-secondary)';
+        pbcEl.title = '';
+      }
+    }
   }
   labelInp.addEventListener('input', refreshDerivedPreview);
   slugInp.addEventListener('input', refreshDerivedPreview);
   if (urlPathInp) urlPathInp.addEventListener('input', refreshDerivedPreview);
+
+  // Breadcrumb-parent select: "__pick__" opens the node picker; the chosen value is
+  // staged on the select and committed on Save (consistent with the other fields).
+  if (bcParentSel) {
+    bcParentSel.addEventListener('change', () => {
+      if (bcParentSel.value === '__pick__') {
+        const exclude = new Set([node.id]);
+        showMenuNodePicker((picked) => {
+          // Add (or reuse) an option for the picked node and select it
+          let opt = Array.from(bcParentSel.options).find(o => o.value === picked.id);
+          if (!opt) {
+            opt = document.createElement('option');
+            opt.value = picked.id;
+            opt.textContent = '→ ' + picked.label;
+            bcParentSel.insertBefore(opt, bcParentSel.querySelector('option[value="__pick__"]'));
+          }
+          bcParentSel.value = picked.id;
+          _bcParentPrev = picked.id;
+          refreshDerivedPreview();
+        }, { title: 'Choose breadcrumb parent', excludeIds: exclude });
+        // Revert to the previous value until/unless a pick completes
+        bcParentSel.value = _bcParentPrev;
+      } else {
+        _bcParentPrev = bcParentSel.value;
+        refreshDerivedPreview();
+      }
+    });
+  }
+
+  refreshDerivedPreview(); // populate the page-breadcrumb readout on open
 
   function close() { dialog.remove(); overlay.remove(); }
   dialog.querySelector('#_nne-close').addEventListener('click', close);
@@ -13833,6 +13990,12 @@ function openNavNodeEditor(node) {
     // subtree recalculates and assigned-page URLs cascade.
     const newUrlOverride = urlPathInp ? normalizeUrlOverride(urlPathInp.value) : '';
     if (newUrlOverride !== (node.urlOverride || '')) { onNavNodeEdit(node, 'urlOverride', newUrlOverride); }
+    // Breadcrumb parent — display-only axis (doesn't affect computedPath/rows), so set directly.
+    if (bcParentSel) {
+      const raw = bcParentSel.value;
+      const newBcParent = (raw === '__pick__') ? (node.breadcrumbParentId || '') : raw;
+      if (newBcParent !== (node.breadcrumbParentId || '')) { node.breadcrumbParentId = newBcParent; state.navTreeDirty = true; setDirty(true); }
+    }
     if (newNotes !== (node.notes || ''))         { node.notes     = newNotes;     state.navTreeDirty = true; setDirty(true); }
     if (newPhase !== (node.phase || ''))         { node.phase     = newPhase;     state.navTreeDirty = true; setDirty(true); }
     if (newNodeType !== (node.nodeType || ''))   { node.nodeType  = newNodeType;  state.navTreeDirty = true; setDirty(true); }
