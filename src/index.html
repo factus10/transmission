@@ -31,6 +31,7 @@
     <button class="view-tab"        data-view="table"     role="tab" aria-selected="false">Table</button>
     <button class="view-tab"        data-view="nav-tree"  role="tab" aria-selected="false">Navigation Tree</button>
     <button class="view-tab"        data-view="redirects" role="tab" aria-selected="false">Redirects</button>
+    <button class="view-tab"        data-view="menus"     role="tab" aria-selected="false">Menus</button>
   </div>
 
   <!-- ── App shell ──────────────────────────────────────────────────────────── -->
@@ -524,6 +525,21 @@
         </div>
         <div id="table-view-body-wrap">
           <div id="table-view-body"></div>
+        </div>
+      </div>
+
+      <div id="menus-view" class="hidden">
+        <div id="menus-view-toolbar">
+          <span class="menus-view-title">Menus</span>
+          <button id="btn-menu-add" class="btn btn-sm btn-ghost">+ New Menu</button>
+          <button id="btn-menu-seed" class="btn btn-sm btn-ghost" title="Create a menu from the content tree's in-menu nodes">Seed from content tree</button>
+          <span style="flex:1"></span>
+          <span id="menus-view-stats"></span>
+          <button id="btn-menus-view-close" class="btn btn-sm btn-ghost">Back to Audit</button>
+        </div>
+        <div id="menus-view-body">
+          <div id="menus-list"></div>
+          <div id="menus-detail"></div>
         </div>
       </div>
 

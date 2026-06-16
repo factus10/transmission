@@ -96,6 +96,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMenuTableView:     (cb) => ipcRenderer.on('menu-table-view',        ()   => cb()),
   onMenuNavTree:       (cb) => ipcRenderer.on('menu-nav-tree',          ()   => cb()),
   onMenuRedirectEditor:(cb) => ipcRenderer.on('menu-redirect-editor',   ()   => cb()),
+  onMenuMenus:         (cb) => ipcRenderer.on('menu-menus',             ()   => cb()),
   onMenuSmeExport:     (cb) => ipcRenderer.on('menu-sme-export',        ()   => cb()),
   onMenuSmeImport:     (cb) => ipcRenderer.on('menu-sme-import',        ()   => cb()),
   onMenuSmeResolve:    (cb) => ipcRenderer.on('menu-sme-resolve',       ()   => cb()),

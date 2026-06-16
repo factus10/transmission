@@ -36,13 +36,13 @@ npm run build:intel  # Intel only
 
 Note: **Table View** (Cmd+T), **Navigation Tree** (Cmd+Shift+T), and **Redirect Editor** (Cmd+Shift+R) all hide the sidebar and go full-width. The `.tv-active` class on `#app` controls this layout switch and is used by all three views.
 
-**View switcher** (`#view-switcher`) sits between the OS titlebar and the app shell. Always visible. Four tabs: Audit · Table · Navigation Tree · Redirects. `setupViewSwitcher()` wires the clicks; `refreshViewSwitcher()` keeps the active state in sync with the underlying `_tableViewOpen` / `_navEditorOpen` / `_redirectEditorOpen` flags and is called from each view's open/close functions.
+**View switcher** (`#view-switcher`) sits between the OS titlebar and the app shell. Always visible. Five tabs: Audit · Table · Navigation Tree · Redirects · Menus. `setupViewSwitcher()` wires the clicks; `refreshViewSwitcher()` keeps the active state in sync with the underlying `_tableViewOpen` / `_navEditorOpen` / `_redirectEditorOpen` / `_menusViewOpen` flags and is called from each view's open/close functions.
 
 **Menu organization (post-reorg):**
 - **App menu (macOS) / File (Win/Linux)** — Preferences (Cmd+,)
 - **File** — Open · Open Recent · Save · Save As Project… (Cmd+Shift+S) · Import/Merge · Merge Auditor · Save/Load Template · Export… (unified dialog `openUnifiedExportDialog()`) · Export Full Workbook (.xlsx)… · Package for Handoff…
 - **Edit** — standard
-- **View** — Audit (Cmd+1) · Table (Cmd+T) · Nav Tree (Cmd+Shift+T) · Redirects (Cmd+Shift+R) · Audit Progress (Cmd+P) · zoom · fullscreen · (dev items in source builds)
+- **View** — Audit (Cmd+1) · Table (Cmd+T) · Nav Tree (Cmd+Shift+T) · Redirects (Cmd+Shift+R) · Menus (Cmd+Shift+M) · Audit Progress (Cmd+P) · zoom · fullscreen · (dev items in source builds)
 - **Project** — Project Settings · Glossary · Content Type Registry · Target Spec Library · Component Library · Run Rubric · Refresh GA KKE · Recompute Suggested KKE · Triage Non-200 Pages
 - **Migration** — Migration Tracker · Migration Checklist · Net New Brief · Redirect Map Report · Redirect Chain Check · Nav Coverage · Export Redirect Map (CSV)
 - **Reports** — Executive Summary · Content Inventory · SME Review Status (narrative reports only)
@@ -142,6 +142,7 @@ A `.transmission` file is a **SQLite database** (better-sqlite3, WAL mode) that 
 | main → renderer | `menu-table-view` | none                                          |
 | main → renderer | `menu-nav-tree`  | none — switch to navigation tree (Cmd+Shift+T) |
 | main → renderer | `menu-redirect-editor` | none — switch to redirect editor (Cmd+Shift+R) |
+| main → renderer | `menu-menus` | none — switch to the Menus view (Cmd+Shift+M) |
 | main → renderer | `menu-sme-export` | none                                          |
 | main → renderer | `menu-sme-import` | none                                          |
 | main → renderer | `menu-sme-resolve` | none                                         |
@@ -513,6 +514,22 @@ Toggled via the **Redirects** button. Hides sidebar via `.tv-active` class. Show
 
 ### Table View (`#table-view`)
 Toggled via **Cmd+T** (or View menu). Hides the sidebar by adding `.tv-active` to `#app` and replaces the main panel with a full-width spreadsheet-style table. Has its own independent sort state (`_tableSort`) and per-column filter state (`_tableColFilters`), separate from the sidebar's sort/filter. Virtual scrolling uses `TV_ROW_HEIGHT=28` and `TV_OVERSCAN=15`. Column configuration is persisted in prefs as `tableColumns`. Core rendering functions: `renderTableView()` builds the table structure, `renderTableVisibleRows()` handles the virtual-scrolled row rendering. The **# column is frozen** (position: sticky) when scrolling horizontally. **Inline editing**: double-click audit columns to edit in-place (dropdown for KKE-type columns, text input for others; commit on blur/Enter, cancel on Escape). **Keyboard navigation**: Arrow Up/Down and j/k navigate rows when no input is focused.
+
+### Menus view (`#menus-view`) — Phase 1
+
+Toggled via **Cmd+Shift+M**, the **Menus** view-switcher tab, or View → Menus (`menu-menus` IPC → `toggleMenusView()`). Full-panel view (`.tv-active`) for building **independent navigation structures** that *reference* content-tree nodes — decoupled from the containment hierarchy (see [[nav-axes-decoupling-design]] in memory for the full rationale). The content tree stays the canonical backbone (page homes, URL, breadcrumb); menus are a separate, arbitrary, user-defined collection.
+
+**Data model** (canonical, lives in `state.projectSettings.menus` + `state.projectSettings.menuPlacementLibrary` — so persistence is **free** via the existing `projectSettings` plumbing: KKE_Settings JSON for `.xlsx`, settings table for `.transmission`; no new structural sheet in Phase 1):
+- `menu = { id, name, placement, description, items: [] }` — `placement` is a controlled-vocab string from `menuPlacementLibrary` (per-project, seeded with `DEFAULT_MENU_PLACEMENTS`: Top bar / Mega (hover) / Utility / Footer / Overlay / Fly-out / Sidebar / In-page); `description` is free text.
+- `MenuItem = { id, parentId, kind: 'ref'|'link'|'header', nodeId, externalUrl, label }` — `kind` **ref** points at a content node (`nodeId`; `label` blank = inherit the node's label live), **link** is an external URL, **header** is a label-only grouping row. Hierarchy by `parentId`; sibling order is array order. A node may be referenced by any number of items across any menus, at any depth (many-to-many; the content node tracks nothing).
+
+**Layout:** `#menus-list` (left, draggable menu list — flat reorder) + `#menus-detail` (right: name / placement inline-add select / description, then the item tree). `renderMenusView()` → `renderMenusList()` + `renderMenuDetail()` → `renderMenuItemTree()` (DFS by `parentId`, indented) → `buildMenuItemRow()`.
+
+**Item DnD** (`attachMenuItemDnD` / `moveMenuItem` / `clearMenuDropIndicators`, module var `_menuDragOver`): grip (`.mi-grip`) drag, 30%-zone before/after/into, `mi-drop-*` indicator classes, subtree-cycle guard, array-splice reparent. **This engine is the one to backport to the nav tree** (see follow-ups in [[nav-axes-decoupling-design]]). **Menu-list DnD** (`reorderMenus` / `clearMenuListDropIndicators`, `_menuListDragOver`) reorders the menu array (before/after only).
+
+**Item kind is changeable in place** via a `<select>` on the kind badge → `changeMenuItemKind(menu, item, newKind)`: leaving `ref` materializes the inherited label first; → `ref` opens the node picker if there's no target yet; → `link`/`header` clears `nodeId` (and `externalUrl` for header).
+
+**Other ops:** `addMenu` / `deleteMenu`, `addMenuItemRef` (→ `showMenuNodePicker`, a searchable content-node picker) / `addMenuItemLink` / `addMenuItemHeader`, `removeMenuItem` (reparents orphans to the removed item's parent), `seedMenuFromContentTree` (builds a menu mirroring in-menu nav nodes, falls back to all nodes). Setup in `setupMenusView()`; the other views' open functions call `closeMenusView()` and vice-versa. **Not yet built (later phases):** dedicated human-readable `Menus` xlsx sheet, per-menu Contentful-shaped exports, orphan-ref reports, breadcrumb axis.
 
 ---
 

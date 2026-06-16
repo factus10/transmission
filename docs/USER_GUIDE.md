@@ -1000,7 +1000,22 @@ The reference picker is a wide (880px) dialog, sorted hierarchically and indente
 
 #### The NavStructure sheet
 
-Behind the editor, the `NavStructure` sheet holds: **Number** (the dotted hierarchy like `1.1.2`), **Label**, **ID**, **Path** (slug), **SortID**, **ParentNumber**, **Computed Path**, and **Breadcrumb** — plus extension columns for the external `URL`, `Phase`, `Notes`, `Node_Type`, `InMenu`, the reference, and the build-metadata fields (Build Pattern, Page Status, the three assignees, Build Guidance, Writer Brief). The whole sheet is rewritten on save.
+Behind the editor, the `NavStructure` sheet holds: **Number** (the dotted hierarchy like `1.1.2`), **Label**, **ID**, **Path** (slug), **SortID**, **ParentNumber**, **Computed Path**, and **Breadcrumb** — plus extension columns for the external `URL`, the `Url_Path` URL override, `Phase`, `Notes`, `Node_Type`, `InMenu`, the reference, and the build-metadata fields (Build Pattern, Page Status, the three assignees, Build Guidance, Writer Brief). The whole sheet is rewritten on save.
+
+### Menus
+
+The navigation tree describes where content *lives*. **Menus** describe how people *get to it* — and those are not the same thing. A page can sit deep in the content hierarchy but appear in the top bar; the footer often groups links in ways that ignore site structure entirely; a "fly-out" or utility menu is frequently a curated junk-drawer of links that don't fit anywhere else. So menus are modeled as their own independent structures that *point at* your content pages, rather than being tied to the tree.
+
+Open the **Menus** tab in the view switcher (or **Cmd+Shift+M**). On the left is your list of menus; on the right, the selected menu's contents.
+
+- **Create as many menus as you need** — Primary, Mega, Utility, Footer, a search fly-out, whatever this client has. Names are arbitrary. **Drag the menus** in the left list to reorder them.
+- **Seed from content tree** builds a starter menu that mirrors the nav nodes marked "in menu" — then you edit it freely, independent of the tree.
+- Each menu carries two bits of context: a **Placement** (a per-project controlled vocabulary — Top bar, Footer, Overlay / Fly-out, etc. — add your own with "+ New…") and a free-text **Description** for the "what the heck is this and how does it behave" note that helps both you and the client.
+- **Add three kinds of item:** **+ Page** references a content page (search and pick it; it shows the live label and target path, and flags the reference if that page is later removed), **+ Link** is an external/utility URL like a login, and **+ Header** is a label-only heading for grouping (footer columns, mega sections). Change an item's kind anytime with the little **page / link / header** dropdown on its left.
+- **Drag the ⋮⋮ grip** to reorder items or nest them — drop onto the top/bottom third of a row to place it before/after, or the middle to nest it inside. Each menu can be flat or as deep as you like.
+- The same page can appear in **as many menus as you want**, at any depth — referencing it in the footer doesn't remove it from the primary nav.
+
+Menus travel with the file (both `.transmission` projects and `.xlsx` exports), so they're saved alongside everything else.
 
 ---
 
