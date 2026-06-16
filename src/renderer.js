@@ -10549,6 +10549,7 @@ function setupMenusView() {
   const add = $('btn-menu-add'); if (add) add.addEventListener('click', addMenu);
   const seed = $('btn-menu-seed'); if (seed) seed.addEventListener('click', seedMenuFromContentTree);
   const exp = $('btn-menu-export'); if (exp) exp.addEventListener('click', openMenuExportDialog);
+  const smap = $('btn-menu-sitemap'); if (smap) smap.addEventListener('click', generateMenuSitemap);
   const chk = $('btn-menu-check'); if (chk) chk.addEventListener('click', openMenuOrphansDialog);
   const close = $('btn-menus-view-close'); if (close) close.addEventListener('click', () => returnToAuditView());
 }
@@ -11290,6 +11291,110 @@ function openMenuOrphansDialog() {
   };
   renderList();
   openModal({ title: 'Broken menu references', body, width: 580, buttons: [{ label: 'Done', variant: 'primary' }] });
+}
+
+// ─── Per-menu sitemap ────────────────────────────────────────────────────────
+// Renders each menu as a box-tree via the shared render-sitemap-d3 pipeline.
+// One tree per menu (synthetic root = the menu name); items are colored by kind
+// (page / link / header) and headers get a dashed border (grouping, not a link).
+
+function _menuSitemapZoom(container, svg) {
+  let scale = 1, panning = false, sx, sy, sl, st;
+  container.addEventListener('wheel', e => {
+    e.preventDefault();
+    scale = Math.max(0.2, Math.min(3, scale + (e.deltaY > 0 ? -0.1 : 0.1)));
+    svg.style.transform = 'scale(' + scale + ')';
+    svg.style.transformOrigin = '0 0';
+  }, { passive: false });
+  container.addEventListener('mousedown', e => { panning = true; container.style.cursor = 'grabbing'; sx = e.pageX; sy = e.pageY; sl = container.scrollLeft; st = container.scrollTop; });
+  container.addEventListener('mousemove', e => { if (!panning) return; e.preventDefault(); container.scrollLeft = sl - (e.pageX - sx); container.scrollTop = st - (e.pageY - sy); });
+  container.addEventListener('mouseup', () => { panning = false; container.style.cursor = 'grab'; });
+  container.addEventListener('mouseleave', () => { panning = false; container.style.cursor = 'grab'; });
+}
+
+async function generateMenuSitemap() {
+  const menus = getMenus();
+  if (!menus.length) { showToast('No menus to visualize', 'error'); return; }
+
+  const colorMap = { 'Page': '#059669', 'Link': '#D97706', 'Header': '#64748B' };
+  const kindKey = (it) => it.kind === 'ref' ? 'Page' : it.kind === 'link' ? 'Link' : 'Header';
+  const buildItems = (menu, pid) => (menu.items || [])
+    .filter(it => (it.parentId || '') === (pid || ''))
+    .map(it => ({
+      name: (menuItemLabel(it) || '(item)').substring(0, 35),
+      menu: it.kind !== 'header',     // dashed border for headers (grouping, not a destination)
+      pattern: kindKey(it),           // colored by kind
+      phase: '',
+      pageCount: 0,
+      hasHiddenChildren: false,
+      children: buildItems(menu, it.id),
+    }));
+  const buildMenuTree = (menu) => ({
+    name: (menu.name || '(untitled menu)').substring(0, 40),
+    menu: true,
+    pattern: '',
+    phase: '',
+    pageCount: 0,
+    hasHiddenChildren: false,
+    children: buildItems(menu, ''),
+  });
+
+  const ps = state.projectSettings || {};
+  const slug = (ps.projectName || ps.clientName || 'project').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project';
+
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:16px;';
+  const legend = document.createElement('div');
+  legend.style.cssText = 'display:flex;gap:14px;align-items:center;font-size:11px;color:var(--text-muted);flex-wrap:wrap;';
+  legend.innerHTML = Object.entries(colorMap).map(([k, c]) => `<span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:12px;height:12px;border-radius:3px;background:${c};display:inline-block;"></span>${k}</span>`).join('')
+    + ` <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:14px;height:10px;border:1px dashed var(--text-muted);display:inline-block;"></span>Header (grouping)</span>`
+    + ` <span>· scroll to zoom, drag to pan</span>`;
+  body.appendChild(legend);
+
+  menus.forEach(menu => {
+    const card = document.createElement('div');
+    card.style.cssText = 'border:1px solid var(--border);border-radius:8px;overflow:hidden;';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:10px;font-weight:600;font-size:13px;padding:8px 12px;background:var(--bg-field-bar);border-bottom:1px solid var(--border);';
+    const title = document.createElement('span');
+    title.style.flex = '1';
+    title.textContent = (menu.name || '(untitled menu)') + (menu.placement ? ' · ' + menu.placement : '') + ` · ${(menu.items || []).length} item${(menu.items || []).length !== 1 ? 's' : ''}`;
+    head.appendChild(title);
+    const dl = document.createElement('button');
+    dl.className = 'btn btn-sm btn-ghost';
+    dl.textContent = 'SVG';
+    dl.disabled = true;
+    head.appendChild(dl);
+    card.appendChild(head);
+    const chartDiv = document.createElement('div');
+    chartDiv.style.cssText = 'overflow:auto;background:#fff;position:relative;cursor:grab;max-height:60vh;';
+    chartDiv.innerHTML = '<p style="color:#888;font-size:12px;padding:16px;">Rendering…</p>';
+    card.appendChild(chartDiv);
+    body.appendChild(card);
+
+    (async () => {
+      try {
+        const result = await window.electronAPI.renderSitemapD3({ treeData: buildMenuTree(menu), colorMap, options: { menuOnly: false } });
+        if (result && result.success && result.svg) {
+          chartDiv.innerHTML = result.svg;
+          const svg = chartDiv.querySelector('svg');
+          if (svg) { svg.style.display = 'block'; svg.style.transformOrigin = '0 0'; _menuSitemapZoom(chartDiv, svg); }
+          dl.disabled = false;
+          dl.addEventListener('click', async () => {
+            const menuSlug = (menu.name || 'menu').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'menu';
+            const r = await window.electronAPI.saveTextFile({ content: result.svg, defaultName: `${slug}-${menuSlug}-sitemap.svg`, filters: [{ name: 'SVG', extensions: ['svg'] }, { name: 'All Files', extensions: ['*'] }] });
+            if (r && r.success) showToast('Saved SVG', 'success');
+          });
+        } else {
+          chartDiv.innerHTML = '<p style="color:#c0392b;font-size:12px;padding:12px;">Could not render: ' + escapeHtml((result && result.error) || 'unknown error') + '</p>';
+        }
+      } catch (e) {
+        chartDiv.innerHTML = '<p style="color:#c0392b;font-size:12px;padding:12px;">Error: ' + escapeHtml(e.message) + '</p>';
+      }
+    })();
+  });
+
+  openModal({ title: 'Menu sitemaps', body, width: '92vw', buttons: [{ label: 'Done', variant: 'primary' }] });
 }
 
 async function exportNavTree(format) {
