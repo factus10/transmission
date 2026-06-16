@@ -265,6 +265,7 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - **Seed from content tree** — generate a starter menu mirroring the in-menu nav nodes, then edit independently
 - **CMS-agnostic export** — **Export…** writes a neutral, structured description of your menus (all or just the selected one) that any platform's import maps from — no vendor model baked in. Two formats: a flat, readable **Excel** `Menus` sheet or nested **JSON**; page references resolve to their target URLs. CMS-native files are optional add-ons on top.
 - **Broken-reference check** — if a referenced page is deleted/renumbered, the item shows `(missing page)` and a red **⚠ broken refs** toolbar button appears; one click lists every dangling item to re-point or remove before handoff.
+- **Per-menu sitemap** — **Sitemap** draws each menu as a box-tree (items colored by kind — page / link / header, headers dashed), with scroll-zoom, drag-pan, and per-menu SVG download.
 - Menus travel with the file (both `.transmission` and `.xlsx`)
 
 ### Visual Sitemap

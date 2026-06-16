@@ -1019,6 +1019,8 @@ Open the **Menus** tab in the view switcher (or **Cmd+Shift+M**). On the left is
 
 Menus travel with the file (both `.transmission` projects and `.xlsx` exports), so they're saved alongside everything else.
 
+**Seeing a menu as a diagram.** The toolbar's **Sitemap** button draws each menu as a box-tree — the menu name at the root, items beneath it colored by kind (page / link / header, headers shown with a dashed border). Scroll to zoom, drag to pan, and download any menu as an **SVG**. A quick way to eyeball a menu's shape and depth, or drop a picture into a deck.
+
 **Catching broken references.** Because menu items point at content pages, deleting or renumbering a page can leave a menu item dangling. Any broken item shows `(missing page)` inline, and the toolbar surfaces a red **⚠ N broken refs** button whenever any exist — click it to see them all and either **Re-pick** the page or **Remove** the item. Worth a quick check before you export for handoff.
 
 **Exporting menus for a build team.** The toolbar's **Export…** produces a *CMS-agnostic* deliverable — a neutral, structured description of your menus that any platform's import can map from (it deliberately doesn't bake in any one CMS's model). Choose **all menus or just the selected one**, and a format: **Excel** (a flat, readable `Menus` sheet — one row per item with its depth, label, kind, and resolved target URL) or **JSON** (the same data nested, for a developer to import programmatically). Page references resolve to their target URLs automatically. A Contentful, WordPress, Drupal, or AEM team each maps the same file onto its own navigation; if a client ever needs a platform-native file, that's a thin add-on on top of this neutral export.
