@@ -651,7 +651,7 @@ const NAV_HEADER_TO_KEY = {
   'Number': 'number', 'Label': 'label', 'Path': 'path', 'SortID': 'sortID',
   'ParentNumber': 'parentNumber', 'Breadcrumb': 'breadcrumb', 'Computed Path': 'computedPath',
   'ID': 'id', 'RefNodeID': 'refNodeId', 'InMenu': 'inMenu', 'URL': 'url',
-  'Url_Path': 'urlOverride',
+  'Url_Path': 'urlOverride', 'Breadcrumb_Parent': 'breadcrumbParentId',
   'Notes': 'notes', 'Phase': 'phase', 'Node_Type': 'nodeType', 'Nav_Layer': 'navLayer',
   'Build_Pattern': 'buildPattern', 'Build_Guidance': 'buildGuidance', 'Writer_Brief': 'writerBrief',
   'Page_Status': 'pageStatus', 'Build_Assignee': 'buildAssignee', 'Write_Assignee': 'writeAssignee',
@@ -748,6 +748,7 @@ function parseNavSheet(worksheet) {
     inMenu:       h.indexOf('InMenu'),
     url:          h.indexOf('URL'),
     urlOverride:  h.indexOf('Url_Path'),
+    breadcrumbParentId: h.indexOf('Breadcrumb_Parent'),
     notes:        h.indexOf('Notes'),
     phase:        h.indexOf('Phase'),
     // Phase 5 (reserved): preserved through round-trip; no UI binding yet.
@@ -786,6 +787,7 @@ function parseNavSheet(worksheet) {
       inMenu:       idx.inMenu >= 0      ? String(r[idx.inMenu] || '')      : '',
       url:          idx.url >= 0         ? String(r[idx.url] || '')         : '',
       urlOverride:  idx.urlOverride >= 0 ? String(r[idx.urlOverride] || '') : '',
+      breadcrumbParentId: idx.breadcrumbParentId >= 0 ? String(r[idx.breadcrumbParentId] || '') : '',
       notes:        idx.notes >= 0       ? String(r[idx.notes] || '')       : '',
       phase:        idx.phase >= 0       ? String(r[idx.phase] || '')       : '',
       // Phase 5 reserved fields — preserved but not bound to UI yet
@@ -1437,6 +1439,11 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
           nsHeaders.push('Url_Path');
           nsData[0] = nsHeaders;
         }
+        // Ensure Breadcrumb_Parent column exists (per-node breadcrumb re-root — decouples breadcrumb from hierarchy)
+        if (!nsHeaders.includes('Breadcrumb_Parent')) {
+          nsHeaders.push('Breadcrumb_Parent');
+          nsData[0] = nsHeaders;
+        }
         // Ensure Notes column exists
         if (!nsHeaders.includes('Notes')) {
           nsHeaders.push('Notes');
@@ -1474,6 +1481,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
           inMenu:       nsHeaders.indexOf('InMenu'),
           url:          nsHeaders.indexOf('URL'),
           urlOverride:  nsHeaders.indexOf('Url_Path'),
+          breadcrumbParentId: nsHeaders.indexOf('Breadcrumb_Parent'),
           notes:        nsHeaders.indexOf('Notes'),
           phase:        nsHeaders.indexOf('Phase'),
           nodeType:     nsHeaders.indexOf('Node_Type'),
@@ -1503,6 +1511,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
           if (colIdx.inMenu >= 0)       newRow[colIdx.inMenu]       = node.inMenu || '';
           if (colIdx.url >= 0)          newRow[colIdx.url]          = node.url || '';
           if (colIdx.urlOverride >= 0)  newRow[colIdx.urlOverride]  = node.urlOverride || '';
+          if (colIdx.breadcrumbParentId >= 0) newRow[colIdx.breadcrumbParentId] = node.breadcrumbParentId || '';
           if (colIdx.notes >= 0)        newRow[colIdx.notes]        = clampCell(node.notes || '');
           if (colIdx.phase >= 0)        newRow[colIdx.phase]        = node.phase || '';
           // Phase 5 reserved fields — preserve through round-trip
@@ -1525,7 +1534,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
         // always export from scratch) round-trip notes/phase/build metadata.
         const nsName = 'NavStructure';
         const nsHeaders = ['ID', 'Number', 'ParentNumber', 'Label', 'Path', 'SortID', 'Computed Path', 'Breadcrumb',
-                           'RefNodeID', 'InMenu', 'URL', 'Url_Path', 'Notes', 'Phase', 'Node_Type', 'Nav_Layer',
+                           'RefNodeID', 'InMenu', 'URL', 'Url_Path', 'Breadcrumb_Parent', 'Notes', 'Phase', 'Node_Type', 'Nav_Layer',
                            'Build_Pattern', 'Build_Guidance', 'Writer_Brief', 'Page_Status',
                            'Build_Assignee', 'Write_Assignee', 'Migrate_Assignee'];
         const rebuilt = [nsHeaders];
@@ -1534,7 +1543,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
             node.id, node.number, node.parentNumber || '',
             node.label, node.path || '', node.sortID || '',
             node.computedPath || '', node.breadcrumb || '',
-            node.refNodeId || '', node.inMenu || '', node.url || '', node.urlOverride || '',
+            node.refNodeId || '', node.inMenu || '', node.url || '', node.urlOverride || '', node.breadcrumbParentId || '',
             node.notes || '', node.phase || '', node.nodeType || '', node.navLayer || '',
             node.buildPattern || '', node.buildGuidance || '', node.writerBrief || '', node.pageStatus || '',
             node.buildAssignee || '', node.writeAssignee || '', node.migrateAssignee || ''
