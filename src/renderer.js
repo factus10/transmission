@@ -5059,6 +5059,7 @@ function buildSavePayload({ fullNav = false, drainLog = true } = {}) {
       refNodeId: n.refNodeId || '',
       inMenu: n.inMenu || '',
       url: n.url || '',
+      urlOverride: n.urlOverride || '',
       notes: n.notes || '',
       phase: n.phase || '',
       // Phase 2, Chunk α — preserve reserved + build/write metadata
@@ -10650,6 +10651,8 @@ function renderNavEditor() {
   statsText += ` · ${assignedRows} pages placed`;
   const fragmentCount = state.navNodes.filter(n => n.nodeType === 'Fragment').length;
   if (fragmentCount > 0) statsText += ` · ${fragmentCount} fragment${fragmentCount !== 1 ? 's' : ''}`;
+  const urlOverrideCount = state.navNodes.filter(n => normalizeUrlOverride(n.urlOverride)).length;
+  if (urlOverrideCount > 0) statsText += ` · ${urlOverrideCount} URL override${urlOverrideCount !== 1 ? 's' : ''}`;
   // "need placement" is rendered as a clickable link below (after statsEl text is set).
 
   // Phase 2, Chunk δ: build-phase tally — only show when at least one node has a status
@@ -11380,10 +11383,17 @@ function renderNavEditorNode(node, pageCounts, depth, dupSlugs, depthFilter) {
     });
     pathCell.appendChild(clearUrl);
   } else {
-    // Normal computed path (read-only text)
+    // Normal computed path (read-only text). When this node carries a URL
+    // override, mark it so the off-hierarchy URL is visible at a glance.
     const pathText = document.createElement('span');
     pathText.className = 'ne-cell-text';
-    pathText.textContent = node.computedPath || '';
+    if (normalizeUrlOverride(node.urlOverride)) {
+      pathText.textContent = '↪ ' + (node.computedPath || '');
+      pathText.style.color = 'var(--accent)';
+      pathCell.title = 'URL override — this page’s address is set independently of its place in the menu';
+    } else {
+      pathText.textContent = node.computedPath || '';
+    }
     pathCell.appendChild(pathText);
   }
   row.appendChild(pathCell);
@@ -11796,8 +11806,40 @@ function onNavNodeEdit(node, field, value) {
   }
 }
 
+/** Normalize a URL-override value to the same shape stored in computedPath:
+ *  no leading/trailing slashes, trimmed. Blank-ish values return ''. */
+function normalizeUrlOverride(s) {
+  return String(s || '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+}
+
+/** Compute a node's URL path (the value stored in computedPath), honoring
+ *  per-node URL overrides. A node's own override IS its path verbatim. Otherwise
+ *  we climb ancestors collecting slugs until an ancestor's override provides the
+ *  base — that override re-roots the whole subtree below it. With no overrides in
+ *  the chain this is identical to the old ancestor-slug join. */
+function computeNodeUrlPath(node) {
+  const ownOverride = normalizeUrlOverride(node.urlOverride);
+  if (ownOverride) return ownOverride;
+
+  const slugs = [];
+  let base = '';
+  let cur = node;
+  while (cur) {
+    if (cur !== node) {
+      const ov = normalizeUrlOverride(cur.urlOverride);
+      if (ov) { base = ov; break; } // nearest ancestor override = new root
+    }
+    if (cur.path) slugs.unshift(cur.path);
+    cur = cur.parentNumber ? state.navNodes.find(n => n.number === cur.parentNumber) : null;
+  }
+  const tail = slugs.join('/');
+  if (base) return tail ? base + '/' + tail : base;
+  return tail;
+}
+
 function recalcDerivedFields(node) {
-  // Rebuild breadcrumb: walk up parents
+  // Rebuild breadcrumb: walk up parents. The IA stays label-based and is NOT
+  // affected by URL overrides — overrides change only the URL, not the tree.
   const labels = [];
   let cur = node;
   while (cur) {
@@ -11806,14 +11848,8 @@ function recalcDerivedFields(node) {
   }
   node.breadcrumb = labels.join(' > ');
 
-  // Rebuild computed path
-  const slugs = [];
-  cur = node;
-  while (cur) {
-    if (cur.path) slugs.unshift(cur.path);
-    cur = cur.parentNumber ? state.navNodes.find(n => n.number === cur.parentNumber) : null;
-  }
-  node.computedPath = slugs.join('/');
+  // Rebuild computed path (the URL) — override-aware.
+  node.computedPath = computeNodeUrlPath(node);
 
   // Recurse into children
   if (node.children) {
@@ -12820,6 +12856,12 @@ function openNavNodeEditor(node) {
         <label for="_nne-url" style="font-size:12px;color:var(--text-secondary);">External URL</label>
         <input id="_nne-url" type="text" value="${escapeHtml(node.url || '')}" placeholder="https://… (leave blank for normal node)" style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono);">
 
+        <label for="_nne-urlpath" style="font-size:12px;color:var(--text-secondary);">URL override</label>
+        <div>
+          <input id="_nne-urlpath" type="text" value="${escapeHtml(node.urlOverride || '')}" placeholder="e.g. careers  (blank = follow hierarchy)" style="width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono);">
+          <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Sets this page's URL path independently of where it sits in the menu. Re-roots its sub-pages too. Leave blank to inherit the hierarchy.</div>
+        </div>
+
         <label style="font-size:12px;color:var(--text-secondary);">Reference</label>
         <div style="display:flex;align-items:center;gap:6px;font-size:12px;">
           ${refTarget
@@ -12935,6 +12977,8 @@ function openNavNodeEditor(node) {
   const bcEl = dialog.querySelector('#_nne-bc');
   const cpEl = dialog.querySelector('#_nne-cp');
 
+  const urlPathInp = dialog.querySelector('#_nne-urlpath');
+
   // Live preview of breadcrumb / computed path as user types
   function refreshDerivedPreview() {
     const newLabel = labelInp.value.trim();
@@ -12946,11 +12990,21 @@ function openNavNodeEditor(node) {
       cur = cur.parentNumber ? state.navNodes.find(n => n.number === cur.parentNumber) : null;
     }
     bcEl.textContent = [...labels, newLabel].filter(Boolean).join(' > ');
-    const parentPath = parent ? (parent.computedPath || '') : '';
-    cpEl.textContent = parentPath ? (newSlug ? parentPath + '/' + newSlug : parentPath) : newSlug;
+    // A URL override on THIS node is its path verbatim. Otherwise derive from the
+    // parent's (already override-aware) computed path + this node's slug.
+    const ownOverride = normalizeUrlOverride(urlPathInp.value);
+    if (ownOverride) {
+      cpEl.textContent = ownOverride;
+      cpEl.title = 'URL override — off hierarchy';
+    } else {
+      const parentPath = parent ? (parent.computedPath || '') : '';
+      cpEl.textContent = parentPath ? (newSlug ? parentPath + '/' + newSlug : parentPath) : newSlug;
+      cpEl.title = '';
+    }
   }
   labelInp.addEventListener('input', refreshDerivedPreview);
   slugInp.addEventListener('input', refreshDerivedPreview);
+  if (urlPathInp) urlPathInp.addEventListener('input', refreshDerivedPreview);
 
   function close() { dialog.remove(); overlay.remove(); }
   dialog.querySelector('#_nne-close').addEventListener('click', close);
@@ -13165,6 +13219,10 @@ function openNavNodeEditor(node) {
     if (newSlug !== node.path)   onNavNodeEdit(node, 'path', newSlug);
     if (newInmenu !== (node.inMenu || ''))       { node.inMenu    = newInmenu;    state.navTreeDirty = true; setDirty(true); }
     if (newUrl !== (node.url || ''))             { node.url       = newUrl;       state.navTreeDirty = true; setDirty(true); }
+    // URL override changes the computed path → route through onNavNodeEdit so the
+    // subtree recalculates and assigned-page URLs cascade.
+    const newUrlOverride = urlPathInp ? normalizeUrlOverride(urlPathInp.value) : '';
+    if (newUrlOverride !== (node.urlOverride || '')) { onNavNodeEdit(node, 'urlOverride', newUrlOverride); }
     if (newNotes !== (node.notes || ''))         { node.notes     = newNotes;     state.navTreeDirty = true; setDirty(true); }
     if (newPhase !== (node.phase || ''))         { node.phase     = newPhase;     state.navTreeDirty = true; setDirty(true); }
     if (newNodeType !== (node.nodeType || ''))   { node.nodeType  = newNodeType;  state.navTreeDirty = true; setDirty(true); }

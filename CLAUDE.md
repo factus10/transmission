@@ -248,7 +248,9 @@ Column mapping entries in `state.columnMap` include: `smeDecision`, `smeNotes`, 
 
 `state.projectSettings.gaKkeConfig` = `{ columnMap: {sessions, engagementRate, avgSessionDuration, viewsPerSession}, weights: {...}, thresholds: {keep, evolve}, missingPolicy: 'skip'|'zero', computedAt: ISO, lastRun: {computed, skipped, total} }` — or `{ dismissed: true }` if the user declined setup. Serialized into `KKE_Settings` sheet as JSON under `gaKkeConfig`.
 
-**Nav node objects** (`state.navNodes`) include extension fields: `refNodeId` (alias to another node), `inMenu` ('Y' / ''), `url` (external URL), `notes` (markdown), `phase` ('Future' / 'Stretch' / 'Archived' / custom / ''). Each is read from / written to a column on the NavStructure sheet (added on save if missing).
+**Nav node objects** (`state.navNodes`) include extension fields: `refNodeId` (alias to another node), `inMenu` ('Y' / ''), `url` (external URL), `urlOverride` (URL-path override — see below), `notes` (markdown), `phase` ('Future' / 'Stretch' / 'Archived' / custom / ''). Each is read from / written to a column on the NavStructure sheet (added on save if missing).
+
+**URL override (decouples URL from hierarchy):** `node.urlOverride` (NavStructure `Url_Path` column) lets a page's URL diverge from where it sits in the menu. The IA — tree position, breadcrumb (labels), sortID, page counts — is unaffected; only `computedPath` (the URL) changes. `recalcDerivedFields()` builds `computedPath` via `computeNodeUrlPath(node)`: a node's own (normalized) override IS its path verbatim; otherwise it climbs ancestors collecting slugs **until the nearest ancestor override**, which becomes the new root and **re-roots the whole subtree** below it (descendants append their slugs to the override base). With no overrides in the chain this is identical to the old ancestor-slug join. Because every downstream URL consumer (redirects, `effectiveConsolidateUrl`, Migration Tracker target, URL-change detection, `cascadeNavChangesToRows`) reads `computedPath`, no consumer needed changes — only the derivation did. `normalizeUrlOverride(s)` strips leading/trailing slashes so overrides match the stored no-leading-slash convention. Edited in the modal node editor (`#_nne-urlpath`, routed through `onNavNodeEdit('urlOverride', …)` so the subtree recalcs and assigned-page URLs cascade); the tree path cell prefixes an overridden path with `↪` in accent color; the nav stats bar tallies `N URL overrides`. Round-trips in both xlsx (`Url_Path` column) and `.transmission` (flat-node JSON via `NAV_HEADER_TO_KEY`).
 
 **Phase 2, Chunk α — nav node build/write metadata:** nav nodes carry build + write annotations for the migration delivery deliverable. Six new fields, read/written via NavStructure columns (auto-added on save):
 - `buildPattern` — selected pattern name (free-text for α; library lands in β)
@@ -569,7 +571,7 @@ Sheets hidden from the data sheet picker:
 
 | Sheet | Purpose |
 |-------|---------|
-| `NavStructure` | Navigation tree nodes (Number, Label, Path, ID, URL, etc.) |
+| `NavStructure` | Navigation tree nodes (Number, Label, Path, ID, URL, `Url_Path` URL override, etc.) |
 | `KKE_Settings` | Project-level key/value store (clientName, projectName, siteDomain, defaultRedirectUrl, customKkeStates, savedFilters, kkeFilter). Arrays like kkeFilter and savedFilters are JSON-serialized when written and parsed back on load. |
 | `KKE_ChangeLog` | Audit trail: Timestamp, Row, URL, Field, Old Value, New Value. Written on save from `_sessionChangeLog`; accumulates across sessions. |
 | `KKE_Glossary` | Tag/group descriptions: Type, Name, Notes (markdown). Parsed by `parseGlossarySheet()` and written by `writeGlossarySheet()`. Empty-notes entries pruned on save. |
