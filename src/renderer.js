@@ -10549,6 +10549,7 @@ function setupMenusView() {
   const add = $('btn-menu-add'); if (add) add.addEventListener('click', addMenu);
   const seed = $('btn-menu-seed'); if (seed) seed.addEventListener('click', seedMenuFromContentTree);
   const exp = $('btn-menu-export'); if (exp) exp.addEventListener('click', openMenuExportDialog);
+  const chk = $('btn-menu-check'); if (chk) chk.addEventListener('click', openMenuOrphansDialog);
   const close = $('btn-menus-view-close'); if (close) close.addEventListener('click', () => returnToAuditView());
 }
 
@@ -10580,8 +10581,22 @@ function renderMenusView() {
   renderMenuDetail();
   const menus = getMenus();
   const totalItems = menus.reduce((s, m) => s + (m.items ? m.items.length : 0), 0);
+  const orphanCount = findMenuOrphans().length;
   const statsEl = $('menus-view-stats');
   if (statsEl) statsEl.textContent = `${menus.length} menu${menus.length !== 1 ? 's' : ''} · ${totalItems} item${totalItems !== 1 ? 's' : ''}`;
+  const chk = $('btn-menu-check');
+  if (chk) {
+    if (orphanCount > 0) {
+      chk.classList.remove('hidden');
+      chk.textContent = `⚠ ${orphanCount} broken ref${orphanCount !== 1 ? 's' : ''}`;
+      chk.style.color = 'var(--kke-kill, #c0392b)';
+      chk.style.borderColor = 'var(--kke-kill, #c0392b)';
+    } else {
+      chk.classList.add('hidden');
+      chk.style.color = '';
+      chk.style.borderColor = '';
+    }
+  }
 }
 
 function renderMenusList() {
@@ -11213,6 +11228,66 @@ function openMenuExportDialog() {
         } }
     ]
   });
+}
+
+// ─── Menu reference integrity ────────────────────────────────────────────────
+// `ref` items point at content nodes by id; deleting/renumbering a node can leave
+// a dangling reference. findMenuOrphans() surfaces them; the dialog re-points or
+// removes each. (Inline, each broken item already shows "(missing page)".)
+
+function findMenuOrphans() {
+  const out = [];
+  getMenus().forEach(menu => {
+    (menu.items || []).forEach(item => {
+      if (item.kind === 'ref' && !state.navNodes.find(n => n.id === item.nodeId)) {
+        out.push({ menu, item });
+      }
+    });
+  });
+  return out;
+}
+
+function openMenuOrphansDialog() {
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:8px;font-size:13px;max-height:52vh;overflow-y:auto;';
+  const renderList = () => {
+    const orphans = findMenuOrphans();
+    body.innerHTML = '';
+    if (orphans.length === 0) {
+      const ok = document.createElement('div');
+      ok.style.cssText = 'color:var(--text-muted);padding:8px;';
+      ok.textContent = 'No broken references — every menu item points at a live page. ✓';
+      body.appendChild(ok);
+      return;
+    }
+    const intro = document.createElement('div');
+    intro.style.cssText = 'color:var(--text-muted);margin-bottom:2px;';
+    intro.textContent = `${orphans.length} menu item${orphans.length !== 1 ? 's' : ''} reference a page that no longer exists. Re-point or remove each.`;
+    body.appendChild(intro);
+    orphans.forEach(({ menu, item }) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:5px;padding:6px 8px;';
+      const txt = document.createElement('div');
+      txt.style.cssText = 'flex:1;min-width:0;';
+      txt.innerHTML = `<strong>${escapeHtml(menu.name || '(untitled)')}</strong> → ${escapeHtml(menuItemLabel(item) || '(no label)')} <span style="color:var(--text-muted);font-family:var(--font-mono);font-size:11px;">was ${escapeHtml(item.nodeId || '∅')}</span>`;
+      row.appendChild(txt);
+      const repick = document.createElement('button');
+      repick.className = 'btn btn-sm btn-ghost';
+      repick.textContent = 'Re-pick…';
+      repick.addEventListener('click', () => {
+        showMenuNodePicker((node) => { item.nodeId = node.id; setDirty(true); renderMenusView(); renderList(); }, { title: 'Re-point menu item' });
+      });
+      row.appendChild(repick);
+      const rm = document.createElement('button');
+      rm.className = 'btn btn-sm btn-ghost';
+      rm.textContent = 'Remove';
+      rm.addEventListener('click', () => { removeMenuItem(menu, item.id); renderList(); });
+      row.appendChild(rm);
+      body.appendChild(row);
+    });
+  };
+  renderList();
+  openModal({ title: 'Broken menu references', body, width: 580, buttons: [{ label: 'Done', variant: 'primary' }] });
 }
 
 async function exportNavTree(format) {
