@@ -361,6 +361,7 @@ function buildMenu() {
         { label: 'Table',           accelerator: 'CmdOrCtrl+T',        click: send('menu-table-view') },
         { label: 'Navigation Tree', accelerator: 'CmdOrCtrl+Shift+T',  click: send('menu-nav-tree') },
         { label: 'Redirects',       accelerator: 'CmdOrCtrl+Shift+R',  click: send('menu-redirect-editor') },
+        { label: 'Menus',           accelerator: 'CmdOrCtrl+Shift+M',  click: send('menu-menus') },
         { type: 'separator' },
         { label: 'Audit Progress…', accelerator: 'CmdOrCtrl+P', click: send('menu-progress') },
         { type: 'separator' },
