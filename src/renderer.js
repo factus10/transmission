@@ -10548,6 +10548,7 @@ function closeMenusView() {
 function setupMenusView() {
   const add = $('btn-menu-add'); if (add) add.addEventListener('click', addMenu);
   const seed = $('btn-menu-seed'); if (seed) seed.addEventListener('click', seedMenuFromContentTree);
+  const exp = $('btn-menu-export'); if (exp) exp.addEventListener('click', openMenuExportDialog);
   const close = $('btn-menus-view-close'); if (close) close.addEventListener('click', () => returnToAuditView());
 }
 
@@ -11075,6 +11076,143 @@ async function seedMenuFromContentTree() {
   setDirty(true);
   renderMenusView();
   showToast(`Seeded “${menu.name}” with ${menu.items.length} item${menu.items.length !== 1 ? 's' : ''}`, 'success');
+}
+
+// ─── Menu export (CMS-agnostic) ──────────────────────────────────────────────
+// A neutral, structured representation any CMS import can map from — deliberately
+// NOT shaped to any vendor's nav model. Page references resolve to their target
+// URLs. Two formats: a human-readable Menus xlsx sheet and a nested JSON.
+
+function menuExportTargetUrl(item) {
+  if (item.kind === 'link') return item.externalUrl || '';
+  if (item.kind === 'ref') {
+    const node = state.navNodes.find(n => n.id === item.nodeId);
+    if (!node) return '';
+    const cp = String(node.computedPath || '');
+    const base = getRedirectBaseUrl();
+    return base ? base + '/' + cp.replace(/^\//, '') : '/' + cp.replace(/^\//, '');
+  }
+  return '';
+}
+
+function menuToJsonTree(menu) {
+  const items = menu.items || [];
+  const childrenOf = (pid) => items.filter(it => (it.parentId || '') === (pid || ''));
+  const build = (pid) => childrenOf(pid).map(it => {
+    const o = { id: it.id, kind: it.kind, label: menuItemLabel(it) };
+    if (it.kind === 'ref') {
+      const node = state.navNodes.find(n => n.id === it.nodeId);
+      o.nodeId = it.nodeId || '';
+      o.url = menuExportTargetUrl(it);
+      o.path = node ? (node.computedPath || '') : '';
+      o.breadcrumb = node ? (node.breadcrumb || '') : '';
+      if (!node) o.missing = true;
+    } else if (it.kind === 'link') {
+      o.url = it.externalUrl || '';
+    }
+    const kids = build(it.id);
+    if (kids.length) o.children = kids;
+    return o;
+  });
+  return { id: menu.id, name: menu.name || '', placement: menu.placement || '', description: menu.description || '', items: build('') };
+}
+
+function buildMenuExportSheet(menusToExport) {
+  const headers = ['Menu', 'Placement', 'Description', 'Depth', 'Trail', 'Label', 'Kind', 'Target URL', 'Target Page', 'Node ID', 'Item ID', 'Parent Item ID'];
+  const aoa = [headers];
+  menusToExport.forEach(menu => {
+    const items = menu.items || [];
+    const childrenOf = (pid) => items.filter(it => (it.parentId || '') === (pid || ''));
+    let firstRow = true;
+    const walk = (pid, depth, trail) => {
+      childrenOf(pid).forEach(it => {
+        const node = it.kind === 'ref' ? state.navNodes.find(n => n.id === it.nodeId) : null;
+        const label = menuItemLabel(it);
+        aoa.push([
+          menu.name || '',
+          menu.placement || '',
+          firstRow ? (menu.description || '') : '',
+          depth,
+          trail.join(' > '),
+          label,
+          it.kind === 'ref' ? 'page' : it.kind,
+          menuExportTargetUrl(it),
+          node ? (node.breadcrumb || node.label || '') : (it.kind === 'ref' ? '(missing page)' : ''),
+          it.kind === 'ref' ? (it.nodeId || '') : '',
+          it.id,
+          it.parentId || ''
+        ]);
+        firstRow = false;
+        walk(it.id, depth + 1, [...trail, label]);
+      });
+    };
+    walk('', 0, []);
+  });
+  const cols = [{ wch: 18 }, { wch: 16 }, { wch: 30 }, { wch: 6 }, { wch: 30 }, { wch: 24 }, { wch: 7 }, { wch: 42 }, { wch: 28 }, { wch: 10 }, { wch: 10 }, { wch: 12 }];
+  return { name: 'Menus', aoa, cols };
+}
+
+function menuExportDefaultName(ext) {
+  const ps = state.projectSettings || {};
+  const slug = (ps.projectName || ps.clientName || 'project').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project';
+  const stamp = new Date().toISOString().slice(0, 10);
+  return `${slug}-menus-${stamp}.${ext}`;
+}
+
+async function runMenuExport(menusToExport, format) {
+  if (!menusToExport.length) { showToast('No menus to export', 'error'); return; }
+  const n = menusToExport.length;
+  let result;
+  if (format === 'json') {
+    const payload = { exportedAt: new Date().toISOString(), site: getRedirectBaseUrl() || '', menus: menusToExport.map(menuToJsonTree) };
+    result = await window.electronAPI.saveTextFile({
+      content: JSON.stringify(payload, null, 2),
+      defaultName: menuExportDefaultName('json'),
+      filters: [{ name: 'JSON', extensions: ['json'] }, { name: 'All Files', extensions: ['*'] }]
+    });
+  } else {
+    result = await window.electronAPI.exportMigrationTracker({
+      defaultName: menuExportDefaultName('xlsx'),
+      sheets: [buildMenuExportSheet(menusToExport)],
+      title: 'Export Menus'
+    });
+  }
+  if (result?.success) showToast(`Exported ${n} menu${n !== 1 ? 's' : ''} → ${result.filePath.split('/').pop()}`, 'success');
+  else if (result?.error && result.error !== 'Cancelled') showToast('Export failed: ' + result.error, 'error');
+}
+
+function openMenuExportDialog() {
+  const menus = getMenus();
+  if (!menus.length) { showToast('No menus to export yet', 'error'); return; }
+  const selected = menus.find(m => m.id === _menuSelectedId);
+  const body = `
+    <div style="display:flex;flex-direction:column;gap:14px;font-size:13px;">
+      <div>
+        <div style="font-weight:600;margin-bottom:6px;">Which menus?</div>
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:4px;"><input type="radio" name="_mexp-scope" value="all" checked> All menus (${menus.length})</label>
+        <label style="display:flex;align-items:center;gap:8px;${selected ? '' : 'opacity:0.5;'}"><input type="radio" name="_mexp-scope" value="selected" ${selected ? '' : 'disabled'}> Just “${escapeHtml(selected ? (selected.name || '(untitled)') : '—')}”</label>
+      </div>
+      <div>
+        <div style="font-weight:600;margin-bottom:6px;">Format</div>
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:4px;"><input type="radio" name="_mexp-fmt" value="xlsx" checked> Excel sheet (.xlsx) — flat, human-readable</label>
+        <label style="display:flex;align-items:center;gap:8px;"><input type="radio" name="_mexp-fmt" value="json"> JSON (.json) — nested, machine-readable</label>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);line-height:1.5;">A neutral, CMS-agnostic structure — page references resolve to their target URLs. Any CMS import (Contentful, WordPress, Drupal, AEM, …) maps from it.</div>
+    </div>`;
+  openModal({
+    title: 'Export menus',
+    body,
+    width: 460,
+    buttons: [
+      { label: 'Cancel' },
+      { label: 'Export', variant: 'primary', onClick: (api) => {
+          const scope = api.dialog.querySelector('input[name="_mexp-scope"]:checked').value;
+          const fmt = api.dialog.querySelector('input[name="_mexp-fmt"]:checked').value;
+          const list = (scope === 'selected' && selected) ? [selected] : menus;
+          runMenuExport(list, fmt);
+        } }
+    ]
+  });
 }
 
 async function exportNavTree(format) {
