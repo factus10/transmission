@@ -2800,11 +2800,11 @@ ipcMain.handle('copy-to-clipboard', (event, text) => {
   return true;
 });
 
-ipcMain.handle('save-text-file', async (event, { content, defaultName }) => {
+ipcMain.handle('save-text-file', async (event, { content, defaultName, filters }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     title: 'Save Results',
     defaultPath: defaultName || 'results.txt',
-    filters: [{ name: 'Text', extensions: ['txt'] }, { name: 'All Files', extensions: ['*'] }]
+    filters: Array.isArray(filters) && filters.length ? filters : [{ name: 'Text', extensions: ['txt'] }, { name: 'All Files', extensions: ['*'] }]
   });
   if (result.canceled) return { success: false };
   try {
