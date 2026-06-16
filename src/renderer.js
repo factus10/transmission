@@ -13751,88 +13751,110 @@ function openNavNodeEditor(node) {
     </div>
     <div style="flex:1;overflow-y:auto;padding:14px 18px;">
 
-      <div style="display:grid;grid-template-columns:130px 1fr;gap:6px 12px;align-items:center;font-size:12px;margin-bottom:14px;">
-        <div style="color:var(--text-muted);">Parent</div>
-        <div>${parent ? escapeHtml(parent.number + ' · ' + parent.label) : '<em>(root)</em>'}</div>
-        <div style="color:var(--text-muted);">Breadcrumb</div>
-        <div id="_nne-bc" style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${escapeHtml(node.breadcrumb || '')}</div>
-        <div style="color:var(--text-muted);">Computed Path</div>
-        <div id="_nne-cp" style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${escapeHtml(node.computedPath || '')}</div>
-        <div style="color:var(--text-muted);">Page breadcrumb</div>
-        <div id="_nne-pbc" style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);"></div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center;margin-bottom:10px;">
-        <label for="_nne-label" style="font-size:12px;color:var(--text-secondary);">Label</label>
-        <input id="_nne-label" type="text" value="${escapeHtml(node.label || '')}" style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;">
-
-        <label for="_nne-slug" style="font-size:12px;color:var(--text-secondary);">Slug</label>
-        <input id="_nne-slug" type="text" value="${escapeHtml(node.path || '')}" placeholder="(URL segment)" style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;font-family:var(--font-mono);">
-
-        <label style="font-size:12px;color:var(--text-secondary);">In menu</label>
-        <label style="display:flex;align-items:center;gap:6px;font-size:12px;">
-          <input id="_nne-inmenu" type="checkbox" ${(node.inMenu === 'Y' || node.inMenu === 'y' || node.inMenu === 'true') ? 'checked' : ''}>
-          <span style="color:var(--text-muted);">Include in navigation menus</span>
-        </label>
-
-        <label for="_nne-url" style="font-size:12px;color:var(--text-secondary);">External URL</label>
-        <input id="_nne-url" type="text" value="${escapeHtml(node.url || '')}" placeholder="https://… (leave blank for normal node)" style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono);">
-
-        <label for="_nne-urlpath" style="font-size:12px;color:var(--text-secondary);">URL override</label>
-        <div>
-          <input id="_nne-urlpath" type="text" value="${escapeHtml(node.urlOverride || '')}" placeholder="e.g. careers  (blank = follow hierarchy)" style="width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono);">
-          <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Sets this page's URL path independently of where it sits in the menu. Re-roots its sub-pages too. Leave blank to inherit the hierarchy.</div>
-        </div>
-
-        <label for="_nne-bcparent" style="font-size:12px;color:var(--text-secondary);">Breadcrumb parent</label>
-        <div>
-          <select id="_nne-bcparent" style="width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;">
-            <option value="" ${!node.breadcrumbParentId ? 'selected' : ''}>Inherit — physical parent${parent ? ': ' + escapeHtml(parent.label) : ' (none / root)'}</option>
-            <option value="${BREADCRUMB_ROOT}" ${node.breadcrumbParentId === BREADCRUMB_ROOT ? 'selected' : ''}>Breadcrumb root (top level)</option>
-            ${bcParentNode ? `<option value="${escapeHtml(bcParentNode.id)}" selected>→ ${escapeHtml(bcParentNode.label)}</option>`
-              : (node.breadcrumbParentId && node.breadcrumbParentId !== BREADCRUMB_ROOT ? `<option value="${escapeHtml(node.breadcrumbParentId)}" selected>→ (missing node)</option>` : '')}
-            <option value="__pick__">Choose a node…</option>
-          </select>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Sets the on-page breadcrumb's parent independently of the tree. “Root” starts the trail here (after any Home prefix); pick a node to re-root onto it. Sub-pages inherit.</div>
-        </div>
-
-        <label style="font-size:12px;color:var(--text-secondary);">Reference</label>
-        <div style="display:flex;align-items:center;gap:6px;font-size:12px;">
-          ${refTarget
-            ? `<span style="font-style:italic;color:var(--text-secondary);">→ ${escapeHtml(refTarget.breadcrumb)}</span>
-               <button id="_nne-ref-clear" class="btn btn-sm btn-ghost" style="font-size:11px;">Clear</button>`
-            : node.refNodeId
-              ? '<span style="color:var(--kke-kill);">Broken reference (target missing)</span> <button id="_nne-ref-clear" class="btn btn-sm btn-ghost" style="font-size:11px;">Clear</button>'
-              : '<span style="color:var(--text-muted);">(none — this is a real node)</span>'}
-        </div>
-
-        <label for="_nne-phase" style="font-size:12px;color:var(--text-secondary);">Phase</label>
-        <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
-          <select id="_nne-phase" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;">
-            <option value="">— Current build (default)</option>
-            <option value="Future" ${node.phase === 'Future' ? 'selected' : ''}>Future / Aspirational</option>
-            <option value="Stretch" ${node.phase === 'Stretch' ? 'selected' : ''}>Stretch goal</option>
-            <option value="Archived" ${node.phase === 'Archived' ? 'selected' : ''}>Archived</option>
-            ${node.phase && !['','Future','Stretch','Archived'].includes(node.phase) ? `<option value="${escapeHtml(node.phase)}" selected>${escapeHtml(node.phase)} (custom)</option>` : ''}
-          </select>
-          <span style="color:var(--text-muted);font-size:11px;">Mark nodes that aren't required for the current build.</span>
-        </div>
-
-        <label for="_nne-node-type" style="font-size:12px;color:var(--text-secondary);">Node type</label>
-        <div>
-          <select id="_nne-node-type" style="font-size:13px;padding:4px 8px;min-width:200px;">
-            <option value="" ${!node.nodeType ? 'selected' : ''}>Page (standard)</option>
-            <option value="Header" ${node.nodeType === 'Header' ? 'selected' : ''}>Header / organizing level</option>
-            <option value="Fragment" ${node.nodeType === 'Fragment' ? 'selected' : ''}>Fragment / shared content</option>
-          </select>
-          <div id="_nne-node-type-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
+      <div class="nne-context-panel">
+        <div class="nne-context-title">Context · read-only</div>
+        <div style="display:grid;grid-template-columns:130px 1fr;gap:6px 12px;align-items:center;font-size:12px;">
+          <div style="color:var(--text-muted);">Parent</div>
+          <div>${parent ? escapeHtml(parent.number + ' · ' + parent.label) : '<em>(root)</em>'}</div>
+          <div style="color:var(--text-muted);">Breadcrumb</div>
+          <div id="_nne-bc" style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${escapeHtml(node.breadcrumb || '')}</div>
+          <div style="color:var(--text-muted);">Computed Path</div>
+          <div id="_nne-cp" style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${escapeHtml(node.computedPath || '')}</div>
+          <div style="color:var(--text-muted);">Page breadcrumb</div>
+          <div id="_nne-pbc" style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);"></div>
         </div>
       </div>
 
-      <div style="margin-top:14px;">
-        <label for="_nne-notes" style="font-size:12px;color:var(--text-secondary);font-weight:600;">Migration notes</label>
-        <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Internal IA / strategy commentary. Surfaces as a hover tooltip on the node.</div>
-        <textarea id="_nne-notes" rows="4" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono);resize:vertical;box-sizing:border-box;">${escapeHtml(node.notes || '')}</textarea>
+      <!-- Identity -->
+      <div class="nne-section">
+        <div class="nne-section-header">
+          <span class="nne-section-pill" style="background:#e2e8f0;color:#334155;">Identity</span>
+          <span style="font-size:11px;color:var(--text-muted);">Name, address slug, node type, and build phase.</span>
+        </div>
+        <div style="display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center;margin-top:10px;">
+          <label for="_nne-label" style="font-size:12px;color:var(--text-secondary);">Label</label>
+          <input id="_nne-label" type="text" value="${escapeHtml(node.label || '')}" style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;">
+
+          <label for="_nne-slug" style="font-size:12px;color:var(--text-secondary);">Slug</label>
+          <input id="_nne-slug" type="text" value="${escapeHtml(node.path || '')}" placeholder="(URL segment)" style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;font-family:var(--font-mono);">
+
+          <label style="font-size:12px;color:var(--text-secondary);">In menu</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;">
+            <input id="_nne-inmenu" type="checkbox" ${(node.inMenu === 'Y' || node.inMenu === 'y' || node.inMenu === 'true') ? 'checked' : ''}>
+            <span style="color:var(--text-muted);">Include in navigation menus</span>
+          </label>
+
+          <label for="_nne-node-type" style="font-size:12px;color:var(--text-secondary);">Node type</label>
+          <div>
+            <select id="_nne-node-type" style="font-size:13px;padding:4px 8px;min-width:200px;">
+              <option value="" ${!node.nodeType ? 'selected' : ''}>Page (standard)</option>
+              <option value="Header" ${node.nodeType === 'Header' ? 'selected' : ''}>Header / organizing level</option>
+              <option value="Fragment" ${node.nodeType === 'Fragment' ? 'selected' : ''}>Fragment / shared content</option>
+            </select>
+            <div id="_nne-node-type-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
+          </div>
+
+          <label for="_nne-phase" style="font-size:12px;color:var(--text-secondary);">Phase</label>
+          <div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+            <select id="_nne-phase" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;">
+              <option value="">— Current build (default)</option>
+              <option value="Future" ${node.phase === 'Future' ? 'selected' : ''}>Future / Aspirational</option>
+              <option value="Stretch" ${node.phase === 'Stretch' ? 'selected' : ''}>Stretch goal</option>
+              <option value="Archived" ${node.phase === 'Archived' ? 'selected' : ''}>Archived</option>
+              ${node.phase && !['','Future','Stretch','Archived'].includes(node.phase) ? `<option value="${escapeHtml(node.phase)}" selected>${escapeHtml(node.phase)} (custom)</option>` : ''}
+            </select>
+            <span style="color:var(--text-muted);font-size:11px;">Mark nodes that aren't required for the current build.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Addressing & breadcrumb -->
+      <div class="nne-section">
+        <div class="nne-section-header">
+          <span class="nne-section-pill" style="background:#ccfbf1;color:#115e59;">Addressing &amp; breadcrumb</span>
+          <span style="font-size:11px;color:var(--text-muted);">How this node resolves its URL, breadcrumb, and aliases — independent of the tree.</span>
+        </div>
+        <div style="display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center;margin-top:10px;">
+          <label for="_nne-url" style="font-size:12px;color:var(--text-secondary);">External URL</label>
+          <input id="_nne-url" type="text" value="${escapeHtml(node.url || '')}" placeholder="https://… (leave blank for normal node)" style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono);">
+
+          <label for="_nne-urlpath" style="font-size:12px;color:var(--text-secondary);">URL override</label>
+          <div>
+            <input id="_nne-urlpath" type="text" value="${escapeHtml(node.urlOverride || '')}" placeholder="e.g. careers  (blank = follow hierarchy)" style="width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono);">
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Sets this page's URL path independently of where it sits in the menu. Re-roots its sub-pages too. Leave blank to inherit the hierarchy.</div>
+          </div>
+
+          <label for="_nne-bcparent" style="font-size:12px;color:var(--text-secondary);">Breadcrumb parent</label>
+          <div>
+            <select id="_nne-bcparent" style="width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;">
+              <option value="" ${!node.breadcrumbParentId ? 'selected' : ''}>Inherit — physical parent${parent ? ': ' + escapeHtml(parent.label) : ' (none / root)'}</option>
+              <option value="${BREADCRUMB_ROOT}" ${node.breadcrumbParentId === BREADCRUMB_ROOT ? 'selected' : ''}>Breadcrumb root (top level)</option>
+              ${bcParentNode ? `<option value="${escapeHtml(bcParentNode.id)}" selected>→ ${escapeHtml(bcParentNode.label)}</option>`
+                : (node.breadcrumbParentId && node.breadcrumbParentId !== BREADCRUMB_ROOT ? `<option value="${escapeHtml(node.breadcrumbParentId)}" selected>→ (missing node)</option>` : '')}
+              <option value="__pick__">Choose a node…</option>
+            </select>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Sets the on-page breadcrumb's parent independently of the tree. “Root” starts the trail here (after any Home prefix); pick a node to re-root onto it. Sub-pages inherit.</div>
+          </div>
+
+          <label style="font-size:12px;color:var(--text-secondary);">Reference</label>
+          <div style="display:flex;align-items:center;gap:6px;font-size:12px;">
+            ${refTarget
+              ? `<span style="font-style:italic;color:var(--text-secondary);">→ ${escapeHtml(refTarget.breadcrumb)}</span>
+                 <button id="_nne-ref-clear" class="btn btn-sm btn-ghost" style="font-size:11px;">Clear</button>`
+              : node.refNodeId
+                ? '<span style="color:var(--kke-kill);">Broken reference (target missing)</span> <button id="_nne-ref-clear" class="btn btn-sm btn-ghost" style="font-size:11px;">Clear</button>'
+                : '<span style="color:var(--text-muted);">(none — this is a real node)</span>'}
+          </div>
+        </div>
+      </div>
+
+      <!-- Notes -->
+      <div class="nne-section">
+        <div class="nne-section-header">
+          <span class="nne-section-pill" style="background:#f1f5f9;color:#475569;">Notes</span>
+          <span style="font-size:11px;color:var(--text-muted);">Internal IA / strategy commentary. Surfaces as a hover tooltip on the node.</span>
+        </div>
+        <textarea id="_nne-notes" rows="4" style="width:100%;margin-top:10px;padding:8px 10px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono);resize:vertical;box-sizing:border-box;">${escapeHtml(node.notes || '')}</textarea>
       </div>
 
       <!-- ── Phase 2, Chunk α: Build section ───────────────────────────────── -->
