@@ -267,20 +267,13 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - Menus travel with the file (both `.transmission` and `.xlsx`)
 
 ### Visual Sitemap
-- The **Sitemap** button in the nav editor generates a D3 visualization of the navigation structure
-- **Box-style nodes** — each node is a 160×34px rectangle with rounded corners, not circles
-- **Left-aligned indented layout** — root at top-left, children indented 50px per depth level, rows stacked top-to-bottom in DFS order (like a file tree / outline). Not a symmetric tidy tree.
-- **L-shaped elbow connectors** — straight lines with 90° corners descend from a parent's left area to each child
-- **Color fill from Build_Pattern** — a stable color palette is auto-computed across all distinct patterns in the nav tree; nodes with no pattern assigned get default indigo
-- **Solid border** = in nav menu (`InMenu = Y`); **dashed border** = not in nav menu
-- **Stacked shadow boxes** behind a node when it has children hidden by the "Menu items only" filter
-- **Page count badge** — small number in the top-right corner of each box (counts non-Kill/non-Consolidate assigned pages)
-- **Color legend** below each section: pattern color swatches (sorted, up to 4 per row), in-nav vs not-in-nav border examples, has-sub-pages stacked shadow example
-- **Menu items only** checkbox (default: checked) filters to nav menu items; toggling it shows/hides non-menu nodes and updates the stacked shadow indicators
-- Each top-level nav section renders as a separate card
-- Zoom (scroll wheel) and pan (drag) within each card
-- Tabs: **Visual** and **Text Tree** (plain-text indented hierarchy)
-- Export as **PDF** or **SVG/HTML** (Word-compatible)
+- The **Sitemap** button in the nav editor renders the **content IA** as a box-style D3 diagram (160×34px nodes), one card per top-level section. Zoom (scroll) / pan (drag); **Visual** and **Text Tree** tabs; export **PDF** or **SVG/HTML**.
+- **Layout** picker — **Outline** (indented file-tree), **Top-down tree** (`d3.tree()`), or **Mega columns** (sections fan into side-by-side columns, items stacked beneath)
+- **Levels** — show All, or cap at 1…max depth; deeper nodes collapse to a stacked box
+- **Collapse** (per node) — check **Collapse** on any node (or bulk **Collapse ✓ / Expand**) to summarize its subtree as a single box with a "has more underneath" stack. Best practice for big trees: leave one representative of a repeating pattern (e.g. one academic department) expanded and collapse the rest.
+- **Color by** — **Section**, **Build pattern**, **Page status** (your status colors), or **KKE** (each node by its assigned pages' decision)
+- **Palette** — **Meaningful**, **Client brand** (your Project Settings → Identity colors, shared with the menu sitemaps), or **Mono**
+- **Border** = build phase (solid = current build, dashed = phased); **page-count badge** in each box's corner
 
 ### Rubrics & Assessment
 - Define Keep/Kill/Evolve/Exclude criteria as markdown rubric files

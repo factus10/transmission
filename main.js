@@ -651,7 +651,7 @@ const NAV_HEADER_TO_KEY = {
   'Number': 'number', 'Label': 'label', 'Path': 'path', 'SortID': 'sortID',
   'ParentNumber': 'parentNumber', 'Breadcrumb': 'breadcrumb', 'Computed Path': 'computedPath',
   'ID': 'id', 'RefNodeID': 'refNodeId', 'InMenu': 'inMenu', 'URL': 'url',
-  'Url_Path': 'urlOverride', 'Breadcrumb_Parent': 'breadcrumbParentId',
+  'Url_Path': 'urlOverride', 'Breadcrumb_Parent': 'breadcrumbParentId', 'Collapse': 'collapse',
   'Notes': 'notes', 'Phase': 'phase', 'Node_Type': 'nodeType', 'Nav_Layer': 'navLayer',
   'Build_Pattern': 'buildPattern', 'Build_Guidance': 'buildGuidance', 'Writer_Brief': 'writerBrief',
   'Page_Status': 'pageStatus', 'Build_Assignee': 'buildAssignee', 'Write_Assignee': 'writeAssignee',
@@ -749,6 +749,7 @@ function parseNavSheet(worksheet) {
     url:          h.indexOf('URL'),
     urlOverride:  h.indexOf('Url_Path'),
     breadcrumbParentId: h.indexOf('Breadcrumb_Parent'),
+    collapse:     h.indexOf('Collapse'),
     notes:        h.indexOf('Notes'),
     phase:        h.indexOf('Phase'),
     // Phase 5 (reserved): preserved through round-trip; no UI binding yet.
@@ -788,6 +789,7 @@ function parseNavSheet(worksheet) {
       url:          idx.url >= 0         ? String(r[idx.url] || '')         : '',
       urlOverride:  idx.urlOverride >= 0 ? String(r[idx.urlOverride] || '') : '',
       breadcrumbParentId: idx.breadcrumbParentId >= 0 ? String(r[idx.breadcrumbParentId] || '') : '',
+      collapse:     idx.collapse >= 0    ? String(r[idx.collapse] || '')    : '',
       notes:        idx.notes >= 0       ? String(r[idx.notes] || '')       : '',
       phase:        idx.phase >= 0       ? String(r[idx.phase] || '')       : '',
       // Phase 5 reserved fields — preserved but not bound to UI yet
@@ -1444,6 +1446,11 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
           nsHeaders.push('Breadcrumb_Parent');
           nsData[0] = nsHeaders;
         }
+        // Ensure Collapse column exists (per-node collapse-subtree flag for the visual sitemap)
+        if (!nsHeaders.includes('Collapse')) {
+          nsHeaders.push('Collapse');
+          nsData[0] = nsHeaders;
+        }
         // Ensure Notes column exists
         if (!nsHeaders.includes('Notes')) {
           nsHeaders.push('Notes');
@@ -1482,6 +1489,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
           url:          nsHeaders.indexOf('URL'),
           urlOverride:  nsHeaders.indexOf('Url_Path'),
           breadcrumbParentId: nsHeaders.indexOf('Breadcrumb_Parent'),
+          collapse:     nsHeaders.indexOf('Collapse'),
           notes:        nsHeaders.indexOf('Notes'),
           phase:        nsHeaders.indexOf('Phase'),
           nodeType:     nsHeaders.indexOf('Node_Type'),
@@ -1512,6 +1520,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
           if (colIdx.url >= 0)          newRow[colIdx.url]          = node.url || '';
           if (colIdx.urlOverride >= 0)  newRow[colIdx.urlOverride]  = node.urlOverride || '';
           if (colIdx.breadcrumbParentId >= 0) newRow[colIdx.breadcrumbParentId] = node.breadcrumbParentId || '';
+          if (colIdx.collapse >= 0)     newRow[colIdx.collapse]     = node.collapse || '';
           if (colIdx.notes >= 0)        newRow[colIdx.notes]        = clampCell(node.notes || '');
           if (colIdx.phase >= 0)        newRow[colIdx.phase]        = node.phase || '';
           // Phase 5 reserved fields — preserve through round-trip
@@ -1534,7 +1543,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
         // always export from scratch) round-trip notes/phase/build metadata.
         const nsName = 'NavStructure';
         const nsHeaders = ['ID', 'Number', 'ParentNumber', 'Label', 'Path', 'SortID', 'Computed Path', 'Breadcrumb',
-                           'RefNodeID', 'InMenu', 'URL', 'Url_Path', 'Breadcrumb_Parent', 'Notes', 'Phase', 'Node_Type', 'Nav_Layer',
+                           'RefNodeID', 'InMenu', 'URL', 'Url_Path', 'Breadcrumb_Parent', 'Collapse', 'Notes', 'Phase', 'Node_Type', 'Nav_Layer',
                            'Build_Pattern', 'Build_Guidance', 'Writer_Brief', 'Page_Status',
                            'Build_Assignee', 'Write_Assignee', 'Migrate_Assignee'];
         const rebuilt = [nsHeaders];
@@ -1543,7 +1552,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
             node.id, node.number, node.parentNumber || '',
             node.label, node.path || '', node.sortID || '',
             node.computedPath || '', node.breadcrumb || '',
-            node.refNodeId || '', node.inMenu || '', node.url || '', node.urlOverride || '', node.breadcrumbParentId || '',
+            node.refNodeId || '', node.inMenu || '', node.url || '', node.urlOverride || '', node.breadcrumbParentId || '', node.collapse || '',
             node.notes || '', node.phase || '', node.nodeType || '', node.navLayer || '',
             node.buildPattern || '', node.buildGuidance || '', node.writerBrief || '', node.pageStatus || '',
             node.buildAssignee || '', node.writeAssignee || '', node.migrateAssignee || ''
@@ -3166,7 +3175,7 @@ ipcMain.handle('render-sitemap-d3', async (event, { treeData, colorMap, options 
     parts.push('  var INDENT=50, ROW_H=52;');
     // TRUNK_X: the connector trunk runs at this x-offset from the parent box left edge
     parts.push('  var TRUNK_X=14;');
-    parts.push('  var DEFAULT_COLOR="#6366f1";');
+    parts.push('  var DEFAULT_COLOR=OPTS.defaultColor || "#6366f1";');
     // Color helpers
     parts.push('  function nodeColor(d) { return COLOR_MAP[d.data.pattern] || DEFAULT_COLOR; }');
     parts.push('  function hexRgba(hex, a) {');
@@ -3261,10 +3270,10 @@ ipcMain.handle('render-sitemap-d3', async (event, { treeData, colorMap, options 
     parts.push('  node.append("rect")');
     parts.push('    .attr("x",0).attr("y",0)');
     parts.push('    .attr("width",BOX_W).attr("height",BOX_H).attr("rx",BOX_RX)');
-    parts.push('    .attr("fill", function(d) { return hexRgba(nodeColor(d), 0.12); })');
-    parts.push('    .attr("stroke", function(d) { return nodeColor(d); })');
+    parts.push('    .attr("fill", function(d) { return d.data.isMenuRoot ? "#eef1f5" : hexRgba(nodeColor(d), 0.12); })');
+    parts.push('    .attr("stroke", function(d) { return d.data.isMenuRoot ? "#94a3b8" : nodeColor(d); })');
     parts.push('    .attr("stroke-width","1.5px")');
-    parts.push('    .attr("stroke-dasharray", function(d) { return d.data.menu ? "none" : "5,3"; });');
+    parts.push('    .attr("stroke-dasharray", function(d) { return (d.data.menu || d.data.isMenuRoot) ? "none" : "5,3"; });');
     // Label — centered inside box; bold for root level
     parts.push('  node.append("text")');
     parts.push('    .attr("x",BOX_W/2).attr("y",BOX_H/2).attr("dy","0.35em")');

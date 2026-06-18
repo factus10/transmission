@@ -929,7 +929,7 @@ Your goal is to drive **need placement** in the stats line down to **0**.
 Open a node's editor and you can set:
 
 - **Node type** — **Page** (a normal page), **Header** (a grouping level with no page of its own), or **Fragment** (shared/embedded content with no menu entry — see [Content Types & the Crosswalk](#7-content-types--the-crosswalk)).
-- **In menu** — whether the node appears in navigation. The toolbar's **Set Menu ✓** / **Clear Menu** toggle this for all *visible* nodes at once (pair with the Depth filter).
+- **Collapse** — collapse this node's subtree in the **Visual Sitemap** (it renders as a single box with a "has more underneath" stack instead of its full branch). The toolbar's **Collapse ✓** / **Expand** apply this to all *visible* nodes at once (pair with the Depth filter). *(What's actually in navigation is now described by the independent **Menus** view, not a per-node flag.)*
 - **External URL** — point a menu item at an outside address instead of a built page.
 - **Reference** — alias this node to another so the same destination can appear in two places without duplicating it.
 
@@ -956,7 +956,14 @@ So **need placement → 0** confirms every Keep/Evolve page is in the IA, **empt
 
 ### See it and report on it
 
-- **Sitemap** (toolbar) renders a box-style tree: a solid border means the node is in the menu, dashed means it isn't; the fill color comes from its build pattern; a stacked shadow signals hidden children; and a corner badge shows the page count. Toggle **Menu items only**, switch **Visual** / **Text Tree** tabs, zoom and pan, and export as **PDF** or **SVG/HTML**.
+- **Visual Sitemap** (toolbar **Sitemap**) renders the content IA as a box-style tree, one card per top-level section, with a corner badge for page count and a stacked shadow signalling a collapsed/cut subtree. Controls:
+  - **Levels** — All, or cap at 1 … max depth; anything deeper collapses to a stacked box.
+  - **Layout** — **Outline** (indented list), **Top-down tree**, or **Mega columns** (sections fan into side-by-side columns).
+  - **Color by** — **Section**, **Build pattern**, **Page status** (uses your status colors), or **KKE** (each node colored by its assigned pages' decision).
+  - **Palette** — **Meaningful**, **Client brand** (your Project Settings → Identity colors), or **Mono**.
+  - Border encodes build phase (solid = current build, dashed = phased). Switch **Visual** / **Text Tree**, zoom/pan, export **PDF** or **SVG/HTML**.
+
+  > **Taming a big tree — collapse repeating patterns.** On a large site, whole branches repeat the same shape (every academic department has Overview / Faculty / Programs / Contact). Showing all of them is noise. Best practice: for any branch whose children follow a content pattern, **pick the best representative and leave it expanded** to show the pattern in full, then **Collapse** the rest (check **Collapse** on each, or select them and hit **Collapse ✓**). The collapsed siblings still appear as single boxes with a "more underneath" stack, so the structure stays honest while the diagram stays readable.
 - **IA & coverage reports:** **IA Report** (toolbar) or **Reports → Navigation IA…**, **Reports → Nav Coverage Report…**, and **Reports → Net New Content Brief…**.
 
 To resolve pages that landed on the same node, see the Consolidation Candidates workflow in [Consolidate](#9-consolidate).
@@ -966,7 +973,6 @@ To resolve pages that landed on the same node, see the Consolidation Candidates 
 - [ ] **need placement = 0** — every Keep/Evolve page sits on a node
 - [ ] No **empty** leaf nodes left unexplained
 - [ ] No **duplicate NavID** warning, and no red duplicate-slug highlights
-- [ ] **In menu** set correctly on every node that belongs in navigation
 - [ ] Out-of-scope work is **phased**, and net-new sections are intentional
 
 ### Going deeper
@@ -989,7 +995,7 @@ The **✕** always confirms first, showing the breadcrumb so you know exactly wh
 
 #### The editor's columns and drag behavior
 
-The columns are Node (number, toggle, label — it fills the width), Slug, InMenu, Computed Path, Breadcrumb, Pages, and Actions (✎ edit, **+** child, ⧉ clone, ↗ reference, external-URL link, ✕ delete — visible on hover); all are resizable. When you drag, the top/bottom third of a target row inserts before or after it (shown by a line indicator) and the middle reparents (shown by a blue left border). The dragged row fades to 35%, and the drop zone only activates after you've moved about 30% in, to avoid accidental drops. Moving a node carries its whole subtree, and all numbers, sort IDs, breadcrumbs, and paths recalculate. Fold state persists across edits.
+The columns are Node (number, toggle, label — it fills the width), Slug, Collapse, Computed Path, Breadcrumb, Pages, and Actions (✎ edit, **+** child, ⧉ clone, ↗ reference, external-URL link, ✕ delete — visible on hover); all are resizable. When you drag, the top/bottom third of a target row inserts before or after it (shown by a line indicator) and the middle reparents (shown by a blue left border). The dragged row fades to 35%, and the drop zone only activates after you've moved about 30% in, to avoid accidental drops. Moving a node carries its whole subtree, and all numbers, sort IDs, breadcrumbs, and paths recalculate. Fold state persists across edits.
 
 #### Reading the Pages column
 
@@ -997,11 +1003,11 @@ A link icon means an external URL, an arrow means a reference, **NEW** means net
 
 #### Reference picker and Visual Sitemap
 
-The reference picker is a wide (880px) dialog, sorted hierarchically and indented by depth with top-level nodes in bold; a numeric search matches from the start (`2.2` finds 2.2.1) while a text search matches anywhere. The Visual Sitemap lays the tree out left-to-right like a file tree (50px per level, L-shaped connectors), one card per top-level section, with each node a labeled 160×34px box.
+The reference picker is a wide (880px) dialog, sorted hierarchically and indented by depth with top-level nodes in bold; a numeric search matches from the start (`2.2` finds 2.2.1) while a text search matches anywhere. The **Visual Sitemap** (see [See it and report on it](#see-it-and-report-on-it) above) draws the IA as labeled boxes with selectable layout, color-by, palette, depth (Levels), and per-node Collapse.
 
 #### The NavStructure sheet
 
-Behind the editor, the `NavStructure` sheet holds: **Number** (the dotted hierarchy like `1.1.2`), **Label**, **ID**, **Path** (slug), **SortID**, **ParentNumber**, **Computed Path**, and **Breadcrumb** — plus extension columns for the external `URL`, the `Url_Path` URL override, the `Breadcrumb_Parent` breadcrumb re-root, `Phase`, `Notes`, `Node_Type`, `InMenu`, the reference, and the build-metadata fields (Build Pattern, Page Status, the three assignees, Build Guidance, Writer Brief). The whole sheet is rewritten on save.
+Behind the editor, the `NavStructure` sheet holds: **Number** (the dotted hierarchy like `1.1.2`), **Label**, **ID**, **Path** (slug), **SortID**, **ParentNumber**, **Computed Path**, and **Breadcrumb** — plus extension columns for the external `URL`, the `Url_Path` URL override, the `Breadcrumb_Parent` breadcrumb re-root, the `Collapse` sitemap flag, `Phase`, `Notes`, `Node_Type`, `InMenu` (legacy), the reference, and the build-metadata fields (Build Pattern, Page Status, the three assignees, Build Guidance, Writer Brief). The whole sheet is rewritten on save.
 
 ### Menus
 
@@ -1010,7 +1016,7 @@ The navigation tree describes where content *lives*. **Menus** describe how peop
 Open the **Menus** tab in the view switcher (or **Cmd+Shift+M**). On the left is your list of menus; on the right, the selected menu's contents.
 
 - **Create as many menus as you need** — Primary, Mega, Utility, Footer, a search fly-out, whatever this client has. Names are arbitrary. **Drag the menus** in the left list to reorder them.
-- **Seed from content tree** builds a starter menu that mirrors the nav nodes marked "in menu" — then you edit it freely, independent of the tree.
+- **Seed from content tree** opens a small dialog: pick a starting **branch** of the content tree (or all top-level sections) and a **depth**, name the menu, and it mirrors that subtree as page references — then you edit it freely, independent of the tree.
 - Each menu carries two bits of context: a **Placement** (a per-project controlled vocabulary — Top bar, Footer, Overlay / Fly-out, etc. — add your own with "+ New…") and a free-text **Description** for the "what the heck is this and how does it behave" note that helps both you and the client.
 - **Add three kinds of item:** **+ Page** references a content page (search and pick it; it shows the live label and target path, and flags the reference if that page is later removed), **+ Link** is an external/utility URL like a login, and **+ Header** is a label-only heading for grouping (footer columns, mega sections). Change an item's kind anytime with the little **page / link / header** dropdown on its left.
 - **Drag the ⋮⋮ grip** to reorder items or nest them — drop onto the top/bottom third of a row to place it before/after, or the middle to nest it inside. Each menu can be flat or as deep as you like.
@@ -1018,7 +1024,7 @@ Open the **Menus** tab in the view switcher (or **Cmd+Shift+M**). On the left is
 
 Menus travel with the file (both `.transmission` projects and `.xlsx` exports), so they're saved alongside everything else.
 
-**Seeing a menu as a diagram.** The toolbar's **Sitemap** button draws each menu as a box-tree — items colored by kind (page / link / header, headers shown with a dashed border). Scroll to zoom, drag to pan, and download any menu as an **SVG**. Each card has a **layout** dropdown so you can pick the shape that fits *that* menu (the choice is remembered per menu):
+**Seeing a menu as a diagram.** The toolbar's **Sitemap** button draws each menu as a box-tree. Modal-level **Color by** (Item kind / Section) and **Palette** (Meaningful / Client brand / Mono) controls apply to all menus; headers show a dashed border. Scroll to zoom, drag to pan, and download any menu as an **SVG**. Each card has a **layout** dropdown so you can pick the shape that fits *that* menu (the choice is remembered per menu):
 > - **Mega columns** (default) — fans the menu's sections into side-by-side columns, each stacking its items beneath. Wide *and* deep; mirrors a real mega-menu panel.
 > - **Top-down tree** — the classic sitemap fan-out; good for shallow, wide menus.
 > - **Outline** — a compact indented list; good for deep, narrow menus.
