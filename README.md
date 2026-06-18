@@ -2,7 +2,7 @@
 
 A macOS desktop app for auditing website content. Load a Screaming Frog crawl export (or any spreadsheet with URLs), review each page in an embedded browser, and record Keep/Kill/Evolve decisions directly in the file.
 
-**Version 2.4.0** — "How Soon Is Now?"
+**Version 2.4.1** — "How Soon Is Now?"
 
 ---
 
@@ -64,7 +64,7 @@ The View menu mirrors these and adds **Audit Progress…** (`Cmd+P`), zoom contr
 - **View** — view switcher mirrors + Audit Progress + zoom
 - **Project** — Project Settings · Glossary · Content Type Registry · Target Spec Library · Component Library · **AI Suggest for Unreviewed** · Run Rubric · Refresh GA KKE · Recompute Suggested KKE · Triage Non-200 Pages
 - **Migration** (export & validation tools) — **Pre-Handoff Check** · Migration Tracker · Export Redirect Map (CSV) · Redirect Chain Check
-- **Reports** (all reports, grouped) — Executive Summary · Content Inventory · SME Review Status · Navigation IA · Nav Coverage · Component Inventory · Migration Checklist · Net New Content Brief · Redirect Map Report
+- **Reports** (all reports, grouped) — Executive Summary · Content Inventory · SME Review Status · Menu Report · Nav Coverage · Component Inventory · Migration Checklist · Net New Content Brief · Redirect Map Report
 - **SME** — Export · Import · **Compare KKE vs SME** · Resolve Conflicts
 - **Help** — Getting Started · Product Tour · Keyboard Shortcuts (`Cmd+/`) · Help
 
@@ -247,7 +247,7 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - **Reference picker** — 880px wide dialog with nodes sorted hierarchically by sortID, indented by depth, top-level nodes bold. Search by node number matches from start; text search matches anywhere.
 - **Wide scrollbar** — the nav editor's vertical scrollbar is widened to 14px so it's grabbable without hitting the window edge resize cursor.
 - **Sanitizer on label/slug edits** — paste handlers strip mojibake (`‚Äô` → `'`), HTML entities, NBSP, zero-width chars, vertical tabs, etc. Multi-character mojibake patterns only — bare accented characters (`é`, `ü`, `ñ`) are left alone.
-- **IA Report** — toolbar button generates a per-node status report directly in the nav editor. Each node is classified into one of four states: **Empty** (red — no pages and no redirect), **→** (slate — no direct pages but has redirect-destination rows assigned), **Np** (grey — node has N live pages), or **≡** (italic header row — structural node with no own content). Useful for spotting gaps and orphans before handing off.
+- **Menu Report** — a tight, hand-off-ready report of your menus (**Menus → Report**, or **Reports → Menu Report…**): one section card per menu with its item hierarchy, page-count badges on page references, `↗` on external links, `≡` on headers, and a red **missing** badge on broken references. Exports to PDF / HTML. (This is the former nav "IA Report", now fed by the independent menus.)
 - Page counts per node with gap detection (empty nodes highlighted)
 - **URL override** — a node can publish at an address independent of its place in the menu (`Url_Path`); the override re-roots its sub-pages too. Containment and URL are separate axes.
 - **Breadcrumb parent** — set an arbitrary on-page breadcrumb top, independent of both the tree and the URL: mark a node a *breadcrumb root* or re-root it onto any other node (`Breadcrumb_Parent`); sub-pages inherit. Optional project "Home" prefix and advisory max-depth flag live in Project Settings → Identity. A deep `College of Business > Departments > Accounting` page can read simply **Home > Accounting**. The rendered page breadcrumb is exported as a column in the Migration Tracker Nav Plan, the Nav Tree column-picker export, and the menu export.

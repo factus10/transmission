@@ -1,6 +1,6 @@
 # Transmission — User Guide
 
-**Version 2.4.0 "How Soon Is Now?"**
+**Version 2.4.1 "How Soon Is Now?"**
 macOS (Apple Silicon + Intel)
 
 ---
@@ -964,7 +964,7 @@ So **need placement → 0** confirms every Keep/Evolve page is in the IA, **empt
   - Border encodes build phase (solid = current build, dashed = phased). Switch **Visual** / **Text Tree**, zoom/pan, export **PDF** or **SVG/HTML**.
 
   > **Taming a big tree — collapse repeating patterns.** On a large site, whole branches repeat the same shape (every academic department has Overview / Faculty / Programs / Contact). Showing all of them is noise. Best practice: for any branch whose children follow a content pattern, **pick the best representative and leave it expanded** to show the pattern in full, then **Collapse** the rest (check **Collapse** on each, or select them and hit **Collapse ✓**). The collapsed siblings still appear as single boxes with a "more underneath" stack, so the structure stays honest while the diagram stays readable.
-- **IA & coverage reports:** **IA Report** (toolbar) or **Reports → Navigation IA…**, **Reports → Nav Coverage Report…**, and **Reports → Net New Content Brief…**.
+- **IA & coverage reports:** the **Visual Sitemap** (above) for structure, plus **Reports → Nav Coverage Report…** and **Reports → Net New Content Brief…**. *(The hand-off report of the navigation itself is now the **Menu Report**, in the Menus view.)*
 
 To resolve pages that landed on the same node, see the Consolidation Candidates workflow in [Consolidate](#9-consolidate).
 
@@ -999,7 +999,7 @@ The columns are Node (number, toggle, label — it fills the width), Slug, Colla
 
 #### Reading the Pages column
 
-A link icon means an external URL, an arrow means a reference, **NEW** means net-new, an empty circle means an empty leaf, and a number is the page count (click it to expand). The Navigation IA report adds four node states: a **red** badge for **Empty** (no pages, no redirects), a slate **→** for **Redirect only**, a grey **Np** for **N live pages**, and an italic **≡** for a **Structural header**. These are purely informational — Transmission never blocks a save over coverage.
+A link icon means an external URL, an arrow means a reference, **NEW** means net-new, an empty circle means an empty leaf, and a number is the page count (click it to expand). The **Menu Report** (Menus → Report) adds per-item badges: a page-count on each page reference, `↗` on an external link, `≡` on a header, and a red **missing** badge on a broken reference. These are purely informational — Transmission never blocks a save over coverage.
 
 #### Reference picker and Visual Sitemap
 
@@ -1030,6 +1030,8 @@ Menus travel with the file (both `.transmission` projects and `.xlsx` exports), 
 > - **Outline** — a compact indented list; good for deep, narrow menus.
 
 **Catching broken references.** Because menu items point at content pages, deleting or renumbering a page can leave a menu item dangling. Any broken item shows `(missing page)` inline, and the toolbar surfaces a red **⚠ N broken refs** button whenever any exist — click it to see them all and either **Re-pick** the page or **Remove** the item. Worth a quick check before you export for handoff.
+
+**A tidy hand-off report.** The toolbar's **Report** (also **Reports → Menu Report…**) produces a polished, readable document — one section card per menu with its full item hierarchy, a page-count badge on each page reference, `↗` on external links, `≡` on headers, and a red **missing** badge on any broken reference. Export to PDF or HTML. This is the report to hand internal colleagues or a client when you want them to *read* the navigation rather than import it.
 
 **Exporting menus for a build team.** The toolbar's **Export…** produces a *CMS-agnostic* deliverable — a neutral, structured description of your menus that any platform's import can map from (it deliberately doesn't bake in any one CMS's model). Choose **all menus or just the selected one**, and a format: **Excel** (a flat, readable `Menus` sheet — one row per item with its depth, label, kind, and resolved target URL) or **JSON** (the same data nested, for a developer to import programmatically). Page references resolve to their target URLs automatically. A Contentful, WordPress, Drupal, or AEM team each maps the same file onto its own navigation; if a client ever needs a platform-native file, that's a thin add-on on top of this neutral export.
 
@@ -1201,7 +1203,7 @@ Reports are read-only views, generated on demand from the current file — run t
 
 ### For information architecture
 
-- **Navigation IA** — the in-menu tree with per-node page and redirect counts (and the [node states](#13-navigation--ia) from §13). Also available as the **IA Report** button in the nav toolbar.
+- **Menu Report** — one section card per menu with its item hierarchy, page-count badges on page references, `↗` on links, `≡` on headers, and a red **missing** badge on broken references. Also available as **Menus → Report**. A tight hand-off doc for colleagues and clients.
 - **Nav Coverage Report** — the gap-finder: empty leaf nodes, hub nodes, overloaded nodes (5+ pages), and path mismatches.
 - **Content Type Crosswalk** — one row per current type → renders → target type → target spec → migration track, with page volume and KKE breakdown, flagging any type with no crosswalk.
 - **Component Inventory** — the UI-component picture (see [Component Inventory](#20-component-inventory)).
