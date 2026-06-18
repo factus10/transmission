@@ -2,7 +2,7 @@
 
 Task-oriented guides to the real lifecycle of a content audit. Each is mental-model-first, with numbered steps using exact UI labels, and ends with a self-check. Read them in order the first time; revisit individually after.
 
-Every label, menu path, and shortcut here is verified against the 2.4.0 source — not memory.
+Every label, menu path, and shortcut here is verified against the 2.4.1 source — not memory.
 
 ## Reading path (the audit lifecycle)
 

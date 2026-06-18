@@ -4,6 +4,17 @@ All notable changes to Transmission are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 major-version codenames drawn from The Smiths.
 
+## [2.4.1] — "How Soon Is Now?"
+
+### Changed
+- **The nav "IA Report" became the Menu Report.** The polished section-card +
+  tree report is now fed by the independent **menus** rather than `inMenu`-filtered
+  nav nodes — reached via **Menus → Report** and **Reports → Menu Report…** (the
+  old nav-editor IA-Report button was removed). One card per menu with its item
+  hierarchy, page-count badges on page references, `↗` on external links, `≡` on
+  headers, and a red **missing** badge on broken references. PDF / HTML export.
+  This retires the lingering `inMenu`-vs-report question.
+
 ## [2.4.0] — "How Soon Is Now?"
 
 A visualization-focused release: the sitemaps gain layouts, palettes, and
