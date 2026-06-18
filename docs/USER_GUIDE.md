@@ -1018,7 +1018,10 @@ Open the **Menus** tab in the view switcher (or **Cmd+Shift+M**). On the left is
 
 Menus travel with the file (both `.transmission` projects and `.xlsx` exports), so they're saved alongside everything else.
 
-**Seeing a menu as a diagram.** The toolbar's **Sitemap** button draws each menu as a box-tree — the menu name at the root, items beneath it colored by kind (page / link / header, headers shown with a dashed border). Scroll to zoom, drag to pan, and download any menu as an **SVG**. A quick way to eyeball a menu's shape and depth, or drop a picture into a deck.
+**Seeing a menu as a diagram.** The toolbar's **Sitemap** button draws each menu as a box-tree — items colored by kind (page / link / header, headers shown with a dashed border). Scroll to zoom, drag to pan, and download any menu as an **SVG**. Each card has a **layout** dropdown so you can pick the shape that fits *that* menu (the choice is remembered per menu):
+> - **Mega columns** (default) — fans the menu's sections into side-by-side columns, each stacking its items beneath. Wide *and* deep; mirrors a real mega-menu panel.
+> - **Top-down tree** — the classic sitemap fan-out; good for shallow, wide menus.
+> - **Outline** — a compact indented list; good for deep, narrow menus.
 
 **Catching broken references.** Because menu items point at content pages, deleting or renumbering a page can leave a menu item dangling. Any broken item shows `(missing page)` inline, and the toolbar surfaces a red **⚠ N broken refs** button whenever any exist — click it to see them all and either **Re-pick** the page or **Remove** the item. Worth a quick check before you export for handoff.
 

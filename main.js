@@ -3176,14 +3176,48 @@ ipcMain.handle('render-sitemap-d3', async (event, { treeData, colorMap, options 
     // Build hierarchy then assign positions with a custom DFS pre-order layout
     // Each node gets .lx (left x) and .ly (top y) — the top-left corner of its box
     parts.push('  var root = d3.hierarchy(TREE_DATA);');
+    parts.push('  var LAYOUT = OPTS.layout || "outline";');
     parts.push('  var counter = {v:0};');
-    parts.push('  function layoutNode(d, depth) {');
-    parts.push('    d.lx = depth * INDENT;');
-    parts.push('    d.ly = counter.v * ROW_H;');
-    parts.push('    counter.v++;');
-    parts.push('    if (d.children) d.children.forEach(function(c) { layoutNode(c, depth+1); });');
+    // Outline (default): DFS pre-order — depth indents right, rows stack down.
+    parts.push('  function layoutOutline(d, depth) {');
+    parts.push('    d.lx = depth * INDENT; d.ly = counter.v * ROW_H; counter.v++;');
+    parts.push('    if (d.children) d.children.forEach(function(c) { layoutOutline(c, depth+1); });');
     parts.push('  }');
-    parts.push('  layoutNode(root, 0);');
+    // Top-down tidy tree via d3.tree(): x = horizontal spread, y = depth row.
+    parts.push('  function layoutTree() {');
+    parts.push('    d3.tree().nodeSize([BOX_W+26, BOX_H+36])(root);');
+    parts.push('    root.each(function(d){ d.lx = d.x - BOX_W/2; d.ly = d.depth*(BOX_H+36); });');
+    parts.push('  }');
+    // Mega-menu columns: root on top; depth-1 sections fan out as columns;
+    // depth>=2 stack vertically within each column (indented for sub-nesting).
+    parts.push('  function layoutColumns() {');
+    parts.push('    var INDENT_C=20, COL_GAP=40, ROW_HC=ROW_H+8;');
+    // Descend through any single-child "spine" (e.g. Primary > Home > Academics)
+    // until the menu actually branches — those children become the columns.
+    parts.push('    var spine=[root], branch=root;');
+    parts.push('    while (branch.children && branch.children.length===1) { branch=branch.children[0]; spine.push(branch); }');
+    parts.push('    spine.forEach(function(d,i){ d.lx=0; d.ly=i*ROW_HC; d.isSpine=true; });');
+    parts.push('    var baseY = spine.length*ROW_HC;');
+    parts.push('    var sections = branch.children || [];');
+    parts.push('    var xCursor=0;');
+    parts.push('    sections.forEach(function(sec){');
+    parts.push('      sec.isColumnHead = true;');
+    parts.push('      var colX=xCursor, rc={v:0}, maxRight=colX+BOX_W;');
+    parts.push('      function place(d, sub){');
+    parts.push('        d.lx = colX + sub*INDENT_C; d.ly = baseY + rc.v*ROW_HC; rc.v++;');
+    parts.push('        if (d.lx+BOX_W > maxRight) maxRight = d.lx+BOX_W;');
+    parts.push('        if (d.children) d.children.forEach(function(c){ place(c, sub+1); });');
+    parts.push('      }');
+    parts.push('      place(sec, 0);');
+    parts.push('      xCursor = maxRight + COL_GAP;');
+    parts.push('    });');
+    // Center the spine (incl. the root) over the full span of the columns.
+    parts.push('    var totalW = Math.max(BOX_W, xCursor - COL_GAP);');
+    parts.push('    spine.forEach(function(d){ d.lx = (totalW - BOX_W)/2; });');
+    parts.push('  }');
+    parts.push('  if (LAYOUT==="tree") layoutTree();');
+    parts.push('  else if (LAYOUT==="columns") layoutColumns();');
+    parts.push('  else layoutOutline(root, 0);');
     // Compute SVG canvas size from the layout
     parts.push('  var allNodes = root.descendants();');
     parts.push('  var maxRight = 0;');
@@ -3197,9 +3231,16 @@ ipcMain.handle('render-sitemap-d3', async (event, { treeData, colorMap, options 
     parts.push('  g.selectAll(".link").data(root.links()).join("path")');
     parts.push('    .attr("fill","none").attr("stroke","#c5c5d8").attr("stroke-width","1.5px")');
     parts.push('    .attr("d", function(d) {');
-    parts.push('      var px=d.source.lx+TRUNK_X, py=d.source.ly+BOX_H;');
-    parts.push('      var cx=d.target.lx,          cy=d.target.ly+BOX_H/2;');
-    parts.push('      return "M"+px+","+py+" L"+px+","+cy+" L"+cx+","+cy;');
+    // Top-down elbow for tree links, and for the root→section links in columns mode.
+    parts.push('      if (LAYOUT==="tree" || (LAYOUT==="columns" && (d.target.isColumnHead || d.target.isSpine))) {');
+    parts.push('        var px=d.source.lx+BOX_W/2, py=d.source.ly+BOX_H;');
+    parts.push('        var cx=d.target.lx+BOX_W/2, cy=d.target.ly, my=(py+cy)/2;');
+    parts.push('        return "M"+px+","+py+" L"+px+","+my+" L"+cx+","+my+" L"+cx+","+cy;');
+    parts.push('      }');
+    // Indented elbow (outline, and within-column links in columns mode)
+    parts.push('      var sx=d.source.lx+TRUNK_X, sy=d.source.ly+BOX_H;');
+    parts.push('      var tx=d.target.lx,          ty=d.target.ly+BOX_H/2;');
+    parts.push('      return "M"+sx+","+sy+" L"+sx+","+ty+" L"+tx+","+ty;');
     parts.push('    });');
     // Node groups placed at top-left of each box (rects/text use 0,0 origin)
     parts.push('  var node = g.selectAll(".node").data(allNodes).join("g")');
@@ -3255,11 +3296,14 @@ ipcMain.handle('render-sitemap-d3', async (event, { treeData, colorMap, options 
     // Legend — anchored below the repositioned tree
     parts.push('  var lgY = 20 + bb.height + 20;');
     parts.push('  var lgG = svg.append("g").attr("transform","translate(20,"+lgY+")");');
+    parts.push('  var LEGEND_TITLE = OPTS.legendTitle || "Page Pattern";');
+    parts.push('  var BORDER_SOLID = (OPTS.borderLegend && OPTS.borderLegend.solid) || "In nav menu";');
+    parts.push('  var BORDER_DASHED = (OPTS.borderLegend && OPTS.borderLegend.dashed) || "Not in nav";');
     // Pattern rows (only when patterns exist)
     parts.push('  if (patterns.length > 0) {');
     parts.push('    lgG.append("text").attr("x",0).attr("y",0)');
     parts.push('      .attr("font-size","10px").attr("font-weight","600").attr("fill","#888")');
-    parts.push('      .text("Page Pattern");');
+    parts.push('      .text(LEGEND_TITLE);');
     parts.push('    patterns.forEach(function(p, i) {');
     parts.push('      var col=i%COLS, row=Math.floor(i/COLS);');
     parts.push('      var x=col*ITEM_W, y=row*ITEM_H+14;');
@@ -3275,11 +3319,13 @@ ipcMain.handle('render-sitemap-d3', async (event, { treeData, colorMap, options 
     parts.push('  var indY = patternRowCount>0 ? patternRowCount*ITEM_H+22 : 9;');
     parts.push('  lgG.append("rect").attr("x",0).attr("y",indY-9).attr("width",28).attr("height",12).attr("rx",2)');
     parts.push('    .attr("fill","rgba(99,102,241,0.1)").attr("stroke","#6366f1").attr("stroke-width","1.5px");');
-    parts.push('  lgG.append("text").attr("x",34).attr("y",indY+1).attr("font-size","10px").attr("fill","#555").text("In nav menu");');
+    parts.push('  lgG.append("text").attr("x",34).attr("y",indY+1).attr("font-size","10px").attr("fill","#555").text(BORDER_SOLID);');
     parts.push('  lgG.append("rect").attr("x",120).attr("y",indY-9).attr("width",28).attr("height",12).attr("rx",2)');
     parts.push('    .attr("fill","rgba(99,102,241,0.1)").attr("stroke","#6366f1").attr("stroke-width","1.5px").attr("stroke-dasharray","5,3");');
-    parts.push('  lgG.append("text").attr("x",154).attr("y",indY+1).attr("font-size","10px").attr("fill","#555").text("Not in nav");');
-    // Stack indicator — back shadow, mid shadow, main box (each offset 3px down-right from previous)
+    parts.push('  lgG.append("text").attr("x",154).attr("y",indY+1).attr("font-size","10px").attr("fill","#555").text(BORDER_DASHED);');
+    // Stack indicator — back shadow, mid shadow, main box (each offset 3px down-right from previous).
+    // Only relevant to the nav sitemap's "menu items only" filter; menus pass showStack:false.
+    parts.push('  if (OPTS.showStack !== false) {');
     parts.push('  lgG.append("rect").attr("x",246+4).attr("y",indY-9+4).attr("width",28).attr("height",12).attr("rx",2)');
     parts.push('    .attr("fill","#eeeef8").attr("stroke","#b8b8cc").attr("stroke-width","1px");');
     parts.push('  lgG.append("rect").attr("x",246+2).attr("y",indY-9+2).attr("width",28).attr("height",12).attr("rx",2)');
@@ -3287,6 +3333,7 @@ ipcMain.handle('render-sitemap-d3', async (event, { treeData, colorMap, options 
     parts.push('  lgG.append("rect").attr("x",246).attr("y",indY-9).attr("width",28).attr("height",12).attr("rx",2)');
     parts.push('    .attr("fill","rgba(99,102,241,0.1)").attr("stroke","#6366f1").attr("stroke-width","1.5px");');
     parts.push('  lgG.append("text").attr("x",246+34).attr("y",indY+1).attr("font-size","10px").attr("fill","#555").text("Has sub-pages");');
+    parts.push('  }');
     parts.push('  document.title="DONE";');
     parts.push('})();');
     parts.push('</script></body></html>');
