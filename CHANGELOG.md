@@ -4,6 +4,34 @@ All notable changes to Transmission are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 major-version codenames drawn from The Smiths.
 
+## [2.4.0] — "How Soon Is Now?"
+
+A visualization-focused release: the sitemaps gain layouts, palettes, and
+collapse, and the Nav Tree sitemap is reframed as the content-IA "Visual Sitemap."
+
+### Added
+- **Sitemap layouts** (both sitemaps) — **Outline**, **Top-down tree**, and
+  **Mega columns** (sections fan into side-by-side columns, items stacked beneath).
+- **Color by + Palette** — color the IA sitemap by **Section / Build pattern /
+  Page status / KKE** (menus by **Item kind / Section**), in a **Meaningful**,
+  **Client brand**, or **Mono** palette. A client-brand palette editor lives in
+  **Project Settings → Identity** and is shared across both sitemaps.
+- **Collapse + Levels** — a per-node **Collapse** flag summarizes a subtree as a
+  single box with a "has more underneath" stack, and a **Levels** selector caps
+  the visible depth — built for large (1000+ node) trees.
+- **Seed from content tree** (Menus) reworked into a pick-a-branch + depth dialog.
+
+### Changed
+- The **Nav Tree → Sitemap** is now the **Visual Sitemap** of the content IA:
+  retitled, the "Menu items only" toggle removed, and the border now encodes
+  build phase (solid = current build, dashed = phased).
+- The legacy per-node **In-menu** controls (checkbox, Set/Clear Menu, node-editor
+  toggle) are **repurposed to Collapse**. `inMenu` data still round-trips.
+
+### Fixed
+- Per-menu sitemap rendered every card with the last menu's tree (concurrent
+  renders clobbered a shared temp file) — temp files are now unique per call.
+
 ## [2.3.0] — "How Soon Is Now?"
 
 Decouples the navigation tree's four overloaded jobs into independent axes and
