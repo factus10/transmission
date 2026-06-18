@@ -473,7 +473,7 @@ function bindIPCListeners() {
   window.electronAPI.onMenuReportRedirectMap(() => reportRedirectMap());
   window.electronAPI.onMenuReportNetNew(() => reportNetNewBrief());
   window.electronAPI.onMenuReportMigration(() => reportMigrationChecklist());
-  window.electronAPI.onMenuReportNavIa(() => reportNavIa());
+  window.electronAPI.onMenuReportNavIa(() => reportMenus());
   if (window.electronAPI.onMenuReportDesignPatterns) {
     window.electronAPI.onMenuReportDesignPatterns(() => reportDesignPatterns());
   }
@@ -10296,8 +10296,7 @@ function setupNavTree() {
   // Sitemap generator
   $('btn-nav-sitemap').addEventListener('click', generateNavSitemap);
 
-  // Navigation IA report
-  $('btn-nav-ia-report').addEventListener('click', reportNavIa);
+  // (The IA / Menu Report moved to the Menus view — Menus → Report.)
 
   // Nav export dropdown
   const exportBtn = $('btn-nav-export');
@@ -10607,6 +10606,7 @@ function setupMenusView() {
   const seed = $('btn-menu-seed'); if (seed) seed.addEventListener('click', seedMenuFromContentTree);
   const exp = $('btn-menu-export'); if (exp) exp.addEventListener('click', openMenuExportDialog);
   const smap = $('btn-menu-sitemap'); if (smap) smap.addEventListener('click', generateMenuSitemap);
+  const rep = $('btn-menu-report'); if (rep) rep.addEventListener('click', reportMenus);
   const chk = $('btn-menu-check'); if (chk) chk.addEventListener('click', openMenuOrphansDialog);
   const close = $('btn-menus-view-close'); if (close) close.addEventListener('click', () => returnToAuditView());
 }
@@ -18172,46 +18172,46 @@ const _NAV_IA_ACCENT_COLORS = [
   '#1A5C38', '#6B3F00', '#3D2B1F'
 ];
 
-function reportNavIa() {
-  if (!state.navNodes || state.navNodes.length === 0) {
-    showToast('No navigation structure loaded', 'error');
-    return;
-  }
+// Convert a menu's item tree into the pseudo-node shape the report builders
+// consume: ref → the referenced nav node's id (so page counts resolve), header →
+// nodeType 'Header', link → `_link` URL, broken ref → `_missing`.
+function _menuToReportSection(menu) {
+  const items = menu.items || [];
+  const childrenOf = pid => items.filter(it => (it.parentId || '') === (pid || ''));
+  const toNode = (it) => {
+    const refNode = it.kind === 'ref' ? state.navNodes.find(n => n.id === it.nodeId) : null;
+    return {
+      label: menuItemLabel(it) || (it.kind === 'header' ? '(section)' : it.kind === 'link' ? '(link)' : '(item)'),
+      id: (it.kind === 'ref' && refNode) ? refNode.id : ('__mi_' + it.id),
+      nodeType: it.kind === 'header' ? 'Header' : '',
+      refNodeId: null,
+      _link: it.kind === 'link' ? (it.externalUrl || '') : '',
+      _missing: it.kind === 'ref' && !refNode,
+      inMenu: 'Y',
+      children: childrenOf(it.id).map(toNode),
+    };
+  };
+  return {
+    label: menu.name || '(untitled menu)',
+    id: '__menu_' + menu.id,
+    nodeType: '', refNodeId: null, _link: '', _missing: false, inMenu: 'Y',
+    children: childrenOf('').map(toNode),
+  };
+}
+
+// Menu Report — the tight, hand-off-ready hierarchy view, now built from the
+// independent menus (one section card per menu). Reuses the report HTML/CSS.
+function reportMenus() {
+  const menus = getMenus();
+  if (!menus.length) { showToast('No menus to report — build one in the Menus view first', 'error'); return; }
 
   const pageCounts = _navPageCountsCache();
-
-  // Separate count of Kill/Consolidate (redirect-only) pages per node.
-  // These don't count as "live" pages at the destination but the node isn't
-  // truly empty either — the URL is intentionally going somewhere.
-  const redirectCounts = {};
-  (state.editedRows || []).forEach(r => {
-    const id = String(r['NavID'] || '').trim();
-    if (!id) return;
-    const effective = String(r[finalKkeCol()] || r[kkeCol()] || '').trim().toLowerCase();
-    if (effective === 'kill' || effective === 'consolidate') {
-      redirectCounts[id] = (redirectCounts[id] || 0) + 1;
-    }
-  });
-
-  // Determine section-card nodes.
-  // If there is a single root (e.g. "Home"), use its in-menu children as cards.
-  // If multiple roots, each root is a card.
-  const roots = state.navTree || [];
-  let sectionNodes;
-  if (roots.length === 1) {
-    sectionNodes = (roots[0].children || []).filter(n => n.inMenu === 'Y');
-  } else {
-    sectionNodes = roots.filter(n => n.inMenu === 'Y');
-  }
-
-  if (sectionNodes.length === 0) {
-    showToast('No in-menu top-level nodes found', 'error');
-    return;
-  }
+  const redirectCounts = {}; // not meaningful for menus
+  const sectionNodes = menus.map(_menuToReportSection);
 
   const previewHtml = _navIaPreviewHtml(sectionNodes, pageCounts, redirectCounts);
   const exportHtml  = _navIaExportHtml(sectionNodes, pageCounts, redirectCounts);
-  const title = 'Navigation IA';
+  const title = 'Menu Report';
   const defaultName = reportDefaultName(title);
 
   showReport(title, previewHtml, async (fmt) => {
@@ -18234,19 +18234,24 @@ function _navIaSubtreePageCount(node, pageCounts) {
   return count;
 }
 
+// Count of all descendant nodes (used for the Menu Report's item tally)
+function _reportCountDescendants(node) {
+  return (node.children || []).reduce((s, c) => s + 1 + _reportCountDescendants(c), 0);
+}
+
 // ── Preview HTML (inline styles for progress modal) ───────────────────────────
 
 function _navIaPreviewHtml(sectionNodes, pageCounts, redirectCounts) {
-  const totalNodes = (state.navNodes || []).length;
-  const inMenuCount = (state.navNodes || []).filter(n => n.inMenu === 'Y').length;
+  const itemCount = sectionNodes.reduce((s, sec) => s + _reportCountDescendants(sec), 0);
+  const pagesRef = sectionNodes.reduce((s, sec) => s + _navIaSubtreePageCount(sec, pageCounts), 0);
 
   let html = `<div style="font-family:system-ui,sans-serif;font-size:13px;line-height:1.5;color:#1a1a2e;">`;
 
   // Stats bar
   html += `<div style="margin-bottom:14px;padding:8px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;font-size:11.5px;color:#64748b;display:flex;gap:20px;flex-wrap:wrap;">`;
-  html += `<span><strong style="color:#1e293b;">${sectionNodes.length}</strong> mega-menu sections</span>`;
-  html += `<span><strong style="color:#1e293b;">${inMenuCount}</strong> in-menu nodes</span>`;
-  html += `<span><strong style="color:#1e293b;">${totalNodes}</strong> total nodes</span>`;
+  html += `<span><strong style="color:#1e293b;">${sectionNodes.length}</strong> menu${sectionNodes.length !== 1 ? 's' : ''}</span>`;
+  html += `<span><strong style="color:#1e293b;">${itemCount}</strong> items</span>`;
+  html += `<span><strong style="color:#1e293b;">${pagesRef}</strong> pages referenced</span>`;
   html += `</div>`;
 
   sectionNodes.forEach((section, i) => {
@@ -18287,15 +18292,19 @@ function _navIaPreviewSubtree(nodes, pageCounts, redirectCounts, depth) {
     const isBold = depth === 0;
     const indent = depth * 14;
 
-    const labelColor = (isEmpty || isHeader) ? '#9ca3af' : isRedirectOnly ? '#94a3b8' : isBold ? '#1e293b' : '#475569';
+    const labelColor = node._missing ? '#ef4444' : node._link ? (isBold ? '#1e293b' : '#475569') : (isEmpty || isHeader) ? '#9ca3af' : isRedirectOnly ? '#94a3b8' : isBold ? '#1e293b' : '#475569';
     html += `<li style="padding:2px 0 2px ${indent}px;border-bottom:1px solid #f1f5f9;display:flex;align-items:baseline;gap:6px;">`;
     html += `<span style="font-size:${isBold ? 12 : 11.5}px;font-weight:${isBold ? 600 : 400};font-style:${isHeader ? 'italic' : 'normal'};color:${labelColor};">`;
     html += escapeHtml(node.label);
     if (isAlias) html += ` <span style="font-size:9.5px;color:#94a3b8;">(→)</span>`;
     html += `</span>`;
 
-    if (isHeader) {
-      html += `<span style="margin-left:auto;font-size:10px;color:#94a3b8;background:#f8fafc;border:1px solid #e2e8f0;border-radius:3px;padding:0 4px;white-space:nowrap;" title="Menu header — structural grouping, no page content">≡</span>`;
+    if (node._missing) {
+      html += `<span style="margin-left:auto;font-size:10px;color:#ef4444;background:#fef2f2;border:1px solid #fecaca;border-radius:3px;padding:0 4px;white-space:nowrap;">missing</span>`;
+    } else if (node._link) {
+      html += `<span style="margin-left:auto;font-size:10px;color:#0284c7;white-space:nowrap;" title="${escapeHtml(node._link)}">↗ link</span>`;
+    } else if (isHeader) {
+      html += `<span style="margin-left:auto;font-size:10px;color:#94a3b8;background:#f8fafc;border:1px solid #e2e8f0;border-radius:3px;padding:0 4px;white-space:nowrap;" title="Menu header — structural grouping">≡</span>`;
     } else if (isEmpty) {
       html += `<span style="margin-left:auto;font-size:10px;color:#ef4444;background:#fef2f2;border:1px solid #fecaca;border-radius:3px;padding:0 4px;white-space:nowrap;">empty</span>`;
     } else if (isRedirectOnly) {
@@ -18322,9 +18331,9 @@ function _navIaExportHtml(sectionNodes, pageCounts, redirectCounts) {
   const ps = state.projectSettings || {};
   const clientProject = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
   const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  const totalNodes = (state.navNodes || []).length;
-  const inMenuCount = (state.navNodes || []).filter(n => n.inMenu === 'Y').length;
-  const title = escapeHtml(clientProject ? clientProject + ' — Navigation IA' : 'Navigation IA');
+  const itemCount = sectionNodes.reduce((s, sec) => s + _reportCountDescendants(sec), 0);
+  const pagesRef = sectionNodes.reduce((s, sec) => s + _navIaSubtreePageCount(sec, pageCounts), 0);
+  const title = escapeHtml(clientProject ? clientProject + ' — Menus' : 'Menus');
 
   // Wide card = section with ≥ 6 in-menu L2 children
   function isWide(section) {
@@ -18412,15 +18421,15 @@ function _navIaExportHtml(sectionNodes, pageCounts, redirectCounts) {
   <div class="internal-badge">Internal — Not for client distribution</div>
 </div>
 <div class="stats-strip">
-  <span><strong>${sectionNodes.length}</strong> mega-menu sections</span>
-  <span><strong>${inMenuCount}</strong> in-menu nodes</span>
-  <span><strong>${totalNodes}</strong> total nodes</span>
+  <span><strong>${sectionNodes.length}</strong> menu${sectionNodes.length !== 1 ? 's' : ''}</span>
+  <span><strong>${itemCount}</strong> items</span>
+  <span><strong>${pagesRef}</strong> pages referenced</span>
 </div>
 <div class="sections-grid">
 ${cardsHtml}
 </div>
 <div class="page-footer">
-  <span>${escapeHtml(clientProject || 'Navigation IA')}</span>
+  <span>${escapeHtml(clientProject || 'Menus')}</span>
   <span>Generated by Transmission · ${escapeHtml(dateStr)}</span>
 </div>
 </body>
@@ -18435,7 +18444,10 @@ function _navIaExportL2(node, pageCounts, redirectCounts) {
 
   let html = `<li><span class="l2-label">${escapeHtml(node.label)}`;
   if (isAlias) html += ` <span class="node-alias">(→)</span>`;
-  if (directCount > 0) html += ` <span class="node-count">${directCount}p</span>`;
+  if (node._missing) html += ` <span class="node-empty">missing</span>`;
+  else if (node._link) html += ` <span class="node-count" title="${escapeHtml(node._link)}">↗</span>`;
+  else if (node.nodeType === 'Header') html += ` <span class="node-header-badge" title="Menu header — grouping">≡</span>`;
+  else if (directCount > 0) html += ` <span class="node-count">${directCount}p</span>`;
   html += `</span>`;
 
   if (inMenuChildren.length > 0) {
@@ -18460,8 +18472,12 @@ function _navIaExportItem(node, pageCounts, redirectCounts, depth) {
 
   let html = `<li${isHeader ? ' class="node-is-header"' : ''}>${escapeHtml(node.label)}`;
   if (isAlias) html += ` <span class="node-alias">(→)</span>`;
-  if (isHeader) {
-    html += ` <span class="node-header-badge" title="Menu header — structural grouping, no page content">≡</span>`;
+  if (node._missing) {
+    html += ` <span class="node-empty">missing</span>`;
+  } else if (node._link) {
+    html += ` <span class="node-count" title="${escapeHtml(node._link)}">↗</span>`;
+  } else if (isHeader) {
+    html += ` <span class="node-header-badge" title="Menu header — structural grouping">≡</span>`;
   } else if (isEmpty) {
     html += ` <span class="node-empty">empty</span>`;
   } else if (isRedirectOnly) {

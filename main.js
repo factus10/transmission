@@ -416,7 +416,7 @@ function buildMenu() {
         { label: 'Content Inventory by Section…', click: send('menu-report-content-inventory') },
         { label: 'SME Review Status…',          click: send('menu-report-sme-status') },
         { type: 'separator' },
-        { label: 'Navigation IA…',              click: send('menu-report-nav-ia') },
+        { label: 'Menu Report…',                click: send('menu-report-nav-ia') },
         { label: 'Nav Coverage Report…',        click: send('menu-nav-coverage') },
         { label: 'Component Inventory…',          click: send('menu-report-design-patterns') },
         { label: 'Content Type Crosswalk…',       click: send('menu-report-content-crosswalk') },

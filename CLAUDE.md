@@ -578,11 +578,7 @@ Six client-facing reports accessible from the Reports menu, all using shared inf
 
 Reports: Executive Summary, Content Inventory by Section, SME Review Status, Redirect Map Report, Net New Content Brief, Migration Checklist. Each is triggered by a `menu-report-*` IPC channel from the Reports menu.
 
-**IA Report enhancements:** `reportNavIa()` builds a `redirectCounts` map (NavID → count of Kill/Consolidate rows assigned to that node) and passes it to the HTML builders. `_navIaPreviewSubtree` / `_navIaExportItem` now render four distinct node states:
-- `isEmpty` (no pages + redirect count is 0) → red empty badge
-- `isRedirectOnly` (redirect count > 0 but no live pages) → `→` slate badge
-- `isHeader` (structural header node) → `≡` italic header badge in export
-- Normal (has live pages) → `Np` grey count badge
+**Menu Report (`reportMenus`, formerly the nav "IA Report"):** the polished section-card + tree report — once the in-menu nav IA, now **fed by the independent menus** (this retired the parked `inMenu`/IA-report question). `_menuToReportSection(menu)` converts each menu's item tree into the pseudo-node shape the existing builders consume (`ref` → referenced node's id so page counts resolve; `header` → `nodeType:'Header'`; `link` → `_link` URL; broken ref → `_missing`), and `reportMenus()` feeds `menus.map(_menuToReportSection)` to `_navIaPreviewHtml` / `_navIaExportHtml`. The shared item builders (`_navIaPreviewSubtree` / `_navIaExportL2` / `_navIaExportItem`) render per-item badges: page-count `Np` on refs, `↗` on `_link`, `≡` on headers, red **missing** on `_missing` (the old empty/redirect node-states still exist for ref-to-empty-node leaves). Reached via **Menus → Report** (`#btn-menu-report`) and **Reports → Menu Report…** (`menu-report-nav-ia` IPC, kept). The old nav-editor IA-Report button was removed.
 
 Page counts in both `renderNavEditor()` and `_navPageCountsCache()` exclude Kill/Consolidate rows so those pages do not inflate live-page tallies.
 
