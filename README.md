@@ -2,7 +2,7 @@
 
 A macOS desktop app for auditing website content. Load a Screaming Frog crawl export (or any spreadsheet with URLs), review each page in an embedded browser, and record Keep/Kill/Evolve decisions directly in the file.
 
-**Version 2.3.0** — "How Soon Is Now?"
+**Version 2.4.0** — "How Soon Is Now?"
 
 ---
 
