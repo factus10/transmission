@@ -533,10 +533,10 @@
       <p class="help-mm"><strong>Mental model —</strong> audit rows answer "what about each <em>existing</em> page?"; the nav tree answers "what is the <em>new</em> site?". You connect them by <strong>placing</strong> Keep/Evolve pages onto nodes. The tree is the source of truth for breadcrumbs and computed URLs — renames cascade.</p>
       <ul>
         <li>Open with <code>Cmd+Shift+T</code> (or the <strong>Navigation Tree</strong> tab). Drive <strong>need placement &rarr; 0</strong>: KKE = Keep + Evolve, field filter <code>NavID is blank</code>, then <strong>Nav</strong> &rarr; <strong>Assign</strong> (use <strong>+ Child</strong> to create a node inline).</li>
-        <li><strong>Shape:</strong> rename/re-slug inline (cascades), drag to reorder/reparent, <strong>+ Root Node</strong> / row <strong>+</strong>, <strong>&#10697;</strong> clone, <strong>Remediate</strong>. Set <strong>Node type</strong>, <strong>In menu</strong> (bulk <strong>Set Menu &#10003;</strong>), <strong>Reference</strong>, <strong>Phase</strong>.</li>
+        <li><strong>Shape:</strong> rename/re-slug inline (cascades), drag to reorder/reparent, <strong>+ Root Node</strong> / row <strong>+</strong>, <strong>&#10697;</strong> clone, <strong>Remediate</strong>. Set <strong>Node type</strong>, <strong>Collapse</strong> (bulk <strong>Collapse &#10003; / Expand</strong> &mdash; summarizes a subtree in the Visual Sitemap), <strong>Reference</strong>, <strong>Phase</strong>.</li>
         <li><strong>Gaps:</strong> <strong>NEW</strong> = net-new; red <strong>empty leaf</strong> = assign / net-new / phase / delete; <strong>&#9888; duplicate IDs</strong> auto-renumbers. Read the stats line.</li>
         <li><strong>Decouple the three axes</strong> (all in the node editor): <strong>URL override</strong> (<code>&#8618;</code>) publishes a page at an address off its menu position, re-rooting sub-pages; <strong>Breadcrumb parent</strong> (<code>&#8624;</code>) sets an arbitrary on-page breadcrumb top (e.g. deep <em>Accounting</em> reads <strong>Home &gt; Accounting</strong>) &mdash; optional Home prefix + advisory depth cap in <strong>Project Settings &rarr; Identity</strong>, and a <strong>Page Breadcrumb</strong> column in the Migration Tracker / nav &amp; menu exports; and <strong>Menus</strong> (below) are independent of the tree. Containment, URL, breadcrumb, and menus are four separate things.</li>
-        <li><strong>See/report:</strong> <strong>Sitemap</strong> (box tree), <strong>IA Report</strong>, <strong>Nav Coverage</strong>, <strong>Net New Content Brief</strong>.</li>
+        <li><strong>Visual Sitemap</strong> (toolbar <strong>Sitemap</strong>): the content IA as a box tree. Per-diagram <strong>Levels</strong> (1&hellip;max depth), <strong>Layout</strong> (Outline / Top-down tree / Mega columns), <strong>Color by</strong> (Section / Build pattern / Page status / KKE), <strong>Palette</strong> (Meaningful / Client brand / Mono). Collapsed nodes (or those past the Levels cap) show a "has more underneath" stack. Also <strong>IA Report</strong>, <strong>Nav Coverage</strong>, <strong>Net New Content Brief</strong>.</li>
       </ul>
       <h3>Menus</h3>
       <p class="help-mm"><strong>Mental model —</strong> the tree says where content <em>lives</em>; <strong>menus</strong> say how people <em>reach</em> it — not the same thing. Menus are independent structures that <em>reference</em> content pages, so the same page can appear in several menus at different depths, and a menu's shape need not match the hierarchy.</p>
@@ -552,7 +552,7 @@
       <h4>Good end-state</h4>
       <ul class="help-check">
         <li>need placement = 0; no unexplained empty leaves; no duplicate NavID/slug warnings</li>
-        <li>In menu set correctly; phased work marked; net-new intentional</li>
+        <li>Phased work marked; net-new intentional; big repeating branches collapsed in the sitemap</li>
       </ul>
     </section>
 

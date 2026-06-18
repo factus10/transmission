@@ -5053,6 +5053,7 @@ function buildSavePayload({ fullNav = false, drainLog = true } = {}) {
       url: n.url || '',
       urlOverride: n.urlOverride || '',
       breadcrumbParentId: n.breadcrumbParentId || '',
+      collapse: n.collapse || '',
       notes: n.notes || '',
       phase: n.phase || '',
       // Phase 2, Chunk α — preserve reserved + build/write metadata
@@ -6409,6 +6410,7 @@ function toggleProjectSettingsPopover() {
   $('ps-default-redirect').value = ps.defaultRedirectUrl || '';
   if ($('ps-breadcrumb-home')) $('ps-breadcrumb-home').value = ps.breadcrumbHomeLabel || '';
   if ($('ps-breadcrumb-maxdepth')) $('ps-breadcrumb-maxdepth').value = ps.breadcrumbMaxDepth || '';
+  renderBrandPalette();
   // KKE States tab
   renderCustomKkeList();
   renderRogueKkeList();
@@ -10261,24 +10263,24 @@ function setupNavTree() {
   const phaseFilterEl = $('nav-phase-filter');
   if (phaseFilterEl) phaseFilterEl.addEventListener('change', () => renderNavEditor());
 
-  // Bulk menu set/clear for visible nodes
+  // Bulk collapse / expand (sitemap) for visible nodes
   $('btn-nav-set-menu-filtered').addEventListener('click', () => {
     const nodes = getNavDepthFilteredNodes();
     if (nodes.length === 0) return;
-    nodes.forEach(n => { n.inMenu = 'Y'; });
+    nodes.forEach(n => { n.collapse = 'Y'; });
     setDirty(true);
     state.navTreeDirty = true;
     renderNavEditor();
-    showToast(`Set Menu for ${nodes.length} nodes`, 'success');
+    showToast(`Collapsed ${nodes.length} nodes in the sitemap`, 'success');
   });
   $('btn-nav-clear-menu-filtered').addEventListener('click', () => {
     const nodes = getNavDepthFilteredNodes();
     if (nodes.length === 0) return;
-    nodes.forEach(n => { n.inMenu = ''; });
+    nodes.forEach(n => { n.collapse = ''; });
     setDirty(true);
     state.navTreeDirty = true;
     renderNavEditor();
-    showToast(`Cleared Menu for ${nodes.length} nodes`, 'success');
+    showToast(`Expanded ${nodes.length} nodes in the sitemap`, 'success');
   });
 
   // Collapse / expand all nav nodes
@@ -11025,7 +11027,8 @@ function showMenuNodePicker(onPick, opts = {}) {
   if (prior) prior.remove();
   const overlay = document.createElement('div');
   overlay.className = 'menu-node-picker';
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:950;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);';
+  // z above openModal dialogs (1000+) so it works when launched from one (e.g. seed dialog)
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:1300;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);';
   const dialog = document.createElement('div');
   dialog.style.cssText = 'background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:16px;width:760px;max-width:90vw;max-height:72vh;display:flex;flex-direction:column;box-shadow:0 16px 48px rgba(0,0,0,0.3);';
   const title = document.createElement('div');
@@ -11085,42 +11088,82 @@ function showMenuNodePicker(onPick, opts = {}) {
   setTimeout(() => search.focus(), 0);
 }
 
-async function seedMenuFromContentTree() {
+// Bootstrap a menu by mirroring a branch of the content tree as page references.
+// (Independent afterward — the inMenu-based seed was retired with the nav reframe.)
+function seedMenuFromContentTree() {
   if (!state.navNodes || state.navNodes.length === 0) {
     showToast('No content tree to seed from', 'error');
     return;
   }
-  const ordered = sortNodesForNavigation(state.navNodes);
-  const inMenuNodes = ordered.filter(n => (n.inMenu === 'Y' || n.inMenu === 'y' || n.inMenu === 'true'));
-  let source = inMenuNodes;
-  if (source.length === 0) {
-    const proceed = await confirmDialog({ title: 'Seed menu', message: 'No nodes are marked “in menu”. Seed from ALL content nodes instead?', confirmLabel: 'Use all nodes' });
-    if (!proceed) return;
-    source = ordered;
-  }
-  const name = await showPrompt('Seed menu from content tree', 'Menu name', 'Primary');
-  if (!name || !name.trim()) return;
+  let picked = null; // chosen branch node; null = all top-level content nodes
 
-  const menu = { id: genMenuId(), name: sanitizeText(name).trim(), placement: 'Top bar', description: 'Seeded from the content tree’s in-menu nodes. Edit freely — it’s now independent of the tree.', items: [] };
-  const inSource = new Set(source.map(n => n.number));
-  const nodeByNumber = {};
-  state.navNodes.forEach(n => { nodeByNumber[n.number] = n; });
-  const itemIdByNumber = {};
-  source.forEach((n, i) => { itemIdByNumber[n.number] = 'mi-' + String(i + 1).padStart(4, '0'); });
-  source.forEach(n => {
-    let pid = '';
-    let cur = n.parentNumber ? nodeByNumber[n.parentNumber] : null;
-    while (cur) {
-      if (inSource.has(cur.number)) { pid = itemIdByNumber[cur.number]; break; }
-      cur = cur.parentNumber ? nodeByNumber[cur.parentNumber] : null;
-    }
-    menu.items.push({ id: itemIdByNumber[n.number], parentId: pid, kind: 'ref', nodeId: n.id, externalUrl: '', label: '' });
+  function runSeed(node, depthLimit, rawName) {
+    const name = sanitizeText(rawName || '').trim();
+    if (!name) { showToast('Enter a menu name', 'error'); return false; }
+    const roots = node ? (node.children || []) : state.navTree;
+    if (!roots || !roots.length) { showToast('That branch has no child pages to mirror', 'error'); return false; }
+    const menu = { id: genMenuId(), name, placement: '', description: 'Seeded from the content tree — now independent; edit freely.', items: [] };
+    let seq = 0;
+    const addItems = (nodes, parentItemId, level) => {
+      (nodes || []).forEach(n => {
+        const item = { id: 'mi-' + String(++seq).padStart(4, '0'), parentId: parentItemId, kind: 'ref', nodeId: n.id, externalUrl: '', label: '' };
+        menu.items.push(item);
+        if (!depthLimit || level < depthLimit) addItems(n.children, item.id, level + 1);
+      });
+    };
+    addItems(roots, '', 1);
+    getMenus().push(menu);
+    _menuSelectedId = menu.id;
+    setDirty(true);
+    renderMenusView();
+    showToast(`Seeded “${name}” with ${menu.items.length} item${menu.items.length !== 1 ? 's' : ''}`, 'success');
+    return true;
+  }
+
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:12px;font-size:13px;';
+  body.innerHTML = `
+    <div style="color:var(--text-muted);line-height:1.5;">Mirror a branch of the content tree into a new menu as page references. The menu is independent afterward — edit it freely.</div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="width:80px;color:var(--text-secondary);">Start from</span>
+      <button id="_seed-pick" class="btn btn-sm btn-ghost">Choose node…</button>
+      <span id="_seed-picked" style="font-size:12px;color:var(--text-muted);">all top-level sections</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <label style="width:80px;color:var(--text-secondary);" for="_seed-depth">Depth</label>
+      <select id="_seed-depth" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;">
+        <option value="0">All levels</option>
+        <option value="1">1 level</option>
+        <option value="2">2 levels</option>
+        <option value="3">3 levels</option>
+      </select>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <label style="width:80px;color:var(--text-secondary);" for="_seed-name">Menu name</label>
+      <input id="_seed-name" type="text" value="Primary" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;">
+    </div>`;
+
+  const m = openModal({
+    title: 'Seed menu from content tree',
+    body,
+    width: 520,
+    buttons: [
+      { label: 'Cancel' },
+      { label: 'Seed', variant: 'primary', closeOnClick: false, onClick: (api) => {
+          const depth = parseInt(api.dialog.querySelector('#_seed-depth').value, 10) || 0;
+          const name = api.dialog.querySelector('#_seed-name').value;
+          if (runSeed(picked, depth, name)) api.close();
+        } }
+    ]
   });
-  getMenus().push(menu);
-  _menuSelectedId = menu.id;
-  setDirty(true);
-  renderMenusView();
-  showToast(`Seeded “${menu.name}” with ${menu.items.length} item${menu.items.length !== 1 ? 's' : ''}`, 'success');
+  m.dialog.querySelector('#_seed-pick').addEventListener('click', () => {
+    showMenuNodePicker((node) => {
+      picked = node;
+      m.dialog.querySelector('#_seed-picked').textContent = node.breadcrumb || node.label || '(node)';
+      const nameInp = m.dialog.querySelector('#_seed-name');
+      if (nameInp && (!nameInp.value.trim() || nameInp.value === 'Primary')) nameInp.value = node.label || 'Menu';
+    }, { title: 'Choose starting branch' });
+  });
 }
 
 // ─── Menu export (CMS-agnostic) ──────────────────────────────────────────────
@@ -11341,56 +11384,166 @@ function _menuSitemapZoom(container, svg) {
   container.addEventListener('mouseleave', () => { panning = false; container.style.cursor = 'grab'; });
 }
 
+// Sections = the children at the menu's first real branch point (after descending
+// any single-child spine). Each item maps to the section it descends from; spine
+// items map to '' (neutral). Mirrors the columns layout's column grouping.
+function menuSections(menu) {
+  const items = menu.items || [];
+  const childrenOf = pid => items.filter(it => (it.parentId || '') === (pid || ''));
+  let level = childrenOf('');
+  while (level.length === 1) level = childrenOf(level[0].id);
+  const sectionOf = {};
+  level.forEach(sec => {
+    const label = menuItemLabel(sec) || '(section)';
+    (function walk(it) { sectionOf[it.id] = label; childrenOf(it.id).forEach(walk); })(sec);
+  });
+  return sectionOf;
+}
+
+const SITEMAP_SECTION_CYCLE = ['#4F46E5', '#0891B2', '#059669', '#D97706', '#DC2626', '#7C3AED', '#0284C7', '#65A30D', '#DB2777', '#9333EA', '#C2410C', '#0D9488'];
+const SITEMAP_KIND_COLORS = { Page: '#059669', Link: '#D97706', Header: '#64748B' };
+
+// Returns { patternFn, colorMap, defaultColor, legendTitle } for one menu given the
+// color-by dimension (kind|section) and palette (meaningful|brand|mono).
+function menuColoring(menu, colorBy, palette) {
+  const brand = (Array.isArray(state.projectSettings.brandPalette) && state.projectSettings.brandPalette.length)
+    ? state.projectSettings.brandPalette : null;
+  const kindOf = (it) => it.kind === 'ref' ? 'Page' : it.kind === 'link' ? 'Link' : 'Header';
+
+  if (palette === 'mono') {
+    return { patternFn: () => '', colorMap: {}, defaultColor: (brand && brand[0]) || '#4F46E5', legendTitle: '' };
+  }
+  if (colorBy === 'section') {
+    const sectionOf = menuSections(menu);
+    const labels = [...new Set(Object.values(sectionOf))];
+    const cycle = (palette === 'brand' && brand) ? brand : SITEMAP_SECTION_CYCLE;
+    const colorMap = {};
+    labels.forEach((l, i) => { colorMap[l] = cycle[i % cycle.length]; });
+    return { patternFn: (it) => sectionOf[it.id] || '', colorMap, defaultColor: null, legendTitle: 'Section' };
+  }
+  // colorBy === 'kind'
+  const cycle = (palette === 'brand' && brand) ? brand : null;
+  if (cycle) {
+    const colorMap = {};
+    ['Page', 'Link', 'Header'].forEach((k, i) => { colorMap[k] = cycle[i % cycle.length]; });
+    return { patternFn: kindOf, colorMap, defaultColor: null, legendTitle: 'Item kind' };
+  }
+  return { patternFn: kindOf, colorMap: { ...SITEMAP_KIND_COLORS }, defaultColor: null, legendTitle: 'Item kind' };
+}
+
+// Project Settings → Identity: editable list of client brand hex colors, used by
+// the sitemap "Client brand" palette option. Stored in projectSettings.brandPalette.
+function renderBrandPalette() {
+  const wrap = $('ps-brand-palette');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const pal = Array.isArray(state.projectSettings.brandPalette) ? state.projectSettings.brandPalette : [];
+  pal.forEach((hex, i) => {
+    const cell = document.createElement('span');
+    cell.style.cssText = 'display:inline-flex;align-items:center;gap:2px;border:1px solid var(--border);border-radius:4px;padding:2px 2px 2px 3px;';
+    const inp = document.createElement('input');
+    inp.type = 'color';
+    inp.value = /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : '#4f46e5';
+    inp.style.cssText = 'width:28px;height:22px;border:none;background:none;cursor:pointer;padding:0;';
+    inp.addEventListener('input', () => { state.projectSettings.brandPalette[i] = inp.value; setDirty(true); });
+    const rm = document.createElement('span');
+    rm.textContent = '✕';
+    rm.title = 'Remove color';
+    rm.style.cssText = 'cursor:pointer;color:var(--text-muted);font-size:10px;padding:0 3px;';
+    rm.addEventListener('click', () => { state.projectSettings.brandPalette.splice(i, 1); setDirty(true); renderBrandPalette(); });
+    cell.appendChild(inp);
+    cell.appendChild(rm);
+    wrap.appendChild(cell);
+  });
+  const add = document.createElement('button');
+  add.className = 'btn btn-sm btn-ghost';
+  add.textContent = pal.length ? '+ Add' : '+ Add color';
+  add.addEventListener('click', () => {
+    if (!Array.isArray(state.projectSettings.brandPalette)) state.projectSettings.brandPalette = [];
+    state.projectSettings.brandPalette.push('#4f46e5');
+    setDirty(true);
+    renderBrandPalette();
+  });
+  wrap.appendChild(add);
+}
+
 async function generateMenuSitemap() {
   const menus = getMenus();
   if (!menus.length) { showToast('No menus to visualize', 'error'); return; }
 
-  const colorMap = { 'Page': '#059669', 'Link': '#D97706', 'Header': '#64748B' };
   const kindKey = (it) => it.kind === 'ref' ? 'Page' : it.kind === 'link' ? 'Link' : 'Header';
-  const buildItems = (menu, pid) => (menu.items || [])
+  // patternFn(item) → the value the box is colored by (kind label or section label).
+  const buildItems = (menu, pid, patternFn) => (menu.items || [])
     .filter(it => (it.parentId || '') === (pid || ''))
     .map(it => ({
       name: (menuItemLabel(it) || '(item)').substring(0, 35),
       menu: it.kind !== 'header',     // dashed border for headers (grouping, not a destination)
-      pattern: kindKey(it),           // colored by kind
+      pattern: patternFn(it),
       phase: '',
       pageCount: 0,
       hasHiddenChildren: false,
-      children: buildItems(menu, it.id),
+      children: buildItems(menu, it.id, patternFn),
     }));
-  const buildMenuTree = (menu) => ({
+  const buildMenuTree = (menu, patternFn) => ({
     name: (menu.name || '(untitled menu)').substring(0, 40),
     menu: true,
-    pattern: '',
+    pattern: '',     // root/menu name is always neutral
+    isMenuRoot: true, // styled as the menu container, not a page/link/header
     phase: '',
     pageCount: 0,
     hasHiddenChildren: false,
-    children: buildItems(menu, ''),
+    children: buildItems(menu, '', patternFn),
   });
 
   const ps = state.projectSettings || {};
   const slug = (ps.projectName || ps.clientName || 'project').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project';
 
+  // Color choices are project-level defaults (apply to all menus), tunable from the
+  // modal toolbar; layout is per-menu.
+  let colorBy = ps.sitemapColorBy || 'kind';
+  let palette = ps.sitemapPalette || 'meaningful';
+  let rerenderAll = () => {}; // assigned once cards are built
+
   const body = document.createElement('div');
   body.style.cssText = 'display:flex;flex-direction:column;gap:16px;';
-  const hint = document.createElement('div');
-  hint.style.cssText = 'font-size:11px;color:var(--text-muted);';
-  hint.textContent = 'Each menu draws as its own tree. Pick a layout per menu; scroll to zoom, drag to pan. (Each diagram carries its own color legend.)';
-  body.appendChild(hint);
+
+  // ── Color controls (color-by + palette), modal-level ──
+  const controls = document.createElement('div');
+  controls.style.cssText = 'display:flex;align-items:center;gap:14px;font-size:12px;color:var(--text-secondary);flex-wrap:wrap;';
+  const mkSel = (label, opts, current, onChange) => {
+    const wrap = document.createElement('label');
+    wrap.style.cssText = 'display:flex;align-items:center;gap:5px;';
+    wrap.appendChild(document.createTextNode(label));
+    const sel = document.createElement('select');
+    sel.style.cssText = 'font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;';
+    opts.forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; if (v === current) o.selected = true; sel.appendChild(o); });
+    sel.addEventListener('change', () => onChange(sel.value));
+    wrap.appendChild(sel);
+    return wrap;
+  };
+  const hasBrand = Array.isArray(ps.brandPalette) && ps.brandPalette.length > 0;
+  controls.appendChild(mkSel('Color by', [['kind', 'Item kind'], ['section', 'Section']], colorBy, (v) => { colorBy = v; state.projectSettings.sitemapColorBy = v; setDirty(true); rerenderAll(); }));
+  controls.appendChild(mkSel('Palette', [['meaningful', 'Meaningful'], ['brand', hasBrand ? 'Client brand' : 'Client brand (none set)'], ['mono', 'Mono']], palette, (v) => { palette = v; state.projectSettings.sitemapPalette = v; setDirty(true); rerenderAll(); }));
+  const hint = document.createElement('span');
+  hint.style.cssText = 'font-size:11px;color:var(--text-muted);flex:1;min-width:160px;';
+  hint.textContent = 'Layout is per menu · scroll to zoom, drag to pan' + (hasBrand ? '' : ' · set Client brand colors in Project Settings → Identity');
+  controls.appendChild(hint);
+  body.appendChild(controls);
 
   const LAYOUTS = [['columns', 'Mega columns'], ['tree', 'Top-down tree'], ['outline', 'Outline']];
 
-  // Render (or re-render) one menu's card. Reads menu.sitemapLayout each call so
-  // the per-card layout dropdown can re-render just that card.
+  // Render (or re-render) one menu's card. Reads menu.sitemapLayout + the current
+  // colorBy/palette each call so the dropdowns can re-render.
   const renderCard = async (menu, chartDiv, dl) => {
     chartDiv.innerHTML = '<p style="color:#888;font-size:12px;padding:16px;">Rendering…</p>';
     dl.disabled = true;
     const layout = menu.sitemapLayout || 'columns';
+    const coloring = menuColoring(menu, colorBy, palette);
     try {
       const result = await window.electronAPI.renderSitemapD3({
-        treeData: buildMenuTree(menu),
-        colorMap,
-        options: { layout, legendTitle: 'Item kind', borderLegend: { solid: 'Page / Link', dashed: 'Header' }, showStack: false }
+        treeData: buildMenuTree(menu, coloring.patternFn),
+        colorMap: coloring.colorMap,
+        options: { layout, legendTitle: coloring.legendTitle, borderLegend: { solid: 'Page / Link', dashed: 'Header' }, showStack: false, defaultColor: coloring.defaultColor || undefined }
       });
       if (result && result.success && result.svg) {
         chartDiv.innerHTML = result.svg;
@@ -11451,11 +11604,12 @@ async function generateMenuSitemap() {
     return { menu, chartDiv, dl };
   });
 
+  // Re-render every card sequentially (used when a modal-level color control changes).
+  rerenderAll = () => { (async () => { for (const c of cards) await renderCard(c.menu, c.chartDiv, c.dl); })(); };
+
   openModal({ title: 'Menu sitemaps', body, width: '92vw', buttons: [{ label: 'Done', variant: 'primary' }] });
 
-  (async () => {
-    for (const { menu, chartDiv, dl } of cards) await renderCard(menu, chartDiv, dl);
-  })();
+  rerenderAll();
 }
 
 async function exportNavTree(format) {
@@ -11782,37 +11936,62 @@ async function generateNavSitemap() {
     return;
   }
 
-  const depthFilter = $('nav-depth-filter').value !== '' ? parseInt($('nav-depth-filter').value) : null;
+  let depthFilter = $('nav-depth-filter').value !== '' ? parseInt($('nav-depth-filter').value) : null; // "Levels" cap, tunable in the toolbar
+  let treeMaxDepth = 1;
+  (function md(nodes, depth) { if (!nodes) return; if (depth > treeMaxDepth) treeMaxDepth = depth; nodes.forEach(n => md(n.children, depth + 1)); })(state.navTree, 1);
 
-  // Build color map from all buildPattern values across the nav tree
   const SITEMAP_PALETTE = [
     '#4F46E5', '#0891B2', '#059669', '#D97706', '#DC2626',
     '#7C3AED', '#0284C7', '#65A30D', '#DB2777', '#9333EA',
     '#C2410C', '#0D9488',
   ];
-  const patternSet = new Set();
-  function walkForPatterns(nodes) {
-    if (!nodes) return;
-    nodes.forEach(n => {
-      if (n.buildPattern) patternSet.add(n.buildPattern);
-      walkForPatterns(n.children);
-    });
-  }
-  walkForPatterns(state.navTree);
-  const colorMap = {};
-  [...patternSet].sort().forEach((p, i) => { colorMap[p] = SITEMAP_PALETTE[i % SITEMAP_PALETTE.length]; });
+  // Layout + coloring choices (project-level defaults; tunable from the toolbar).
+  const ps = state.projectSettings || {};
+  let navLayout = ps.navSitemapLayout || 'outline';
+  let navColorBy = ps.navSitemapColorBy || 'pattern';
+  let navPalette = ps.navSitemapPalette || 'meaningful';
 
-  function makeShouldInclude(menuOnly) {
-    return function shouldInclude(node) {
-      if (!menuOnly) return true;
-      if (node.inMenu === 'Y' || node.inMenu === 'y') return true;
-      return (node.children || []).some(c => shouldInclude(c));
-    };
+  // Effective KKE per nav node (from its assigned rows) for the "KKE" color-by.
+  const kkeByNav = {};
+  state.editedRows.forEach(r => {
+    const id = String(r['NavID'] || ''); if (!id) return;
+    const k = String(r[finalKkeCol()] || r[kkeCol()] || '').trim();
+    if (!k) return;
+    (kkeByNav[id] = kkeByNav[id] || new Set()).add(k);
+  });
+  const navNodeKke = (n) => { const s = kkeByNav[n.id]; if (!s || !s.size) return ''; return s.size === 1 ? [...s][0] : 'Mixed'; };
+  const topSectionLabel = (n) => { let cur = n; while (cur.parentNumber) { const p = state.navNodes.find(x => x.number === cur.parentNumber); if (!p) break; cur = p; } return cur.label || ''; };
+  const colorValueOf = (n) => {
+    if (navColorBy === 'status') return n.pageStatus || '';
+    if (navColorBy === 'section') return topSectionLabel(n);
+    if (navColorBy === 'kke') return navNodeKke(n);
+    return n.buildPattern || '';
+  };
+  const navLegendTitle = () => navColorBy === 'section' ? 'Section' : navColorBy === 'status' ? 'Page status' : navColorBy === 'kke' ? 'KKE' : 'Build pattern';
+  function buildNavColorMap() {
+    const brand = (Array.isArray(ps.brandPalette) && ps.brandPalette.length) ? ps.brandPalette : null;
+    if (navPalette === 'mono') return { colorMap: {}, defaultColor: (brand && brand[0]) || '#4F46E5' };
+    const vals = new Set();
+    (function walk(nodes) { if (!nodes) return; nodes.forEach(n => { const v = colorValueOf(n); if (v) vals.add(v); walk(n.children); }); })(state.navTree);
+    const list = [...vals].sort();
+    const colorMap = {};
+    if (navColorBy === 'kke' && navPalette !== 'brand') {
+      const KKE_COLORS = { Keep: '#059669', Kill: '#DC2626', Evolve: '#D97706', Consolidate: '#7C3AED', Exclude: '#64748B', Mixed: '#94a3b8' };
+      list.forEach(v => { colorMap[v] = KKE_COLORS[v] || '#6366f1'; });
+      return { colorMap, defaultColor: null };
+    }
+    if (navColorBy === 'status' && navPalette !== 'brand' && Array.isArray(state.pageStatusLibrary)) {
+      list.forEach((v, i) => { const st = state.pageStatusLibrary.find(s => s.name === v); colorMap[v] = (st && st.color) ? st.color : SITEMAP_PALETTE[i % SITEMAP_PALETTE.length]; });
+      return { colorMap, defaultColor: null };
+    }
+    const cycle = (navPalette === 'brand' && brand) ? brand : SITEMAP_PALETTE;
+    list.forEach((v, i) => { colorMap[v] = cycle[i % cycle.length]; });
+    return { colorMap, defaultColor: null };
   }
+  const shouldInclude = () => true; // IA sitemap shows the full hierarchy
 
-  function buildSitemap(menuOnly) {
+  function buildSitemap() {
     const idMap = new Map();
-    const shouldInclude = makeShouldInclude(menuOnly);
 
     function sanitizeId(id) {
       return 'N' + id.replace(/[^a-zA-Z0-9]/g, '_');
@@ -11880,16 +12059,17 @@ async function generateNavSitemap() {
     let textTree = '';
     function addTextNodes(nodes, depth, prefix) {
       if (!nodes) return;
-      const filtered = menuOnly ? nodes.filter(n => shouldInclude(n)) : nodes;
+      const filtered = nodes;
       filtered.forEach((node, i) => {
         if (depthFilter !== null && depth > depthFilter) return;
         const isLast = i === filtered.length - 1;
         const connector = depth === 0 ? '' : (isLast ? '└── ' : '├── ');
         const childPrefix = depth === 0 ? '' : (isLast ? '    ' : '│   ');
         const menu = '';
+        const collapsed = node.collapse === 'Y' || node.collapse === true;
         const path = node.computedPath ? ` (/${node.computedPath})` : '';
-        textTree += prefix + connector + node.label + menu + path + '\n';
-        addTextNodes(node.children, depth + 1, prefix + childPrefix);
+        textTree += prefix + connector + node.label + menu + path + (collapsed && (node.children || []).length ? ' [+]' : '') + '\n';
+        if (!collapsed) addTextNodes(node.children, depth + 1, prefix + childPrefix);
       });
     }
     addTextNodes(state.navTree, 0, '');
@@ -11898,18 +12078,22 @@ async function generateNavSitemap() {
   }
 
   // Build initial sitemap (all nodes)
-  let current = buildSitemap(false);
+  let current = buildSitemap();
 
-  function renderSitemapModal(data, menuOnly, activeTab) {
+  function renderSitemapModal(data, activeTab) {
     if (!activeTab) activeTab = 'visual';
+    const opt = (v, label, cur) => `<option value="${v}"${v === cur ? ' selected' : ''}>${label}</option>`;
     let html = `<div style="padding:0;display:flex;flex-direction:column;height:100%;">`;
 
     // Toolbar
-    html += `<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0;">`;
-    html += `<div style="font-weight:600;font-size:13px;">Sitemap — ${data.nodeCount} nodes${depthFilter !== null ? ` (depth ≤ ${depthFilter})` : ''}</div>`;
-    html += `<label style="font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;">`;
-    html += `<input type="checkbox" id="sitemap-menu-only" ${menuOnly ? 'checked' : ''}> Menu items only`;
-    html += `</label>`;
+    html += `<div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;">`;
+    html += `<div style="font-weight:600;font-size:13px;">Visual Sitemap — ${data.nodeCount} nodes${depthFilter !== null ? ` (depth ≤ ${depthFilter})` : ''}</div>`;
+    let levelsOpts = `<option value=""${depthFilter === null ? ' selected' : ''}>All</option>`;
+    for (let L = 1; L <= treeMaxDepth; L++) levelsOpts += `<option value="${L}"${depthFilter === L ? ' selected' : ''}>${L}</option>`;
+    html += `<label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:4px;">Levels <select id="sitemap-levels" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;">${levelsOpts}</select></label>`;
+    html += `<label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:4px;">Layout <select id="sitemap-layout" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;">${opt('outline', 'Outline', navLayout)}${opt('tree', 'Top-down tree', navLayout)}${opt('columns', 'Mega columns', navLayout)}</select></label>`;
+    html += `<label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:4px;">Color by <select id="sitemap-colorby" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;">${opt('section', 'Section', navColorBy)}${opt('pattern', 'Build pattern', navColorBy)}${opt('status', 'Page status', navColorBy)}${opt('kke', 'KKE', navColorBy)}</select></label>`;
+    html += `<label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:4px;">Palette <select id="sitemap-palette" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;">${opt('meaningful', 'Meaningful', navPalette)}${opt('brand', 'Client brand', navPalette)}${opt('mono', 'Mono', navPalette)}</select></label>`;
     html += `<span style="flex:1"></span>`;
     // Tabs
     html += `<button class="btn btn-sm ${activeTab === 'visual' ? 'btn-primary' : 'btn-ghost'}" id="sitemap-tab-visual">Visual</button>`;
@@ -11937,12 +12121,14 @@ async function generateNavSitemap() {
 
   let _sitemapActiveTab = 'visual';
 
-  async function showSitemapModal(menuOnly) {
-    current = buildSitemap(menuOnly);
-    $('progress-body').innerHTML = renderSitemapModal(current, menuOnly, _sitemapActiveTab);
+  async function showSitemapModal() {
+    current = buildSitemap();
+    $('progress-body').innerHTML = renderSitemapModal(current, _sitemapActiveTab);
     $('progress-body').style.height = '100%';
     $('btn-progress-export-pdf').classList.add('hidden');
     $('btn-progress-export-html').classList.add('hidden');
+    const titleEl = $('progress-modal-title');
+    if (titleEl) titleEl.textContent = 'Visual Sitemap';
 
     // Make the modal larger for the sitemap
     const modal = $('progress-modal');
@@ -11952,31 +12138,29 @@ async function generateNavSitemap() {
     $('progress-overlay').classList.remove('hidden');
     modal.classList.remove('hidden');
 
-    // Restore modal size on close
-    const origClose = closeProgressDashboard;
-
     // Render D3 tidy tree
     const renderDiv = $('sitemap-mermaid-render');
     if (renderDiv && _sitemapActiveTab === 'visual') {
       renderDiv.innerHTML = '<p style="color:var(--text-muted);font-size:12px;padding:20px;">Rendering tree...</p>';
 
-      // Build D3-compatible tree data
-      const shouldIncludeD3 = makeShouldInclude(menuOnly);
+      const { colorMap, defaultColor } = buildNavColorMap();
       const pageCounts = _navPageCountsCache();
       function buildD3Tree(nodes) {
         if (!nodes) return [];
-        return nodes.filter(n => shouldIncludeD3(n)).map(n => {
+        return nodes.map(n => {
           const allChildren = n.children || [];
-          // hasHiddenChildren: in menu-only mode, children that exist but are completely excluded
-          const hiddenChildren = menuOnly ? allChildren.filter(c => !shouldIncludeD3(c)) : [];
+          // A node's subtree is cut (shown collapsed, with the stacked "has sub-pages"
+          // indicator) when it's flagged collapse, or when the Levels cap hides its children.
+          const collapsed = n.collapse === 'Y' || n.collapse === true;
+          const cut = collapsed || (depthFilter !== null && getNodeDepth(n) >= depthFilter);
           return {
             name: (n.label || '(unnamed)').substring(0, 35),
-            menu: n.inMenu === 'Y' || n.inMenu === 'y',
-            pattern: n.buildPattern || '',
+            menu: !String(n.phase || '').trim(),  // solid = current build, dashed = phased
+            pattern: colorValueOf(n),
             phase: n.phase || '',
             pageCount: pageCounts[n.id] || 0,
-            hasHiddenChildren: hiddenChildren.length > 0,
-            children: (depthFilter !== null && getNodeDepth(n) >= depthFilter) ? [] : buildD3Tree(n.children),
+            hasHiddenChildren: cut && allChildren.length > 0,
+            children: cut ? [] : buildD3Tree(n.children),
           };
         });
       }
@@ -12013,7 +12197,7 @@ async function generateNavSitemap() {
           renderDiv.appendChild(section);
 
           try {
-            const result = await window.electronAPI.renderSitemapD3({ treeData: tree, colorMap, options: { menuOnly } });
+            const result = await window.electronAPI.renderSitemapD3({ treeData: tree, colorMap, options: { layout: navLayout, defaultColor: defaultColor || undefined, legendTitle: navLegendTitle(), borderLegend: { solid: 'Current build', dashed: 'Phased' }, showStack: true } });
             if (result.success && result.svg) {
               chartDiv.innerHTML = result.svg;
               const svg = chartDiv.querySelector('svg');
@@ -12060,13 +12244,22 @@ async function generateNavSitemap() {
       $('btn-copy-text-tree')?.addEventListener('click', () => {
         navigator.clipboard.writeText(current.textTree).then(() => showToast('Text tree copied'));
       });
-      $('sitemap-menu-only')?.addEventListener('change', (e) => {
-        showSitemapModal(e.target.checked);
+      $('sitemap-levels')?.addEventListener('change', (e) => {
+        depthFilter = e.target.value === '' ? null : parseInt(e.target.value, 10); showSitemapModal();
+      });
+      $('sitemap-layout')?.addEventListener('change', (e) => {
+        navLayout = e.target.value; state.projectSettings.navSitemapLayout = navLayout; setDirty(true); showSitemapModal();
+      });
+      $('sitemap-colorby')?.addEventListener('change', (e) => {
+        navColorBy = e.target.value; state.projectSettings.navSitemapColorBy = navColorBy; setDirty(true); showSitemapModal();
+      });
+      $('sitemap-palette')?.addEventListener('change', (e) => {
+        navPalette = e.target.value; state.projectSettings.navSitemapPalette = navPalette; setDirty(true); showSitemapModal();
       });
       // Tab switching
       $('sitemap-tab-visual')?.addEventListener('click', () => {
         _sitemapActiveTab = 'visual';
-        showSitemapModal(menuOnly);
+        showSitemapModal();
       });
       $('sitemap-tab-text')?.addEventListener('click', () => {
         _sitemapActiveTab = 'text';
@@ -12173,7 +12366,7 @@ async function generateNavSitemap() {
     parent.addEventListener('mouseleave', () => { panning = false; parent.style.cursor = 'grab'; });
   }
 
-  await showSitemapModal(true);
+  await showSitemapModal();
 }
 
 /** Get nav nodes visible under the current depth filter. */
@@ -12479,15 +12672,15 @@ function renderNavEditorNode(node, pageCounts, depth, dupSlugs, depthFilter) {
   }
   row.appendChild(countCell);
 
-  // Menu checkbox
+  // Collapse checkbox — when set, this node's subtree is collapsed (summarized) in the Visual Sitemap
   const menuCell = document.createElement('span');
   menuCell.className = 'ne-cell ne-col-menu';
   const menuCb = document.createElement('input');
   menuCb.type = 'checkbox';
-  menuCb.checked = node.inMenu === 'Y' || node.inMenu === 'y' || node.inMenu === 'true';
-  menuCb.title = 'Include in menu';
+  menuCb.checked = node.collapse === 'Y' || node.collapse === true;
+  menuCb.title = 'Collapse this node’s subtree in the Visual Sitemap';
   menuCb.addEventListener('change', () => {
-    node.inMenu = menuCb.checked ? 'Y' : '';
+    node.collapse = menuCb.checked ? 'Y' : '';
     setDirty(true);
     state.navTreeDirty = true;
   });
@@ -13857,10 +14050,10 @@ function openNavNodeEditor(node) {
           <label for="_nne-slug" style="font-size:12px;color:var(--text-secondary);">Slug</label>
           <input id="_nne-slug" type="text" value="${escapeHtml(node.path || '')}" placeholder="(URL segment)" style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;font-family:var(--font-mono);">
 
-          <label style="font-size:12px;color:var(--text-secondary);">In menu</label>
+          <label style="font-size:12px;color:var(--text-secondary);">Collapse</label>
           <label style="display:flex;align-items:center;gap:6px;font-size:12px;">
-            <input id="_nne-inmenu" type="checkbox" ${(node.inMenu === 'Y' || node.inMenu === 'y' || node.inMenu === 'true') ? 'checked' : ''}>
-            <span style="color:var(--text-muted);">Include in navigation menus</span>
+            <input id="_nne-inmenu" type="checkbox" ${(node.collapse === 'Y' || node.collapse === true) ? 'checked' : ''}>
+            <span style="color:var(--text-muted);">Collapse this node’s subtree in the Visual Sitemap</span>
           </label>
 
           <label for="_nne-node-type" style="font-size:12px;color:var(--text-secondary);">Node type</label>
@@ -14300,7 +14493,7 @@ function openNavNodeEditor(node) {
 
     if (newLabel !== node.label) onNavNodeEdit(node, 'label', newLabel);
     if (newSlug !== node.path)   onNavNodeEdit(node, 'path', newSlug);
-    if (newInmenu !== (node.inMenu || ''))       { node.inMenu    = newInmenu;    state.navTreeDirty = true; setDirty(true); }
+    if (newInmenu !== (node.collapse || ''))     { node.collapse  = newInmenu;    state.navTreeDirty = true; setDirty(true); }
     if (newUrl !== (node.url || ''))             { node.url       = newUrl;       state.navTreeDirty = true; setDirty(true); }
     // URL override changes the computed path → route through onNavNodeEdit so the
     // subtree recalculates and assigned-page URLs cascade.
