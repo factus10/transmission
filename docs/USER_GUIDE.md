@@ -1,6 +1,6 @@
 # Transmission — User Guide
 
-**Version 2.3.0 "How Soon Is Now?"**
+**Version 2.4.0 "How Soon Is Now?"**
 macOS (Apple Silicon + Intel)
 
 ---
