@@ -535,7 +535,13 @@ Toggled via **Cmd+Shift+M**, the **Menus** view-switcher tab, or View → Menus 
 
 **Page breadcrumb in exports:** the breadcrumb axis surfaces in deliverables via a `pageBreadcrumb` column (`pageBreadcrumbOf(node)`) — added to `navExportColumnDefs()` (so it flows into the Migration Tracker **Nav Plan** sheet and the Nav Tree's *Filtered nodes → Excel* column picker) and to the menu export (xlsx `Page Breadcrumb` column + JSON `pageBreadcrumb` on `ref` items).
 
-**Per-menu sitemap (`btn-menu-sitemap` → `generateMenuSitemap()`):** renders each menu as a box-tree through the shared `render-sitemap-d3` IPC (same `{name, menu, pattern, phase, pageCount, hasHiddenChildren, children}` shape as the nav sitemap). One tree per menu (synthetic root = the menu name); items colored by **kind** via a `{Page, Link, Header}` colorMap (`pattern` = kind label), with `header` items dashed (`menu:false`). Wide `openModal`, one card per menu, scroll-zoom / drag-pan (`_menuSitemapZoom`), and a per-card **SVG** download via `save-text-file`. No main-process changes (reuses the existing D3 renderer). **Backlog (later):** backport the menu DnD engine to the nav tree.
+**Per-menu sitemap (`btn-menu-sitemap` → `generateMenuSitemap()`):** renders each menu as a box-tree through the shared `render-sitemap-d3` IPC (same `{name, menu, pattern, phase, pageCount, hasHiddenChildren, children}` shape as the nav sitemap). One tree per menu (synthetic root = the menu name); items colored by **kind** via a `{Page, Link, Header}` colorMap (`pattern` = kind label), with `header` items dashed (`menu:false`). Wide `openModal`, one card per menu, scroll-zoom / drag-pan (`_menuSitemapZoom`), and a per-card **SVG** download via `save-text-file`.
+
+**Sitemap layouts (`options.layout` in the D3 renderer):** three layouts, selectable per menu via a card dropdown (stored as `menu.sitemapLayout`, default `columns`):
+- `outline` — DFS indented list (depth → indent right, rows stack down). The original; deep/narrow menus.
+- `tree` — top-down tidy tree via `d3.tree()`; classic fan-out for shallow/wide.
+- `columns` — mega-menu layout: descends the single-child **spine** (e.g. Primary → Home → Academics) until the menu branches, then fans those children into side-by-side **columns**, each stacking its descendants vertically (nested items indent within the column). Wide *and* deep. The spine is centered over the columns; `sec.isColumnHead` / `d.isSpine` flags drive top-down vs indented connectors. `ROW_HC`/`COL_GAP`/`INDENT_C` tune spacing.
+The renderer is layout-agnostic otherwise; the menu sitemap passes `legendTitle`/`borderLegend`/`showStack:false` so the legend reads "Item kind · Page/Link · Header" instead of the nav-only "In nav / Has sub-pages". **Backlog (later):** backport the menu DnD engine to the nav tree.
 
 ---
 

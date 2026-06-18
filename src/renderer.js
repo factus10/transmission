@@ -11373,16 +11373,45 @@ async function generateMenuSitemap() {
 
   const body = document.createElement('div');
   body.style.cssText = 'display:flex;flex-direction:column;gap:16px;';
-  const legend = document.createElement('div');
-  legend.style.cssText = 'display:flex;gap:14px;align-items:center;font-size:11px;color:var(--text-muted);flex-wrap:wrap;';
-  legend.innerHTML = Object.entries(colorMap).map(([k, c]) => `<span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:12px;height:12px;border-radius:3px;background:${c};display:inline-block;"></span>${k}</span>`).join('')
-    + ` <span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:14px;height:10px;border:1px dashed var(--text-muted);display:inline-block;"></span>Header (grouping)</span>`
-    + ` <span>· scroll to zoom, drag to pan</span>`;
-  body.appendChild(legend);
+  const hint = document.createElement('div');
+  hint.style.cssText = 'font-size:11px;color:var(--text-muted);';
+  hint.textContent = 'Each menu draws as its own tree. Pick a layout per menu; scroll to zoom, drag to pan. (Each diagram carries its own color legend.)';
+  body.appendChild(hint);
 
-  // Build every card synchronously first, then render the trees ONE AT A TIME.
-  // The D3 renderer is not safe to call concurrently from one view, and serial
-  // rendering also avoids spawning many heavy hidden windows at once.
+  const LAYOUTS = [['columns', 'Mega columns'], ['tree', 'Top-down tree'], ['outline', 'Outline']];
+
+  // Render (or re-render) one menu's card. Reads menu.sitemapLayout each call so
+  // the per-card layout dropdown can re-render just that card.
+  const renderCard = async (menu, chartDiv, dl) => {
+    chartDiv.innerHTML = '<p style="color:#888;font-size:12px;padding:16px;">Rendering…</p>';
+    dl.disabled = true;
+    const layout = menu.sitemapLayout || 'columns';
+    try {
+      const result = await window.electronAPI.renderSitemapD3({
+        treeData: buildMenuTree(menu),
+        colorMap,
+        options: { layout, legendTitle: 'Item kind', borderLegend: { solid: 'Page / Link', dashed: 'Header' }, showStack: false }
+      });
+      if (result && result.success && result.svg) {
+        chartDiv.innerHTML = result.svg;
+        const svg = chartDiv.querySelector('svg');
+        if (svg) { svg.style.display = 'block'; svg.style.transformOrigin = '0 0'; _menuSitemapZoom(chartDiv, svg); }
+        dl.disabled = false;
+        dl.onclick = async () => {
+          const menuSlug = (menu.name || 'menu').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'menu';
+          const r = await window.electronAPI.saveTextFile({ content: result.svg, defaultName: `${slug}-${menuSlug}-sitemap.svg`, filters: [{ name: 'SVG', extensions: ['svg'] }, { name: 'All Files', extensions: ['*'] }] });
+          if (r && r.success) showToast('Saved SVG', 'success');
+        };
+      } else {
+        chartDiv.innerHTML = '<p style="color:#c0392b;font-size:12px;padding:12px;">Could not render: ' + escapeHtml((result && result.error) || 'unknown error') + '</p>';
+      }
+    } catch (e) {
+      chartDiv.innerHTML = '<p style="color:#c0392b;font-size:12px;padding:12px;">Error: ' + escapeHtml(e.message) + '</p>';
+    }
+  };
+
+  // Build every card synchronously first, then render the trees ONE AT A TIME
+  // (the D3 renderer is heavy and shouldn't be hit concurrently from one view).
   const cards = menus.map(menu => {
     const card = document.createElement('div');
     card.style.cssText = 'border:1px solid var(--border);border-radius:8px;overflow:hidden;';
@@ -11392,15 +11421,31 @@ async function generateMenuSitemap() {
     title.style.flex = '1';
     title.textContent = (menu.name || '(untitled menu)') + (menu.placement ? ' · ' + menu.placement : '') + ` · ${(menu.items || []).length} item${(menu.items || []).length !== 1 ? 's' : ''}`;
     head.appendChild(title);
+    const chartDiv = document.createElement('div');
+    chartDiv.style.cssText = 'overflow:auto;background:#fff;position:relative;cursor:grab;max-height:60vh;';
+    chartDiv.innerHTML = '<p style="color:#888;font-size:12px;padding:16px;">Rendering…</p>';
     const dl = document.createElement('button');
     dl.className = 'btn btn-sm btn-ghost';
     dl.textContent = 'SVG';
     dl.disabled = true;
+    // Per-menu layout picker
+    const layoutSel = document.createElement('select');
+    layoutSel.style.cssText = 'font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;';
+    layoutSel.title = 'Layout for this menu';
+    LAYOUTS.forEach(([val, label]) => {
+      const o = document.createElement('option');
+      o.value = val; o.textContent = label;
+      if (val === (menu.sitemapLayout || 'columns')) o.selected = true;
+      layoutSel.appendChild(o);
+    });
+    layoutSel.addEventListener('change', () => {
+      menu.sitemapLayout = layoutSel.value;
+      setDirty(true);
+      renderCard(menu, chartDiv, dl);
+    });
+    head.appendChild(layoutSel);
     head.appendChild(dl);
     card.appendChild(head);
-    const chartDiv = document.createElement('div');
-    chartDiv.style.cssText = 'overflow:auto;background:#fff;position:relative;cursor:grab;max-height:60vh;';
-    chartDiv.innerHTML = '<p style="color:#888;font-size:12px;padding:16px;">Rendering…</p>';
     card.appendChild(chartDiv);
     body.appendChild(card);
     return { menu, chartDiv, dl };
@@ -11409,26 +11454,7 @@ async function generateMenuSitemap() {
   openModal({ title: 'Menu sitemaps', body, width: '92vw', buttons: [{ label: 'Done', variant: 'primary' }] });
 
   (async () => {
-    for (const { menu, chartDiv, dl } of cards) {
-      try {
-        const result = await window.electronAPI.renderSitemapD3({ treeData: buildMenuTree(menu), colorMap, options: { menuOnly: false } });
-        if (result && result.success && result.svg) {
-          chartDiv.innerHTML = result.svg;
-          const svg = chartDiv.querySelector('svg');
-          if (svg) { svg.style.display = 'block'; svg.style.transformOrigin = '0 0'; _menuSitemapZoom(chartDiv, svg); }
-          dl.disabled = false;
-          dl.addEventListener('click', async () => {
-            const menuSlug = (menu.name || 'menu').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'menu';
-            const r = await window.electronAPI.saveTextFile({ content: result.svg, defaultName: `${slug}-${menuSlug}-sitemap.svg`, filters: [{ name: 'SVG', extensions: ['svg'] }, { name: 'All Files', extensions: ['*'] }] });
-            if (r && r.success) showToast('Saved SVG', 'success');
-          });
-        } else {
-          chartDiv.innerHTML = '<p style="color:#c0392b;font-size:12px;padding:12px;">Could not render: ' + escapeHtml((result && result.error) || 'unknown error') + '</p>';
-        }
-      } catch (e) {
-        chartDiv.innerHTML = '<p style="color:#c0392b;font-size:12px;padding:12px;">Error: ' + escapeHtml(e.message) + '</p>';
-      }
-    }
+    for (const { menu, chartDiv, dl } of cards) await renderCard(menu, chartDiv, dl);
   })();
 }
 
