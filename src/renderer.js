@@ -11380,7 +11380,10 @@ async function generateMenuSitemap() {
     + ` <span>· scroll to zoom, drag to pan</span>`;
   body.appendChild(legend);
 
-  menus.forEach(menu => {
+  // Build every card synchronously first, then render the trees ONE AT A TIME.
+  // The D3 renderer is not safe to call concurrently from one view, and serial
+  // rendering also avoids spawning many heavy hidden windows at once.
+  const cards = menus.map(menu => {
     const card = document.createElement('div');
     card.style.cssText = 'border:1px solid var(--border);border-radius:8px;overflow:hidden;';
     const head = document.createElement('div');
@@ -11400,8 +11403,13 @@ async function generateMenuSitemap() {
     chartDiv.innerHTML = '<p style="color:#888;font-size:12px;padding:16px;">Rendering…</p>';
     card.appendChild(chartDiv);
     body.appendChild(card);
+    return { menu, chartDiv, dl };
+  });
 
-    (async () => {
+  openModal({ title: 'Menu sitemaps', body, width: '92vw', buttons: [{ label: 'Done', variant: 'primary' }] });
+
+  (async () => {
+    for (const { menu, chartDiv, dl } of cards) {
       try {
         const result = await window.electronAPI.renderSitemapD3({ treeData: buildMenuTree(menu), colorMap, options: { menuOnly: false } });
         if (result && result.success && result.svg) {
@@ -11420,10 +11428,8 @@ async function generateMenuSitemap() {
       } catch (e) {
         chartDiv.innerHTML = '<p style="color:#c0392b;font-size:12px;padding:12px;">Error: ' + escapeHtml(e.message) + '</p>';
       }
-    })();
-  });
-
-  openModal({ title: 'Menu sitemaps', body, width: '92vw', buttons: [{ label: 'Done', variant: 'primary' }] });
+    }
+  })();
 }
 
 async function exportNavTree(format) {
