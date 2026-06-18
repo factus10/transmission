@@ -476,8 +476,8 @@
               </select>
             </label>
             <div class="nav-tb-sep"></div>
-            <button id="btn-nav-set-menu-filtered" class="btn btn-sm btn-ghost" title="Set Menu for all visible nodes">Set Menu ✓</button>
-            <button id="btn-nav-clear-menu-filtered" class="btn btn-sm btn-ghost" title="Clear Menu for all visible nodes">Clear Menu</button>
+            <button id="btn-nav-set-menu-filtered" class="btn btn-sm btn-ghost" title="Collapse all visible nodes in the Visual Sitemap">Collapse ✓</button>
+            <button id="btn-nav-clear-menu-filtered" class="btn btn-sm btn-ghost" title="Clear the collapse flag on all visible nodes">Expand</button>
             <button id="btn-nav-collapse-all" class="btn btn-sm btn-ghost" title="Collapse all nodes">Collapse All</button>
             <button id="btn-nav-expand-all" class="btn btn-sm btn-ghost" title="Expand all nodes">Expand All</button>
             <div class="nav-tb-sep"></div>
@@ -500,7 +500,7 @@
           <span class="ne-col-hdr ne-col-breadcrumb">Breadcrumb</span>
           <span class="ne-col-resize" data-col="ne-col-breadcrumb"></span>
           <span class="ne-col-hdr ne-col-count">Pages</span>
-          <span class="ne-col-hdr ne-col-menu">Menu</span>
+          <span class="ne-col-hdr ne-col-menu" title="Collapse this node’s subtree in the Visual Sitemap">Collapse</span>
           <span class="ne-col-hdr ne-col-actions"></span>
         </div>
         <div id="nav-editor-body">
@@ -772,6 +772,11 @@
           <div class="setting-group">
             <label class="setting-label">Breadcrumb max depth <span class="setting-hint">(optional — advisory; flags breadcrumbs longer than this)</span></label>
             <input type="number" id="ps-breadcrumb-maxdepth" class="setting-input" min="0" step="1" placeholder="e.g. 4 (0 / blank = no cap)">
+          </div>
+          <div class="setting-divider"></div>
+          <div class="setting-group">
+            <label class="setting-label">Brand palette <span class="setting-hint">(client colors for sitemaps — used by the “Client brand” palette option)</span></label>
+            <div id="ps-brand-palette" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;"></div>
           </div>
         </div>
 
