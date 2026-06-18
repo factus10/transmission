@@ -3134,6 +3134,7 @@ ipcMain.handle('sme-export-multi', async (event, { files }) => {
   }
 });
 
+let _d3RenderSeq = 0;
 ipcMain.handle('render-sitemap-d3', async (event, { treeData, colorMap, options }) => {
   try {
     const d3Path = path.join(__dirname, 'node_modules', 'd3', 'dist', 'd3.min.js');
@@ -3141,7 +3142,10 @@ ipcMain.handle('render-sitemap-d3', async (event, { treeData, colorMap, options 
     const treeJson = JSON.stringify(treeData);
     const colorMapJson = JSON.stringify(colorMap || {});
     const optsJson = JSON.stringify(options || {});
-    const tmpHtml = path.join(require('os').tmpdir(), 'kke-d3-render.html');
+    // Unique per call — a fixed filename would let concurrent renders clobber each
+    // other's HTML before loadFile reads it (e.g. the per-menu sitemap rendering
+    // several menus at once).
+    const tmpHtml = path.join(require('os').tmpdir(), `kke-d3-render-${process.pid}-${++_d3RenderSeq}.html`);
 
     // Build HTML by concatenation (not template literals — D3 source has backticks)
     const parts = [];
