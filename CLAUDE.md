@@ -714,7 +714,7 @@ When adding features or making user-facing changes, update **all four** document
 | `docs/PITCH.md` | Client-facing pitch (written + conversational versions) — describes the audit process and its competitive advantages |
 | `src/help.html` | Help window — concise feature documentation opened as a separate window |
 
-For UI/interaction changes, also keep **`docs/UI_STANDARDS.md`** current (the interaction contract) and **`docs/dev/REVIEW_FINDINGS.md`** (the audit backlog) up to date.
+For UI/interaction changes, also keep **`docs/UI_STANDARDS.md`** current (the interaction contract) and **`docs/dev/REVIEW_FINDINGS.md`** (the audit backlog) up to date. If a change alters the design tokens (`:root` in `styles.css`), the button specs, or the dialog/toast conventions, also update **`docs/SHARED_STYLE_GUIDE.md`** — the portable style contract handed to the sibling **Tauri** app to keep both apps visually consistent (it mirrors §1 tokens + §2 button CSS verbatim).
 
 ---
 

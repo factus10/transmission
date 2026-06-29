@@ -21,6 +21,7 @@ The list below is a feature catalog, not a how-to.
 ### Project Files (.transmission)
 - **SQLite-backed project files** — **File → Save As Project…** (`Cmd+Shift+S`) converts the open spreadsheet (with all in-session edits) into a single `.transmission` file and switches the session to it. Saves become instant (milliseconds, no workbook rebuild) regardless of file size; the existing 2-second autosave does the rest.
 - **One file is still the whole project** — rows, decisions, nav tree, settings, glossary, libraries, and the full change history (now with an auditor name per entry) travel inside it. Put it wherever the project lives; Finder double-click opens it.
+- **Every column survives, losslessly** — your whole crawl is preserved exactly as exported, including any **custom extraction** columns from Screaming Frog (XPath/CSS/regex pulls: CMS IDs, author bylines, publish dates, schema markup, component flags…). Nothing is dropped, renamed, or reordered when you open a spreadsheet or convert it to a `.transmission` project, and it all round-trips back out intact on **Export Full Workbook**. Those columns aren't dead weight either — surface them in Table View, pin them to the field bar, or filter on them with **+ Field filter**. The app treats your columns and its own audit columns identically.
 - **Excel becomes the deliverable format** — **File → Export Full Workbook (.xlsx)…** writes a complete spreadsheet (all structural sheets + full change history) for clients, colleagues without Transmission, or archive. Exports round-trip: an exported workbook can be re-opened and re-converted later.
 - **Package for Handoff** — **File → Package for Handoff…** saves, checkpoints, and zips the project (with a README for the recipient) in one step, then reveals the zip in Finder. The other auditor unzips and double-clicks; their edits join the same change history under their username. A rolling safety copy of each project is also kept in the app's support folder on every open.
 - **Client Export profiles** — **File → Export… → Client Export** exports just the columns an audience needs (filtered or all rows). Ships with **Client Summary** and **Full** built-ins; save your own named profiles and they travel with the project.
@@ -496,6 +497,8 @@ Place your app icon at `assets/icon.icns` before building. If absent, Electron B
 ## Spreadsheet Format
 
 Any `.xlsx` with a header row. Optimized for Screaming Frog crawl exports.
+
+**Every column is preserved.** The app reads the first sheet and keeps all of its columns verbatim — including custom extraction columns. It only *adds* the audit columns below (if missing); it never drops or renames what you brought in. This holds through the full lifecycle: open → convert to `.transmission` → Export Full Workbook returns every original column intact.
 
 **URL column auto-detection** looks for (case-insensitive): `Address`, `URL`, `Link`, `Website`, `Href`, `URI`. If none match, a picker appears.
 
