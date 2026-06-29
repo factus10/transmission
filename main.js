@@ -2090,7 +2090,8 @@ ipcMain.handle('get-prefs', () => {
     pageTypeLibrary:   prefs.pageTypeLibrary   || [],
     designPatternLibrary: prefs.designPatternLibrary || [],
     seenWelcome:       prefs.seenWelcome || false,
-    noteTemplates:     prefs.noteTemplates || []
+    noteTemplates:     prefs.noteTemplates || [],
+    sitemapDefaults:   prefs.sitemapDefaults || null
   };
 });
 
@@ -3143,220 +3144,47 @@ ipcMain.handle('sme-export-multi', async (event, { files }) => {
   }
 });
 
-let _d3RenderSeq = 0;
-ipcMain.handle('render-sitemap-d3', async (event, { treeData, colorMap, options }) => {
+// Visual Sitemap → PDF. The renderer builds a complete, self-contained sitemap
+// HTML (print mode) via SitemapTemplate; here we load it in a hidden window and
+// print it to a single dynamically-sized page. The engine sizes the page to the
+// laid-out canvas via an injected `@page { size: ... }` rule and flips
+// document.title to 'READY' once layout settles, so we wait on that rather than
+// a fixed timeout.
+ipcMain.handle('export-sitemap-pdf', async (event, { html, defaultName }) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Export Sitemap as PDF',
+    defaultPath: defaultName || 'sitemap.pdf',
+    filters: [{ name: 'PDF', extensions: ['pdf'] }]
+  });
+  if (result.canceled) return { success: false, error: 'Cancelled' };
+  let win = null;
   try {
-    const d3Path = path.join(__dirname, 'node_modules', 'd3', 'dist', 'd3.min.js');
-    const d3Js = fs.readFileSync(d3Path, 'utf8');
-    const treeJson = JSON.stringify(treeData);
-    const colorMapJson = JSON.stringify(colorMap || {});
-    const optsJson = JSON.stringify(options || {});
-    // Unique per call — a fixed filename would let concurrent renders clobber each
-    // other's HTML before loadFile reads it (e.g. the per-menu sitemap rendering
-    // several menus at once).
-    const tmpHtml = path.join(require('os').tmpdir(), `kke-d3-render-${process.pid}-${++_d3RenderSeq}.html`);
-
-    // Build HTML by concatenation (not template literals — D3 source has backticks)
-    const parts = [];
-    parts.push('<!DOCTYPE html><html><head><style>');
-    parts.push('body{margin:0;padding:0;background:#fff;font-family:-apple-system,Helvetica Neue,Arial,sans-serif}');
-    parts.push('</style></head><body><svg id="tree"></svg>');
-    parts.push('<script>');
-    parts.push(d3Js);
-    parts.push('</script>');
-    parts.push('<script>');
-    parts.push('var TREE_DATA=' + treeJson + ';');
-    parts.push('var COLOR_MAP=' + colorMapJson + ';');
-    parts.push('var OPTS=' + optsJson + ';');
-    parts.push('(function() {');
-    // Box + layout constants
-    parts.push('  var BOX_W=160, BOX_H=34, BOX_RX=5;');
-    // Indented-list layout: each depth level is INDENT px to the right; rows stack top-to-bottom
-    parts.push('  var INDENT=50, ROW_H=52;');
-    // TRUNK_X: the connector trunk runs at this x-offset from the parent box left edge
-    parts.push('  var TRUNK_X=14;');
-    parts.push('  var DEFAULT_COLOR=OPTS.defaultColor || "#6366f1";');
-    // Color helpers
-    parts.push('  function nodeColor(d) { return COLOR_MAP[d.data.pattern] || DEFAULT_COLOR; }');
-    parts.push('  function hexRgba(hex, a) {');
-    parts.push('    var r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);');
-    parts.push('    return "rgba("+r+","+g+","+b+","+a+")";');
-    parts.push('  }');
-    // Build hierarchy then assign positions with a custom DFS pre-order layout
-    // Each node gets .lx (left x) and .ly (top y) — the top-left corner of its box
-    parts.push('  var root = d3.hierarchy(TREE_DATA);');
-    parts.push('  var LAYOUT = OPTS.layout || "outline";');
-    parts.push('  var counter = {v:0};');
-    // Outline (default): DFS pre-order — depth indents right, rows stack down.
-    parts.push('  function layoutOutline(d, depth) {');
-    parts.push('    d.lx = depth * INDENT; d.ly = counter.v * ROW_H; counter.v++;');
-    parts.push('    if (d.children) d.children.forEach(function(c) { layoutOutline(c, depth+1); });');
-    parts.push('  }');
-    // Top-down tidy tree via d3.tree(): x = horizontal spread, y = depth row.
-    parts.push('  function layoutTree() {');
-    parts.push('    d3.tree().nodeSize([BOX_W+26, BOX_H+36])(root);');
-    parts.push('    root.each(function(d){ d.lx = d.x - BOX_W/2; d.ly = d.depth*(BOX_H+36); });');
-    parts.push('  }');
-    // Mega-menu columns: root on top; depth-1 sections fan out as columns;
-    // depth>=2 stack vertically within each column (indented for sub-nesting).
-    parts.push('  function layoutColumns() {');
-    parts.push('    var INDENT_C=20, COL_GAP=40, ROW_HC=ROW_H+8;');
-    // Descend through any single-child "spine" (e.g. Primary > Home > Academics)
-    // until the menu actually branches — those children become the columns.
-    parts.push('    var spine=[root], branch=root;');
-    parts.push('    while (branch.children && branch.children.length===1) { branch=branch.children[0]; spine.push(branch); }');
-    parts.push('    spine.forEach(function(d,i){ d.lx=0; d.ly=i*ROW_HC; d.isSpine=true; });');
-    parts.push('    var baseY = spine.length*ROW_HC;');
-    parts.push('    var sections = branch.children || [];');
-    parts.push('    var xCursor=0;');
-    parts.push('    sections.forEach(function(sec){');
-    parts.push('      sec.isColumnHead = true;');
-    parts.push('      var colX=xCursor, rc={v:0}, maxRight=colX+BOX_W;');
-    parts.push('      function place(d, sub){');
-    parts.push('        d.lx = colX + sub*INDENT_C; d.ly = baseY + rc.v*ROW_HC; rc.v++;');
-    parts.push('        if (d.lx+BOX_W > maxRight) maxRight = d.lx+BOX_W;');
-    parts.push('        if (d.children) d.children.forEach(function(c){ place(c, sub+1); });');
-    parts.push('      }');
-    parts.push('      place(sec, 0);');
-    parts.push('      xCursor = maxRight + COL_GAP;');
-    parts.push('    });');
-    // Center the spine (incl. the root) over the full span of the columns.
-    parts.push('    var totalW = Math.max(BOX_W, xCursor - COL_GAP);');
-    parts.push('    spine.forEach(function(d){ d.lx = (totalW - BOX_W)/2; });');
-    parts.push('  }');
-    parts.push('  if (LAYOUT==="tree") layoutTree();');
-    parts.push('  else if (LAYOUT==="columns") layoutColumns();');
-    parts.push('  else layoutOutline(root, 0);');
-    // Compute SVG canvas size from the layout
-    parts.push('  var allNodes = root.descendants();');
-    parts.push('  var maxRight = 0;');
-    parts.push('  allNodes.forEach(function(d) { var r=d.lx+BOX_W; if(r>maxRight) maxRight=r; });');
-    parts.push('  var treeW = Math.max(400, maxRight + 80);');
-    parts.push('  var treeH = Math.max(200, counter.v * ROW_H + 60);');
-    parts.push('  var svg = d3.select("#tree").attr("width", treeW).attr("height", treeH);');
-    parts.push('  var g = svg.append("g").attr("transform", "translate(20,20)");');
-    // Links — L-shaped connectors: trunk descends from parent's left area, branch extends right to child
-    // Path: parent trunk-bottom → down to child midpoint-y → right to child box left edge
-    parts.push('  g.selectAll(".link").data(root.links()).join("path")');
-    parts.push('    .attr("fill","none").attr("stroke","#c5c5d8").attr("stroke-width","1.5px")');
-    parts.push('    .attr("d", function(d) {');
-    // Top-down elbow for tree links, and for the root→section links in columns mode.
-    parts.push('      if (LAYOUT==="tree" || (LAYOUT==="columns" && (d.target.isColumnHead || d.target.isSpine))) {');
-    parts.push('        var px=d.source.lx+BOX_W/2, py=d.source.ly+BOX_H;');
-    parts.push('        var cx=d.target.lx+BOX_W/2, cy=d.target.ly, my=(py+cy)/2;');
-    parts.push('        return "M"+px+","+py+" L"+px+","+my+" L"+cx+","+my+" L"+cx+","+cy;');
-    parts.push('      }');
-    // Indented elbow (outline, and within-column links in columns mode)
-    parts.push('      var sx=d.source.lx+TRUNK_X, sy=d.source.ly+BOX_H;');
-    parts.push('      var tx=d.target.lx,          ty=d.target.ly+BOX_H/2;');
-    parts.push('      return "M"+sx+","+sy+" L"+sx+","+ty+" L"+tx+","+ty;');
-    parts.push('    });');
-    // Node groups placed at top-left of each box (rects/text use 0,0 origin)
-    parts.push('  var node = g.selectAll(".node").data(allNodes).join("g")');
-    parts.push('    .attr("transform", function(d) { return "translate("+d.lx+","+d.ly+")"; });');
-    // Shadow boxes — stacked effect for nodes that have children hidden from this filtered view
-    // Rects use top-left origin (0,0) since node groups are now placed at box top-left
-    parts.push('  node.filter(function(d){return d.data.hasHiddenChildren;})');
-    parts.push('    .append("rect")');
-    parts.push('    .attr("x",6).attr("y",6)');
-    parts.push('    .attr("width",BOX_W).attr("height",BOX_H).attr("rx",BOX_RX)');
-    parts.push('    .attr("fill","#eeeef8").attr("stroke","#b8b8cc").attr("stroke-width","1px");');
-    parts.push('  node.filter(function(d){return d.data.hasHiddenChildren;})');
-    parts.push('    .append("rect")');
-    parts.push('    .attr("x",3).attr("y",3)');
-    parts.push('    .attr("width",BOX_W).attr("height",BOX_H).attr("rx",BOX_RX)');
-    parts.push('    .attr("fill","#f3f3fb").attr("stroke","#c5c5dc").attr("stroke-width","1px");');
-    // Main box
-    parts.push('  node.append("rect")');
-    parts.push('    .attr("x",0).attr("y",0)');
-    parts.push('    .attr("width",BOX_W).attr("height",BOX_H).attr("rx",BOX_RX)');
-    parts.push('    .attr("fill", function(d) { return d.data.isMenuRoot ? "#eef1f5" : hexRgba(nodeColor(d), 0.12); })');
-    parts.push('    .attr("stroke", function(d) { return d.data.isMenuRoot ? "#94a3b8" : nodeColor(d); })');
-    parts.push('    .attr("stroke-width","1.5px")');
-    parts.push('    .attr("stroke-dasharray", function(d) { return (d.data.menu || d.data.isMenuRoot) ? "none" : "5,3"; });');
-    // Label — centered inside box; bold for root level
-    parts.push('  node.append("text")');
-    parts.push('    .attr("x",BOX_W/2).attr("y",BOX_H/2).attr("dy","0.35em")');
-    parts.push('    .attr("text-anchor","middle")');
-    parts.push('    .attr("font-size","12px")');
-    parts.push('    .attr("font-weight", function(d) { return d.depth===0 ? "600" : "400"; })');
-    parts.push('    .attr("fill","#1e1e2e")');
-    parts.push('    .text(function(d) { var n=d.data.name; return n.length>22?n.substring(0,20)+"…":n; });');
-    // Page count badge — small number in top-right corner of box
-    parts.push('  node.filter(function(d){return d.data.pageCount>0;})');
-    parts.push('    .append("text")');
-    parts.push('    .attr("x",BOX_W-4).attr("y",9)');
-    parts.push('    .attr("text-anchor","end").attr("font-size","9px").attr("font-weight","600")');
-    parts.push('    .attr("fill", function(d) { return nodeColor(d); })');
-    parts.push('    .text(function(d) { return d.data.pageCount; });');
-    // Measure tree bounding box, compute legend height, then finalize SVG size
-    parts.push('  var bb = g.node().getBBox();');
-    parts.push('  var patterns = Object.keys(COLOR_MAP);');
-    parts.push('  var COLS=4, ITEM_W=175, ITEM_H=18;');
-    parts.push('  var patternRowCount = patterns.length>0 ? Math.ceil(patterns.length/COLS) : 0;');
-    // Legend has: title row (14px) + pattern rows + indicator row (22px) + bottom padding (8px)
-    parts.push('  var legendH = patternRowCount>0 ? 14 + patternRowCount*ITEM_H + 22 + 8 : 22 + 8;');
-    // Reposition g — nudge to keep content clear of SVG edge
-    parts.push('  g.attr("transform","translate("+(20-bb.x)+","+(20-bb.y)+")");');
-    // Finalize SVG canvas size
-    parts.push('  var svgW = 20 + bb.width + 40;');
-    parts.push('  var svgH = 20 + bb.height + 20 + legendH + 10;');
-    parts.push('  svg.attr("width",svgW).attr("height",svgH);');
-    // Legend — anchored below the repositioned tree
-    parts.push('  var lgY = 20 + bb.height + 20;');
-    parts.push('  var lgG = svg.append("g").attr("transform","translate(20,"+lgY+")");');
-    parts.push('  var LEGEND_TITLE = OPTS.legendTitle || "Page Pattern";');
-    parts.push('  var BORDER_SOLID = (OPTS.borderLegend && OPTS.borderLegend.solid) || "In nav menu";');
-    parts.push('  var BORDER_DASHED = (OPTS.borderLegend && OPTS.borderLegend.dashed) || "Not in nav";');
-    // Pattern rows (only when patterns exist)
-    parts.push('  if (patterns.length > 0) {');
-    parts.push('    lgG.append("text").attr("x",0).attr("y",0)');
-    parts.push('      .attr("font-size","10px").attr("font-weight","600").attr("fill","#888")');
-    parts.push('      .text(LEGEND_TITLE);');
-    parts.push('    patterns.forEach(function(p, i) {');
-    parts.push('      var col=i%COLS, row=Math.floor(i/COLS);');
-    parts.push('      var x=col*ITEM_W, y=row*ITEM_H+14;');
-    parts.push('      var c=COLOR_MAP[p];');
-    parts.push('      lgG.append("rect").attr("x",x).attr("y",y-9).attr("width",12).attr("height",12).attr("rx",2)');
-    parts.push('        .attr("fill",hexRgba(c,0.15)).attr("stroke",c).attr("stroke-width","1.5px");');
-    parts.push('      lgG.append("text").attr("x",x+16).attr("y",y+1)');
-    parts.push('        .attr("font-size","10px").attr("fill","#444")');
-    parts.push('        .text(p.length>24?p.substring(0,22)+"…":p);');
-    parts.push('    });');
-    parts.push('  }');
-    // InMenu indicator row — always shown; indY is local-y within lgG for the indicator row
-    parts.push('  var indY = patternRowCount>0 ? patternRowCount*ITEM_H+22 : 9;');
-    parts.push('  lgG.append("rect").attr("x",0).attr("y",indY-9).attr("width",28).attr("height",12).attr("rx",2)');
-    parts.push('    .attr("fill","rgba(99,102,241,0.1)").attr("stroke","#6366f1").attr("stroke-width","1.5px");');
-    parts.push('  lgG.append("text").attr("x",34).attr("y",indY+1).attr("font-size","10px").attr("fill","#555").text(BORDER_SOLID);');
-    parts.push('  lgG.append("rect").attr("x",120).attr("y",indY-9).attr("width",28).attr("height",12).attr("rx",2)');
-    parts.push('    .attr("fill","rgba(99,102,241,0.1)").attr("stroke","#6366f1").attr("stroke-width","1.5px").attr("stroke-dasharray","5,3");');
-    parts.push('  lgG.append("text").attr("x",154).attr("y",indY+1).attr("font-size","10px").attr("fill","#555").text(BORDER_DASHED);');
-    // Stack indicator — back shadow, mid shadow, main box (each offset 3px down-right from previous).
-    // Only relevant to the nav sitemap's "menu items only" filter; menus pass showStack:false.
-    parts.push('  if (OPTS.showStack !== false) {');
-    parts.push('  lgG.append("rect").attr("x",246+4).attr("y",indY-9+4).attr("width",28).attr("height",12).attr("rx",2)');
-    parts.push('    .attr("fill","#eeeef8").attr("stroke","#b8b8cc").attr("stroke-width","1px");');
-    parts.push('  lgG.append("rect").attr("x",246+2).attr("y",indY-9+2).attr("width",28).attr("height",12).attr("rx",2)');
-    parts.push('    .attr("fill","#f3f3fb").attr("stroke","#c5c5dc").attr("stroke-width","1px");');
-    parts.push('  lgG.append("rect").attr("x",246).attr("y",indY-9).attr("width",28).attr("height",12).attr("rx",2)');
-    parts.push('    .attr("fill","rgba(99,102,241,0.1)").attr("stroke","#6366f1").attr("stroke-width","1.5px");');
-    parts.push('  lgG.append("text").attr("x",246+34).attr("y",indY+1).attr("font-size","10px").attr("fill","#555").text("Has sub-pages");');
-    parts.push('  }');
-    parts.push('  document.title="DONE";');
-    parts.push('})();');
-    parts.push('</script></body></html>');
-
-    fs.writeFileSync(tmpHtml, parts.join('\n'), 'utf8');
-    const win = new BrowserWindow({ show: false, width: 5000, height: 3000, webPreferences: { nodeIntegration: false } });
-    await win.loadFile(tmpHtml);
-    await new Promise(r => setTimeout(r, 2000));
-    const svg = await win.webContents.executeJavaScript('document.getElementById("tree").outerHTML');
-    win.close();
-    try { fs.unlinkSync(tmpHtml); } catch (_) {}
-    return { success: true, svg };
+    win = new BrowserWindow({ show: false, width: 2000, height: 1400, webPreferences: { nodeIntegration: false, contextIsolation: true } });
+    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    // Wait for the engine to finish layout (document.title -> 'READY'), capped.
+    await new Promise((resolve) => {
+      let waited = 0;
+      const tick = async () => {
+        try {
+          const t = await win.webContents.executeJavaScript('document.title');
+          if (t === 'READY' || waited >= 6000) return resolve();
+        } catch (_) { return resolve(); }
+        waited += 120;
+        setTimeout(tick, 120);
+      };
+      tick();
+    });
+    const pdfData = await win.webContents.printToPDF({
+      printBackground: true,
+      preferCSSPageSize: true,   // honor the engine's injected @page size
+      margins: { marginType: 'none' }
+    });
+    fs.writeFileSync(result.filePath, pdfData);
+    return { success: true, filePath: result.filePath };
   } catch (e) {
     return { success: false, error: e.message };
+  } finally {
+    if (win) { try { win.close(); } catch (_) {} }
   }
 });
 
