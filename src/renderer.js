@@ -663,7 +663,7 @@ function bindStaticEvents() {
 
     // Switching AWAY from Consolidate to another state — offer to clear the target
     if (current === 'Consolidate' && newVal !== 'Consolidate') {
-      const target = String(row[CONSOLIDATE_COL] || '').trim();
+      const target = String(row[CONSOLIDATE_COL] || '').trim() || consolidateTargetAddr(row);
       if (target) {
         const clearIt = await confirmDialog({ title: 'Clear Consolidate target?', message: `This page has a Consolidate target:\n  ${target}\n\nClear it along with the KKE change?`, confirmLabel: 'Clear target' });
         if (clearIt) clearConsolidateTarget(state.selectedIndex);
@@ -888,6 +888,36 @@ function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, she
   state.contentThemeLibrary = Array.isArray(state.projectSettings.contentThemeLibrary)
     ? state.projectSettings.contentThemeLibrary
     : [];
+
+  // Issue #1: Consolidate_Into is now a derived display (the master's relative new path) backed by
+  // a stable identity column (_ConsolidateTargetId = the master's Address). Migrate legacy projects:
+  // for consolidating rows that still hold a Consolidate_Into value but have no identity yet, resolve
+  // the stored URL back to its inventory master, store that master's Address as the identity, and
+  // rewrite Consolidate_Into to the clean relative path. Idempotent (skips rows already migrated);
+  // rows whose target is off-inventory keep their legacy literal (the resolver still falls back to it).
+  let consMigrated = 0;
+  {
+    const urlC = urlColumn || state.urlColumn || 'Address';
+    const byAddr = new Map();
+    state.editedRows.forEach(r => { const u = String(r[urlC] || '').trim(); if (u) byAddr.set(u, r); });
+    state.editedRows.forEach((r, i) => {
+      if (!rowIsConsolidate(r)) return;
+      if (String(r[CONSOLIDATE_ID_COL] || '').trim()) return; // already migrated
+      const legacy = String(r[CONSOLIDATE_COL] || '').trim();
+      if (!legacy) return;
+      // Legacy value may be the master's Address OR its effective new-site URL — try both.
+      const master = byAddr.get(legacy) || state.editedRows.find(m => effectiveConsolidateUrl(m) === legacy);
+      if (!master) return; // external/unknown target — leave the legacy literal in place
+      r[CONSOLIDATE_ID_COL] = String(master[urlC] || '').trim();
+      const disp = consolidateDisplayPath(master);
+      if (disp) r[CONSOLIDATE_COL] = disp;
+      consMigrated++;
+    });
+  }
+  if (consMigrated > 0) {
+    showToast(`Updated ${consMigrated} consolidation target${consMigrated !== 1 ? 's' : ''} to the new format · save to commit`, 'success');
+    setDirty(true);
+  }
 
   // Phase 2, Chunk α: Page_Status library (per-project, seeded with defaults)
   state.pageStatusLibrary = Array.isArray(state.projectSettings.pageStatusLibrary) && state.projectSettings.pageStatusLibrary.length > 0
@@ -2946,7 +2976,7 @@ function renderVisibleRows() {
         : 'Redirect (nav): ' + computedPath;
       indicators.appendChild(r);
     }
-    const consolidateTarget = String(row[CONSOLIDATE_COL] || '').trim();
+    const consolidateTarget = String(row[CONSOLIDATE_COL] || '').trim() || consolidateTargetAddr(row);
     const needsTarget = rowConsolidateNeedsTarget(row);
     if (consolidateTarget) {
       const c = document.createElement('span');
@@ -8762,12 +8792,59 @@ function refreshGaKke() {
 
 // ─── Consolidate (merge a page's content into another inventory page) ─────────
 
+// Consolidate_Into is a USER-FACING DISPLAY value: the master (consolidated-into) page's
+// new-site path as a clean relative string (e.g. "company/team"). It is DERIVED, never the
+// source of truth — it is recomputed from the identity column so it follows the master as it
+// gains/changes its nav home. _ConsolidateTargetId holds the master's stable current Address
+// (the inventory URL, which never changes) and IS the identity every engine consumer keys off.
+// Redirect_Destination, by contrast, always resolves to an absolute new-site URL.
 const CONSOLIDATE_COL = 'Consolidate_Into';
+const CONSOLIDATE_ID_COL = '_ConsolidateTargetId';
 
 /**
- * Returns the canonical URL that should be stored in Consolidate_Into for a given target row.
- * If the row has a Computed Path (nav assignment), that resolves to the new site URL.
- * Otherwise falls back to the row's current inventory URL.
+ * The stable identity of a consolidating row's master: the master's current Address. Survives the
+ * master later gaining/overriding its new-site path. Falls back to the legacy Consolidate_Into
+ * literal for rows that predate the identity column or point off-inventory (external targets).
+ */
+function consolidateTargetAddr(row) {
+  if (!row) return '';
+  const id = String(row[CONSOLIDATE_ID_COL] || '').trim();
+  if (id) return id;
+  return String(row[CONSOLIDATE_COL] || '').trim(); // legacy / external fallback
+}
+
+/** Find the master (consolidated-into) row for a consolidating row, by stable Address identity. */
+function findConsolidateTargetRow(row) {
+  const id = consolidateTargetAddr(row);
+  if (!id) return null;
+  const urlCol = state.urlColumn || 'Address';
+  return state.editedRows.find(r => String(r[urlCol] || '').trim() === id) || null;
+}
+
+/** Strip scheme+domain from an absolute URL, returning a clean no-leading/trailing-slash path. */
+function relativizeUrl(u) {
+  const s = String(u || '').trim();
+  if (!s) return '';
+  try { return new URL(s).pathname.replace(/^\/+/, '').replace(/\/+$/, ''); }
+  catch (_) { return s.replace(/^https?:\/\/[^/]+/i, '').replace(/^\/+/, '').replace(/\/+$/, ''); }
+}
+
+/**
+ * The master's NEW-site path as a clean RELATIVE string — the human-readable value shown in the
+ * Consolidate_Into column. Computed Path (the master's new nav home) if assigned; otherwise the
+ * master's current path as a stand-in until it is placed in the new tree. Derived, not authoritative.
+ */
+function consolidateDisplayPath(targetRow) {
+  if (!targetRow) return '';
+  const comp = String(targetRow['Computed Path'] || '').trim();
+  if (comp) return comp.replace(/^\/+/, '').replace(/\/+$/, '');
+  const urlCol = state.urlColumn || 'Address';
+  return relativizeUrl(targetRow[urlCol]);
+}
+
+/**
+ * The master's absolute NEW-site URL — used to write Redirect_Destination (which always stays
+ * absolute). Computed Path resolved onto the redirect base domain; else the master's current URL.
  */
 function effectiveConsolidateUrl(row) {
   if (!row) return '';
@@ -8780,19 +8857,33 @@ function effectiveConsolidateUrl(row) {
   return String(row[urlCol] || '').trim();
 }
 
+/** Recompute one row's Consolidate_Into display (relative new path) from its stored identity. */
+function refreshConsolidateDisplay(row, i) {
+  if (!rowIsConsolidate(row)) return;
+  const id = String(row[CONSOLIDATE_ID_COL] || '').trim();
+  if (!id) return; // legacy/external row with no identity — leave its Consolidate_Into untouched
+  const master = findConsolidateTargetRow(row);
+  if (!master) return; // identity points off-inventory — leave display as-is
+  const display = consolidateDisplayPath(master);
+  const old = String(row[CONSOLIDATE_COL] || '').trim();
+  if (display && display !== old) {
+    row[CONSOLIDATE_COL] = display;
+    if (typeof i === 'number') logChange(i, CONSOLIDATE_COL, old, display);
+  }
+}
+
+/** Refresh every consolidating row's display path from its identity (cheap full sweep). */
+function refreshAllConsolidateDisplays() {
+  state.editedRows.forEach((row, i) => refreshConsolidateDisplay(row, i));
+}
+
 /**
- * When a row's effective URL changes (e.g., it gains or changes its Computed Path), update
- * all Consolidate_Into values that referenced its old URL to point to its new URL.
+ * Legacy hook kept for the nav-assignment call sites: when a master page is (re)assigned in the
+ * nav tree its dependents' display paths must follow. Identity is unchanged, so we just re-derive
+ * all display values. (Args from old callers are ignored.)
  */
-function resyncConsolidateInto(oldUrl, newUrl) {
-  if (!oldUrl || !newUrl || oldUrl === newUrl) return;
-  state.editedRows.forEach((row, i) => {
-    const ct = String(row[CONSOLIDATE_COL] || '').trim();
-    if (ct === oldUrl) {
-      row[CONSOLIDATE_COL] = newUrl;
-      logChange(i, CONSOLIDATE_COL, ct, newUrl);
-    }
-  });
+function resyncConsolidateInto() {
+  refreshAllConsolidateDisplays();
 }
 
 function rowIsConsolidate(row) {
@@ -8804,22 +8895,17 @@ function rowIsConsolidate(row) {
 
 function rowConsolidateNeedsTarget(row) {
   if (!rowIsConsolidate(row)) return false;
-  return !String(row[CONSOLIDATE_COL] || '').trim();
+  return !consolidateTargetAddr(row);
 }
 
 /**
- * Returns true when this row's Consolidate_Into target has KKE = Kill (or Exclude),
+ * Returns true when this row's consolidation master has KKE = Kill (or Exclude),
  * meaning the consolidation destination is itself being removed from the site.
  */
 function rowConsolidateHasDeadTarget(row) {
   if (!rowIsConsolidate(row)) return false;
-  const ct = String(row[CONSOLIDATE_COL] || '').trim();
-  if (!ct) return false;
-  const urlCol = state.urlColumn || 'Address';
-  const targetRow = state.editedRows.find(r => {
-    const u = String(r[urlCol] || '').trim();
-    return u === ct || effectiveConsolidateUrl(r) === ct;
-  });
+  if (!consolidateTargetAddr(row)) return false;
+  const targetRow = findConsolidateTargetRow(row);
   if (!targetRow) return false;
   const targetKke = String(targetRow[kkeCol()] || '').trim().toLowerCase();
   return targetKke === 'kill' || targetKke === 'exclude';
@@ -8829,7 +8915,7 @@ function updateConsolidateIndicator(row) {
   const dot = els.consolidateIndicator;
   if (!dot) return;
   dot.classList.remove('needs-target', 'dead-target');
-  const target = row ? String(row[CONSOLIDATE_COL] || '').trim() : '';
+  const target = row ? consolidateTargetAddr(row) : '';
   if (target) {
     dot.classList.remove('hidden');
     if (rowConsolidateHasDeadTarget(row)) {
@@ -8850,15 +8936,18 @@ function updateConsolidateIndicator(row) {
 
 async function applyConsolidateTarget(origIndex, targetUrl) {
   const row = state.editedRows[origIndex];
-  const oldTarget = String(row[CONSOLIDATE_COL] || '');
   const rawTarget = String(targetUrl || '').trim();
   if (!rawTarget) return;
 
-  // If the target has a Computed Path, store the resolved new URL rather than the inventory URL.
-  // This keeps Consolidate_Into pointing at the actual destination on the new site.
+  // The picker selects a master by its inventory Address. Store that Address as the stable
+  // identity, and derive Consolidate_Into as the master's clean relative new path (display).
   const urlCol = state.urlColumn || 'Address';
   const targetRow = state.editedRows.find(r => String(r[urlCol] || '').trim() === rawTarget);
-  const newTarget = targetRow ? effectiveConsolidateUrl(targetRow) : rawTarget;
+  const newId = targetRow ? String(targetRow[urlCol] || '').trim() : rawTarget; // off-inventory → keep raw
+  const newDisplay = targetRow ? consolidateDisplayPath(targetRow) : rawTarget;
+
+  const oldId = String(row[CONSOLIDATE_ID_COL] || '');
+  const oldDisplay = String(row[CONSOLIDATE_COL] || '');
 
   // If Consolidate intent already exists (via KKE or Final_KKE), we're just setting
   // the target — don't overwrite KKE_Recommendation, and skip the kill-cleanup prompt.
@@ -8872,9 +8961,13 @@ async function applyConsolidateTarget(origIndex, targetUrl) {
     applyKkeStyle('Consolidate');
   }
 
-  if (oldTarget !== newTarget) {
-    row[CONSOLIDATE_COL] = newTarget;
-    logChange(origIndex, CONSOLIDATE_COL, oldTarget, newTarget);
+  if (oldId !== newId) {
+    row[CONSOLIDATE_ID_COL] = newId;
+    logChange(origIndex, CONSOLIDATE_ID_COL, oldId, newId);
+  }
+  if (oldDisplay !== newDisplay) {
+    row[CONSOLIDATE_COL] = newDisplay;
+    logChange(origIndex, CONSOLIDATE_COL, oldDisplay, newDisplay);
   }
 
   setDirty(true);
@@ -8885,10 +8978,11 @@ async function applyConsolidateTarget(origIndex, targetUrl) {
 
 function clearConsolidateTarget(origIndex) {
   const row = state.editedRows[origIndex];
-  const old = String(row[CONSOLIDATE_COL] || '');
-  if (!old) return;
-  row[CONSOLIDATE_COL] = '';
-  logChange(origIndex, CONSOLIDATE_COL, old, '');
+  const oldId = String(row[CONSOLIDATE_ID_COL] || '');
+  const oldDisplay = String(row[CONSOLIDATE_COL] || '');
+  if (!oldId && !oldDisplay) return;
+  if (oldId) { row[CONSOLIDATE_ID_COL] = ''; logChange(origIndex, CONSOLIDATE_ID_COL, oldId, ''); }
+  if (oldDisplay) { row[CONSOLIDATE_COL] = ''; logChange(origIndex, CONSOLIDATE_COL, oldDisplay, ''); }
   updateConsolidateIndicator(row);
 }
 
@@ -8901,7 +8995,8 @@ function openConsolidatePicker(sourceIndex) {
   const sourceRow = state.editedRows[sourceIndex];
   const urlCol = state.urlColumn || 'Address';
   const sourceUrl = String(sourceRow[urlCol] || '').trim();
-  const currentTarget = String(sourceRow[CONSOLIDATE_COL] || '').trim();
+  // Preselect by the master's stable Address identity (the picker lists pages by Address).
+  const currentTarget = consolidateTargetAddr(sourceRow);
   const smeNotes = String(sourceRow[smeNotesCol()] || '').trim();
   const notesHint = String(sourceRow[notesCol()] || '').trim();
 
@@ -9404,8 +9499,10 @@ function renderCandidateGroup(group, onChange, skipped) {
 
 function applyConsolidationGroup(group, targetOrigIndex) {
   const targetRow = state.editedRows[targetOrigIndex];
-  // Use the resolved destination URL (new computed URL if available, otherwise inventory URL)
-  const resolvedTargetUrl = effectiveConsolidateUrl(targetRow);
+  const urlCol = state.urlColumn || 'Address';
+  // Identity = the master's stable Address; display = its clean relative new path.
+  const targetAddr = String(targetRow[urlCol] || '').trim();
+  const targetDisplay = consolidateDisplayPath(targetRow);
 
   // Target: set KKE to Evolve (unless it's already Evolve/Keep — preserve those; otherwise upgrade to Evolve)
   const oldTargetKke = String(targetRow[kkeCol()] || '').trim();
@@ -9414,14 +9511,19 @@ function applyConsolidationGroup(group, targetOrigIndex) {
     logChange(targetOrigIndex, kkeCol(), oldTargetKke, 'Evolve');
   }
 
-  // Others: KKE = Consolidate, Consolidate_Into = resolved target URL, clear nav
+  // Others: KKE = Consolidate, point identity + display at the master, clear nav
   group.rows.forEach(({ origIndex, row }) => {
     if (origIndex === targetOrigIndex) return;
-    // Set Consolidate_Into
+    // Set consolidation target (identity + derived display)
+    const oldId = String(row[CONSOLIDATE_ID_COL] || '');
+    if (oldId !== targetAddr) {
+      row[CONSOLIDATE_ID_COL] = targetAddr;
+      logChange(origIndex, CONSOLIDATE_ID_COL, oldId, targetAddr);
+    }
     const oldConsTarget = String(row[CONSOLIDATE_COL] || '');
-    if (oldConsTarget !== resolvedTargetUrl) {
-      row[CONSOLIDATE_COL] = resolvedTargetUrl;
-      logChange(origIndex, CONSOLIDATE_COL, oldConsTarget, resolvedTargetUrl);
+    if (oldConsTarget !== targetDisplay) {
+      row[CONSOLIDATE_COL] = targetDisplay;
+      logChange(origIndex, CONSOLIDATE_COL, oldConsTarget, targetDisplay);
     }
     // Set KKE = Consolidate
     const oldKke = String(row[kkeCol()] || '');
@@ -13020,20 +13122,11 @@ function cascadeNavChangesToRows(oldPaths) {
     } else if (newBase && storedPath.length > newBase.length && storedPath.startsWith(newBase + '/')) {
       pageSuffix = storedPath.slice(newBase.length + 1);
     }
-    const oldComputedPath = row['Computed Path'] || '';
     row['Computed Path'] = pageSuffix ? newBase + '/' + pageSuffix : newBase;
 
-    // Keep Consolidate_Into in sync when the nav path changes.
-    if (oldBase !== newBase) {
-      const oldAutoUrl = baseUrl ? baseUrl + '/' + oldBase.replace(/^\//, '') : '/' + oldBase.replace(/^\//, '');
-      const oldFullComputedUrl = baseUrl ? baseUrl + '/' + oldComputedPath.replace(/^\//, '') : '/' + oldComputedPath.replace(/^\//, '');
-      const newComputedUrl = baseUrl ? baseUrl + '/' + (row['Computed Path']).replace(/^\//, '') : '/' + (row['Computed Path']).replace(/^\//, '');
-      // Update references that point to the old nav-base URL or old full computed URL
-      resyncConsolidateInto(oldAutoUrl, newComputedUrl);
-      if (oldFullComputedUrl !== oldAutoUrl) {
-        resyncConsolidateInto(oldFullComputedUrl, newComputedUrl);
-      }
-    }
+    // Consolidate_Into is keyed off the master's stable Address identity now, so it no longer
+    // needs per-row URL re-syncing here — the single refresh after this loop re-derives every
+    // affected display path from its identity.
 
     // Keep Redirect_Destination in sync when it was auto-derived from the old nav path.
     // Only update it if it exactly matches what we would have generated from the OLD path —
@@ -13052,6 +13145,8 @@ function cascadeNavChangesToRows(oldPaths) {
       }
     }
   });
+  // A master page may have moved — re-derive every consolidating row's display path once.
+  refreshAllConsolidateDisplays();
   // Update sidebar indicators
   renderVisibleRows();
 }
@@ -16600,28 +16695,10 @@ async function loadAuditTemplate() {
  * Rows whose Consolidate_Into already holds a computed/external URL are left alone.
  */
 function resolveConsolidateIntoUrls() {
-  const urlCol = state.urlColumn || 'Address';
-
-  // Index rows by their inventory URL so we can find targets quickly
-  const rowByInventoryUrl = new Map();
-  state.editedRows.forEach(row => {
-    const u = String(row[urlCol] || '').trim();
-    if (u) rowByInventoryUrl.set(u, row);
-  });
-
-  state.editedRows.forEach((row, i) => {
-    const ct = String(row[CONSOLIDATE_COL] || '').trim();
-    if (!ct) return;
-    // Only act if the stored value is a known inventory URL — if it's already a
-    // computed/external URL it won't appear in this map, so we leave it alone.
-    const targetRow = rowByInventoryUrl.get(ct);
-    if (!targetRow) return;
-    const newUrl = effectiveConsolidateUrl(targetRow);
-    if (newUrl && newUrl !== ct) {
-      row[CONSOLIDATE_COL] = newUrl;
-      logChange(i, CONSOLIDATE_COL, ct, newUrl);
-    }
-  });
+  // Consolidate_Into is a derived display (the master's relative new path), backed by the stable
+  // _ConsolidateTargetId identity. Recompute every display from its identity so it reflects any
+  // nav assignment / URL override the master has gained since the link was made. Run before save.
+  refreshAllConsolidateDisplays();
 }
 
 /** A row "renders as" a Fragment (embeddable content object) — no public URL,
@@ -16658,9 +16735,9 @@ function resolveRedirectDestinations() {
     // If the target itself is set to 404, propagate
     const targetExplicit = String(target[destCol] || '').trim();
     if (targetExplicit === '404') return '404';
-    // If the target is itself being consolidated, follow the chain
+    // If the target is itself being consolidated, follow the chain (via its identity)
     if (targetKke === 'consolidate') {
-      const next = String(target[CONSOLIDATE_COL] || '').trim();
+      const next = consolidateTargetAddr(target);
       if (next) return resolveFinalUrl(next, visited);
     }
     // Target will move to a new URL via nav Computed Path
@@ -16682,22 +16759,22 @@ function resolveRedirectDestinations() {
     const selfUrl = String(row[urlCol] || '').trim();
 
     if (kke === 'consolidate') {
-      const target = String(row[CONSOLIDATE_COL] || '').trim();
-      if (!target) { row[destCol] = ''; return; }
-      // Preserve manual overrides (existing ≠ raw Consolidate_Into URL).
-      // If existing equals the raw target URL, it was auto-derived and should be re-derived
-      // in case the target has since been assigned to the nav tree (new Computed Path).
-      if (existing && existing !== target) return;
-      // Chase to final URL, seeding visited with self to avoid self-cycles
-      row[destCol] = resolveFinalUrl(target, new Set([selfUrl]));
+      const targetId = consolidateTargetAddr(row);
+      if (!targetId) { row[destCol] = ''; return; }
+      // Auto-derive the absolute destination from the master's identity. Preserve a genuine manual
+      // override (a value unrelated to the master); re-derive blanks, prior auto values, and the
+      // bare identity (the latter covers "linked before the master had a nav home, now it does").
+      const auto = resolveFinalUrl(targetId, new Set([selfUrl]));
+      const looksAutoDerived = !existing || existing === auto || existing === targetId;
+      if (looksAutoDerived) row[destCol] = auto;
       return;
     }
 
     if (kke === 'kill') {
       if (existing) return; // explicit value already set
-      // Priority: Consolidate_Into > nav node path > default destination > blank
+      // Priority: consolidation master > nav node path > default destination > blank
       let resolved = '';
-      const consolidateTarget = String(row[CONSOLIDATE_COL] || '').trim();
+      const consolidateTarget = consolidateTargetAddr(row);
       if (consolidateTarget) {
         resolved = resolveFinalUrl(consolidateTarget, new Set([selfUrl]));
       }
@@ -17518,32 +17595,27 @@ function navExportContext() {
     if (u) (assignedUrls[id] = assignedUrls[id] || []).push(u);
   });
 
-  // Pages being consolidated INTO another page, keyed by the stored target URL.
+  // Pages being consolidated INTO another page, keyed by the master's stable Address identity.
   const consolidateInto = new Map();
   (state.editedRows || []).forEach(r => {
     if (!rowIsConsolidate(r)) return;
-    const tgt = String(r[CONSOLIDATE_COL] || '').trim();
+    const tgt = consolidateTargetAddr(r);
     if (!tgt) return;
     if (!consolidateInto.has(tgt)) consolidateInto.set(tgt, []);
     consolidateInto.get(tgt).push(r);
   });
-  // For each node, the URLs of pages consolidating into its assigned page(s). Match on
-  // each assigned page's current URL AND its effective/new-site URL (Consolidate_Into
-  // may hold either); dedupe across the node's pages.
+  // For each node, the URLs of pages consolidating into its assigned page(s). The identity is
+  // the master's current Address, so match each assigned page's Address directly; dedupe.
   const consolidatedUrls = {};
   Object.keys(assignedRowsByNode).forEach(id => {
     const seen = new Set();
     const urls = [];
     assignedRowsByNode[id].forEach(row => {
-      const keys = new Set();
       const cur = String(row[urlCol] || '').trim();
-      const e2 = effectiveConsolidateUrl(row);
-      if (cur) keys.add(cur);
-      if (e2) keys.add(e2);
-      keys.forEach(k => (consolidateInto.get(k) || []).forEach(src => {
+      (consolidateInto.get(cur) || []).forEach(src => {
         const su = String(src[urlCol] || '').trim();
         if (su && !seen.has(su)) { seen.add(su); urls.push(su); }
-      }));
+      });
     });
     if (urls.length) consolidatedUrls[id] = urls;
   });
@@ -18512,29 +18584,24 @@ function gatherAssigneeBriefData(role, person) {
     assignedByNav.get(id).push(r);
   });
 
-  // Pages being consolidated INTO another page, keyed by the stored target URL.
+  // Pages being consolidated INTO another page, keyed by the master's stable Address identity.
   // Lets each surviving page show how many old pages it absorbs ("merges N").
   const consolidateInto = new Map();
   state.editedRows.forEach(r => {
     if (!rowIsConsolidate(r)) return;
-    const tgt = String(r[CONSOLIDATE_COL] || '').trim();
+    const tgt = consolidateTargetAddr(r);
     if (!tgt) return;
     if (!consolidateInto.has(tgt)) consolidateInto.set(tgt, []);
     consolidateInto.get(tgt).push(r);
   });
-  // Count distinct pages merging into a given live page (match on its current URL and
-  // its effective/new-site URL, since Consolidate_Into may hold either).
+  // Count distinct pages merging into a given live page — match on its current Address (identity).
   const mergeCountFor = (row) => {
-    const keys = new Set();
     const cur = String(row[urlCol] || '').trim();
-    const e2 = effectiveConsolidateUrl(row);
-    if (cur) keys.add(cur);
-    if (e2) keys.add(e2);
     const seen = new Set();
-    keys.forEach(k => (consolidateInto.get(k) || []).forEach(src => {
+    (consolidateInto.get(cur) || []).forEach(src => {
       const sid = String(src[urlCol] || '') || String(src['NavID'] || '');
       if (!seen.has(sid)) seen.add(sid);
-    }));
+    });
     return seen.size;
   };
 
@@ -19346,13 +19413,20 @@ const TV_HIDDEN_BY_DEFAULT = new Set([
   'Design_Patterns'
 ]);
 
+// Plain-language explanations surfaced as column-header tooltips (Table View) so non-experts
+// understand what they're reading. Keyed by column name.
+const COLUMN_HELP = {
+  'Consolidate_Into': 'The new-site path of the page this content is being merged into. Shown as a relative path; the actual 301 redirect still points at the full destination URL.'
+};
+
 function ensureTableColumns() {
   if (_tableColumns.length > 0) return;
 
   if (state.tableColumns) {
     _tableColumns = state.tableColumns.map(c => ({ ...c }));
     state.headers.forEach(h => {
-      if (h !== '_rowIndex' && !_tableColumns.find(c => c.name === h)) {
+      // Skip internal (_-prefixed) columns — they're engine plumbing, never shown in Table View.
+      if (h !== '_rowIndex' && !h.startsWith('_') && !_tableColumns.find(c => c.name === h)) {
         const defaultVisible = !TV_HIDDEN_BY_DEFAULT.has(h);
         _tableColumns.push({ name: h, visible: defaultVisible, width: tvDefaultWidth(h) });
       }
@@ -19496,7 +19570,7 @@ function renderTableHeaders(visibleCols) {
       ? (_tableSort.dir === 'asc' ? ' ▲' : ' ▼')
       : '';
     hdr.textContent = col.name + arrow;
-    hdr.title = col.name;
+    hdr.title = COLUMN_HELP[col.name] || col.name;
 
     hdr.addEventListener('click', () => {
       if (_tableSort.col === col.name) {
@@ -20244,27 +20318,27 @@ function renderRedirectEditor() {
     const computedPath = String(row['Computed Path'] || '').trim();
     const existingDest = String(row[REDIRECT_DEST_COL] || '').trim();
 
-    // Consolidate pages — destination chases the target's final URL
+    // Consolidate pages — destination chases the master's final URL (via stable identity)
     if (status.toLowerCase() === 'consolidate') {
-      const target = String(row[CONSOLIDATE_COL] || '').trim();
+      const target = consolidateTargetAddr(row);
       let resolvedDest = '';
       if (target) {
-        // Inline chase: if target is in inventory and has Computed Path, use that;
-        // fall back to target's explicit Redirect_Destination; otherwise target URL as-is.
+        // Inline chase: if master is in inventory and has Computed Path, use that;
+        // fall back to master's explicit Redirect_Destination; otherwise master's URL as-is.
         const targetRow = state.editedRows.find(r => String(r[urlCol] || '').trim() === target);
         if (targetRow) {
           const tComp = String(targetRow['Computed Path'] || '').trim();
           const tExplicit = String(targetRow[REDIRECT_DEST_COL] || '').trim();
           if (tComp) resolvedDest = baseUrl ? baseUrl + '/' + tComp.replace(/^\//, '') : '/' + tComp.replace(/^\//, '');
           else if (tExplicit && tExplicit !== '404') resolvedDest = tExplicit;
-          else resolvedDest = target;
+          else resolvedDest = String(targetRow[urlCol] || '').trim();
         } else {
           resolvedDest = target;
         }
       }
       // Use freshly derived URL for display unless the existing value is a genuine manual
-      // override (i.e., it differs from the raw Consolidate_Into target URL).
-      const isManualOverride = existingDest && existingDest !== target;
+      // override (differs from both the derived destination and the bare identity).
+      const isManualOverride = existingDest && existingDest !== resolvedDest && existingDest !== target;
       const finalDest = isManualOverride ? existingDest : resolvedDest;
       redirectEntries.push({
         origIndex: i,
@@ -20282,7 +20356,7 @@ function renderRedirectEditor() {
     if (status.toLowerCase() === 'kill') {
       // Priority: explicit > Consolidate target > nav node path > default destination > blank (retired/404)
       let resolvedDest = '';
-      const consTarget = String(row[CONSOLIDATE_COL] || '').trim();
+      const consTarget = consolidateTargetAddr(row);
       if (consTarget) {
         const targetRow = state.editedRows.find(r => String(r[urlCol] || '').trim() === consTarget);
         if (targetRow) {
@@ -20290,7 +20364,7 @@ function renderRedirectEditor() {
           const tExplicit = String(targetRow[REDIRECT_DEST_COL] || '').trim();
           if (tComp) resolvedDest = baseUrl ? baseUrl + '/' + tComp.replace(/^\//, '') : '/' + tComp.replace(/^\//, '');
           else if (tExplicit && tExplicit !== '404') resolvedDest = tExplicit;
-          else resolvedDest = consTarget;
+          else resolvedDest = String(targetRow[urlCol] || '').trim();
         } else {
           resolvedDest = consTarget;
         }
