@@ -2144,7 +2144,21 @@ async function promptKillCleanup(origIndex, targetStateLabel = 'Kill') {
   if (!hasNav && !hasRedirect) return true;
   const result = await showKillCleanupModal(row, targetStateLabel);
   if (result === null) return false;
-  if (result.clearNav) clearNavAssignment(row, origIndex);
+  if (result.clearNav) {
+    const oldNavID = String(row['NavID'] || '').trim();
+    clearNavAssignment(row, origIndex);
+    // Consistency with the manual clearNav(): if the page's nav node is now an orphan leaf
+    // (no children, no other pages assigned), offer to remove it from the tree too — otherwise
+    // killing/consolidating a page leaves its empty node behind in the IA.
+    if (oldNavID && state.navNodes.length > 0) {
+      const node = state.navNodes.find(n => n.id === oldNavID);
+      if (node) {
+        const hasChildren = node.children && node.children.length > 0;
+        const otherPages = state.editedRows.some(r => String(r['NavID'] || '').trim() === oldNavID);
+        if (!hasChildren && !otherPages) showOrphanNodeDialog(node);
+      }
+    }
+  }
   if (result.clearRedirect) clearRedirectDestination(row, origIndex);
   return true;
 }
