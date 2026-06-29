@@ -69,7 +69,7 @@ We built a proprietary content audit platform that eliminates the manual overhea
 
 **Transparency throughout.** You don't have to wait for a final report to understand what's happening with your content. We can generate a branded progress report at any point during the audit and share it with you as a PDF — showing the current status, breakdown by recommendation, and group-level detail. A built-in Table View lets strategists view, sort, and filter the full spreadsheet without leaving the tool — no need to open Excel alongside the platform. Filtered exports let us share relevant subsets with different stakeholders — your SEO team sees one view, your content editors see another, your developers see the redirect map.
 
-**Your data stays yours.** Everything is saved back to standard Excel files. There's no proprietary format lock-in, no cloud dependency, no data leaving your engagement. When the audit is done, you have a fully portable spreadsheet with every decision, tag, note, and recommendation intact.
+**Your data stays yours — all of it.** Everything is saved back to standard Excel files. There's no proprietary format lock-in, no cloud dependency, no data leaving your engagement. When the audit is done, you have a fully portable spreadsheet with every decision, tag, note, and recommendation intact. And critically, *your* data comes through untouched: whatever you pulled in your crawl — including custom Screaming Frog extractions like CMS template names, author bylines, publish dates, schema markup, or component flags — is preserved column-for-column through the entire audit and migration lifecycle. Most tools that "ingest" your spreadsheet quietly flatten it to a fixed template and lose those columns. We don't drop a single one — and better still, those custom columns become first-class audit data: your strategists can filter on them, sort by them, and surface them right next to the live page. The data you invested in capturing actually gets used.
 
 ---
 
@@ -127,6 +127,10 @@ Use these as talking points. Adapt to context.
 
 > "No. AI assists our strategists — it doesn't replace them. Think of it like this: we define the evaluation criteria, the AI applies them at scale, and then a human reviews and makes the final call. The AI is particularly useful for subjective content quality questions that you can't answer with spreadsheet data alone. But every recommendation is reviewed by a strategist who understands your business."
 
+### On Your Crawl Data (if they've invested in custom extractions)
+
+> "One thing teams who really know Screaming Frog appreciate: if you've set up custom extractions — pulling CMS template names, author bylines, publish dates, structured data, whatever matters to you — all of that comes through completely intact. A lot of tools quietly collapse your spreadsheet down to their own fixed set of columns and lose that work. We keep every column exactly as you crawled it, and we make those custom fields usable inside the audit — your team can filter and sort on them and see them next to each live page. The data you went to the trouble of capturing actually drives the audit."
+
 ### Closing
 
 > "Content audits are one of those things where the methodology matters as much as the expertise. Everyone in our space knows what Keep/Kill/Evolve means. The difference is in how efficiently and consistently you execute it. We invested in building the tooling to do it better."
@@ -154,3 +158,4 @@ When clients mention other approaches or tools:
 | "We've looked at SEMrush Content Audit" | "SEMrush is great for pulling data together. Where it stops is the actual decision-making workflow — you're still looking at a dashboard and manually recording recommendations. Our platform is built specifically for the review-and-decide workflow." |
 | "Can't we just do this with Google Sheets so everyone can collaborate?" | "Google Sheets works for small sites, but it doesn't scale. At 1,000+ pages you hit performance issues, and you still have the fundamental problem of flipping between the sheet and the actual pages. Our platform solves both." |
 | "We already did an audit internally" | "That's great — we can import those decisions and build on them. Our platform merges existing audit data by URL, so nothing is lost. We'd review what you've done, apply our rubric for consistency, and fill in the gaps." |
+| "We set up a lot of custom extractions in our crawl" | "Perfect — those come straight through. Every custom extraction column you built is preserved exactly, and our platform makes them usable: your team can filter and sort on them and see them alongside each live page. Most tools flatten your spreadsheet to a fixed template and throw that work away. We treat your columns as first-class data." |
