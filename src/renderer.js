@@ -289,6 +289,7 @@ async function init() {
   state.autoAdvance   = prefs.autoAdvance;
   state.claudeApiKey  = prefs.claudeApiKey || '';
   state.groupLibrary    = prefs.groupLibrary || [];
+  state.sitemapDefaults = prefs.sitemapDefaults || null; // app-level Visual Sitemap defaults
   // Page Type library — global (app prefs), defaults to a curated list when prefs is empty
   // NOTE: prefs.pageTypeLibrary is now returned by get-prefs so user additions persist correctly
   if (Array.isArray(prefs.pageTypeLibrary) && prefs.pageTypeLibrary.length > 0) {
@@ -11365,70 +11366,189 @@ function openMenuOrphansDialog() {
   openModal({ title: 'Broken menu references', body, width: 580, buttons: [{ label: 'Done', variant: 'primary' }] });
 }
 
-// ─── Per-menu sitemap ────────────────────────────────────────────────────────
-// Renders each menu as a box-tree via the shared render-sitemap-d3 pipeline.
-// One tree per menu (synthetic root = the menu name); items are colored by kind
-// (page / link / header) and headers get a dashed border (grouping, not a link).
+// ─── Visual Sitemap (interactive engine — see src/sitemap-template.js) ────────
+// One engine drives three surfaces: the in-app view (an Electron <webview>
+// running the generated HTML — free of the app's strict CSP), the client-
+// shareable interactive HTML export, and the PDF export. Settings live in two
+// tiers — app-level defaults (prefs.sitemapDefaults) and per-project,
+// per-context overrides (projectSettings.sitemapSettings.{nav,menus}). Node
+// layout/color overrides and the collapse view-state are always project-level.
 
-function _menuSitemapZoom(container, svg) {
-  let scale = 1, panning = false, sx, sy, sl, st;
-  container.addEventListener('wheel', e => {
-    e.preventDefault();
-    scale = Math.max(0.2, Math.min(3, scale + (e.deltaY > 0 ? -0.1 : 0.1)));
-    svg.style.transform = 'scale(' + scale + ')';
-    svg.style.transformOrigin = '0 0';
-  }, { passive: false });
-  container.addEventListener('mousedown', e => { panning = true; container.style.cursor = 'grabbing'; sx = e.pageX; sy = e.pageY; sl = container.scrollLeft; st = container.scrollTop; });
-  container.addEventListener('mousemove', e => { if (!panning) return; e.preventDefault(); container.scrollLeft = sl - (e.pageX - sx); container.scrollTop = st - (e.pageY - sy); });
-  container.addEventListener('mouseup', () => { panning = false; container.style.cursor = 'grab'; });
-  container.addEventListener('mouseleave', () => { panning = false; container.style.cursor = 'grab'; });
+const SITEMAP_DEFAULT_PALETTE = ['#2d6a9f', '#1e7a4e', '#7a3a9f', '#9f6a1e', '#2d7a7a', '#7a2d2d', '#3a5a8f', '#5a7a2d'];
+const SITEMAP_ROOT_COLOR = '#1a3a6b';
+const SITEMAP_MSG_PREFIX = '@@SITEMAP@@';   // must match MSG_PREFIX in the engine
+
+// App-level layout defaults merged with whatever the user saved via
+// "Save as my defaults" (prefs.sitemapDefaults).
+function sitemapAppDefaults() {
+  return Object.assign({
+    vertDepth: 2, childThresh: 3, cardWidth: 148, cardHeight: 54,
+    hGap: 40, vRow: 60, vlGap: 12, vlDrop: 32, vlHgap: 20, pad: 72,
+    showNumbers: true
+  }, state.sitemapDefaults || {});
 }
 
-// Sections = the children at the menu's first real branch point (after descending
-// any single-child spine). Each item maps to the section it descends from; spine
-// items map to '' (neutral). Mirrors the columns layout's column grouping.
-function menuSections(menu) {
-  const items = menu.items || [];
-  const childrenOf = pid => items.filter(it => (it.parentId || '') === (pid || ''));
-  let level = childrenOf('');
-  while (level.length === 1) level = childrenOf(level[0].id);
-  const sectionOf = {};
-  level.forEach(sec => {
-    const label = menuItemLabel(sec) || '(section)';
-    (function walk(it) { sectionOf[it.id] = label; childrenOf(it.id).forEach(walk); })(sec);
+// Effective settings for a context: app defaults < saved project overrides.
+function sitemapEffectiveSettings(context, defaultColorRules) {
+  const all = state.projectSettings.sitemapSettings || {};
+  const ctx = all[context] || {};
+  const appD = sitemapAppDefaults();
+  const eff = Object.assign({}, appD, ctx);
+  eff.colorRules   = ctx.colorRules   || (state.sitemapDefaults && state.sitemapDefaults.colorRules) || defaultColorRules || [];
+  eff.legendLabels = ctx.legendLabels || (state.sitemapDefaults && state.sitemapDefaults.legendLabels) || {};
+  eff.nodeOverrides = ctx.nodeOverrides || {};
+  eff.collapsed = Array.isArray(ctx.collapsed) ? ctx.collapsed : null;
+  return eff;
+}
+
+function sitemapProjectSlug() {
+  const ps = state.projectSettings || {};
+  return (ps.projectName || ps.clientName || 'project').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project';
+}
+
+// Value-rule set: one {type:'value'} rule per distinct colorValue, plus a
+// trailing fallback. Used as the initial color scheme (sections for nav, item
+// kinds for menus).
+function sitemapValueRules(values, palette, fallback, rootColor) {
+  const rules = [];
+  if (rootColor) rules.push({ id: 'r-root', label: 'Homepage / root', condition: { type: 'depth', value: 0 }, color: rootColor });
+  values.filter(Boolean).forEach((v, i) => {
+    rules.push({ id: 'r-val-' + i, label: v, condition: { type: 'value', value: v }, color: palette[i % palette.length] });
   });
-  return sectionOf;
+  rules.push({ id: 'r-fallback', label: 'Everything else', condition: { type: 'always' }, color: fallback || '#9aa0ab' });
+  return rules;
 }
 
-const SITEMAP_SECTION_CYCLE = ['#4F46E5', '#0891B2', '#059669', '#D97706', '#DC2626', '#7C3AED', '#0284C7', '#65A30D', '#DB2777', '#9333EA', '#C2410C', '#0D9488'];
-const SITEMAP_KIND_COLORS = { Page: '#059669', Link: '#D97706', Header: '#64748B' };
+// Opens the interactive sitemap modal for a built tree.
+// opts: { context, title, rootHeadings, roots, slug, defaultColorRules,
+//         palette, rootColor, initialCollapsed }
+function openSitemapView(opts) {
+  if (!window.SitemapTemplate) { showToast('Sitemap engine unavailable', 'error'); return; }
+  const palette = (Array.isArray(state.projectSettings.brandPalette) && state.projectSettings.brandPalette.length)
+    ? state.projectSettings.brandPalette : (opts.palette || SITEMAP_DEFAULT_PALETTE);
+  const eff = sitemapEffectiveSettings(opts.context, opts.defaultColorRules);
 
-// Returns { patternFn, colorMap, defaultColor, legendTitle } for one menu given the
-// color-by dimension (kind|section) and palette (meaningful|brand|mono).
-function menuColoring(menu, colorBy, palette) {
-  const brand = (Array.isArray(state.projectSettings.brandPalette) && state.projectSettings.brandPalette.length)
-    ? state.projectSettings.brandPalette : null;
-  const kindOf = (it) => it.kind === 'ref' ? 'Page' : it.kind === 'link' ? 'Link' : 'Header';
+  const baseData = {
+    title: opts.title,
+    rootHeadings: !!opts.rootHeadings,
+    roots: opts.roots,
+    storageKey: sitemapProjectSlug() + '-' + opts.context,
+    palette: palette,
+    rootColor: opts.rootColor || SITEMAP_ROOT_COLOR,
+    appDefaults: sitemapAppDefaults(),
+    settings: {
+      vertDepth: eff.vertDepth, childThresh: eff.childThresh,
+      cardWidth: eff.cardWidth, cardHeight: eff.cardHeight,
+      hGap: eff.hGap, vRow: eff.vRow, vlGap: eff.vlGap, vlDrop: eff.vlDrop,
+      vlHgap: eff.vlHgap, pad: eff.pad, showNumbers: eff.showNumbers !== false,
+      colorRules: eff.colorRules, legendLabels: eff.legendLabels, nodeOverrides: eff.nodeOverrides
+    },
+    // Nav uses node.collapse (the Nav Tree checkbox / NavStructure column) as the
+    // single source of truth for "starts collapsed" — so always seed from it, and
+    // never let a stale saved view-state shadow a checkbox change. Menus have no
+    // such flag, so they fall back to their own persisted collapse view-state.
+    initialCollapsed: opts.collapseToNavNodes ? (opts.initialCollapsed || []) : (eff.collapsed || opts.initialCollapsed || [])
+  };
 
-  if (palette === 'mono') {
-    return { patternFn: () => '', colorMap: {}, defaultColor: (brand && brand[0]) || '#4F46E5', legendTitle: '' };
+  let lastState = { collapsed: baseData.initialCollapsed, showNumbers: baseData.settings.showNumbers, settings: baseData.settings };
+
+  const persist = () => {
+    const all = state.projectSettings.sitemapSettings || (state.projectSettings.sitemapSettings = {});
+    const entry = Object.assign({}, all[opts.context], lastState.settings);
+    // For nav, collapse lives on the nodes (written via applySitemapCollapseToNav),
+    // not here — keeping it out avoids the two stores fighting.
+    if (opts.collapseToNavNodes) delete entry.collapsed;
+    else entry.collapsed = lastState.collapsed || [];
+    all[opts.context] = entry;
+    setDirty(true);
+  };
+
+  const html = window.SitemapTemplate.build(Object.assign({ mode: 'app' }, baseData));
+  const wv = document.createElement('webview');
+  wv.setAttribute('src', 'data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  wv.style.cssText = 'width:100%;height:100%;border:0;flex:1;';
+
+  const container = document.createElement('div');
+  container.style.cssText = 'width:100%;height:80vh;display:flex;';
+  container.appendChild(wv);
+
+  wv.addEventListener('console-message', (e) => {
+    if (!e || !e.message || e.message.indexOf(SITEMAP_MSG_PREFIX) !== 0) return;
+    let msg; try { msg = JSON.parse(e.message.slice(SITEMAP_MSG_PREFIX.length)); } catch (_) { return; }
+    if (msg.type === 'state') {
+      lastState = msg.state;
+      persist();
+      // Collapsing/expanding a node in the view writes back to node.collapse so the
+      // Nav Tree checkbox stays in sync (nav only).
+      if (opts.collapseToNavNodes) applySitemapCollapseToNav(lastState.collapsed || []);
+    } else if (msg.type === 'saveDefaults') {
+      state.sitemapDefaults = Object.assign({}, state.sitemapDefaults, msg.settings);
+      window.electronAPI.savePrefs({ sitemapDefaults: state.sitemapDefaults });
+      showToast('Saved as your sitemap defaults', 'success');
+    } else if (msg.type === 'export') {
+      if (msg.state) lastState = msg.state;
+      if (msg.format === 'client') sitemapExportClient(baseData, lastState, opts.slug);
+      else if (msg.format === 'pdf') sitemapExportPdf(baseData, lastState, opts.slug);
+    }
+  });
+
+  openModal({ title: opts.title, body: container, width: '94vw', buttons: [{ label: 'Done', variant: 'primary' }] });
+}
+
+// Reconcile the nav nodes' `collapse` flag with what the user collapsed/expanded
+// in the sitemap view. The engine only reports collapse on nodes that have
+// children, so a node absent from the set is genuinely expanded → clear its flag.
+// Mutates the live navTree node objects (which Save serializes), keeps the
+// NavStructure Collapse column and the Nav Tree checkboxes in sync.
+function applySitemapCollapseToNav(collapsedIds) {
+  const set = new Set(collapsedIds || []);
+  let changed = false;
+  (function walk(nodes) {
+    if (!nodes) return;
+    nodes.forEach(n => {
+      if (n.children && n.children.length) {
+        const want = set.has(n.id) ? 'Y' : '';
+        const cur = (n.collapse === 'Y' || n.collapse === true) ? 'Y' : '';
+        if (want !== cur) { n.collapse = want; changed = true; }
+      }
+      walk(n.children);
+    });
+  })(state.navTree);
+  if (changed) {
+    state.navTreeDirty = true;
+    setDirty(true);
+    invalidateNavPageCountsCache();
+    if (typeof _navEditorOpen !== 'undefined' && _navEditorOpen) renderNavEditor();
   }
-  if (colorBy === 'section') {
-    const sectionOf = menuSections(menu);
-    const labels = [...new Set(Object.values(sectionOf))];
-    const cycle = (palette === 'brand' && brand) ? brand : SITEMAP_SECTION_CYCLE;
-    const colorMap = {};
-    labels.forEach((l, i) => { colorMap[l] = cycle[i % cycle.length]; });
-    return { patternFn: (it) => sectionOf[it.id] || '', colorMap, defaultColor: null, legendTitle: 'Section' };
-  }
-  // colorBy === 'kind'
-  const cycle = (palette === 'brand' && brand) ? brand : null;
-  if (cycle) {
-    const colorMap = {};
-    ['Page', 'Link', 'Header'].forEach((k, i) => { colorMap[k] = cycle[i % cycle.length]; });
-    return { patternFn: kindOf, colorMap, defaultColor: null, legendTitle: 'Item kind' };
-  }
-  return { patternFn: kindOf, colorMap: { ...SITEMAP_KIND_COLORS }, defaultColor: null, legendTitle: 'Item kind' };
+}
+
+async function sitemapExportClient(baseData, st, slug) {
+  const data = Object.assign({}, baseData, {
+    mode: 'client',
+    settings: (st && st.settings) || baseData.settings,
+    initialCollapsed: (st && st.collapsed) || baseData.initialCollapsed
+  });
+  const html = window.SitemapTemplate.build(data);
+  const r = await window.electronAPI.saveTextFile({
+    content: html,
+    defaultName: (slug || 'sitemap') + '.html',
+    filters: [{ name: 'HTML', extensions: ['html'] }, { name: 'All Files', extensions: ['*'] }]
+  });
+  if (r && r.success) showToast('Saved interactive sitemap (HTML)', 'success');
+  else if (r && r.error && r.error !== 'Cancelled') showToast('Export failed: ' + r.error, 'error');
+}
+
+async function sitemapExportPdf(baseData, st, slug) {
+  const data = Object.assign({}, baseData, {
+    mode: 'print',
+    settings: (st && st.settings) || baseData.settings,
+    initialCollapsed: (st && st.collapsed) || baseData.initialCollapsed
+  });
+  const html = window.SitemapTemplate.build(data);
+  showToast('Generating PDF…');
+  const r = await window.electronAPI.exportSitemapPdf({ html, defaultName: (slug || 'sitemap') + '.pdf' });
+  if (r && r.success) showToast('Exported PDF', 'success');
+  else if (r && r.error && r.error !== 'Cancelled') showToast('PDF export failed: ' + r.error, 'error');
 }
 
 // Project Settings → Identity: editable list of client brand hex colors, used by
@@ -11471,145 +11591,43 @@ async function generateMenuSitemap() {
   const menus = getMenus();
   if (!menus.length) { showToast('No menus to visualize', 'error'); return; }
 
-  const kindKey = (it) => it.kind === 'ref' ? 'Page' : it.kind === 'link' ? 'Link' : 'Header';
-  // patternFn(item) → the value the box is colored by (kind label or section label).
-  const buildItems = (menu, pid, patternFn) => (menu.items || [])
+  const kindOf = (it) => it.kind === 'ref' ? 'Page' : it.kind === 'link' ? 'Link' : 'Header';
+  const buildItems = (menu, pid) => (menu.items || [])
     .filter(it => (it.parentId || '') === (pid || ''))
-    .map(it => ({
-      name: (menuItemLabel(it) || '(item)').substring(0, 35),
-      menu: it.kind !== 'header',     // dashed border for headers (grouping, not a destination)
-      pattern: patternFn(it),
-      phase: '',
-      pageCount: 0,
-      hasHiddenChildren: false,
-      children: buildItems(menu, it.id, patternFn),
-    }));
-  const buildMenuTree = (menu, patternFn) => ({
-    name: (menu.name || '(untitled menu)').substring(0, 40),
-    menu: true,
-    pattern: '',     // root/menu name is always neutral
-    isMenuRoot: true, // styled as the menu container, not a page/link/header
-    phase: '',
-    pageCount: 0,
-    hasHiddenChildren: false,
-    children: buildItems(menu, '', patternFn),
-  });
+    .map(it => {
+      const kids = buildItems(menu, it.id);
+      const node = {
+        id: it.id,
+        label: menuItemLabel(it) || '(item)',
+        colorValue: kindOf(it),          // colored by item kind by default
+        menu: it.kind !== 'header',      // dashed border for headers (grouping, not a destination)
+      };
+      if (kids.length) { node.collapsible = true; node.children = kids; }
+      return node;
+    });
+
+  // One root per menu (synthetic neutral root = the menu name), stacked vertically.
+  const roots = menus.map(menu => ({
+    id: 'menu-' + menu.id,
+    label: (menu.name || '(untitled menu)') + (menu.placement ? ' · ' + menu.placement : ''),
+    isMenuRoot: true,
+    children: buildItems(menu, ''),
+  }));
 
   const ps = state.projectSettings || {};
-  const slug = (ps.projectName || ps.clientName || 'project').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project';
+  const palette = (Array.isArray(ps.brandPalette) && ps.brandPalette.length) ? ps.brandPalette : SITEMAP_DEFAULT_PALETTE;
+  const title = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
 
-  // Color choices are project-level defaults (apply to all menus), tunable from the
-  // modal toolbar; layout is per-menu.
-  let colorBy = ps.sitemapColorBy || 'kind';
-  let palette = ps.sitemapPalette || 'meaningful';
-  let rerenderAll = () => {}; // assigned once cards are built
-
-  const body = document.createElement('div');
-  body.style.cssText = 'display:flex;flex-direction:column;gap:16px;';
-
-  // ── Color controls (color-by + palette), modal-level ──
-  const controls = document.createElement('div');
-  controls.style.cssText = 'display:flex;align-items:center;gap:14px;font-size:12px;color:var(--text-secondary);flex-wrap:wrap;';
-  const mkSel = (label, opts, current, onChange) => {
-    const wrap = document.createElement('label');
-    wrap.style.cssText = 'display:flex;align-items:center;gap:5px;';
-    wrap.appendChild(document.createTextNode(label));
-    const sel = document.createElement('select');
-    sel.style.cssText = 'font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;';
-    opts.forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; if (v === current) o.selected = true; sel.appendChild(o); });
-    sel.addEventListener('change', () => onChange(sel.value));
-    wrap.appendChild(sel);
-    return wrap;
-  };
-  const hasBrand = Array.isArray(ps.brandPalette) && ps.brandPalette.length > 0;
-  controls.appendChild(mkSel('Color by', [['kind', 'Item kind'], ['section', 'Section']], colorBy, (v) => { colorBy = v; state.projectSettings.sitemapColorBy = v; setDirty(true); rerenderAll(); }));
-  controls.appendChild(mkSel('Palette', [['meaningful', 'Meaningful'], ['brand', hasBrand ? 'Client brand' : 'Client brand (none set)'], ['mono', 'Mono']], palette, (v) => { palette = v; state.projectSettings.sitemapPalette = v; setDirty(true); rerenderAll(); }));
-  const hint = document.createElement('span');
-  hint.style.cssText = 'font-size:11px;color:var(--text-muted);flex:1;min-width:160px;';
-  hint.textContent = 'Layout is per menu · scroll to zoom, drag to pan' + (hasBrand ? '' : ' · set Client brand colors in Project Settings → Identity');
-  controls.appendChild(hint);
-  body.appendChild(controls);
-
-  const LAYOUTS = [['columns', 'Mega columns'], ['tree', 'Top-down tree'], ['outline', 'Outline']];
-
-  // Render (or re-render) one menu's card. Reads menu.sitemapLayout + the current
-  // colorBy/palette each call so the dropdowns can re-render.
-  const renderCard = async (menu, chartDiv, dl) => {
-    chartDiv.innerHTML = '<p style="color:#888;font-size:12px;padding:16px;">Rendering…</p>';
-    dl.disabled = true;
-    const layout = menu.sitemapLayout || 'columns';
-    const coloring = menuColoring(menu, colorBy, palette);
-    try {
-      const result = await window.electronAPI.renderSitemapD3({
-        treeData: buildMenuTree(menu, coloring.patternFn),
-        colorMap: coloring.colorMap,
-        options: { layout, legendTitle: coloring.legendTitle, borderLegend: { solid: 'Page / Link', dashed: 'Header' }, showStack: false, defaultColor: coloring.defaultColor || undefined }
-      });
-      if (result && result.success && result.svg) {
-        chartDiv.innerHTML = result.svg;
-        const svg = chartDiv.querySelector('svg');
-        if (svg) { svg.style.display = 'block'; svg.style.transformOrigin = '0 0'; _menuSitemapZoom(chartDiv, svg); }
-        dl.disabled = false;
-        dl.onclick = async () => {
-          const menuSlug = (menu.name || 'menu').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'menu';
-          const r = await window.electronAPI.saveTextFile({ content: result.svg, defaultName: `${slug}-${menuSlug}-sitemap.svg`, filters: [{ name: 'SVG', extensions: ['svg'] }, { name: 'All Files', extensions: ['*'] }] });
-          if (r && r.success) showToast('Saved SVG', 'success');
-        };
-      } else {
-        chartDiv.innerHTML = '<p style="color:#c0392b;font-size:12px;padding:12px;">Could not render: ' + escapeHtml((result && result.error) || 'unknown error') + '</p>';
-      }
-    } catch (e) {
-      chartDiv.innerHTML = '<p style="color:#c0392b;font-size:12px;padding:12px;">Error: ' + escapeHtml(e.message) + '</p>';
-    }
-  };
-
-  // Build every card synchronously first, then render the trees ONE AT A TIME
-  // (the D3 renderer is heavy and shouldn't be hit concurrently from one view).
-  const cards = menus.map(menu => {
-    const card = document.createElement('div');
-    card.style.cssText = 'border:1px solid var(--border);border-radius:8px;overflow:hidden;';
-    const head = document.createElement('div');
-    head.style.cssText = 'display:flex;align-items:center;gap:10px;font-weight:600;font-size:13px;padding:8px 12px;background:var(--bg-field-bar);border-bottom:1px solid var(--border);';
-    const title = document.createElement('span');
-    title.style.flex = '1';
-    title.textContent = (menu.name || '(untitled menu)') + (menu.placement ? ' · ' + menu.placement : '') + ` · ${(menu.items || []).length} item${(menu.items || []).length !== 1 ? 's' : ''}`;
-    head.appendChild(title);
-    const chartDiv = document.createElement('div');
-    chartDiv.style.cssText = 'overflow:auto;background:#fff;position:relative;cursor:grab;max-height:60vh;';
-    chartDiv.innerHTML = '<p style="color:#888;font-size:12px;padding:16px;">Rendering…</p>';
-    const dl = document.createElement('button');
-    dl.className = 'btn btn-sm btn-ghost';
-    dl.textContent = 'SVG';
-    dl.disabled = true;
-    // Per-menu layout picker
-    const layoutSel = document.createElement('select');
-    layoutSel.style.cssText = 'font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;';
-    layoutSel.title = 'Layout for this menu';
-    LAYOUTS.forEach(([val, label]) => {
-      const o = document.createElement('option');
-      o.value = val; o.textContent = label;
-      if (val === (menu.sitemapLayout || 'columns')) o.selected = true;
-      layoutSel.appendChild(o);
-    });
-    layoutSel.addEventListener('change', () => {
-      menu.sitemapLayout = layoutSel.value;
-      setDirty(true);
-      renderCard(menu, chartDiv, dl);
-    });
-    head.appendChild(layoutSel);
-    head.appendChild(dl);
-    card.appendChild(head);
-    card.appendChild(chartDiv);
-    body.appendChild(card);
-    return { menu, chartDiv, dl };
+  openSitemapView({
+    context: 'menus',
+    title: (title ? title + ' — ' : '') + 'Menus',
+    rootHeadings: true,
+    roots,
+    slug: sitemapProjectSlug() + '-menus-sitemap',
+    defaultColorRules: sitemapValueRules(['Page', 'Link', 'Header'], palette, '#9aa0ab', null),
+    palette,
+    rootColor: null,
   });
-
-  // Re-render every card sequentially (used when a modal-level color control changes).
-  rerenderAll = () => { (async () => { for (const c of cards) await renderCard(c.menu, c.chartDiv, c.dl); })(); };
-
-  openModal({ title: 'Menu sitemaps', body, width: '92vw', buttons: [{ label: 'Done', variant: 'primary' }] });
-
-  rerenderAll();
 }
 
 async function exportNavTree(format) {
@@ -11936,437 +11954,58 @@ async function generateNavSitemap() {
     return;
   }
 
-  let depthFilter = $('nav-depth-filter').value !== '' ? parseInt($('nav-depth-filter').value) : null; // "Levels" cap, tunable in the toolbar
-  let treeMaxDepth = 1;
-  (function md(nodes, depth) { if (!nodes) return; if (depth > treeMaxDepth) treeMaxDepth = depth; nodes.forEach(n => md(n.children, depth + 1)); })(state.navTree, 1);
+  invalidateNavPageCountsCache();
+  const pageCounts = _navPageCountsCache();
+  const initialCollapsed = [];
 
-  const SITEMAP_PALETTE = [
-    '#4F46E5', '#0891B2', '#059669', '#D97706', '#DC2626',
-    '#7C3AED', '#0284C7', '#65A30D', '#DB2777', '#9333EA',
-    '#C2410C', '#0D9488',
-  ];
-  // Layout + coloring choices (project-level defaults; tunable from the toolbar).
+  // Map one nav node → a SitemapNode. `topLabel` is the node's top-level section
+  // label, stamped onto colorValue so "color by section" tints the whole subtree.
+  function navToSitemap(node, topLabel) {
+    const kids = (node.children || []);
+    const count = pageCounts[node.id] || 0;
+    if (node.collapse === 'Y' || node.collapse === true) initialCollapsed.push(node.id);
+    const out = {
+      id: node.id,
+      label: node.label || '(unnamed)',
+      colorValue: topLabel,
+      menu: !String(node.phase || '').trim(),   // solid = current build, dashed = phased
+    };
+    if (count > 0) out.sub = count + (count === 1 ? ' page' : ' pages');
+    if (kids.length) {
+      out.collapsible = true;
+      out.children = kids.map(c => navToSitemap(c, topLabel));
+    } else if (count > 1) {
+      out.stacked = true;   // a leaf standing in for many same-type pages
+    }
+    return out;
+  }
+
   const ps = state.projectSettings || {};
-  let navLayout = ps.navSitemapLayout || 'outline';
-  let navColorBy = ps.navSitemapColorBy || 'pattern';
-  let navPalette = ps.navSitemapPalette || 'meaningful';
+  // Single synthetic site root; the nav top-level nodes become its sections.
+  const sections = state.navTree.map(sec => navToSitemap(sec, sec.label || '(section)'));
+  const roots = [{
+    id: '__site__',
+    label: ps.siteDomain || ps.clientName || ps.projectName || 'Home',
+    root: true,
+    children: sections,
+  }];
 
-  // Effective KKE per nav node (from its assigned rows) for the "KKE" color-by.
-  const kkeByNav = {};
-  state.editedRows.forEach(r => {
-    const id = String(r['NavID'] || ''); if (!id) return;
-    const k = String(r[finalKkeCol()] || r[kkeCol()] || '').trim();
-    if (!k) return;
-    (kkeByNav[id] = kkeByNav[id] || new Set()).add(k);
+  const palette = (Array.isArray(ps.brandPalette) && ps.brandPalette.length) ? ps.brandPalette : SITEMAP_DEFAULT_PALETTE;
+  const sectionLabels = [...new Set(state.navTree.map(s => s.label || '(section)'))];
+  const title = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
+
+  openSitemapView({
+    context: 'nav',
+    title: (title ? title + ' — ' : '') + 'Visual Sitemap',
+    rootHeadings: false,
+    roots,
+    slug: sitemapProjectSlug() + '-sitemap',
+    defaultColorRules: sitemapValueRules(sectionLabels, palette, '#9aa0ab', SITEMAP_ROOT_COLOR),
+    palette,
+    rootColor: SITEMAP_ROOT_COLOR,
+    initialCollapsed,
+    collapseToNavNodes: true,   // node.collapse (Nav Tree checkbox) is the source of truth
   });
-  const navNodeKke = (n) => { const s = kkeByNav[n.id]; if (!s || !s.size) return ''; return s.size === 1 ? [...s][0] : 'Mixed'; };
-  const topSectionLabel = (n) => { let cur = n; while (cur.parentNumber) { const p = state.navNodes.find(x => x.number === cur.parentNumber); if (!p) break; cur = p; } return cur.label || ''; };
-  const colorValueOf = (n) => {
-    if (navColorBy === 'status') return n.pageStatus || '';
-    if (navColorBy === 'section') return topSectionLabel(n);
-    if (navColorBy === 'kke') return navNodeKke(n);
-    return n.buildPattern || '';
-  };
-  const navLegendTitle = () => navColorBy === 'section' ? 'Section' : navColorBy === 'status' ? 'Page status' : navColorBy === 'kke' ? 'KKE' : 'Build pattern';
-  function buildNavColorMap() {
-    const brand = (Array.isArray(ps.brandPalette) && ps.brandPalette.length) ? ps.brandPalette : null;
-    if (navPalette === 'mono') return { colorMap: {}, defaultColor: (brand && brand[0]) || '#4F46E5' };
-    const vals = new Set();
-    (function walk(nodes) { if (!nodes) return; nodes.forEach(n => { const v = colorValueOf(n); if (v) vals.add(v); walk(n.children); }); })(state.navTree);
-    const list = [...vals].sort();
-    const colorMap = {};
-    if (navColorBy === 'kke' && navPalette !== 'brand') {
-      const KKE_COLORS = { Keep: '#059669', Kill: '#DC2626', Evolve: '#D97706', Consolidate: '#7C3AED', Exclude: '#64748B', Mixed: '#94a3b8' };
-      list.forEach(v => { colorMap[v] = KKE_COLORS[v] || '#6366f1'; });
-      return { colorMap, defaultColor: null };
-    }
-    if (navColorBy === 'status' && navPalette !== 'brand' && Array.isArray(state.pageStatusLibrary)) {
-      list.forEach((v, i) => { const st = state.pageStatusLibrary.find(s => s.name === v); colorMap[v] = (st && st.color) ? st.color : SITEMAP_PALETTE[i % SITEMAP_PALETTE.length]; });
-      return { colorMap, defaultColor: null };
-    }
-    const cycle = (navPalette === 'brand' && brand) ? brand : SITEMAP_PALETTE;
-    list.forEach((v, i) => { colorMap[v] = cycle[i % cycle.length]; });
-    return { colorMap, defaultColor: null };
-  }
-  const shouldInclude = () => true; // IA sitemap shows the full hierarchy
-
-  function buildSitemap() {
-    const idMap = new Map();
-
-    function sanitizeId(id) {
-      return 'N' + id.replace(/[^a-zA-Z0-9]/g, '_');
-    }
-
-    // Analyze tree shape to pick best layout direction
-    let maxWidth = 0;  // widest level (most siblings at any depth)
-    let maxDepth = 0;
-    function analyzeShape(nodes, depth) {
-      if (!nodes) return;
-      const included = nodes.filter(n => (depthFilter === null || depth <= depthFilter) && shouldInclude(n));
-      if (included.length > maxWidth) maxWidth = included.length;
-      if (depth > maxDepth) maxDepth = depth;
-      included.forEach(n => analyzeShape(n.children, depth + 1));
-    }
-    analyzeShape(state.navTree, 0);
-
-    // Build node definitions for a subtree
-    function addNodes(mermaidRef, nodes, depth, parentMermaidId) {
-      if (!nodes) return;
-      nodes.forEach(node => {
-        if (depthFilter !== null && depth > depthFilter) return;
-        if (!shouldInclude(node)) return;
-
-        const mid = sanitizeId(node.id);
-        idMap.set(node.id, mid);
-
-        let label = (node.label || '(unnamed)').replace(/"/g, "'");
-        if (label.length > 30) label = label.substring(0, 28) + '…';
-        const menu = node.inMenu === 'Y' ? ' *' : '';
-        mermaidRef.code += `  ${mid}["${label}${menu}"]\n`;
-
-        if (parentMermaidId) {
-          mermaidRef.code += `  ${parentMermaidId} --> ${mid}\n`;
-        }
-
-        addNodes(mermaidRef, node.children, depth + 1, mid);
-      });
-    }
-
-    // One diagram per top-level node, using LR (left-to-right) for vertical layout
-    const topNodes = state.navTree.filter(n => shouldInclude(n));
-    const mermaidCharts = [];
-
-    topNodes.forEach(root => {
-      if (depthFilter !== null && 0 > depthFilter) return;
-      const chart = { code: 'graph LR\n' };
-      const mid = sanitizeId(root.id);
-      idMap.set(root.id, mid);
-      let label = (root.label || '(unnamed)').replace(/"/g, "'");
-      if (label.length > 30) label = label.substring(0, 28) + '…';
-      const menu = root.inMenu === 'Y' ? ' *' : '';
-      chart.code += `  ${mid}["${label}${menu}"]\n`;
-      addNodes(chart, root.children || [], 1, mid);
-      mermaidCharts.push({ title: root.label, code: chart.code });
-    });
-
-    // Combined mermaid (for code export)
-    let mermaid = 'graph TD\n';
-    const combined = { code: mermaid };
-    addNodes(combined, state.navTree, 0, null);
-    mermaid = combined.code;
-
-    // Text tree
-    let textTree = '';
-    function addTextNodes(nodes, depth, prefix) {
-      if (!nodes) return;
-      const filtered = nodes;
-      filtered.forEach((node, i) => {
-        if (depthFilter !== null && depth > depthFilter) return;
-        const isLast = i === filtered.length - 1;
-        const connector = depth === 0 ? '' : (isLast ? '└── ' : '├── ');
-        const childPrefix = depth === 0 ? '' : (isLast ? '    ' : '│   ');
-        const menu = '';
-        const collapsed = node.collapse === 'Y' || node.collapse === true;
-        const path = node.computedPath ? ` (/${node.computedPath})` : '';
-        textTree += prefix + connector + node.label + menu + path + (collapsed && (node.children || []).length ? ' [+]' : '') + '\n';
-        if (!collapsed) addTextNodes(node.children, depth + 1, prefix + childPrefix);
-      });
-    }
-    addTextNodes(state.navTree, 0, '');
-
-    return { mermaid, textTree, nodeCount: idMap.size, charts: mermaidCharts };
-  }
-
-  // Build initial sitemap (all nodes)
-  let current = buildSitemap();
-
-  function renderSitemapModal(data, activeTab) {
-    if (!activeTab) activeTab = 'visual';
-    const opt = (v, label, cur) => `<option value="${v}"${v === cur ? ' selected' : ''}>${label}</option>`;
-    let html = `<div style="padding:0;display:flex;flex-direction:column;height:100%;">`;
-
-    // Toolbar
-    html += `<div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;">`;
-    html += `<div style="font-weight:600;font-size:13px;">Visual Sitemap — ${data.nodeCount} nodes${depthFilter !== null ? ` (depth ≤ ${depthFilter})` : ''}</div>`;
-    let levelsOpts = `<option value=""${depthFilter === null ? ' selected' : ''}>All</option>`;
-    for (let L = 1; L <= treeMaxDepth; L++) levelsOpts += `<option value="${L}"${depthFilter === L ? ' selected' : ''}>${L}</option>`;
-    html += `<label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:4px;">Levels <select id="sitemap-levels" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;">${levelsOpts}</select></label>`;
-    html += `<label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:4px;">Layout <select id="sitemap-layout" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;">${opt('outline', 'Outline', navLayout)}${opt('tree', 'Top-down tree', navLayout)}${opt('columns', 'Mega columns', navLayout)}</select></label>`;
-    html += `<label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:4px;">Color by <select id="sitemap-colorby" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;">${opt('section', 'Section', navColorBy)}${opt('pattern', 'Build pattern', navColorBy)}${opt('status', 'Page status', navColorBy)}${opt('kke', 'KKE', navColorBy)}</select></label>`;
-    html += `<label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:4px;">Palette <select id="sitemap-palette" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);border-radius:4px;">${opt('meaningful', 'Meaningful', navPalette)}${opt('brand', 'Client brand', navPalette)}${opt('mono', 'Mono', navPalette)}</select></label>`;
-    html += `<span style="flex:1"></span>`;
-    // Tabs
-    html += `<button class="btn btn-sm ${activeTab === 'visual' ? 'btn-primary' : 'btn-ghost'}" id="sitemap-tab-visual">Visual</button>`;
-    html += `<button class="btn btn-sm ${activeTab === 'text' ? 'btn-primary' : 'btn-ghost'}" id="sitemap-tab-text">Text Tree</button>`;
-    html += `<button class="btn btn-sm btn-ghost" id="sitemap-export-pdf">Export PDF</button>`;
-    html += `<button class="btn btn-sm btn-ghost" id="sitemap-export-svg">Export SVG</button>`;
-    html += `</div>`;
-
-    // Visual tab
-    html += `<div id="sitemap-panel-visual" style="flex:1;overflow:auto;min-height:0;${activeTab !== 'visual' ? 'display:none;' : ''}">`;
-    html += `<div id="sitemap-mermaid-render" style="background:#fff;padding:16px;min-height:100%;cursor:grab;transform-origin:0 0;"></div>`;
-    html += `</div>`;
-
-    // Text tree tab
-    html += `<div id="sitemap-panel-text" style="flex:1;overflow:auto;min-height:0;padding:12px 16px;${activeTab !== 'text' ? 'display:none;' : ''}">`;
-    html += `<div style="display:flex;justify-content:flex-end;margin-bottom:4px;">`;
-    html += `<button id="btn-copy-text-tree" class="btn btn-sm btn-ghost">Copy</button>`;
-    html += `</div>`;
-    html += `<pre style="background:var(--bg-base);border:1px solid var(--border);border-radius:4px;padding:10px;font-size:11px;font-family:var(--font-mono);overflow:auto;white-space:pre;margin:0;">${escapeHtml(data.textTree)}</pre>`;
-    html += `</div>`;
-
-    html += `</div>`;
-    return html;
-  }
-
-  let _sitemapActiveTab = 'visual';
-
-  async function showSitemapModal() {
-    current = buildSitemap();
-    $('progress-body').innerHTML = renderSitemapModal(current, _sitemapActiveTab);
-    $('progress-body').style.height = '100%';
-    $('btn-progress-export-pdf').classList.add('hidden');
-    $('btn-progress-export-html').classList.add('hidden');
-    const titleEl = $('progress-modal-title');
-    if (titleEl) titleEl.textContent = 'Visual Sitemap';
-
-    // Make the modal larger for the sitemap
-    const modal = $('progress-modal');
-    modal.style.width = '90vw';
-    modal.style.maxWidth = '1200px';
-    modal.style.height = '85vh';
-    $('progress-overlay').classList.remove('hidden');
-    modal.classList.remove('hidden');
-
-    // Render D3 tidy tree
-    const renderDiv = $('sitemap-mermaid-render');
-    if (renderDiv && _sitemapActiveTab === 'visual') {
-      renderDiv.innerHTML = '<p style="color:var(--text-muted);font-size:12px;padding:20px;">Rendering tree...</p>';
-
-      const { colorMap, defaultColor } = buildNavColorMap();
-      const pageCounts = _navPageCountsCache();
-      function buildD3Tree(nodes) {
-        if (!nodes) return [];
-        return nodes.map(n => {
-          const allChildren = n.children || [];
-          // A node's subtree is cut (shown collapsed, with the stacked "has sub-pages"
-          // indicator) when it's flagged collapse, or when the Levels cap hides its children.
-          const collapsed = n.collapse === 'Y' || n.collapse === true;
-          const cut = collapsed || (depthFilter !== null && getNodeDepth(n) >= depthFilter);
-          return {
-            name: (n.label || '(unnamed)').substring(0, 35),
-            menu: !String(n.phase || '').trim(),  // solid = current build, dashed = phased
-            pattern: colorValueOf(n),
-            phase: n.phase || '',
-            pageCount: pageCounts[n.id] || 0,
-            hasHiddenChildren: cut && allChildren.length > 0,
-            children: cut ? [] : buildD3Tree(n.children),
-          };
-        });
-      }
-
-      function getNodeDepth(node) {
-        let depth = 0;
-        let cur = node;
-        while (cur.parentNumber) {
-          depth++;
-          cur = state.navNodes.find(n => n.number === cur.parentNumber) || { parentNumber: '' };
-        }
-        return depth;
-      }
-
-      // Build separate trees for each top-level nav (Utility Nav, Main Nav, Footer Nav, etc.)
-      const d3Trees = buildD3Tree(state.navTree);
-
-      renderDiv.innerHTML = '<p style="color:var(--text-muted);font-size:12px;padding:20px;">Rendering ' + d3Trees.length + ' tree(s)...</p>';
-
-      const renderAll = async () => {
-        renderDiv.innerHTML = '';
-        for (const tree of d3Trees) {
-          const section = document.createElement('div');
-          section.style.cssText = 'margin-bottom:24px;border:1px solid #e0e0e0;border-radius:8px;overflow:hidden;';
-
-          const heading = document.createElement('div');
-          heading.style.cssText = 'font-weight:600;font-size:14px;padding:10px 16px;background:#f5f5f5;border-bottom:1px solid #e0e0e0;';
-          heading.textContent = tree.name;
-          section.appendChild(heading);
-
-          const chartDiv = document.createElement('div');
-          chartDiv.style.cssText = 'overflow:auto;background:#fff;position:relative;cursor:grab;';
-          section.appendChild(chartDiv);
-          renderDiv.appendChild(section);
-
-          try {
-            const result = await window.electronAPI.renderSitemapD3({ treeData: tree, colorMap, options: { layout: navLayout, defaultColor: defaultColor || undefined, legendTitle: navLegendTitle(), borderLegend: { solid: 'Current build', dashed: 'Phased' }, showStack: true } });
-            if (result.success && result.svg) {
-              chartDiv.innerHTML = result.svg;
-              const svg = chartDiv.querySelector('svg');
-              if (svg) {
-                svg.style.display = 'block';
-                svg.style.transform = 'scale(1)';
-                svg.style.transformOrigin = '0 0';
-                svg.style.minWidth = svg.getAttribute('width') + 'px';
-                // Setup zoom/pan for this chart
-                let scale = 1;
-                let panning = false, startX, startY, scrollL, scrollT;
-                chartDiv.addEventListener('wheel', e => {
-                  e.preventDefault();
-                  scale = Math.max(0.2, Math.min(3, scale + (e.deltaY > 0 ? -0.1 : 0.1)));
-                  svg.style.transform = 'scale(' + scale + ')';
-                  svg.style.transformOrigin = '0 0';
-                }, { passive: false });
-                chartDiv.addEventListener('mousedown', e => {
-                  panning = true; chartDiv.style.cursor = 'grabbing';
-                  startX = e.pageX; startY = e.pageY;
-                  scrollL = chartDiv.scrollLeft; scrollT = chartDiv.scrollTop;
-                });
-                chartDiv.addEventListener('mousemove', e => {
-                  if (!panning) return; e.preventDefault();
-                  chartDiv.scrollLeft = scrollL - (e.pageX - startX);
-                  chartDiv.scrollTop = scrollT - (e.pageY - startY);
-                });
-                chartDiv.addEventListener('mouseup', () => { panning = false; chartDiv.style.cursor = 'grab'; });
-                chartDiv.addEventListener('mouseleave', () => { panning = false; chartDiv.style.cursor = 'grab'; });
-              }
-            } else {
-              chartDiv.innerHTML = '<p style="color:var(--text-muted);font-size:12px;padding:12px;">Could not render: ' + escapeHtml(result.error || '') + '</p>';
-            }
-          } catch (err) {
-            chartDiv.innerHTML = '<p style="color:var(--kke-kill);font-size:12px;padding:12px;">Error: ' + escapeHtml(err.message) + '</p>';
-          }
-        }
-      };
-      renderAll();
-    }
-
-    // Wire buttons
-    setTimeout(() => {
-      $('btn-copy-text-tree')?.addEventListener('click', () => {
-        navigator.clipboard.writeText(current.textTree).then(() => showToast('Text tree copied'));
-      });
-      $('sitemap-levels')?.addEventListener('change', (e) => {
-        depthFilter = e.target.value === '' ? null : parseInt(e.target.value, 10); showSitemapModal();
-      });
-      $('sitemap-layout')?.addEventListener('change', (e) => {
-        navLayout = e.target.value; state.projectSettings.navSitemapLayout = navLayout; setDirty(true); showSitemapModal();
-      });
-      $('sitemap-colorby')?.addEventListener('change', (e) => {
-        navColorBy = e.target.value; state.projectSettings.navSitemapColorBy = navColorBy; setDirty(true); showSitemapModal();
-      });
-      $('sitemap-palette')?.addEventListener('change', (e) => {
-        navPalette = e.target.value; state.projectSettings.navSitemapPalette = navPalette; setDirty(true); showSitemapModal();
-      });
-      // Tab switching
-      $('sitemap-tab-visual')?.addEventListener('click', () => {
-        _sitemapActiveTab = 'visual';
-        showSitemapModal();
-      });
-      $('sitemap-tab-text')?.addEventListener('click', () => {
-        _sitemapActiveTab = 'text';
-        $('sitemap-panel-visual').style.display = 'none';
-        $('sitemap-panel-text').style.display = '';
-        $('sitemap-tab-visual').className = 'btn btn-sm btn-ghost';
-        $('sitemap-tab-text').className = 'btn btn-sm btn-primary';
-      });
-      // Export buttons
-      $('sitemap-export-pdf')?.addEventListener('click', async () => {
-        const svgs = [...$('sitemap-mermaid-render').querySelectorAll('svg')];
-        if (svgs.length === 0) { showToast('No diagram to export', 'error'); return; }
-        let html = '<div style="font-family:-apple-system,Helvetica Neue,Arial,sans-serif;padding:24px;">';
-        const ps = state.projectSettings;
-        html += '<h1 style="font-size:18px;margin:0 0 4px;">Site Map</h1>';
-        const cp = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
-        if (cp) html += '<p style="font-size:13px;color:#666;margin:0 0 16px;">' + escapeHtml(cp) + '</p>';
-        // Include each section with clean SVGs (no zoom transforms)
-        const sections = $('sitemap-mermaid-render').querySelectorAll(':scope > div');
-        sections.forEach(sec => {
-          const clone = sec.cloneNode(true);
-          const svgEl = clone.querySelector('svg');
-          if (svgEl) {
-            svgEl.style.transform = '';
-            svgEl.style.transformOrigin = '';
-            svgEl.style.minWidth = '';
-            svgEl.style.display = 'block';
-            svgEl.style.maxWidth = '100%';
-            svgEl.style.height = 'auto';
-          }
-          html += clone.outerHTML;
-        });
-        html += '</div>';
-        const fullHtml = buildReportShell('Site Map', html.replace(buildReportShell('',''), ''));
-        const defaultName = reportDefaultName('Site Map');
-        await exportReport('Site Map', html, defaultName, 'pdf');
-      });
-      $('sitemap-export-svg')?.addEventListener('click', () => {
-        const svgs = [...$('sitemap-mermaid-render').querySelectorAll('svg')];
-        if (svgs.length === 0) { showToast('No diagram to export', 'error'); return; }
-        // Combine all SVGs into one HTML with embedded SVGs
-        let combined = '<!DOCTYPE html><html><head><style>body{font-family:-apple-system,Helvetica Neue,Arial,sans-serif;margin:24px;}</style></head><body>';
-        const ps = state.projectSettings;
-        combined += '<h1 style="font-size:18px;">Site Map</h1>';
-        const cp = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
-        if (cp) combined += '<p style="color:#666;">' + escapeHtml(cp) + '</p>';
-        const sections = $('sitemap-mermaid-render').querySelectorAll(':scope > div');
-        sections.forEach(sec => {
-          const heading = sec.querySelector('div:first-child');
-          const svg = sec.querySelector('svg');
-          if (heading) combined += '<h2 style="margin-top:24px;">' + heading.textContent + '</h2>';
-          if (svg) {
-            // Clone SVG and strip any zoom transform for clean export
-            const clone = svg.cloneNode(true);
-            clone.style.transform = '';
-            clone.style.transformOrigin = '';
-            clone.style.minWidth = '';
-            clone.style.display = 'block';
-            combined += clone.outerHTML;
-          }
-        });
-        combined += '</body></html>';
-        const defaultName = reportDefaultName('Site Map') + '.html';
-        window.electronAPI.exportReportHtml({ html: combined, defaultName }).then(r => {
-          if (r.success) showToast('SVG/HTML exported — opens in Word', 'success');
-          else if (r.error !== 'Cancelled') showToast('Export failed: ' + r.error, 'error');
-        });
-      });
-    }, 50);
-  }
-
-  function setupSitemapZoom(container) {
-    let scale = 1;
-    let panning = false;
-    let startX, startY, scrollLeft, scrollTop;
-    const parent = container.parentElement;
-
-    // Zoom with scroll wheel
-    parent.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      scale = Math.max(0.2, Math.min(3, scale + delta));
-      container.style.transform = `scale(${scale})`;
-    }, { passive: false });
-
-    // Pan with mouse drag
-    parent.addEventListener('mousedown', (e) => {
-      panning = true;
-      parent.style.cursor = 'grabbing';
-      startX = e.pageX - parent.offsetLeft;
-      startY = e.pageY - parent.offsetTop;
-      scrollLeft = parent.scrollLeft;
-      scrollTop = parent.scrollTop;
-    });
-    parent.addEventListener('mousemove', (e) => {
-      if (!panning) return;
-      e.preventDefault();
-      const x = e.pageX - parent.offsetLeft;
-      const y = e.pageY - parent.offsetTop;
-      parent.scrollLeft = scrollLeft - (x - startX);
-      parent.scrollTop = scrollTop - (y - startY);
-    });
-    parent.addEventListener('mouseup', () => { panning = false; parent.style.cursor = 'grab'; });
-    parent.addEventListener('mouseleave', () => { panning = false; parent.style.cursor = 'grab'; });
-  }
-
-  await showSitemapModal();
 }
 
 /** Get nav nodes visible under the current depth filter. */
