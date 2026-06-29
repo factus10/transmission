@@ -956,14 +956,17 @@ So **need placement → 0** confirms every Keep/Evolve page is in the IA, **empt
 
 ### See it and report on it
 
-- **Visual Sitemap** (toolbar **Sitemap**) renders the content IA as a box-style tree, one card per top-level section, with a corner badge for page count and a stacked shadow signalling a collapsed/cut subtree. Controls:
-  - **Levels** — All, or cap at 1 … max depth; anything deeper collapses to a stacked box.
-  - **Layout** — **Outline** (indented list), **Top-down tree**, or **Mega columns** (sections fan into side-by-side columns).
-  - **Color by** — **Section**, **Build pattern**, **Page status** (uses your status colors), or **KKE** (each node colored by its assigned pages' decision).
-  - **Palette** — **Meaningful**, **Client brand** (your Project Settings → Identity colors), or **Mono**.
-  - Border encodes build phase (solid = current build, dashed = phased). Switch **Visual** / **Text Tree**, zoom/pan, export **PDF** or **SVG/HTML**.
+- **Visual Sitemap** (toolbar **Sitemap**) renders the content IA as one interactive box-tree rooted at your homepage, with a page-count badge on each card and a stacked shadow signalling a collapsed subtree or a multi-page leaf. It opens live in the app — click a card to **collapse/expand**, scroll to **zoom**, drag to **pan**, **Fit** to frame, toggle **Numbers**, **Expand all** / **Collapse all**. Controls:
+  - **Smart layout** — each branch lays out **horizontally** (children fan sideways below the parent) or **vertically** (children stack below-and-indented) automatically. Two toolbar dropdowns decide which, whichever fires first: **Vertical from depth** (go vertical at this depth) and **or if children ≥** (go vertical for any node with this many children). Right-click any node with children to **force horizontal / force vertical** or clear the override; nodes you've overridden show a dashed outline.
+  - **Settings** (button → panel, three tabs):
+    - **Layout** — card width/height and every gap, in pixels; previews live.
+    - **Colors** — a rule engine. Each card's top band is colored by the **first matching rule** (or a per-node override). Start from **Color by depth** or **Color by top-level section**, then add your own rules (by depth, depth range, section, or value), recolor or delete them, and drag to reorder. Right-click a single node → **Set color** to override just that node. Uses your **Client brand** palette (Project Settings → Identity) when set.
+    - **Legend** — edit the legend's labels for the client-facing exports.
+    - **Save as my defaults** stores the current layout/colors/legend as your app-wide starting point for new projects; **Reset to defaults** restores them.
+  - Border encodes build phase (solid = current build, dashed = phased).
+  - **Share it:** **Export HTML** writes a single self-contained, **still-interactive** file your client opens in any browser (they can collapse/expand, zoom, and pan — no app required; their tweaks persist in that file's local storage). **Export PDF** prints the current view to one page sized to the tree.
 
-  > **Taming a big tree — collapse repeating patterns.** On a large site, whole branches repeat the same shape (every academic department has Overview / Faculty / Programs / Contact). Showing all of them is noise. Best practice: for any branch whose children follow a content pattern, **pick the best representative and leave it expanded** to show the pattern in full, then **Collapse** the rest (check **Collapse** on each, or select them and hit **Collapse ✓**). The collapsed siblings still appear as single boxes with a "more underneath" stack, so the structure stays honest while the diagram stays readable.
+  > **Taming a big tree — collapse repeating patterns.** On a large site, whole branches repeat the same shape (every academic department has Overview / Faculty / Programs / Contact). Showing all of them is noise. Best practice: for any branch whose children follow a content pattern, **pick the best representative and leave it expanded** to show the pattern in full, then **collapse** the rest by clicking their cards. The collapsed siblings still appear as single boxes with a "more underneath" stack, so the structure stays honest while the diagram stays readable. **Collapsing/expanding here is the same setting as the node's `Collapse` checkbox in the nav tree** — they stay in sync both ways: a node checked **Collapse** starts collapsed every time the sitemap opens, and collapsing a node in the sitemap ticks its checkbox (and is saved with the project). So you can shape "what's collapsed by default for the client" right in the diagram.
 - **IA & coverage reports:** the **Visual Sitemap** (above) for structure, plus **Reports → Nav Coverage Report…** and **Reports → Net New Content Brief…**. *(The hand-off report of the navigation itself is now the **Menu Report**, in the Menus view.)*
 
 To resolve pages that landed on the same node, see the Consolidation Candidates workflow in [Consolidate](#9-consolidate).
@@ -1003,7 +1006,7 @@ A link icon means an external URL, an arrow means a reference, **NEW** means net
 
 #### Reference picker and Visual Sitemap
 
-The reference picker is a wide (880px) dialog, sorted hierarchically and indented by depth with top-level nodes in bold; a numeric search matches from the start (`2.2` finds 2.2.1) while a text search matches anywhere. The **Visual Sitemap** (see [See it and report on it](#see-it-and-report-on-it) above) draws the IA as labeled boxes with selectable layout, color-by, palette, depth (Levels), and per-node Collapse.
+The reference picker is a wide (880px) dialog, sorted hierarchically and indented by depth with top-level nodes in bold; a numeric search matches from the start (`2.2` finds 2.2.1) while a text search matches anywhere. The **Visual Sitemap** (see [See it and report on it](#see-it-and-report-on-it) above) draws the IA as an interactive box-tree with smart horizontal/vertical layout, an editable color-rule engine, collapse/expand, and interactive-HTML + PDF export.
 
 #### The NavStructure sheet
 
@@ -1024,10 +1027,7 @@ Open the **Menus** tab in the view switcher (or **Cmd+Shift+M**). On the left is
 
 Menus travel with the file (both `.transmission` projects and `.xlsx` exports), so they're saved alongside everything else.
 
-**Seeing a menu as a diagram.** The toolbar's **Sitemap** button draws each menu as a box-tree. Modal-level **Color by** (Item kind / Section) and **Palette** (Meaningful / Client brand / Mono) controls apply to all menus; headers show a dashed border. Scroll to zoom, drag to pan, and download any menu as an **SVG**. Each card has a **layout** dropdown so you can pick the shape that fits *that* menu (the choice is remembered per menu):
-> - **Mega columns** (default) — fans the menu's sections into side-by-side columns, each stacking its items beneath. Wide *and* deep; mirrors a real mega-menu panel.
-> - **Top-down tree** — the classic sitemap fan-out; good for shallow, wide menus.
-> - **Outline** — a compact indented list; good for deep, narrow menus.
+**Seeing a menu as a diagram.** The toolbar's **Sitemap** button draws your menus using the same interactive engine as the **Visual Sitemap** (see [See it and report on it](#see-it-and-report-on-it)): each menu is one tree, stacked under its name, with items colored by kind (page / link / header) and headers shown with a dashed border. Everything from the Visual Sitemap applies here — collapse/expand, smart horizontal/vertical layout with right-click per-node overrides, the **Settings** panel (Layout / Colors / Legend), zoom/pan/Fit, and **Export HTML** (interactive, client-shareable) / **Export PDF**.
 
 **Catching broken references.** Because menu items point at content pages, deleting or renumbering a page can leave a menu item dangling. Any broken item shows `(missing page)` inline, and the toolbar surfaces a red **⚠ N broken refs** button whenever any exist — click it to see them all and either **Re-pick** the page or **Remove** the item. Worth a quick check before you export for handoff.
 

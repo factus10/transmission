@@ -264,17 +264,17 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - **Seed from content tree** — generate a starter menu mirroring the in-menu nav nodes, then edit independently
 - **CMS-agnostic export** — **Export…** writes a neutral, structured description of your menus (all or just the selected one) that any platform's import maps from — no vendor model baked in. Two formats: a flat, readable **Excel** `Menus` sheet or nested **JSON**; page references resolve to their target URLs. CMS-native files are optional add-ons on top.
 - **Broken-reference check** — if a referenced page is deleted/renumbered, the item shows `(missing page)` and a red **⚠ broken refs** toolbar button appears; one click lists every dangling item to re-point or remove before handoff.
-- **Per-menu sitemap** — **Sitemap** draws each menu as a box-tree (items colored by kind — page / link / header, headers dashed), with scroll-zoom, drag-pan, and per-menu SVG download. A per-card **layout** picker (remembered per menu) offers **Mega columns** (sections fan into side-by-side columns, items stacked beneath — wide *and* deep), **Top-down tree**, and **Outline**.
+- **Per-menu sitemap** — **Sitemap** draws each menu as a box-tree using the same interactive engine as the Visual Sitemap (below): menus stack with headings, items are colored by kind (page / link / header, headers dashed), and you collapse/expand, pan/zoom, recolor, and export right in the view.
 - Menus travel with the file (both `.transmission` and `.xlsx`)
 
 ### Visual Sitemap
-- The **Sitemap** button in the nav editor renders the **content IA** as a box-style D3 diagram (160×34px nodes), one card per top-level section. Zoom (scroll) / pan (drag); **Visual** and **Text Tree** tabs; export **PDF** or **SVG/HTML**.
-- **Layout** picker — **Outline** (indented file-tree), **Top-down tree** (`d3.tree()`), or **Mega columns** (sections fan into side-by-side columns, items stacked beneath)
-- **Levels** — show All, or cap at 1…max depth; deeper nodes collapse to a stacked box
-- **Collapse** (per node) — check **Collapse** on any node (or bulk **Collapse ✓ / Expand**) to summarize its subtree as a single box with a "has more underneath" stack. Best practice for big trees: leave one representative of a repeating pattern (e.g. one academic department) expanded and collapse the rest.
-- **Color by** — **Section**, **Build pattern**, **Page status** (your status colors), or **KKE** (each node by its assigned pages' decision)
-- **Palette** — **Meaningful**, **Client brand** (your Project Settings → Identity colors, shared with the menu sitemaps), or **Mono**
-- **Border** = build phase (solid = current build, dashed = phased); **page-count badge** in each box's corner
+A fully interactive box-tree you build, refine, and hand off — the **Sitemap** button renders the **content IA** as one tree rooted at your homepage. Click cards to collapse/expand, scroll to zoom, drag to pan, **Fit** to frame.
+- **Smart layout** — each branch lays out **horizontally** (children fan sideways) or **vertically** (children stack indented below) automatically, controlled by two thresholds in the toolbar: **Vertical from depth** and **or if children ≥**. Right-click any node to **force horizontal / vertical** or override it later.
+- **Color rules** — a small rule engine (Settings → **Colors**): color by depth or by top-level section out of the box, add your own rules (by depth, depth range, section, or value), drag to reorder, and right-click a single node to **set its color**. Uses your **Client brand** palette (Project Settings → Identity) when set.
+- **Settings panel** — **Layout** (card sizes & spacing), **Colors** (rules + per-node overrides), and **Legend** (editable labels) tabs, with **Save as my defaults** so new projects start the way you like.
+- **Stacked pages** — multi-page leaves and collapsed branches render with a "more underneath" stack; build phase shows as a solid (current) vs dashed (phased) border.
+- **Share it** — **Export HTML** writes a self-contained, **interactive** file a client opens in any browser (collapse/zoom/pan, no app needed); **Export PDF** prints the current view to a single right-sized page.
+- The menu sitemaps use this same engine, so everything above applies there too.
 
 ### Rubrics & Assessment
 - Define Keep/Kill/Evolve/Exclude criteria as markdown rubric files
