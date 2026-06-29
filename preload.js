@@ -118,7 +118,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMenuReportDesignPatterns: (cb) => ipcRenderer.on('menu-report-design-patterns',     () => cb()),
   onMenuReportContentCrosswalk: (cb) => ipcRenderer.on('menu-report-content-crosswalk',  () => cb()),
   exportReportHtml:           (payload) => ipcRenderer.invoke('export-report-html', payload),
-  renderMermaid:              (payload) => ipcRenderer.invoke('render-mermaid', payload),
   exportSitemapPdf:           (payload) => ipcRenderer.invoke('export-sitemap-pdf', payload),
   saveAuditTemplate:   (payload) => ipcRenderer.invoke('save-audit-template', payload),
   loadAuditTemplate:   ()        => ipcRenderer.invoke('load-audit-template'),
