@@ -902,9 +902,17 @@ Work down the conflict list, picking the right call for each — or use the bulk
 
 ### The mental model
 
-Your audit rows answer one question: *"what do we do with each existing page?"* The **sitemap** answers a different one: *"what is the new site?"* — its sections, its hierarchy, its URLs.
+The **sitemap is how your content is organized** — the sections, the hierarchy, where each page lives. Its goal is a shared picture everyone can see: the **Visual Sitemap** (the toolbar's *Visual Sitemap* button) turns the structure into an interactive box-tree so stakeholders can *look at* the organization instead of reading a spreadsheet.
 
-You connect the two by **placing** each Keep/Evolve page onto a tree node. A node can carry **no** source pages (it's net-new content you'll write), **one**, or **many** (it's a consolidation target). The tree is the source of truth for breadcrumbs and computed URLs, so renaming a node cascades the change to its descendants and to every page beneath it.
+Your audit rows answer *"what do we do with each existing page?"* The sitemap answers a different question: *"how is the new site organized?"* You connect the two by **placing** each Keep/Evolve page onto a node. A node can carry **no** source pages (it's net-new content you'll write), **one**, or **many** (it's a consolidation target).
+
+**The URL path and the on-page breadcrumb are *derived from* the sitemap — but they are not bound to it.** By default a page's URL and breadcrumb follow its position in the tree, and renaming a node cascades to its descendants. But the sitemap is about *organization*, not *addressing*, so either can diverge whenever the real site needs it to. The app has a per-node **URL override** and **breadcrumb override** for exactly this (the *Addressing & breadcrumb* block in the node editor) — so you organize content in the way that makes sense, without being forced into matching URLs or verbose breadcrumbs.
+
+> **Two everyday examples of the split:**
+> - **Retail.** Shoes might be organized under both `Home › Clothes › Men › Shoes` and `Home › Clothes › Women › Shoes`, yet ship at the flatter URLs `/shoes/men` and `/shoes/women`. Same organization, simpler addresses.
+> - **Higher ed.** A department lives at `Home › Academics › Departments › Chemistry` in the sitemap, but its URL is just `/chemistry` and its on-page breadcrumb reads `Home > Departments > Chemistry`. The deep organizational home doesn't force a deep URL or a long breadcrumb.
+>
+> The rule of thumb: **organize in the sitemap; let URL and breadcrumb follow by default, and override only the few that shouldn't.**
 
 Open the tree with **Cmd+Shift+T** (or the **Sitemap** tab). The **stats line** beneath the toolbar is your dashboard — more on reading it below.
 
