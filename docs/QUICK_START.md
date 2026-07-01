@@ -43,14 +43,15 @@ Everything **auto-saves** 2 seconds after you stop — watch the title bar: *●
 
 ## 4. Plan the migration  ·  optional, when you're replatforming
 
-- **Navigation Tree** (Cmd+Shift+T): drag-and-drop the future-state IA; assign Keep/Evolve pages to nodes.
+- **Sitemap** (Cmd+Shift+T): drag-and-drop the future-state IA; assign Keep/Evolve pages to nodes. You can also seed the very first node straight from the audit bar's **Sitemap** button.
+- **Menus** (Cmd+Shift+M): build independent navigation menus that reference your sitemap pages; the audit bar's **Menu** button drops the current page into a menu without leaving the audit.
 - **Redirects** (Cmd+Shift+R): every Kill or URL-changed page, with an editable destination.
 - **Consolidate**: point near-duplicate pages at the survivor; the redirect follows the target automatically.
 
 ## 5. Check & hand off  ·  before you ship
 
 1. **Migration → Pre-Handoff Check** — one report flags everything that isn't ready: unreviewed pages, consolidate targets that don't exist (or point at a Kill page), redirect chains, duplicate nav IDs, empty nav nodes. Fix what it finds.
-2. **Reports** menu — Executive Summary, Content Inventory, SME Review Status, Nav Coverage, Migration Checklist, and more (export each as PDF or Word-compatible HTML).
+2. **Reports** menu — Executive Summary, Content Inventory, SME Review Status, Sitemap Coverage, Migration Checklist, and more (export each as PDF or Word-compatible HTML).
 3. **File → Export… (Cmd+Shift+E)** — filtered rows, audit decisions (CSV/JSON), redirect map (CSV), or the multi-sheet Migration Tracker for engineering.
 
 ---

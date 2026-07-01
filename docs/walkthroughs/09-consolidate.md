@@ -27,7 +27,7 @@ How to fold redundant pages into a single surviving page — so three thin pages
 
 When several pages already share one nav node, they're likely consolidation candidates:
 
-- **Navigation Tree → Consolidation Candidates…** lists every node with **2+** assigned pages, largest first.
+- **Sitemap → Consolidation Candidates…** lists every node with **2+** assigned pages, largest first.
 - For each group, pick the **target** (set to **Evolve**); the rest become **Consolidate** pointing at it, with their nav + explicit redirects cleared. Skip a group to leave it untouched for the session.
 
 ---

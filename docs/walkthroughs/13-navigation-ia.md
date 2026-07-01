@@ -1,6 +1,6 @@
-# Navigation & IA Walkthrough
+# Sitemap & IA Walkthrough
 
-How to build the **future-state navigation tree** and place every page you're keeping onto it. This is where the audit stops being a list of pages and becomes the shape of the new site.
+How to build the **future-state sitemap** and place every page you're keeping onto it. This is where the audit stops being a list of pages and becomes the shape of the new site.
 
 > Prerequisite: you've made KKE calls (at least **Keep** / **Evolve**) on the pages that matter. Placement operates on those rows; **Kill** and **Consolidate** pages don't get placed (they fold into a target or redirect).
 
@@ -9,11 +9,13 @@ How to build the **future-state navigation tree** and place every page you're ke
 ## 0. The mental model
 
 - The **audit rows** answer "what do we do with each *existing* page?"
-- The **nav tree** answers "what is the *new* site?" — its sections, hierarchy, and URLs.
+- The **sitemap** answers "what is the *new* site?" — its sections, hierarchy, and URLs.
 - You connect the two by **placing** each Keep/Evolve page onto a nav node. A node can carry **0** source pages (net-new), **1**, or **many** (a consolidation target).
 - The tree is the source of truth for breadcrumbs and the computed URL of every node. Rename a node and the change cascades to its descendants and to every page assigned under it.
 
-Open the tree with **Cmd+Shift+T** (or the **Navigation Tree** tab in the view switcher). The **stats line** under the toolbar is your dashboard — learn to read it (see §6).
+Open the tree with **Cmd+Shift+T** (or the **Sitemap** tab in the view switcher). The **stats line** under the toolbar is your dashboard — learn to read it (see §6).
+
+> Starting fresh? You don't have to open the Sitemap first. On any page in the **Audit** view, clicking the audit bar's **Sitemap** button when the sitemap is still empty offers an inline form (Label prefilled from the title, Slug from the URL) and a **Create & assign** button that creates the first root node and assigns the page in one step.
 
 ---
 
@@ -24,7 +26,7 @@ Goal: drive **need placement** in the stats line to **0**.
 "Need placement" = Keep/Evolve rows with no nav node yet. To find and assign them:
 
 1. **Audit** view (**Cmd+1**) → **KKE** filter → check **Keep** + **Evolve** → **+ Field filter** → field `NavID`, operator **is blank** → **Apply**.
-2. For each row, click **Nav** (in the **DECIDE** cluster) → drill to the right node → **Assign**. Use **+ Child** in the picker footer to create a new node inline if no good home exists yet.
+2. For each row, click **Sitemap** (in the **DECIDE** cluster) → drill to the right node → **Assign**. Use **+ Child** in the picker footer to create a new node inline if no good home exists yet.
 3. To place many similar pages at once: multi-select them in the sidebar (**Cmd/Shift-click**), then **drag the selection onto a node** in the tree.
 
 > Fast path: the stats line's **N need placement** link is clickable — it jumps you straight to the audit view filtered to exactly those rows. Work the list down to zero.
@@ -35,7 +37,7 @@ Consolidation note: pages you marked **Consolidate** don't need placement — th
 
 ## 2. Shape the future-state tree
 
-In the **Navigation Tree**:
+In the **Sitemap**:
 
 - **Rename / re-slug** inline — double-click the label, or open the **✎** node editor. The **Label** drives the breadcrumb; the **Slug** drives the computed URL segment. Changes cascade to descendants and assigned pages.
 - **Reorder / reparent** by dragging the grip handle. Top/bottom third of a row = move as a sibling; middle = drop *into* the row as a child.
@@ -55,6 +57,8 @@ Open a node's editor (double-click the label, or **✎**). The top fields define
 - **In menu** — toggles whether the node appears in the navigation menus. (**Set Menu ✓** / **Clear Menu** in the toolbar bulk-toggle this for all *visible* nodes — combine with the Depth filter.)
 - **External URL** — point a menu item at an outside URL instead of a built page.
 - **Reference** — alias this node to another node (a "→ breadcrumb" target) so the same destination can appear in two places without duplicating it.
+
+> Menus are built separately (the **Menus** view / **Cmd+Shift+M**), but you can add a page to one without leaving the audit: the audit bar's **Menu** button first ensures the page is on the sitemap, then lets you pick an existing menu, start a **+ New menu…**, or create your first menu on the spot.
 
 ---
 
@@ -112,8 +116,8 @@ If several pages landed on one node, they may be consolidation candidates:
 **Visual Sitemap** — toolbar **Sitemap**: a box-style tree where solid borders = in-menu, dashed = not in menu, fill color = build pattern, a stacked shadow = hidden children, and a corner badge = page count. Toggle **Menu items only**, switch **Visual / Text Tree** tabs, zoom/pan, and export as **PDF** or **SVG/HTML**.
 
 **IA & coverage reports:**
-- **IA Report** (toolbar) or **Reports → Navigation IA…** — the tree with per-node page and redirect counts; flags empty, redirect-only, and header nodes.
-- **Reports → Nav Coverage Report…** — empty leaves, hubs, overloaded nodes, and path mismatches.
+- **IA Report** (toolbar) or **Reports → Sitemap & IA…** — the sitemap with per-node page and redirect counts; flags empty, redirect-only, and header nodes.
+- **Reports → Sitemap Coverage Report…** — empty leaves, hubs, overloaded nodes, and path mismatches.
 - **Reports → Net New Content Brief…** — every node that needs brand-new content.
 
 ---

@@ -10,7 +10,7 @@ How to install the app, open your first crawl export, and understand what the fi
 
 - The app is a **viewer and editor for your spreadsheet** — it doesn't own a database. Your `.xlsx` *is* the project.
 - On open, it **injects its audit columns** (KKE_Recommendation, Tags, Notes, …) if they aren't already there, and adds a handful of **structural sheets** (NavStructure, KKE_Settings, etc.) to hold project state.
-- Everything you do saves **back into that same file**. Hand the file to a colleague with the app and they see exactly your state — decisions, nav tree, settings, change log.
+- Everything you do saves **back into that same file**. Hand the file to a colleague with the app and they see exactly your state — decisions, sitemap, settings, change log.
 - So: **one file = one project**, fully portable.
 
 ---
@@ -39,26 +39,40 @@ On open, the app ensures these exist (and adds them if missing):
 
 - **Audit columns** — KKE_Recommendation lands first; Tags, Notes, Group, Primary Tag sit right after the URL column; the rest (SME, migration, CMS, Design_Patterns…) are appended. See the *Audit Columns* reference.
 - **Structural sheets** (hidden from the data-sheet picker), each carrying part of the project:
-  - **NavStructure** — the future-state nav tree.
+  - **NavStructure** — the future-state sitemap.
   - **KKE_Settings** — project settings, saved filters, computed-column config.
   - **KKE_ChangeLog** — the audit trail of decision changes.
   - **KKE_Glossary**, **ContentTypeRegistry**, **PatternLibrary** (Target Spec Library), **DesignPatternLibrary** (Component Library).
 
 ---
 
-## 4. Seed banners
+## 4. The five views
+
+A persistent **tab strip** below the titlebar (mirrored in the **View** menu) switches between the app's five views — always one click away:
+
+- **Audit** (**Cmd+1**) — the default: sidebar row list + the embedded browser and field bar. Where you make each Keep/Kill/Evolve call.
+- **Table** (**Cmd+T**) — a full-width spreadsheet of every row and column, with inline editing.
+- **Sitemap** (**Cmd+Shift+T**) — the drag-and-drop editor for the future-state sitemap.
+- **Redirects** (**Cmd+Shift+R**) — every Kill or URL-changed page with an editable destination.
+- **Menus** (**Cmd+Shift+M**) — build independent navigation menus that reference your sitemap pages.
+
+> You can build navigation right from the **Audit** view without switching tabs: the audit bar's **Sitemap** button places the current page on the sitemap (and, if the sitemap is still empty, offers a quick form to create its first node), and the **Menu** button drops the page into one of your menus.
+
+---
+
+## 5. Seed banners
 
 The first time a project could use a starter library, a one-time **seed banner** offers defaults — accept or dismiss:
 
 - **Content Type Registry** — ~20 common content types with default classifications (**Seed defaults**).
-- **Target Spec Library** — 12 curated page-template/content-model specs (offered once a nav tree exists).
+- **Target Spec Library** — 12 curated page-template/content-model specs (offered once a sitemap exists).
 - **Component Library** — 57 built-in UI components (self-seeds globally on first run; also re-seedable from the editor).
 
 Seeding only stages the data — **save** to commit it to the file.
 
 ---
 
-## 5. Save & round-trip
+## 6. Save & round-trip
 
 1. **File → Save** (**Cmd+S**). The titlebar shows the dirty state; a toast confirms the write.
 2. On save the app resolves redirect destinations, writes all audit + structural sheets, and appends this session's changes to **KKE_ChangeLog**.
