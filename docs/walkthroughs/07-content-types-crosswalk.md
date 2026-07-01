@@ -50,7 +50,7 @@ When a row's **Content Type** is set (or changed), the app looks it up in the re
 - Lookup is case-insensitive exact match first; if that misses, it splits compound types (`Article / blog post`) on separators and tries each token — so you don't have to register every variant.
 - The **Migrate** cluster shows **Renders as** and **Track**, plus a **ghost suggestion** next to Track when it's blank (derived from KKE + Renders as) — click to accept.
 
-> **Renders as = Fragment (embeddable)** (stored `Content Object`) marks content with no public URL — it's skipped in redirects and nav coverage downstream.
+> **Renders as = Fragment (embeddable)** (stored `Content Object`) marks content with no public URL — it's skipped in redirects and sitemap coverage downstream.
 
 ---
 

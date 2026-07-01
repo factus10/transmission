@@ -1,8 +1,8 @@
 # Build & Direction Walkthrough
 
-How to turn a placed nav tree into **work three people can pick up and execute** — the builder who constructs each page, the writer who fills it, and the migrator who maps the old content in. This is where the tree stops being a map and becomes a delivery plan.
+How to turn a placed sitemap into **work three people can pick up and execute** — the builder who constructs each page, the writer who fills it, and the migrator who maps the old content in. This is where the sitemap stops being a map and becomes a delivery plan.
 
-> Prerequisite: the future-state tree exists and your Keep/Evolve pages are placed on it (**need placement = 0**). See the **Navigation & IA** walkthrough.
+> Prerequisite: the future-state sitemap exists and your Keep/Evolve pages are placed on it (**need placement = 0**). See the **Sitemap & IA** walkthrough.
 
 ---
 
@@ -131,4 +131,4 @@ Once nodes are annotated:
 
 ---
 
-*See also: the **Navigation & IA** walkthrough (building and placing the tree), `USER_GUIDE.md` (full manual), and `CONTENT_TYPE_MODEL.md` (why the three roles and two levels exist).*
+*See also: the **Sitemap & IA** walkthrough (building and placing the sitemap), `USER_GUIDE.md` (full manual), and `CONTENT_TYPE_MODEL.md` (why the three roles and two levels exist).*

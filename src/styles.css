@@ -38,6 +38,18 @@
   --danger:  #b91c1c;
   --warning: #854d0e;
 
+  /* Aliases for legacy var() references. Several rules were written as
+     var(--bg-input, #fff) / var(--text) etc. against tokens that were never
+     defined, so they fell through to the light hardcoded fallback in BOTH
+     themes — the root cause of "panels stayed white" in dark mode. Defining
+     them as aliases to real themed tokens makes those rules adapt for free. */
+  --bg-input: var(--bg-surface);
+  --bg-main:  var(--bg-panel);
+  --bg-body:  var(--bg-base);
+  --text:     var(--text-primary);
+  --border-subtle: var(--border);
+  --accent-bg: #e8f0fe;   /* selected-row tint (Table View); dark value in theming block */
+
   --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
 
@@ -597,8 +609,8 @@ html, body {
 }
 .row-ind-nav      { background: var(--kke-keep-bg);   color: var(--kke-keep); }
 .row-ind-redirect { background: var(--kke-evolve-bg); color: var(--kke-evolve); }
-.row-ind-consolidate { background: #e0e7ff; color: #4338ca; }
-.row-ind-consolidate-missing { background: #fee2e2; color: #b91c1c; }
+.row-ind-consolidate { background: var(--kke-consolidate-bg); color: var(--kke-consolidate); }
+.row-ind-consolidate-missing { background: var(--kke-kill-bg); color: var(--kke-kill); }
 .row-ind-cms {
   background: #ecfdf5;
   color: #047857;
@@ -2774,58 +2786,131 @@ body.dragging-popover iframe { pointer-events: none !important; }
   border-color: var(--accent);
 }
 
-/* ── Dark mode ────────────────────────────────────────────────────────────── */
+/* ── Theming (light / dark) ───────────────────────────────────────────────────
+   The effective theme is driven by a data-theme attribute on <html>, set by
+   applyTheme() in renderer.js — 'light' | 'dark' ('system' is resolved to one
+   of those via matchMedia, and re-resolved when the OS setting changes). Light
+   values live in :root above; dark values + dark-only overrides live here.
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg-base:       #1a1a1a;
-    --bg-sidebar:    #222222;
-    --bg-panel:      #1e1e1e;
-    --bg-surface:    #2a2a2a;
-    --bg-hover:      #333333;
-    --bg-selected:   #1a3d2a;
-    --bg-field-bar:  #242424;
-    --bg-audit-bar:  #1e1e1e;
+   The <webview> renders remote pages in its own process and is deliberately
+   NEVER themed by these rules. Its embedded pages are additionally forced to
+   report prefers-color-scheme: light (via CDP emulation in main.js) so a site
+   is shown as designed regardless of the app's theme or the OS setting. */
 
-    --border:        #3a3a3a;
-    --border-light:  #444444;
+:root[data-theme="light"] { color-scheme: light; }
 
-    --accent:        #22c55e;
-    --accent-dim:    #1a3d2a;
-    --accent-text:   #86efac;
-    --info:          #60a5fa;
+:root[data-theme="dark"] {
+  color-scheme: dark;
 
-    --kke-keep:      #4ade80;
-    --kke-keep-bg:   #14532d;
-    --kke-kill:      #f87171;
-    --kke-kill-bg:   #450a0a;
-    --kke-evolve:    #fbbf24;
-    --kke-evolve-bg: #422006;
-    --kke-exclude:   #9ca3af;
-    --kke-exclude-bg:#374151;
+  --bg-base:       #1a1a1a;
+  --bg-sidebar:    #222222;
+  --bg-panel:      #1e1e1e;
+  --bg-surface:    #2a2a2a;
+  --bg-hover:      #333333;
+  --bg-selected:   #1a3d2a;
+  --bg-field-bar:  #242424;
+  --bg-audit-bar:  #1e1e1e;
 
-    --text-primary:   #e5e5e5;
-    --text-secondary: #a3a3a3;
-    --text-muted:     #737373;
-    --text-accent:    #e5e5e5;
+  --border:        #3a3a3a;
+  --border-light:  #444444;
 
-    --danger:  #f87171;
-    --warning: #fbbf24;
-  }
+  --accent:        #22c55e;
+  --accent-dim:    #1a3d2a;
+  --accent-text:   #86efac;
+  --info:          #60a5fa;
 
-  html, body { background: var(--bg-base); }
-  #titlebar { background: var(--bg-sidebar); }
+  --kke-keep:      #4ade80;
+  --kke-keep-bg:   #14532d;
+  --kke-kill:      #f87171;
+  --kke-kill-bg:   #450a0a;
+  --kke-evolve:    #fbbf24;
+  --kke-evolve-bg: #422006;
+  --kke-consolidate:    #a5b4fc;
+  --kke-consolidate-bg: #1e1b4b;
+  --kke-exclude:   #9ca3af;
+  --kke-exclude-bg:#374151;
 
-  #webview-wrap.viewport-constrained { background: #111; }
-  #webview-wrap.viewport-constrained::-webkit-scrollbar-track { background: #222; }
-  #webview-wrap.viewport-constrained::-webkit-scrollbar-thumb { background: #555; }
-  #webview-wrap.viewport-constrained::-webkit-scrollbar-thumb:hover { background: #777; }
+  --text-primary:   #e5e5e5;
+  --text-secondary: #a3a3a3;
+  --text-muted:     #737373;
+  --text-accent:    #e5e5e5;
 
-  #toast { background: var(--bg-surface); }
-  #modal-overlay { background: rgba(0,0,0,0.6); }
-
-  .meta-input.readonly { color: var(--text-secondary); }
+  --danger:  #f87171;
+  --warning: #fbbf24;
+  --accent-bg: #1e3a5f;   /* selected-row tint on dark */
 }
+
+:root[data-theme="dark"] { background: var(--bg-base); }
+:root[data-theme="dark"] .tv-cell.editable:hover { background: rgba(255,255,255,0.05); }
+:root[data-theme="dark"] body { background: var(--bg-base); }
+:root[data-theme="dark"] #titlebar { background: var(--bg-sidebar); }
+
+:root[data-theme="dark"] #webview-wrap.viewport-constrained { background: #111; }
+:root[data-theme="dark"] #webview-wrap.viewport-constrained::-webkit-scrollbar-track { background: #222; }
+:root[data-theme="dark"] #webview-wrap.viewport-constrained::-webkit-scrollbar-thumb { background: #555; }
+:root[data-theme="dark"] #webview-wrap.viewport-constrained::-webkit-scrollbar-thumb:hover { background: #777; }
+
+:root[data-theme="dark"] #toast { background: var(--bg-surface); }
+:root[data-theme="dark"] #modal-overlay { background: rgba(0,0,0,0.6); }
+:root[data-theme="dark"] .meta-input.readonly { color: var(--text-secondary); }
+
+/* Dark overrides for tinted badges / chips / panels whose light tints were
+   hardcoded. Grouped here so light mode is left completely untouched. */
+:root[data-theme="dark"] .row-ind-cms { background: #06281f; color: #34d399; }
+:root[data-theme="dark"] .row-sc-3xx { background: #422006; color: #fcd34d; border-color: #7c5310; }
+:root[data-theme="dark"] .row-sc-4xx { background: #450a0a; color: #fca5a5; border-color: #7f1d1d; }
+:root[data-theme="dark"] .row-sc-5xx { background: #3b0764; color: #d8b4fe; border-color: #6b21a8; }
+:root[data-theme="dark"] .dp-option-complexity.low    { background: #14532d; color: #86efac; }
+:root[data-theme="dark"] .dp-option-complexity.medium { background: #422006; color: #fcd34d; }
+:root[data-theme="dark"] .dp-option-complexity.high   { background: #450a0a; color: #fca5a5; }
+:root[data-theme="dark"] #design-pattern-chips .tag-chip { background: #2e1065; color: #c4b5fd; border-color: #5b21b6; }
+:root[data-theme="dark"] #design-pattern-chips .tag-chip .tag-remove { color: #a78bfa; }
+:root[data-theme="dark"] #design-pattern-chips .tag-chip .tag-remove:hover { color: #ddd6fe; }
+:root[data-theme="dark"] .ne-build-pattern  { background: #172554; color: #93c5fd; }
+:root[data-theme="dark"] .ne-build-guidance { background: #06281f; color: #6ee7b7; }
+:root[data-theme="dark"] .ne-build-brief    { background: #2e1065; color: #d8b4fe; }
+:root[data-theme="dark"] .ne-build-warning:hover { background: #422006; }
+/* Sitemap NEW / phase badges — solid bright fills glare on dark; tone them down. */
+:root[data-theme="dark"] .ne-net-new-badge { background: #78350f; color: #fde68a; }
+:root[data-theme="dark"] .ne-phase-badge { background: #334155; color: #e2e8f0; }
+:root[data-theme="dark"] .ne-phase-badge[data-phase="Future"]   { background: #3730a3; }
+:root[data-theme="dark"] .ne-phase-badge[data-phase="Stretch"]  { background: #0e7490; }
+:root[data-theme="dark"] .ne-phase-badge[data-phase="Archived"] { background: #4b5563; }
+:root[data-theme="dark"] .ne-row.ne-row-phase[data-phase="Future"]  { border-left-color: #4338ca; }
+:root[data-theme="dark"] .ne-row.ne-row-phase[data-phase="Stretch"] { border-left-color: #0e7490; }
+:root[data-theme="dark"] .btn-primary:hover { background: #16a34a; }
+:root[data-theme="dark"] .btn-primary.btn-danger:hover { background: #dc2626; }
+:root[data-theme="dark"] .suggested-kke-badge.suggested-kke-disagree { background: #422006; color: #fcd34d; border-color: #b45309; }
+:root[data-theme="dark"] .skp-disagree { background: #422006; color: #fcd34d; }
+
+/* Audit-bar cluster cards + pills (were hardcoded light slate). */
+:root[data-theme="dark"] .audit-cluster { background: var(--bg-panel); border-color: var(--border); }
+:root[data-theme="dark"] .cluster-pill { background: #334155; color: #cbd5e1; }
+:root[data-theme="dark"] .cluster-summary { color: #94a3b8; }
+:root[data-theme="dark"] .cluster-summary-empty { color: #64748b; }
+:root[data-theme="dark"] .cluster-decide   .cluster-pill { background: #172554; color: #93c5fd; }
+:root[data-theme="dark"] .cluster-classify .cluster-pill { background: #334155; color: #cbd5e1; }
+:root[data-theme="dark"] .cluster-patterns .cluster-pill { background: #2e1065; color: #c4b5fd; }
+:root[data-theme="dark"] .cluster-migrate  .cluster-pill { background: #422006; color: #fcd34d; }
+:root[data-theme="dark"] .cluster-cms      .cluster-pill { background: #14532d; color: #86efac; }
+
+/* "+ More fields:" quick-toggle chips when active (were hardcoded light teal/amber). */
+:root[data-theme="dark"] .qt-chip.active { background: #134e4a; border-color: #0f766e; color: #5eead4; }
+:root[data-theme="dark"] .qt-chip[data-cluster="migrate"].active { background: #422006; border-color: #92400e; color: #fcd34d; }
+
+/* SME decision display + Final-KKE "match" pill (were hardcoded light green/amber). */
+:root[data-theme="dark"] .sme-decision-display.sme-approve { background: #06281f; color: #6ee7b7; border-color: #047857; }
+:root[data-theme="dark"] .sme-decision-display.sme-change  { background: #422006; color: #fcd34d; border-color: #92400e; }
+:root[data-theme="dark"] .sme-decision-display-empty { color: #64748b; }
+:root[data-theme="dark"] .final-kke-match { background: #06281f; color: #6ee7b7; border-color: #047857; }
+:root[data-theme="dark"] .final-kke-match:hover { background: #0b3a2c; border-color: #059669; }
+
+/* Misc hardcoded-light states: ghost suggestion, filter/toggle actives, 404 sentinel. */
+:root[data-theme="dark"] .migration-track-suggestion:hover { background: #1e1b4b; border-color: #6366f1; }
+:root[data-theme="dark"] #btn-unclassified-filter.active { background: #422006; border-color: #b45309; color: #fcd34d; }
+:root[data-theme="dark"] .ctr-del:hover { background: #450a0a; border-color: #f87171; color: #f87171; }
+:root[data-theme="dark"] .redirect-dest-404 { background: #422006 !important; color: #fcd34d !important; }
+:root[data-theme="dark"] .re-404-btn.active { background: #422006; border-color: #b45309; color: #fcd34d; }
 
 /* ── Global search bar ────────────────────────────────────────────────── */
 
@@ -4955,6 +5040,19 @@ body.dragging-modal, body.dragging-modal * { cursor: grabbing !important; }
   border-radius: 3px;
   user-select: none;
 }
+/* Section-pill colors (were inline hex; now classes so dark mode can theme them). */
+.nne-pill-identity   { background: #e2e8f0; color: #334155; }
+.nne-pill-addressing { background: #ccfbf1; color: #115e59; }
+.nne-pill-notes      { background: #f1f5f9; color: #475569; }
+.nne-pill-build      { background: #dbeafe; color: #1e40af; }
+.nne-pill-write      { background: #f3e8ff; color: #6b21a8; }
+.nne-pill-migrate    { background: #fef3c7; color: #92400e; }
+:root[data-theme="dark"] .nne-pill-identity   { background: #334155; color: #cbd5e1; }
+:root[data-theme="dark"] .nne-pill-addressing { background: #134e4a; color: #5eead4; }
+:root[data-theme="dark"] .nne-pill-notes      { background: #334155; color: #cbd5e1; }
+:root[data-theme="dark"] .nne-pill-build      { background: #172554; color: #93c5fd; }
+:root[data-theme="dark"] .nne-pill-write      { background: #2e1065; color: #c4b5fd; }
+:root[data-theme="dark"] .nne-pill-migrate    { background: #422006; color: #fcd34d; }
 /* Read-only context block at the top of the nav-node editor — tinted panel so it
    visually reads as reference info, distinct from the editable sections below. */
 .nne-context-panel {
@@ -5222,6 +5320,61 @@ body.dragging-modal, body.dragging-modal * { cursor: grabbing !important; }
   color: var(--accent);
   margin-top: 4px;
 }
+
+/* ── Empty-sitemap create form (nav assignment popover) ───────────────────── */
+.nav-empty-create { display: flex; flex-direction: column; gap: 8px; padding: 4px 2px; }
+.nav-empty-msg { font-size: 12px; color: var(--text-secondary); line-height: 1.4; }
+.nav-empty-field { display: flex; flex-direction: column; gap: 3px; }
+.nav-empty-field label { font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.nav-empty-field input {
+  font: inherit; font-size: 13px; padding: 5px 8px;
+  border: 1px solid var(--border-light); border-radius: var(--radius);
+  background: var(--bg-surface); color: var(--text-primary);
+}
+.nav-empty-field input:focus { outline: none; border-color: var(--accent); }
+.nav-empty-create #nav-root-create { align-self: flex-start; margin-top: 2px; }
+
+/* ── "Add to Menu" chooser + inline menu-create form ──────────────────────── */
+.menu-assign-list { display: flex; flex-direction: column; gap: 6px; }
+.menu-assign-intro { font-size: 12px; color: var(--text-secondary); margin-bottom: 2px; }
+.menu-assign-option {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-surface); color: var(--text-primary); cursor: pointer;
+  font: inherit; transition: border-color 0.12s, background 0.12s;
+}
+.menu-assign-option:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-hover); }
+.menu-assign-option:disabled { opacity: 0.55; cursor: default; }
+.menu-assign-name { font-size: 13px; font-weight: 600; }
+.menu-assign-meta { font-size: 11px; color: var(--text-muted); }
+.menu-assign-new { border-style: dashed; }
+.menu-assign-new .menu-assign-name { color: var(--accent-text); font-weight: 500; }
+
+.menu-create-form { display: flex; flex-direction: column; gap: 12px; }
+.menu-create-field { display: flex; flex-direction: column; gap: 4px; }
+.menu-create-field label { font-size: 11px; font-weight: 600; color: var(--text-secondary); }
+.menu-create-opt { font-weight: 400; color: var(--text-muted); }
+.menu-create-field input,
+.menu-create-field select,
+.menu-create-field textarea {
+  font: inherit; font-size: 13px; padding: 6px 8px;
+  border: 1px solid var(--border-light); border-radius: var(--radius);
+  background: var(--bg-surface); color: var(--text-primary);
+}
+.menu-create-field textarea { resize: vertical; }
+.menu-create-field input:focus,
+.menu-create-field select:focus,
+.menu-create-field textarea:focus { outline: none; border-color: var(--accent); }
+
+/* ── Theme selector (App Settings) ────────────────────────────────────────── */
+.theme-seg { display: inline-flex; border: 1px solid var(--border-light); border-radius: var(--radius); overflow: hidden; }
+.theme-seg button {
+  font: inherit; font-size: 12px; padding: 5px 12px; border: none;
+  background: var(--bg-surface); color: var(--text-secondary); cursor: pointer;
+  border-right: 1px solid var(--border-light);
+}
+.theme-seg button:last-child { border-right: none; }
+.theme-seg button.active { background: var(--accent); color: #fff; }
 
 /* ── Utilities ────────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
