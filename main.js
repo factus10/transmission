@@ -46,7 +46,9 @@ const AUDIT_COLUMNS = ['KKE_Recommendation', 'Tags', 'Notes', '_Flagged', '_Asse
                        // Content-type crosswalk: target (new-CMS) content type, auto-mapped from Page_Type
                        'Target_Content_Type',
                        // Design pattern inventory
-                       'Design_Patterns'];
+                       'Design_Patterns',
+                       // Internal: stable identity (master page's current Address) backing Consolidate_Into
+                       '_ConsolidateTargetId'];
 const NAV_COLUMNS   = ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'];
 
 // Candidate names for auto-detecting audit columns (first match wins, case-insensitive)
@@ -114,7 +116,9 @@ function injectAndOrderAuditColumns(headers, rows, columnMap) {
                      // Content-type crosswalk: target (new-CMS) content type, auto-mapped from Page_Type
                      'Target_Content_Type',
                      // Design pattern inventory
-                     'Design_Patterns'];
+                     'Design_Patterns',
+                     // Internal: stable identity (master page's current Address) backing Consolidate_Into
+                     '_ConsolidateTargetId'];
   auditCols.forEach(col => {
     if (!headers.includes(col)) {
       headers.push(col);
