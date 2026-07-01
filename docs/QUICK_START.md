@@ -50,7 +50,7 @@ Everything **auto-saves** 2 seconds after you stop — watch the title bar: *●
 
 ## 5. Check & hand off  ·  before you ship
 
-1. **Migration → Pre-Handoff Check** — one report flags everything that isn't ready: unreviewed pages, consolidate targets that don't exist (or point at a Kill page), redirect chains, duplicate nav IDs, empty nav nodes. Fix what it finds.
+1. **Migration → Pre-Handoff Check** — one report flags everything that isn't ready: unreviewed pages, consolidate targets that don't exist (or point at a Kill page), redirect chains, duplicate nav IDs, empty sitemap nodes. Fix what it finds.
 2. **Reports** menu — Executive Summary, Content Inventory, SME Review Status, Sitemap Coverage, Migration Checklist, and more (export each as PDF or Word-compatible HTML).
 3. **File → Export… (Cmd+Shift+E)** — filtered rows, audit decisions (CSV/JSON), redirect map (CSV), or the multi-sheet Migration Tracker for engineering.
 

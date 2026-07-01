@@ -38,7 +38,7 @@ In the **Multi-bar**:
 
 **Clear selection** drops the multi-selection (returning the target to "filtered").
 
-> Gotcha: bulk-setting KKE to **Kill** on pages that already have a nav assignment or redirect triggers a **cleanup prompt** — choose whether to clear those too, so you don't leave orphaned redirects.
+> Gotcha: bulk-setting KKE to **Kill** on pages that already have a sitemap assignment or redirect triggers a **cleanup prompt** — choose whether to clear those too, so you don't leave orphaned redirects.
 
 ---
 
