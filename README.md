@@ -272,7 +272,7 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - Menus travel with the file (both `.transmission` and `.xlsx`)
 
 ### Visual Sitemap
-A fully interactive box-tree you build, refine, and hand off — the **Sitemap** button renders the **content IA** as one tree rooted at your homepage. Click cards to collapse/expand, scroll to zoom, drag to pan, **Fit** to frame.
+A fully interactive box-tree you build, refine, and hand off — the Sitemap Editor's **Visual Sitemap** button renders the **content IA** as one tree rooted at your homepage. Click cards to collapse/expand, scroll to zoom, drag to pan, **Fit** to frame.
 - **Smart layout** — each branch lays out **horizontally** (children fan sideways) or **vertically** (children stack indented below) automatically, controlled by two thresholds in the toolbar: **Vertical from depth** and **or if children ≥**. Right-click any node to **force horizontal / vertical** or override it later.
 - **Color rules** — a small rule engine (Settings → **Colors**): color by depth or by top-level section out of the box, add your own rules (by depth, depth range, section, or value), drag to reorder, and right-click a single node to **set its color**. Uses your **Client brand** palette (Project Settings → Identity) when set.
 - **Settings panel** — **Layout** (card sizes & spacing), **Colors** (rules + per-node overrides), and **Legend** (editable labels) tabs, with **Save as my defaults** so new projects start the way you like.
