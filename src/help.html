@@ -289,7 +289,7 @@
       </ul>
       <div class="help-toc-group">E · Architect the future site</div>
       <ul>
-        <li><a href="#navigation-ia">13. Navigation &amp; IA</a></li>
+        <li><a href="#navigation-ia">13. Sitemap &amp; IA</a></li>
         <li><a href="#build-direction">14. Build &amp; Direction</a></li>
       </ul>
       <div class="help-toc-group">F · Ship it</div>
@@ -344,7 +344,7 @@
       <p class="help-mm"><strong>Mental model —</strong> two tiers. <strong>Project Settings</strong> travels <em>with the file</em> (client-specific: site domain, KKE states, suggestion weights, statuses, assignees, saved filters). <strong>App Settings</strong> is <em>per-user</em> (auto-advance, visible clusters, API key, sidebar columns, column mapping).</p>
       <ul>
         <li><strong>Project Settings</strong> (File &rarr; Project Settings) &mdash; five tabs: Identity · KKE States · Suggestions · Migration · Saved Filters.</li>
-        <li><strong>App Settings</strong> (&#9881; button) &mdash; Auto-advance · Show SME fields · Show Migration fields · Show Components cluster · Rubrics folder · Claude API key · Sidebar columns · Column mapping.</li>
+        <li><strong>App Settings</strong> (&#9881; button) &mdash; Appearance (System / Light / Dark) · Auto-advance · Show SME fields · Show Migration fields · Show Components cluster · Rubrics folder · Claude API key · Sidebar columns · Column mapping.</li>
         <li>Turn on only the <strong>Show …</strong> toggles this engagement needs; blank metadata is hidden and every cluster collapses with a click.</li>
       </ul>
       <h4>Good end-state</h4>
@@ -384,7 +384,7 @@
         <li><strong>Search</strong> with a scope selector: All fields / URL / Title.</li>
         <li><strong>KKE filter</strong> is a checkbox dropdown (multi-select, OR-ed) including special filters: Unreviewed, Flagged, Duplicates, SME conflicts/pending, Consolidate (no/dead target), Shared nav, Needs placement, Suggested disagrees / &ne; your call.</li>
         <li><strong>Field filters</strong> (<strong>+ Field filter</strong>) on any column: is blank / is not blank / contains / equals / starts with / ends with. <strong>Unclassified</strong> is a shortcut for <code>Content Nature is blank</code>.</li>
-        <li><strong>Save</strong> a combination (text + scope + KKE + group + field filters) and recall it; <strong>Cmd+F</strong> Global Search finds &amp; navigates across all rows. In the <strong>Navigation Tree</strong>, <strong>Cmd+F</strong> searches the nav nodes instead (label, breadcrumb, number, path, notes, pattern, assignees) and the ◀/▶ buttons jump &amp; scroll to each match, expanding collapsed branches as needed.</li>
+        <li><strong>Save</strong> a combination (text + scope + KKE + group + field filters) and recall it; <strong>Cmd+F</strong> Global Search finds &amp; navigates across all rows. In the <strong>Sitemap</strong>, <strong>Cmd+F</strong> searches the nav nodes instead (label, breadcrumb, number, path, notes, pattern, assignees) and the ◀/▶ buttons jump &amp; scroll to each match, expanding collapsed branches as needed.</li>
       </ul>
       <h4>Good end-state</h4>
       <ul class="help-check">
@@ -466,7 +466,7 @@
       <p class="help-mm"><strong>Mental model —</strong> <strong>Consolidate</strong> merges a page's content <em>into</em> another (recorded in <code>Consolidate_Into</code>); the target survives (usually Evolve). Consolidated pages need no nav placement; the redirect resolver chases the target (cycle-safe). The app warns on a <strong>dead target</strong>.</p>
       <ul>
         <li><strong>One page:</strong> press <code>4</code> / click <strong>Consolidate</strong> → pick the target in the picker (sets <code>Consolidate_Into</code> + KKE, clears nav).</li>
-        <li><strong>In bulk:</strong> <strong>Navigation Tree &rarr; Consolidation Candidates…</strong> lists nodes with 2+ pages; pick the target (→ Evolve), the rest become Consolidate.</li>
+        <li><strong>In bulk:</strong> <strong>Sitemap &rarr; Consolidation Candidates…</strong> lists nodes with 2+ pages; pick the target (→ Evolve), the rest become Consolidate.</li>
         <li><strong>Catch breaks:</strong> sidebar filters <strong>Consolidate (no target)</strong> and <strong>Consolidate &rarr; Kill/Exclude target</strong>.</li>
       </ul>
       <h4>Good end-state</h4>
@@ -528,20 +528,21 @@
     <!-- ============================================================ -->
     <div class="help-phase">E · Architect the future site</div>
 
-    <h2 id="navigation-ia">13. Navigation &amp; IA</h2>
+    <h2 id="navigation-ia">13. Sitemap &amp; IA</h2>
     <section class="help-section">
-      <p class="help-mm"><strong>Mental model —</strong> audit rows answer "what about each <em>existing</em> page?"; the nav tree answers "what is the <em>new</em> site?". You connect them by <strong>placing</strong> Keep/Evolve pages onto nodes. The tree is the source of truth for breadcrumbs and computed URLs — renames cascade.</p>
+      <p class="help-mm"><strong>Mental model —</strong> audit rows answer "what about each <em>existing</em> page?"; the sitemap answers "what is the <em>new</em> site?". You connect them by <strong>placing</strong> Keep/Evolve pages onto nodes. The sitemap is the source of truth for breadcrumbs and computed URLs — renames cascade.</p>
       <ul>
-        <li>Open with <code>Cmd+Shift+T</code> (or the <strong>Navigation Tree</strong> tab). Drive <strong>need placement &rarr; 0</strong>: KKE = Keep + Evolve, field filter <code>NavID is blank</code>, then <strong>Nav</strong> &rarr; <strong>Assign</strong> (use <strong>+ Child</strong> to create a node inline).</li>
+        <li>Open with <code>Cmd+Shift+T</code> (or the <strong>Sitemap</strong> tab). Drive <strong>need placement &rarr; 0</strong>: KKE = Keep + Evolve, field filter <code>NavID is blank</code>, then the audit bar's <strong>Sitemap</strong> button &rarr; <strong>Assign</strong> (use <strong>+ Child</strong> to create a node inline). <strong>Starting empty?</strong> With no nodes yet, the <strong>Sitemap</strong> button offers an inline form (Label from the title, Slug from the URL) to create the first root node and assign the page in one step — no need to open the Sitemap view first.</li>
         <li><strong>Shape:</strong> rename/re-slug inline (cascades), drag to reorder/reparent, <strong>+ Root Node</strong> / row <strong>+</strong>, <strong>&#10697;</strong> clone, <strong>Remediate</strong>. Set <strong>Node type</strong>, <strong>Collapse</strong> (bulk <strong>Collapse &#10003; / Expand</strong> &mdash; summarizes a subtree in the Visual Sitemap), <strong>Reference</strong>, <strong>Phase</strong>.</li>
         <li><strong>Gaps:</strong> <strong>NEW</strong> = net-new; red <strong>empty leaf</strong> = assign / net-new / phase / delete; <strong>&#9888; duplicate IDs</strong> auto-renumbers. Read the stats line.</li>
         <li><strong>Decouple the three axes</strong> (all in the node editor): <strong>URL override</strong> (<code>&#8618;</code>) publishes a page at an address off its menu position, re-rooting sub-pages; <strong>Breadcrumb parent</strong> (<code>&#8624;</code>) sets an arbitrary on-page breadcrumb top (e.g. deep <em>Accounting</em> reads <strong>Home &gt; Accounting</strong>) &mdash; optional Home prefix + advisory depth cap in <strong>Project Settings &rarr; Identity</strong>, and a <strong>Page Breadcrumb</strong> column in the Migration Tracker / nav &amp; menu exports; and <strong>Menus</strong> (below) are independent of the tree. Containment, URL, breadcrumb, and menus are four separate things.</li>
-        <li><strong>Visual Sitemap</strong> (toolbar <strong>Sitemap</strong>): the content IA as one interactive box tree rooted at the homepage. Click cards to collapse/expand, scroll to zoom, drag to pan, <strong>Fit</strong>. Branches auto-lay-out <strong>horizontal vs vertical</strong> by two thresholds (<strong>Vertical from depth</strong>, <strong>or if children &ge;</strong>); right-click a node to force a direction or set its color. <strong>Settings</strong> panel: <strong>Layout</strong> (sizes/gaps), <strong>Colors</strong> (a rule engine &mdash; by depth / section / value, plus per-node overrides), <strong>Legend</strong> (editable labels), and <strong>Save as my defaults</strong>. Export an <strong>interactive HTML</strong> file for the client (collapse/zoom in any browser) or a one-page <strong>PDF</strong>. Also <strong>Nav Coverage</strong> &amp; <strong>Net New Content Brief</strong> (the navigation hand-off report is now the <strong>Menu Report</strong>, in the Menus view).</li>
+        <li><strong>Visual Sitemap</strong> (toolbar <strong>Sitemap</strong>): the content IA as one interactive box tree rooted at the homepage. Click cards to collapse/expand, scroll to zoom, drag to pan, <strong>Fit</strong>. Branches auto-lay-out <strong>horizontal vs vertical</strong> by two thresholds (<strong>Vertical from depth</strong>, <strong>or if children &ge;</strong>); right-click a node to force a direction or set its color. <strong>Settings</strong> panel: <strong>Layout</strong> (sizes/gaps), <strong>Colors</strong> (a rule engine &mdash; by depth / section / value, plus per-node overrides), <strong>Legend</strong> (editable labels), and <strong>Save as my defaults</strong>. Export an <strong>interactive HTML</strong> file for the client (collapse/zoom in any browser) or a one-page <strong>PDF</strong>. Also <strong>Sitemap Coverage</strong> &amp; <strong>Net New Content Brief</strong> (the navigation hand-off report is now the <strong>Menu Report</strong>, in the Menus view).</li>
       </ul>
       <h3>Menus</h3>
       <p class="help-mm"><strong>Mental model —</strong> the tree says where content <em>lives</em>; <strong>menus</strong> say how people <em>reach</em> it — not the same thing. Menus are independent structures that <em>reference</em> content pages, so the same page can appear in several menus at different depths, and a menu's shape need not match the hierarchy.</p>
       <ul>
         <li>Open the <strong>Menus</strong> tab (or <code>Cmd+Shift+M</code>). Left = your menus (<strong>drag to reorder</strong>); right = the selected menu. <strong>+ New Menu</strong>, or <strong>Seed from content tree</strong> to mirror the in-menu nav nodes as a starting point, then edit independently.</li>
+        <li><strong>Add a page from the audit view:</strong> the audit bar's <strong>Menu</strong> button adds the current page to a menu without leaving the audit. Since menus reference pages on the sitemap, it first makes sure the page is on the sitemap (prompting you to add it if not), then opens a chooser of your existing menus (plus <strong>+ New menu…</strong>); with no menus yet, it opens a <strong>New menu</strong> dialog (Name / Placement / Description) and adds the page to it.</li>
         <li><strong>Items, three kinds:</strong> <strong>+ Page</strong> (references a content page — live label/path, flags broken refs), <strong>+ Link</strong> (external URL), <strong>+ Header</strong> (label-only grouping). Switch a kind anytime via the <strong>page / link / header</strong> dropdown on the item.</li>
         <li><strong>Drag the &#10303;&#10303; grip</strong> to reorder or nest (top/bottom third = before/after, middle = nest). Flat or as deep as you like, per menu.</li>
         <li><strong>Per-menu context:</strong> a <strong>Placement</strong> (per-project vocab — Top bar, Footer, Overlay / Fly-out… add your own) and a free-text <strong>Description</strong>. Menus travel with the file.</li>
@@ -598,7 +599,7 @@
       <p class="help-mm"><strong>Mental model —</strong> reports are read-only views generated on demand; each exports to <strong>PDF or HTML</strong> (HTML opens cleanly in Word). Three audiences: stakeholder narratives, IA/structure, delivery/engineering.</p>
       <ul>
         <li><strong>Stakeholder:</strong> Executive Summary · Content Inventory by Section · SME Review Status.</li>
-        <li><strong>IA &amp; structure:</strong> Menu Report · Nav Coverage Report · Content Type Crosswalk · Component Inventory.</li>
+        <li><strong>IA &amp; structure:</strong> Menu Report · Sitemap Coverage Report · Content Type Crosswalk · Component Inventory.</li>
         <li><strong>Delivery:</strong> Migration Direction Brief · Migration Checklist · Net New Content Brief · Redirect Map Report.</li>
         <li>The <strong>Migration</strong> menu holds export/validation <em>tools</em>; the <strong>Progress Dashboard</strong> (<code>Cmd+P</code>) gives live completion stats.</li>
       </ul>
@@ -615,8 +616,8 @@
       <ul>
         <li><strong>Migration &rarr; Migration Tracker…</strong> &mdash; toggle sheets/options, then export (<code>{project}-migration-tracker-YYYY-MM-DD.xlsx</code>).</li>
         <li><strong>Sheets:</strong> <strong>Nav Plan</strong> (build metadata per node) · <strong>Source Pages</strong> (audit rows joined to nodes) · <strong>Redirects</strong> (Kill + URL changes; <code>404</code> as intentional deindex) · <strong>Archive</strong> (Kill rows + notes/tags).</li>
-        <li><strong>Scope the Nav Plan:</strong> pick which columns appear, and tick <strong>Only nodes matching the active Build filter</strong> to export just the nodes that match the Build filter you set in the Nav Tree (e.g. one assignee, one status).</li>
-        <li><strong>Quick one-sheet export:</strong> in the Nav Tree, set a <strong>Build</strong> (and/or Phase) filter, then <strong>Export &rarr; Filtered nodes → Excel…</strong> &mdash; choose columns and export just those rows to a single sheet (<code>{project}-nav-nodes-YYYY-MM-DD.xlsx</code>).</li>
+        <li><strong>Scope the Nav Plan:</strong> pick which columns appear, and tick <strong>Only nodes matching the active Build filter</strong> to export just the nodes that match the Build filter you set in the Sitemap (e.g. one assignee, one status).</li>
+        <li><strong>Quick one-sheet export:</strong> in the Sitemap, set a <strong>Build</strong> (and/or Phase) filter, then <strong>Export &rarr; Filtered nodes → Excel…</strong> &mdash; choose columns and export just those rows to a single sheet (<code>{project}-nav-nodes-YYYY-MM-DD.xlsx</code>).</li>
       </ul>
       <h4>Good end-state</h4>
       <ul class="help-check">
@@ -720,13 +721,13 @@
       </table>
       <p><strong>Redirect_Destination = "404"</strong> &mdash; the literal string <code>404</code> means "let this URL return 404; do not write a redirect rule." Distinct from blank (TBD). Toggle via the <strong>404</strong> button in the Redirect Editor. The Redirect Map Report shows these in their own "Intentional 404s" section.</p>
 
-      <h3>Navigation columns</h3>
+      <h3>Sitemap columns</h3>
       <table class="help-table">
         <tr><th>Column</th><th>Type</th><th>Purpose</th></tr>
         <tr><td><code>NavID</code></td><td>ID</td><td>Assigned nav node identifier</td></tr>
         <tr><td><code>Nav Destination</code></td><td>Text</td><td>Breadcrumb path (e.g., "About > Team")</td></tr>
         <tr><td><code>Computed Path</code></td><td>URL path</td><td>Generated URL segment from nav hierarchy (or a node's <strong>URL override</strong>, set in the node editor, which decouples the address from the menu and re-roots its sub-pages)</td></tr>
-        <tr><td><code>Nav_SortID</code></td><td>Number</td><td>Sort position within the nav tree</td></tr>
+        <tr><td><code>Nav_SortID</code></td><td>Number</td><td>Sort position within the sitemap</td></tr>
       </table>
 
       <h3>Internal/tracking columns</h3>
@@ -761,12 +762,13 @@
         <tr><td><code>Cmd+Shift+S</code></td><td>Save As Project (convert to <code>.transmission</code>)</td></tr>
         <tr><td><code>Cmd+Shift+E</code></td><td>Open unified Export dialog</td></tr>
         <tr><td><code>Cmd+,</code></td><td>Open Preferences</td></tr>
-        <tr><td><code>Cmd+F</code></td><td>Global Search (searches nav nodes when the Nav Tree is open)</td></tr>
+        <tr><td><code>Cmd+F</code></td><td>Global Search (searches nav nodes when the Sitemap is open)</td></tr>
         <tr><td colspan="2" style="font-weight:600; color:var(--text-primary); padding-top:8px;">Views</td></tr>
         <tr><td><code>Cmd+1</code></td><td>Audit View (default)</td></tr>
         <tr><td><code>Cmd+T</code></td><td>Toggle Table View</td></tr>
-        <tr><td><code>Cmd+Shift+T</code></td><td>Navigation Tree</td></tr>
+        <tr><td><code>Cmd+Shift+T</code></td><td>Sitemap</td></tr>
         <tr><td><code>Cmd+Shift+R</code></td><td>Redirect Editor</td></tr>
+        <tr><td><code>Cmd+Shift+M</code></td><td>Menus</td></tr>
         <tr><td><code>Cmd+P</code></td><td>Audit Progress dashboard</td></tr>
         <tr><td colspan="2" style="font-weight:600; color:var(--text-primary); padding-top:8px;">Audit</td></tr>
         <tr><td><code>1</code> / <code>2</code> / <code>3</code> / <code>4</code> / <code>5</code></td><td>Keep / Kill / Evolve / Consolidate / Exclude</td></tr>
@@ -817,7 +819,7 @@
       <p>Hidden from the data-sheet picker; they carry project state and travel with the file.</p>
       <table class="help-table">
         <tr><th>Sheet</th><th>Purpose</th></tr>
-        <tr><td><code>NavStructure</code></td><td>The nav tree (nodes, paths, build metadata)</td></tr>
+        <tr><td><code>NavStructure</code></td><td>The sitemap (nodes, paths, build metadata)</td></tr>
         <tr><td><code>KKE_Settings</code></td><td>Project settings, saved filters, computed-column config (JSON)</td></tr>
         <tr><td><code>KKE_ChangeLog</code></td><td>Decision-change audit trail</td></tr>
         <tr><td><code>KKE_Glossary</code></td><td>Tag/group definitions</td></tr>
@@ -825,7 +827,7 @@
         <tr><td><code>PatternLibrary</code></td><td>Target Spec Library</td></tr>
         <tr><td><code>DesignPatternLibrary</code></td><td>Component Library</td></tr>
       </table>
-      <p><strong>Dark mode</strong> follows your macOS appearance automatically (WCAG-compliant in both themes). <strong>Undo/Redo</strong> (<code>Cmd+Z</code> / <code>Cmd+Shift+Z</code>) covers KKE changes only (100-action stack, cleared on reload).</p>
+      <p><strong>Appearance</strong> is a <strong>System / Light / Dark</strong> toggle in App Settings (per-user; <strong>System</strong> follows your macOS appearance, WCAG-compliant in both themes). <strong>The embedded browser always renders crawled pages as designed</strong> &mdash; it is never dark-mode-adapted, whatever this setting or the OS &mdash; so reviewing pages stays faithful. <strong>Undo/Redo</strong> (<code>Cmd+Z</code> / <code>Cmd+Shift+Z</code>) covers KKE changes only (100-action stack, cleared on reload).</p>
     </section>
 
     <h2 id="sf-columns">Common Screaming Frog Columns</h2>
@@ -866,7 +868,7 @@
         <li>Use audit templates for consistent setup; export SME subsets by Group or Owner.</li>
         <li>Merge parallel auditors' files; the changelog tracks every decision change.</li>
       </ul>
-      <h4>Navigation, redirects &amp; hand-off</h4>
+      <h4>Sitemap, redirects &amp; hand-off</h4>
       <ul>
         <li>Place every Keep/Evolve page (need placement &rarr; 0) before deriving redirects.</li>
         <li>Re-derive redirects from nav after restructuring; run the chain check before export.</li>

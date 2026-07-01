@@ -2,7 +2,7 @@
 
 The final pass before you ship: one command that runs every validation, plus the change log that proves what was decided. Do this last, every time.
 
-> Prerequisite: the audit, nav tree, and redirects are substantially complete.
+> Prerequisite: the audit, sitemap, and redirects are substantially complete.
 
 ---
 
