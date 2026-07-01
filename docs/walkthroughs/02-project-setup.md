@@ -21,7 +21,7 @@ If a setting should be the same for every auditor on this client, it belongs in 
 
 Open with **File → Project Settings…** (or **Project → Project Settings…**). It's a tabbed modal:
 
-**Identity** — **Client name**, **Project name**, **Site domain**, **Default redirect destination**. The site domain drives redirect URLs and nav paths; changing it offers to rewrite existing redirect destinations to the new domain.
+**Identity** — **Client name**, **Project name**, **Site domain**, **Default redirect destination**. The site domain drives redirect URLs and sitemap paths; changing it offers to rewrite existing redirect destinations to the new domain.
 
 **KKE States** — add **custom KKE states** (with a color), beyond the five built-ins (Keep / Kill / Evolve / Consolidate / Exclude), and clean up rogue values. Custom states are stored both with the file *and* in your app prefs, so new files inherit them.
 
