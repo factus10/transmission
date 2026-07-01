@@ -384,7 +384,7 @@
         <li><strong>Search</strong> with a scope selector: All fields / URL / Title.</li>
         <li><strong>KKE filter</strong> is a checkbox dropdown (multi-select, OR-ed) including special filters: Unreviewed, Flagged, Duplicates, SME conflicts/pending, Consolidate (no/dead target), Shared nav, Needs placement, Suggested disagrees / &ne; your call.</li>
         <li><strong>Field filters</strong> (<strong>+ Field filter</strong>) on any column: is blank / is not blank / contains / equals / starts with / ends with. <strong>Unclassified</strong> is a shortcut for <code>Content Nature is blank</code>.</li>
-        <li><strong>Save</strong> a combination (text + scope + KKE + group + field filters) and recall it; <strong>Cmd+F</strong> Global Search finds &amp; navigates across all rows. In the <strong>Sitemap</strong>, <strong>Cmd+F</strong> searches the nav nodes instead (label, breadcrumb, number, path, notes, pattern, assignees) and the ◀/▶ buttons jump &amp; scroll to each match, expanding collapsed branches as needed.</li>
+        <li><strong>Save</strong> a combination (text + scope + KKE + group + field filters) and recall it; <strong>Cmd+F</strong> Global Search finds &amp; navigates across all rows. In the <strong>Sitemap</strong>, <strong>Cmd+F</strong> searches the sitemap nodes instead (label, breadcrumb, number, path, notes, pattern, assignees) and the ◀/▶ buttons jump &amp; scroll to each match, expanding collapsed branches as needed.</li>
       </ul>
       <h4>Good end-state</h4>
       <ul class="help-check">
@@ -463,7 +463,7 @@
 
     <h2 id="consolidate">9. Consolidate</h2>
     <section class="help-section">
-      <p class="help-mm"><strong>Mental model —</strong> <strong>Consolidate</strong> merges a page's content <em>into</em> another (recorded in <code>Consolidate_Into</code>); the target survives (usually Evolve). Consolidated pages need no nav placement; the redirect resolver chases the target (cycle-safe). The app warns on a <strong>dead target</strong>.</p>
+      <p class="help-mm"><strong>Mental model —</strong> <strong>Consolidate</strong> merges a page's content <em>into</em> another (recorded in <code>Consolidate_Into</code>); the target survives (usually Evolve). Consolidated pages need no sitemap placement; the redirect resolver chases the target (cycle-safe). The app warns on a <strong>dead target</strong>.</p>
       <ul>
         <li><strong>One page:</strong> press <code>4</code> / click <strong>Consolidate</strong> → pick the target in the picker (sets <code>Consolidate_Into</code> + KKE, clears nav).</li>
         <li><strong>In bulk:</strong> <strong>Sitemap &rarr; Consolidation Candidates…</strong> lists nodes with 2+ pages; pick the target (→ Evolve), the rest become Consolidate.</li>
@@ -541,7 +541,7 @@
       <h3>Menus</h3>
       <p class="help-mm"><strong>Mental model —</strong> the tree says where content <em>lives</em>; <strong>menus</strong> say how people <em>reach</em> it — not the same thing. Menus are independent structures that <em>reference</em> content pages, so the same page can appear in several menus at different depths, and a menu's shape need not match the hierarchy.</p>
       <ul>
-        <li>Open the <strong>Menus</strong> tab (or <code>Cmd+Shift+M</code>). Left = your menus (<strong>drag to reorder</strong>); right = the selected menu. <strong>+ New Menu</strong>, or <strong>Seed from content tree</strong> to mirror the in-menu nav nodes as a starting point, then edit independently.</li>
+        <li>Open the <strong>Menus</strong> tab (or <code>Cmd+Shift+M</code>). Left = your menus (<strong>drag to reorder</strong>); right = the selected menu. <strong>+ New Menu</strong>, or <strong>Seed from content tree</strong> to mirror the in-menu sitemap nodes as a starting point, then edit independently.</li>
         <li><strong>Add a page from the audit view:</strong> the audit bar's <strong>Menu</strong> button adds the current page to a menu without leaving the audit. Since menus reference pages on the sitemap, it first makes sure the page is on the sitemap (prompting you to add it if not), then opens a chooser of your existing menus (plus <strong>+ New menu…</strong>); with no menus yet, it opens a <strong>New menu</strong> dialog (Name / Placement / Description) and adds the page to it.</li>
         <li><strong>Items, three kinds:</strong> <strong>+ Page</strong> (references a content page — live label/path, flags broken refs), <strong>+ Link</strong> (external URL), <strong>+ Header</strong> (label-only grouping). Switch a kind anytime via the <strong>page / link / header</strong> dropdown on the item.</li>
         <li><strong>Drag the &#10303;&#10303; grip</strong> to reorder or nest (top/bottom third = before/after, middle = nest). Flat or as deep as you like, per menu.</li>
@@ -581,10 +581,10 @@
 
     <h2 id="redirects">15. Redirects</h2>
     <section class="help-section">
-      <p class="help-mm"><strong>Mental model —</strong> a redirect is needed for any Kill page and any page whose URL is changing. The app resolves destinations by priority (<strong>custom &rarr; nav node path &rarr; project default &rarr; blank</strong>). The literal <code>404</code> means "let it die" (distinct from blank = TBD).</p>
+      <p class="help-mm"><strong>Mental model —</strong> a redirect is needed for any Kill page and any page whose URL is changing. The app resolves destinations by priority (<strong>custom &rarr; sitemap node path &rarr; project default &rarr; blank</strong>). The literal <code>404</code> means "let it die" (distinct from blank = TBD).</p>
       <ul>
         <li>Open with the <strong>Redirects</strong> tab / <code>Cmd+Shift+R</code> (lists Kill + URL-changed pages; fragments excluded).</li>
-        <li><strong>Set efficiently:</strong> <strong>Re-derive from nav</strong>, the per-row nav picker, the <strong>404</strong> toggle, and <strong>Find/Replace</strong> (filters to matches; Replace All). Destinations also resolve on Save.</li>
+        <li><strong>Set efficiently:</strong> <strong>Re-derive from nav</strong>, the per-row sitemap picker, the <strong>404</strong> toggle, and <strong>Find/Replace</strong> (filters to matches; Replace All). Destinations also resolve on Save.</li>
         <li><strong>Validate &amp; export:</strong> <strong>Migration &rarr; Redirect Chain Check…</strong>; <strong>Export Redirect Map (CSV)…</strong>; <strong>Reports &rarr; Redirect Map Report…</strong> (Kill / URL-changed / intentional 404s).</li>
       </ul>
       <h4>Good end-state</h4>
@@ -724,7 +724,7 @@
       <h3>Sitemap columns</h3>
       <table class="help-table">
         <tr><th>Column</th><th>Type</th><th>Purpose</th></tr>
-        <tr><td><code>NavID</code></td><td>ID</td><td>Assigned nav node identifier</td></tr>
+        <tr><td><code>NavID</code></td><td>ID</td><td>Assigned sitemap node identifier</td></tr>
         <tr><td><code>Nav Destination</code></td><td>Text</td><td>Breadcrumb path (e.g., "About > Team")</td></tr>
         <tr><td><code>Computed Path</code></td><td>URL path</td><td>Generated URL segment from nav hierarchy (or a node's <strong>URL override</strong>, set in the node editor, which decouples the address from the menu and re-roots its sub-pages)</td></tr>
         <tr><td><code>Nav_SortID</code></td><td>Number</td><td>Sort position within the sitemap</td></tr>
@@ -762,7 +762,7 @@
         <tr><td><code>Cmd+Shift+S</code></td><td>Save As Project (convert to <code>.transmission</code>)</td></tr>
         <tr><td><code>Cmd+Shift+E</code></td><td>Open unified Export dialog</td></tr>
         <tr><td><code>Cmd+,</code></td><td>Open Preferences</td></tr>
-        <tr><td><code>Cmd+F</code></td><td>Global Search (searches nav nodes when the Sitemap is open)</td></tr>
+        <tr><td><code>Cmd+F</code></td><td>Global Search (searches sitemap nodes when the Sitemap is open)</td></tr>
         <tr><td colspan="2" style="font-weight:600; color:var(--text-primary); padding-top:8px;">Views</td></tr>
         <tr><td><code>Cmd+1</code></td><td>Audit View (default)</td></tr>
         <tr><td><code>Cmd+T</code></td><td>Toggle Table View</td></tr>

@@ -257,7 +257,7 @@ Click the **⚙** at the right edge of the metadata bar (not the one in the titl
 
 Your project is set up when:
 
-- [ ] **Identity** is filled in — at least the **Site domain**, since redirects and nav paths depend on it
+- [ ] **Identity** is filled in — at least the **Site domain**, since redirects and sitemap paths depend on it
 - [ ] Any **custom KKE states** this engagement needs are defined
 - [ ] **Suggestion sources** are configured, if you'll use Suggested_KKE
 - [ ] **Migration** vocabularies are seeded, if you'll reach the build phase
@@ -341,7 +341,7 @@ The field bar has two regions.
 - **Migrate** (amber, optional) — Renders as and Migration Track (see [Content Types & the Crosswalk](#7-content-types--the-crosswalk)).
 - **CMS** (green) — Source CMS and New CMS admin links.
 
-> **Heads-up:** switching a page to **Kill** when it already has a nav assignment or a redirect prompts you to clear them, so you never leave an orphaned redirect behind. The same prompt appears for Final KKE, bulk changes, and Table View edits.
+> **Heads-up:** switching a page to **Kill** when it already has a sitemap assignment or a redirect prompts you to clear them, so you never leave an orphaned redirect behind. The same prompt appears for Final KKE, bulk changes, and Table View edits.
 
 ### A few conveniences worth knowing
 
@@ -413,7 +413,7 @@ Built a slice you'll want again? Open **Saved filters…** and choose **+ Save c
 
 When you just want to *find* a page rather than narrow the list, press **Cmd+F** for a floating search bar. It searches every column across every row, shows a match count, and steps through hits with **◀ / ▶** — clearing the sidebar filters if needed so it can show you the match. Think of it as "find and jump," distinct from the sidebar's "narrow the list."
 
-> **Good to know — reading the sidebar.** Each row carries a gentle KKE-tinted background (green Keep, red Kill, yellow Evolve, grey Exclude), the URL, a KKE badge, and the flag ★. Two small letters flag structure: **N** (green) means the page is assigned to a nav node, and **R** (amber) means it has a redirect. Non-200 pages show a colored status badge (amber for 3xx, red for 4xx/5xx). A **Quick Stats Bar** along the bottom tracks "X/Y reviewed (Z%)."
+> **Good to know — reading the sidebar.** Each row carries a gentle KKE-tinted background (green Keep, red Kill, yellow Evolve, grey Exclude), the URL, a KKE badge, and the flag ★. Two small letters flag structure: **N** (green) means the page is assigned to a sitemap node, and **R** (amber) means it has a redirect. Non-200 pages show a colored status badge (amber for 3xx, red for 4xx/5xx). A **Quick Stats Bar** along the bottom tracks "X/Y reviewed (Z%)."
 
 ### Quick self-check
 
@@ -465,7 +465,7 @@ If you've both selected rows and applied a filter, your **selection wins**.
 
 **Clear selection** drops your multi-selection and hands the target back to the filter.
 
-> **Heads-up:** bulk-setting **Kill** on pages that already have a nav assignment or redirect triggers the same cleanup prompt as a single Kill — so you decide whether to clear those too, rather than leaving redirects pointing nowhere.
+> **Heads-up:** bulk-setting **Kill** on pages that already have a sitemap assignment or redirect triggers the same cleanup prompt as a single Kill — so you decide whether to clear those too, rather than leaving redirects pointing nowhere.
 
 ### Score in bulk instead of deciding by hand
 
@@ -726,20 +726,20 @@ Consolidate is the merge option. It concentrates topic authority on one page, en
 
 ### How it works
 
-When you consolidate page A into page B, A's content merges **into** B. A points at its **target** (recorded in `Consolidate_Into`) and the target survives — usually as **Evolve**, since it's receiving new content. A consolidated page needs no nav placement of its own. On save, Transmission works out A's redirect by chasing B to wherever it actually lands, and it warns you if a target is **dead** (missing, or itself being killed).
+When you consolidate page A into page B, A's content merges **into** B. A points at its **target** (recorded in `Consolidate_Into`) and the target survives — usually as **Evolve**, since it's receiving new content. A consolidated page needs no sitemap placement of its own. On save, Transmission works out A's redirect by chasing B to wherever it actually lands, and it warns you if a target is **dead** (missing, or itself being killed).
 
 ### Consolidate a single page
 
 1. Select the source page and press **4** (or click **Consolidate**). The **Consolidate into…** picker opens — a searchable, sortable list of your whole inventory, with the source URL and any SME notes pinned at the top.
 2. Click a page to select it, then double-click it (or use **Set as target**) to confirm.
 
-Transmission sets `Consolidate_Into`, switches the page's call to Consolidate, and clears its nav assignment. To change the target later, click Consolidate again (the current target is highlighted); **Clear target** removes both the target and the call.
+Transmission sets `Consolidate_Into`, switches the page's call to Consolidate, and clears its sitemap assignment. To change the target later, click Consolidate again (the current target is highlighted); **Clear target** removes both the target and the call.
 
 > **Tip:** mark the **target** page **Evolve** and add a note about what's merging in. Don't leave it Unreviewed, don't mark it Keep (receiving content *is* a change), and never mark it Kill (content can't merge into a dead page).
 
 ### Find consolidation groups in bulk
 
-When several pages already share a nav node, they're often consolidation candidates. **Sitemap → Consolidation Candidates…** opens a workflow built for exactly this:
+When several pages already share a sitemap node, they're often consolidation candidates. **Sitemap → Consolidation Candidates…** opens a workflow built for exactly this:
 
 1. It lists every node with 2 or more pages, biggest group first.
 2. For each group, select the radio button on the page that should be the **target**.
@@ -761,14 +761,14 @@ Two sidebar filters keep consolidations honest — clear both before you ship:
 - [ ] Every Consolidate page has a **live** target
 - [ ] No **dead-target** warnings remain
 - [ ] Each target survives as **Keep/Evolve**, not killed
-- [ ] Consolidated pages carry no stray nav assignment
+- [ ] Consolidated pages carry no stray sitemap assignment
 - [ ] Redirects resolve to a real URL (confirm in the [Redirect Editor](#15-redirects))
 
 ### Going deeper
 
-**How the redirect is chased.** On save, a Consolidate page's destination is computed in order: the target's *future* computed path if it has a nav assignment, then — if the target is itself Consolidate — the final destination down the chain (cycle-safe), then the target's own explicit redirect, and finally the target's current URL. It updates automatically whenever the target's nav changes, so you never maintain these by hand.
+**How the redirect is chased.** On save, a Consolidate page's destination is computed in order: the target's *future* computed path if it has a sitemap assignment, then — if the target is itself Consolidate — the final destination down the chain (cycle-safe), then the target's own explicit redirect, and finally the target's current URL. It updates automatically whenever the target's sitemap assignment changes, so you never maintain these by hand.
 
-**Spotting them at a glance.** A Consolidate row takes on an indigo tint and a small `C` pill once a target is set, and the Consolidate button shows a dot. The **Shared nav node (2+ pages)** filter is a lighter-touch alternative to the Candidates workflow — it simply surfaces every page whose `NavID` is shared, for cases you'd rather review one by one.
+**Spotting them at a glance.** A Consolidate row takes on an indigo tint and a small `C` pill once a target is set, and the Consolidate button shows a dot. The **Shared sitemap node (2+ pages)** filter is a lighter-touch alternative to the Candidates workflow — it simply surfaces every page whose `NavID` is shared, for cases you'd rather review one by one.
 
 **When an SME asks for a Consolidate.** SME imports may carry `Change: Consolidate` (sometimes with a target hinted in their notes). Filter to **Consolidate (no target)**, click each row's Consolidate button — the picker shows the SME's notes in a yellow callout — and pick the target. The picker won't overwrite the SME's imposed Final KKE; it just fills in the destination.
 
@@ -1103,7 +1103,7 @@ Once any node has a status, the stats line appends **status tallies** (`5 built 
 3. Optionally pick a **Template** (custom Markdown templates live in *Documents → Transmission → templates*; **Built-in default** needs no setup).
 4. **Generate**, then export **PDF** or **HTML**.
 
-The report groups that person's pages by spec, leads each group with the reference direction (the spec default plus any page-specific briefs), and lists the rest as followers. Under each nav node it also lists the **source page(s)** currently assigned to it; if other pages are being **consolidated into** one of those pages, that page gets a **merges N** flag so the writer knows the new page is absorbing content from N old ones. The summary line totals the consolidations folded in.
+The report groups that person's pages by spec, leads each group with the reference direction (the spec default plus any page-specific briefs), and lists the rest as followers. Under each sitemap node it also lists the **source page(s)** currently assigned to it; if other pages are being **consolidated into** one of those pages, that page gets a **merges N** flag so the writer knows the new page is absorbing content from N old ones. The summary line totals the consolidations folded in.
 
 ### Hand off
 
@@ -1141,7 +1141,7 @@ When the nodes are annotated, two commands carry the work to engineering: **Migr
 A redirect is needed for any **Kill** page and any page whose **URL is changing** (its new computed path differs from its current URL); Consolidate pages redirect to their target. You rarely set destinations by hand — Transmission resolves them by a priority order and can re-derive them from the tree on demand. That order, highest first:
 
 1. A custom destination you typed or picked for the row
-2. The page's nav node path
+2. The page's sitemap node path
 3. The project's default redirect destination
 4. Blank — meaning the page is retired and will 404
 
@@ -1149,12 +1149,12 @@ One special value matters: the literal **`404`** means "let this URL die honestl
 
 ### Open the Redirect Editor
 
-Open it from the **Redirects** tab or **Cmd+Shift+R**. It lists every page that needs a redirect — Kill pages and URL-changed pages — each showing its KKE badge, its title (click to jump to that row in the audit view), the current URL, an editable destination, and a nav picker. Fragments are left out automatically, since they have no public URL.
+Open it from the **Redirects** tab or **Cmd+Shift+R**. It lists every page that needs a redirect — Kill pages and URL-changed pages — each showing its KKE badge, its title (click to jump to that row in the audit view), the current URL, an editable destination, and a sitemap picker. Fragments are left out automatically, since they have no public URL.
 
 ### Set destinations efficiently
 
-- **Re-derive from nav** recomputes destinations from current nav paths for every row with a nav assignment (it skips any explicit `404`). Run it after you've reorganized the tree.
-- The per-row **nav picker** points a single redirect at a specific node.
+- **Re-derive from sitemap** recomputes destinations from current sitemap paths for every row with a sitemap assignment (it skips any explicit `404`). Run it after you've reorganized the sitemap.
+- The per-row **sitemap picker** points a single redirect at a specific node.
 - The **404 toggle** marks a row as an intentional 404.
 - **Find/Replace** opens a bar that *filters the list* to matching destinations (exact-match optional) and can **Replace All** across them — ideal for domain or path-prefix sweeps.
 
@@ -1172,18 +1172,18 @@ Destinations also resolve automatically on **Save**, so the editor is for review
 ### Quick self-check
 
 - [ ] Every Kill / URL-changed page has a destination (or an intentional **404**)
-- [ ] You ran **Re-derive from nav** after the tree was finalized
+- [ ] You ran **Re-derive from sitemap** after the tree was finalized
 - [ ] The **Redirect Chain Check** is clean — no redirects into Kill/404 pages
 - [ ] Intentional 404s are marked, not left blank
 - [ ] The redirect map is exported
 
 ### Going deeper
 
-**The columns.** Status (a KKE badge or "URL Changed"), Title (click to open the audit row), Current URL, the **→** arrow, the editable Destination URL, and the **🗂** nav picker. The toolbar adds a status filter, a text search, and sortable columns that cycle ascending → descending → none.
+**The columns.** Status (a KKE badge or "URL Changed"), Title (click to open the audit row), Current URL, the **→** arrow, the editable Destination URL, and the **🗂** sitemap picker. The toolbar adds a status filter, a text search, and sortable columns that cycle ascending → descending → none.
 
 **Setting a destination.** Type any URL (including a cross-server one), pick a node from the sitemap (a 600px dropdown anchored to the right), or leave it blank to be resolved on save. The **default destination** and **site domain** live in Project Settings; changing the domain rewrites destinations that used the old one. On save, `Redirect_Destination` is filled from the priority chain above — there's no homepage fallback, so a blank means the page is retired and will 404.
 
-**How Re-derive decides.** Kill and Consolidate rows take the nav computed path; Keep/Evolve rows update only when the URL is actually changing; rows with an explicit `404` are always skipped; and rows with no nav assignment are left alone. Every result is visible in the editor before you save, so you can review or override.
+**How Re-derive decides.** Kill and Consolidate rows take the sitemap computed path; Keep/Evolve rows update only when the URL is actually changing; rows with an explicit `404` are always skipped; and rows with no sitemap assignment are left alone. Every result is visible in the editor before you save, so you can review or override.
 
 **A couple of conveniences.** Opening the editor from a page auto-scrolls to that page's row with a brief highlight. And the exported CSV carries four columns: Source URL, Destination URL, Status Code (`301`), and a Reason.
 
@@ -1216,7 +1216,7 @@ Reports are read-only views, generated on demand from the current file — run t
 
 - **Migration Direction Brief** — per-person worklists for the Writer, Builder, or Migrator, grouped by spec and led by the reference direction (supports custom templates — see [Templates](#19-templates)).
 - **Migration Checklist** — the comprehensive hand-off: what to retain, remove, update, and redirect, plus URL changes and net-new pages, with full tables.
-- **Net New Content Brief** — every nav node that needs brand-new content written.
+- **Net New Content Brief** — every sitemap node that needs brand-new content written.
 - **Redirect Map Report** — totals, intentional 404s, chain warnings, and full tables by type.
 
 ### Export them
@@ -1255,12 +1255,12 @@ Open **Migration → Migration Tracker…**. A dialog lets you toggle which shee
 
 Two controls let you scope the **Nav Plan** sheet: a **column picker** (tick exactly which columns to include) and **Only nodes matching the active Build filter** — when you've set a Build filter in the Sitemap (say, one assignee or one page status), this exports just the nodes that match it. The toggle shows the active filter and how many nodes match.
 
-**Just want the nav nodes, not the whole workbook?** In the Sitemap, set a **Build** (and/or Phase) filter, then use **Export → Filtered nodes → Excel…**. Pick **Rows** (the matching nodes, or all nodes) and **Columns**, and it writes a single sheet — `{project-slug}-nav-nodes-YYYY-MM-DD.xlsx`.
+**Just want the sitemap nodes, not the whole workbook?** In the Sitemap, set a **Build** (and/or Phase) filter, then use **Export → Filtered nodes → Excel…**. Pick **Rows** (the matching nodes, or all nodes) and **Columns**, and it writes a single sheet — `{project-slug}-nav-nodes-YYYY-MM-DD.xlsx`.
 
 ### What each sheet carries
 
-- **Nav Plan** — one row per nav node, with all the build metadata: page status, build pattern, builder/writer/migrator, guidance and briefs, source-page count, the assigned **source-page URL(s)**, the **consolidated-in URL(s)** (any old pages being merged into those assigned pages), net-new flag, phase, in-menu, and external URL. The build team's master plan.
-- **Source Pages** — your audit rows joined to their nav node: KKE / Final / Suggested calls, Content Type / Renders As / Target, Group, Primary Tag, and the target breadcrumb, path, pattern, and status. The "where does each old page go" map.
+- **Nav Plan** — one row per sitemap node, with all the build metadata: page status, build pattern, builder/writer/migrator, guidance and briefs, source-page count, the assigned **source-page URL(s)**, the **consolidated-in URL(s)** (any old pages being merged into those assigned pages), net-new flag, phase, in-menu, and external URL. The build team's master plan.
+- **Source Pages** — your audit rows joined to their sitemap node: KKE / Final / Suggested calls, Content Type / Renders As / Target, Group, Primary Tag, and the target breadcrumb, path, pattern, and status. The "where does each old page go" map.
 - **Redirects** — Kill rows plus URL changes; an intentional `404` surfaces as "(404) — intentional deindex."
 - **Archive** — the Kill rows with their notes and tags, for client reference.
 

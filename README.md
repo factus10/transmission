@@ -159,7 +159,7 @@ A dedicated **SME** top-level menu for subject-matter-expert review:
 
 ### Filtering & Selection
 - **Text search** — filters rows by any column value. A scope selector attached to the left of the search box lets you narrow matching to **URL only** or **Title only**, making search results intentional rather than catching metadata you didn't mean to match. Default ("All fields") preserves the original behavior.
-- **KKE status filter** — checkbox dropdown supporting multi-select. Includes built-in states, custom states, and special filters: Unreviewed, Flagged, Duplicates, SME Conflicts, Pending Final KKE, **Consolidate (no target)**, **Shared nav node (2+ pages)**. All checked items are OR'd together.
+- **KKE status filter** — checkbox dropdown supporting multi-select. Includes built-in states, custom states, and special filters: Unreviewed, Flagged, Duplicates, SME Conflicts, Pending Final KKE, **Consolidate (no target)**, **Shared sitemap node (2+ pages)**. All checked items are OR'd together.
 - **Group filter** — filter by assigned group
 - **Flagged filter** — show only flagged/bookmarked rows
 - **Duplicate filter** — show rows with identical Title/H1/Meta Description
@@ -352,12 +352,12 @@ A system for cataloging the UI design patterns present on each page, helping ens
 - **Consolidate** is a fifth KKE state alongside Keep / Kill / Evolve / Exclude — for pages whose content should be merged into another page in the inventory rather than killed outright
 - Why it exists: most audits include a lot of "near-duplicate" pages (multiple landing pages on the same topic, overlapping FAQs, blog posts that should be one comprehensive guide). Kill discards their value; Evolve leaves cannibalization in place; Consolidate is the merge
 - **Consolidate target picker** — virtual-scrolled, filterable, sortable list of every page in the inventory; pinned source URL + SME Notes hint at the top; current target shown in an indigo callout when reassigning
-- **`Consolidate_Into` column** — stores the destination using the target page's **Computed Path** (new site URL) when one is available, falling back to the inventory URL. The value updates automatically when the target page gains a nav assignment.
+- **`Consolidate_Into` column** — stores the destination using the target page's **Computed Path** (new site URL) when one is available, falling back to the inventory URL. The value updates automatically when the target page gains a sitemap assignment.
 - **Dead target warning** — an amber dot appears on the Consolidate button when the consolidation target has been set to Kill or Exclude (a misconfiguration that needs attention)
 - **"Consolidate → Kill/Exclude target" sidebar filter** — surfaces all pages whose consolidation target has been killed or excluded, so you can resolve the entire set at once
 - **Pre-save sweep** — before writing the file, any stale `Consolidate_Into` values (inventory URLs that now have a computed path) are resolved to the new computed URL automatically
-- **"Shared nav node (2+ pages)" sidebar filter** — surfaces all pages where the NavID is shared with one or more other pages, so you can find consolidation candidates in the sidebar
-- **Consolidation Candidates workflow** — Nav Editor toolbar button opens a bulk-resolve modal: every multi-page nav node listed with its pages, pick a target with a radio button, Apply sets the target to Evolve and the others to Consolidate pointing to the target. Skip defers groups; counter tracks progress. Filter bar above the list lets you exclude rows by KKE state (chip checkboxes for every value present in row data, including typos) or by Group (multi-select, useful for de-scoping a section like "Post Launch")
+- **"Shared sitemap node (2+ pages)" sidebar filter** — surfaces all pages where the NavID is shared with one or more other pages, so you can find consolidation candidates in the sidebar
+- **Consolidation Candidates workflow** — Sitemap Editor toolbar button opens a bulk-resolve modal: every multi-page sitemap node listed with its pages, pick a target with a radio button, Apply sets the target to Evolve and the others to Consolidate pointing to the target. Skip defers groups; counter tracks progress. Filter bar above the list lets you exclude rows by KKE state (chip checkboxes for every value present in row data, including typos) or by Group (multi-select, useful for de-scoping a section like "Post Launch")
 - **"Consolidate (no target)" filter** — surfaces rows where KKE or Final_KKE is Consolidate but `Consolidate_Into` is empty (typically after an SME import where the target wasn't specified)
 - The picker shows the row's SME Notes as a yellow hint when present, since SMEs often write target URLs there
 
@@ -383,10 +383,10 @@ The audit bar's suggestion badge surfaces a unified recommendation drawn from mu
 ### Project Settings
 **Project → Project Settings…** opens a centered, draggable modal with **five tabs**:
 
-1. **Identity** — Client / Project name (shown in progress dashboard and PDFs), Site domain (target for redirects + nav paths), Default redirect destination (fallback for Kill pages without a custom redirect; changing it offers to rewrite matching existing values).
+1. **Identity** — Client / Project name (shown in progress dashboard and PDFs), Site domain (target for redirects + sitemap paths), Default redirect destination (fallback for Kill pages without a custom redirect; changing it offers to rewrite matching existing values).
 2. **KKE States** — Custom KKE states (label + color picker). Stored per-project AND globally so new files inherit them. Each row shows usage count and a **Merge…** button to reassign rows from one state to another (used for typo cleanup). Rogue values (KKE values in row data that aren't in your defined states) appear in a separate sub-section with their own Merge buttons.
 3. **Suggestions** — GA Analytics source (button opens the existing GA KKE configuration dialog), Rubric source (button runs batch rubric), per-source weights with **Save & Recompute** action. Last-run stats shown.
-4. **Migration** — **Page Statuses** (color, rename, reorder, delete with cascade-clear across nav nodes) and **Assignees** (rename, delete with cascade-clear). Inline-addable from anywhere they're picked.
+4. **Migration** — **Page Statuses** (color, rename, reorder, delete with cascade-clear across sitemap nodes) and **Assignees** (rename, delete with cascade-clear). Inline-addable from anywhere they're picked.
 5. **Saved Filters** — list of saved filter bundles with Apply / Delete per row.
 
 All settings are stored in the `KKE_Settings` sheet and travel with the file.
@@ -406,14 +406,14 @@ All settings are stored in the `KKE_Settings` sheet and travel with the file.
 - **Text search** — filter by URL, title, or destination
 - **Column sorting** — click Status, Title, Current URL, or Destination URL headers (asc/desc/none)
 - **Find/Replace** — toolbar button opens a bar with Find and Replace fields. Find/Replace **filters** the list (shows only matching rows, not just highlights). Exact match checkbox available. Respects status filter and text search. Live match count shown as you type. "Replace All" applies the substitution to all matching destination URLs. Replace value can be blank to clear destinations.
-- **Re-derive from nav** — toolbar button re-syncs redirect destinations from current sitemap assignments. Useful after reorganizing the sitemap when many existing destinations are out of date. Kill/Consolidate rows get the nav path as their destination; Keep/Evolve rows are updated only if their URL is actually changing; rows with an explicit `404` destination are skipped.
+- **Re-derive from sitemap** — toolbar button re-syncs redirect destinations from current sitemap assignments. Useful after reorganizing the sitemap when many existing destinations are out of date. Kill/Consolidate rows get the sitemap path as their destination; Keep/Evolve rows are updated only if their URL is actually changing; rows with an explicit `404` destination are skipped.
 - **Scroll to current page** — when opening the redirect editor while viewing a page, the editor scrolls to and briefly highlights that page's row
-- **Redirect destination resolution on save** — before saving, all Kill and URL-changed pages have their `Redirect_Destination` column populated with the resolved value (explicit > nav path > default > blank). No more homepage fallback — blank means retired/404.
+- **Redirect destination resolution on save** — before saving, all Kill and URL-changed pages have their `Redirect_Destination` column populated with the resolved value (explicit > sitemap path > default > blank). No more homepage fallback — blank means retired/404.
 - Site domain and default destination are configured in Project Settings (File menu)
 
 ### Reports & Analysis
 - **Redirect Chain Detection** — Reports > Redirect Chain Check scans Kill pages and flags any whose redirect destination is itself a Kill page, catching redirect chains before implementation. Results shown in a dialog.
-- **Sitemap Coverage Report** — Reports > Sitemap Coverage Report analyzes the sitemap: empty leaf nodes (no pages, no children), hub nodes (children but no direct pages), overloaded nodes (5+ pages), and path mismatches (page URL doesn't match computed nav path).
+- **Sitemap Coverage Report** — Reports > Sitemap Coverage Report analyzes the sitemap: empty leaf nodes (no pages, no children), hub nodes (children but no direct pages), overloaded nodes (5+ pages), and path mismatches (page URL doesn't match computed sitemap path).
 
 ### Client Reports
 Client-facing reports available from the Reports menu, all exportable as PDF or HTML (Word-compatible):
@@ -422,7 +422,7 @@ Client-facing reports available from the Reports menu, all exportable as PDF or 
 - **Content Inventory by Section** — per-group breakdown with KKE distribution, sample pages, notes counts
 - **SME Review Status** — overall SME completion, per-Content Owner table (assigned/reviewed/%/approved/changed/unresolved), unresolved conflicts list
 - **Redirect Map Report** — summary (total/kill/URL-changed), redirect chain warnings, full redirect tables grouped by type
-- **Net New Content Brief** — list of nav nodes that need new content (have child pages assigned but no page of their own), with breadcrumb paths, computed URLs, and child page context
+- **Net New Content Brief** — list of sitemap nodes that need new content (have child pages assigned but no page of their own), with breadcrumb paths, computed URLs, and child page context
 - **Migration Checklist** — combined summary: pages to retain, remove, update, redirect; URL changes; net new pages; full tables for evolve pages with notes, redirect map, and URL changes
 - **Component Inventory** — summary stats (pages audited, distinct patterns, one-off count), full per-pattern table (category, complexity, page count, KKE breakdown), one-off pattern flags, and top co-occurring pattern pairs
 - **Content Type Crosswalk** — one row per current content type → renders-as → target (new-CMS) content type → target spec → migration track, with page volume, KKE breakdown, and a "no crosswalk" flag for current types lacking a registry entry. For the CMS architect planning the type migration.
@@ -565,7 +565,7 @@ The app stores project-level settings in a `KKE_Settings` sheet (key/value pairs
 |-----|---------|
 | `clientName` | Client name (shown in progress dashboard and PDF export) |
 | `projectName` | Project name (shown in progress dashboard and PDF export) |
-| `siteDomain` | Target domain for redirect URLs and nav paths |
+| `siteDomain` | Target domain for redirect URLs and sitemap paths |
 | `defaultRedirectUrl` | Default redirect destination for Kill pages |
 | `customKkeStates` | Custom KKE statuses with labels and colors (JSON) |
 
@@ -577,7 +577,7 @@ When a NavStructure sheet is present (or loaded from another file):
 
 | Column | Purpose |
 |--------|---------|
-| `NavID` | Unique nav node identifier |
+| `NavID` | Unique sitemap node identifier |
 | `Nav Destination` | Breadcrumb path |
 | `Computed Path` | URL path segment |
 | `Nav_SortID` | Sortable position value |

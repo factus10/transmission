@@ -10,7 +10,7 @@ How to build the **future-state sitemap** and place every page you're keeping on
 
 - The **audit rows** answer "what do we do with each *existing* page?"
 - The **sitemap** answers "what is the *new* site?" — its sections, hierarchy, and URLs.
-- You connect the two by **placing** each Keep/Evolve page onto a nav node. A node can carry **0** source pages (net-new), **1**, or **many** (a consolidation target).
+- You connect the two by **placing** each Keep/Evolve page onto a sitemap node. A node can carry **0** source pages (net-new), **1**, or **many** (a consolidation target).
 - The tree is the source of truth for breadcrumbs and the computed URL of every node. Rename a node and the change cascades to its descendants and to every page assigned under it.
 
 Open the tree with **Cmd+Shift+T** (or the **Sitemap** tab in the view switcher). The **stats line** under the toolbar is your dashboard — learn to read it (see §6).
@@ -23,7 +23,7 @@ Open the tree with **Cmd+Shift+T** (or the **Sitemap** tab in the view switcher)
 
 Goal: drive **need placement** in the stats line to **0**.
 
-"Need placement" = Keep/Evolve rows with no nav node yet. To find and assign them:
+"Need placement" = Keep/Evolve rows with no sitemap node yet. To find and assign them:
 
 1. **Audit** view (**Cmd+1**) → **KKE** filter → check **Keep** + **Evolve** → **+ Field filter** → field `NavID`, operator **is blank** → **Apply**.
 2. For each row, click **Sitemap** (in the **DECIDE** cluster) → drill to the right node → **Assign**. Use **+ Child** in the picker footer to create a new node inline if no good home exists yet.
@@ -31,7 +31,7 @@ Goal: drive **need placement** in the stats line to **0**.
 
 > Fast path: the stats line's **N need placement** link is clickable — it jumps you straight to the audit view filtered to exactly those rows. Work the list down to zero.
 
-Consolidation note: pages you marked **Consolidate** don't need placement — they fold into their target. The *target* page (usually **Evolve**) is what gets the nav node.
+Consolidation note: pages you marked **Consolidate** don't need placement — they fold into their target. The *target* page (usually **Evolve**) is what gets the sitemap node.
 
 ---
 
@@ -107,7 +107,7 @@ Also: **Collapse All** / **Expand All**, and fold state persists across re-rende
 
 If several pages landed on one node, they may be consolidation candidates:
 
-- Toolbar → **Consolidation Candidates…** lists every node with **2+** assigned pages. Pick the target (→ **Evolve**); the rest become **Consolidate** pointing at it, with their nav assignment cleared.
+- Toolbar → **Consolidation Candidates…** lists every node with **2+** assigned pages. Pick the target (→ **Evolve**); the rest become **Consolidate** pointing at it, with their sitemap assignment cleared.
 
 ---
 

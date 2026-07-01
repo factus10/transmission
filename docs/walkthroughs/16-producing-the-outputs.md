@@ -35,7 +35,7 @@ What every report is *for* and when to run it. The audit's value is in the deliv
 
 - **Migration Direction Brief…** — per-person worklists for the **Writer / Builder / Migrator** roles, grouped by target spec (see **Build & Direction**). Supports custom templates.
 - **Migration Checklist…** — the retain / remove / update / redirect summary the migration team works from.
-- **Net New Content Brief…** — every nav node that needs brand-new content written.
+- **Net New Content Brief…** — every sitemap node that needs brand-new content written.
 - **Redirect Map Report…** — Kill / URL-changed / intentional-404 redirects (see **Redirects**).
 
 ---
