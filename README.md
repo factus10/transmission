@@ -20,7 +20,7 @@ The list below is a feature catalog, not a how-to.
 
 ### Project Files (.transmission)
 - **SQLite-backed project files** — **File → Save As Project…** (`Cmd+Shift+S`) converts the open spreadsheet (with all in-session edits) into a single `.transmission` file and switches the session to it. Saves become instant (milliseconds, no workbook rebuild) regardless of file size; the existing 2-second autosave does the rest.
-- **One file is still the whole project** — rows, decisions, nav tree, settings, glossary, libraries, and the full change history (now with an auditor name per entry) travel inside it. Put it wherever the project lives; Finder double-click opens it.
+- **One file is still the whole project** — rows, decisions, sitemap, settings, glossary, libraries, and the full change history (now with an auditor name per entry) travel inside it. Put it wherever the project lives; Finder double-click opens it.
 - **Every column survives, losslessly** — your whole crawl is preserved exactly as exported, including any **custom extraction** columns from Screaming Frog (XPath/CSS/regex pulls: CMS IDs, author bylines, publish dates, schema markup, component flags…). Nothing is dropped, renamed, or reordered when you open a spreadsheet or convert it to a `.transmission` project, and it all round-trips back out intact on **Export Full Workbook**. Those columns aren't dead weight either — surface them in Table View, pin them to the field bar, or filter on them with **+ Field filter**. The app treats your columns and its own audit columns identically.
 - **Excel becomes the deliverable format** — **File → Export Full Workbook (.xlsx)…** writes a complete spreadsheet (all structural sheets + full change history) for clients, colleagues without Transmission, or archive. Exports round-trip: an exported workbook can be re-opened and re-converted later.
 - **Package for Handoff** — **File → Package for Handoff…** saves, checkpoints, and zips the project (with a README for the recipient) in one step, then reveals the zip in Finder. The other auditor unzips and double-clicks; their edits join the same change history under their username. A rolling safety copy of each project is also kept in the app's support folder on every open.
@@ -31,7 +31,7 @@ The list below is a feature catalog, not a how-to.
 - **File → Open Recent** — submenu of the 10 most recent files (newest first), with "Clear Recent Files" at the bottom. Files that have moved/been deleted show with `(missing)` and are disabled. Useful when juggling multiple projects.
 - **Two-panel layout** — filterable row list on the left, embedded browser on the right
 - **KKE decisions** — Keep, Kill, Evolve, Exclude (plus custom states you define)
-- **Kill cleanup prompt** — when changing KKE to Kill on a page that already has a nav assignment or redirect destination, the app asks whether to clear them. Applies to single-row KKE buttons, Final KKE, bulk KKE, and Table View inline edits.
+- **Kill cleanup prompt** — when changing KKE to Kill on a page that already has a sitemap assignment or redirect destination, the app asks whether to clear them. Applies to single-row KKE buttons, Final KKE, bulk KKE, and Table View inline edits.
 - **Tags** — freeform chip input, stored as comma-separated values
 - **Notes** — per-page rationale in a popover
 - **Groups & Primary Tag** — categorize pages into groups with a primary tag
@@ -54,8 +54,9 @@ The list below is a feature catalog, not a how-to.
 A horizontal tab strip sits permanently below the OS titlebar, always one click away regardless of which view is active:
 - **Audit** (`Cmd+1`) — default audit view (sidebar + browser)
 - **Table** (`Cmd+T`) — full-width spreadsheet
-- **Navigation Tree** (`Cmd+Shift+T`) — nav editor
+- **Sitemap** (`Cmd+Shift+T`) — sitemap editor
 - **Redirects** (`Cmd+Shift+R`) — redirect editor
+- **Menus** (`Cmd+Shift+M`) — menu builder
 
 The View menu mirrors these and adds **Audit Progress…** (`Cmd+P`), zoom controls, and (in source builds) developer items.
 
@@ -65,7 +66,7 @@ The View menu mirrors these and adds **Audit Progress…** (`Cmd+P`), zoom contr
 - **View** — view switcher mirrors + Audit Progress + zoom
 - **Project** — Project Settings · Glossary · Content Type Registry · Target Spec Library · Component Library · **AI Suggest for Unreviewed** · Run Rubric · Refresh GA KKE · Recompute Suggested KKE · Triage Non-200 Pages
 - **Migration** (export & validation tools) — **Pre-Handoff Check** · Migration Tracker · Export Redirect Map (CSV) · Redirect Chain Check
-- **Reports** (all reports, grouped) — Executive Summary · Content Inventory · SME Review Status · Menu Report · Nav Coverage · Component Inventory · Migration Checklist · Net New Content Brief · Redirect Map Report
+- **Reports** (all reports, grouped) — Executive Summary · Content Inventory · SME Review Status · Menu Report · Sitemap Coverage · Component Inventory · Migration Checklist · Net New Content Brief · Redirect Map Report
 - **SME** — Export · Import · **Compare KKE vs SME** · Resolve Conflicts
 - **Help** — Getting Started · Product Tour · Keyboard Shortcuts (`Cmd+/`) · Help
 
@@ -98,7 +99,7 @@ Two separate concerns, kept distinct: **what the content *is*** (its type) and *
 - **Unclassified filter** in the sidebar toolbar — one-click filter for rows whose Content Nature is blank
 
 ### Migration Build & Direction
-The migration delivery deliverable lives on the **nav tree**: each node carries Build Pattern, Build Guidance, Writer Brief, Page Status, and **three assignee roles** — Builder, Writer, and **Migrator**.
+The migration delivery deliverable lives on the **sitemap**: each node carries Build Pattern, Build Guidance, Writer Brief, Page Status, and **three assignee roles** — Builder, Writer, and **Migrator**.
 
 - **Target Spec Library** (`Project → Target Spec Library`, the `PatternLibrary` sheet) — per-project specs that each new content type is built from. Each spec is flagged **Page Template** (layout/components) or **Content Model** (a field schema, for fragments), and carries three kinds of **direction**: a **Writer brief** (for the author), **Build guidance** (for the builder), and a **Migration mapping** (source→target field map, for the migration engineer). Content Model specs also carry a field schema. Ships with 12 curated defaults; assigning a spec fills blank node fields (never clobbers).
 - **Three direction kinds, two levels** — the type-level reference lives once on the spec (covers all bulk/scripted content); element-level briefs on a node override it only where it deviates.
@@ -110,8 +111,8 @@ The migration delivery deliverable lives on the **nav tree**: each node carries 
 - **Migration Direction Brief** (`Reports → Migration Direction Brief…`) — a per-person worklist for any of the three roles (Writer / Builder / Migrator), grouped by spec, leading with the type-level reference and listing the pages that follow it.
 - **Migration Tracker Export** (`File → Export…` → Migration Tracker, or `Migration → Migration Tracker…`) produces a multi-sheet xlsx for engineering: Nav Plan (with a Migrator column), Source Pages (with Content Type / Renders As / Target Content Type), Redirects, Archive.
 
-### Shared-content (Fragment) nav nodes
-- A nav node's **Node type** can be **Page**, **Header / organizing level**, or **Fragment / shared content**.
+### Shared-content (Fragment) sitemap nodes
+- A sitemap node's **Node type** can be **Page**, **Header / organizing level**, or **Fragment / shared content**.
 - **Fragment nodes** represent embedded/shared content (e.g. an AEM experience fragment): they keep their computed path as a repository location but have **no menu entry, breadcrumb, or redirect**. They render as their own layer in the tree (a `FRAG` badge + tinted row) and are excluded from net-new / empty counts and the in-menu IA.
 - **Nature-aware downstream** — pages that render as a Fragment are excluded from redirects (no public URL) and from the need-placement / nav-coverage checks (a fragment has no nav home by design).
 
@@ -145,8 +146,9 @@ A dedicated **SME** top-level menu for subject-matter-expert review:
 | `Cmd+F` | Global Search |
 | `Cmd+1` | Audit View (return to default view) |
 | `Cmd+T` | Toggle Table View |
-| `Cmd+Shift+T` | Navigation Tree |
+| `Cmd+Shift+T` | Sitemap |
 | `Cmd+Shift+R` | Redirect Editor |
+| `Cmd+Shift+M` | Menus |
 | `Cmd+Shift+E` | Export filtered rows |
 | `Cmd+,` | Open Preferences |
 | `Cmd+Z` | Undo last KKE change |
@@ -157,7 +159,7 @@ A dedicated **SME** top-level menu for subject-matter-expert review:
 
 ### Filtering & Selection
 - **Text search** — filters rows by any column value. A scope selector attached to the left of the search box lets you narrow matching to **URL only** or **Title only**, making search results intentional rather than catching metadata you didn't mean to match. Default ("All fields") preserves the original behavior.
-- **KKE status filter** — checkbox dropdown supporting multi-select. Includes built-in states, custom states, and special filters: Unreviewed, Flagged, Duplicates, SME Conflicts, Pending Final KKE, **Consolidate (no target)**, **Shared nav node (2+ pages)**. All checked items are OR'd together.
+- **KKE status filter** — checkbox dropdown supporting multi-select. Includes built-in states, custom states, and special filters: Unreviewed, Flagged, Duplicates, SME Conflicts, Pending Final KKE, **Consolidate (no target)**, **Shared sitemap node (2+ pages)**. All checked items are OR'd together.
 - **Group filter** — filter by assigned group
 - **Flagged filter** — show only flagged/bookmarked rows
 - **Duplicate filter** — show rows with identical Title/H1/Meta Description
@@ -216,15 +218,16 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 **Other batch operations:**
 - **Batch AI assessment** — assess all filtered rows via the Claude API
 
-### Navigation Assignment
-- Load a `NavStructure` sheet (or import from another file) to assign pages to a site navigation tree
+### Sitemap Assignment
+- Load a `NavStructure` sheet (or import from another file) to assign pages to the sitemap
 - Cascading dropdown selection with breadcrumb preview
 - Create child nodes on the fly
-- URL-based suggestions — the app tries to match pages to nav nodes based on URL hierarchy
+- URL-based suggestions — the app tries to match pages to sitemap nodes based on URL hierarchy
 - Page slug editing for computed paths
 
-### Navigation Editor
-- Click **Tree** in the audit bar to open a **full-width** navigation structure editor (sidebar is hidden)
+### Sitemap Editor
+- Open the **Sitemap** tab (or `Cmd+Shift+T`) for a **full-width** sitemap editor (sidebar is hidden)
+- **Seed an empty sitemap from the audit view** — with no nodes yet, clicking the audit bar's **Sitemap** button shows an inline form (Label prefilled from the page title, Slug from the URL) and a **Create & assign** button that creates the first root node and assigns the current page to it in one step — no need to visit the Sitemap tab first
 - Inline editing of node labels and slugs — changes cascade to all assigned pages
 - **Drag-and-drop** to reorder nodes or reparent them (subtrees move together). Between-node drops show a bold line indicator with a circle handle; drop-into-node targets show a blue left-border shadow. The dragged row fades to 35% opacity for clear visual feedback.
 - Add child nodes or root nodes; delete nodes (children promoted to parent)
@@ -234,11 +237,11 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - **Menu item toggle** — InMenu column to mark nodes as visible/hidden in navigation menus
 - **Duplicate slug detection** — slugs that conflict with siblings are highlighted in red
 - **Slug validation** — slugs are validated on assignment to prevent duplicates
-- **Duplicate NavID detection** — when 2+ nav nodes share the same `ID`, the toolbar shows a red ⚠ link with the count. Click → confirms → renumbers duplicates with new unique IDs (the first node in each group keeps the original). Pages assigned to the shared ID stay with the first node; the rest may need manual reassignment via the nav picker.
-- **Consolidation Candidates** — toolbar button opens a bulk-resolve modal listing every nav node with 2+ assigned pages. Pick a target with a radio button, Apply makes the target Evolve and the rest Consolidate pointing to the target. Filter bar lets you exclude rows by KKE state or Group (e.g. de-scope an entire "Post Launch" section in one click).
+- **Duplicate NavID detection** — when 2+ sitemap nodes share the same `ID`, the toolbar shows a red ⚠ link with the count. Click → confirms → renumbers duplicates with new unique IDs (the first node in each group keeps the original). Pages assigned to the shared ID stay with the first node; the rest may need manual reassignment via the sitemap picker.
+- **Consolidation Candidates** — toolbar button opens a bulk-resolve modal listing every sitemap node with 2+ assigned pages. Pick a target with a radio button, Apply makes the target Evolve and the rest Consolidate pointing to the target. Filter bar lets you exclude rows by KKE state or Group (e.g. de-scope an entire "Post Launch" section in one click).
 - **Net new badge** — nodes that have child pages assigned but no page of their own show a yellow "NEW" badge in the Pages column, with a subtle yellow row tint. Reference (alias) nodes are excluded — they don't count toward NEW or empty stats since they don't own content. Stats bar shows the count.
 - **Empty branch indicator** — `○` shows for both empty leaves and parents whose entire subtree has no pages (no descendants with content either). Tooltip distinguishes the two cases. Helps spot redundant aspirational structure for cleanup.
-- **External URL** — assign an external URL to a nav node via the link button in the actions column. Nodes with a URL show a link icon in the Pages column and the URL in blue italic in the Computed Path column. Stored in a `URL` column in the NavStructure sheet.
+- **External URL** — assign an external URL to a sitemap node via the link button in the actions column. Nodes with a URL show a link icon in the Pages column and the URL in blue italic in the Computed Path column. Stored in a `URL` column in the NavStructure sheet.
 - **Phase property** — mark nodes as `Future` / `Stretch` / `Archived` for content the client wants but isn't building yet. Phased nodes get a colored dashed border, italicized label, and a small `FUTURE`/`STRETCH`/`ARCHIVED` pill in the Pages column. Toolbar adds a `Phase` filter (All / Current only / Non-current only) and a count to the stats line. Stored in a `Phase` column in NavStructure.
 - **Node notes** — every node has a markdown notes field accessible from the modal node editor. Notes surface as a hover tooltip on the node label and a small `·` indicator. Stored in a `Notes` column in NavStructure.
 - **Modal node editor** — `✎` button on each row opens a full property editor: read-only context (number / ID / parent / breadcrumb / computed path / page count), editable Label / Slug / In Menu / External URL / Phase / Notes, live preview of derived breadcrumb and computed path as you type. Cmd/Ctrl+Enter saves; Esc cancels.
@@ -251,7 +254,7 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - **Menu Report** — a tight, hand-off-ready report of your menus (**Menus → Report**, or **Reports → Menu Report…**): one section card per menu with its item hierarchy, page-count badges on page references, `↗` on external links, `≡` on headers, and a red **missing** badge on broken references. Exports to PDF / HTML. (This is the former nav "IA Report", now fed by the independent menus.)
 - Page counts per node with gap detection (empty nodes highlighted)
 - **URL override** — a node can publish at an address independent of its place in the menu (`Url_Path`); the override re-roots its sub-pages too. Containment and URL are separate axes.
-- **Breadcrumb parent** — set an arbitrary on-page breadcrumb top, independent of both the tree and the URL: mark a node a *breadcrumb root* or re-root it onto any other node (`Breadcrumb_Parent`); sub-pages inherit. Optional project "Home" prefix and advisory max-depth flag live in Project Settings → Identity. A deep `College of Business > Departments > Accounting` page can read simply **Home > Accounting**. The rendered page breadcrumb is exported as a column in the Migration Tracker Nav Plan, the Nav Tree column-picker export, and the menu export.
+- **Breadcrumb parent** — set an arbitrary on-page breadcrumb top, independent of both the tree and the URL: mark a node a *breadcrumb root* or re-root it onto any other node (`Breadcrumb_Parent`); sub-pages inherit. Optional project "Home" prefix and advisory max-depth flag live in Project Settings → Identity. A deep `College of Business > Departments > Accounting` page can read simply **Home > Accounting**. The rendered page breadcrumb is exported as a column in the Migration Tracker Nav Plan, the Sitemap column-picker export, and the menu export.
 - Full NavStructure sheet rewrite on save (preserves all extension columns including Phase, Notes, RefNodeID, InMenu, URL, Url_Path, Breadcrumb_Parent)
 
 ### Menus
@@ -261,14 +264,15 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - **Drag-and-drop** items (⋮⋮ grip) to reorder and nest; each menu can be flat or arbitrarily deep
 - A page can appear in **any number of menus** at any depth (many-to-many; the content node isn't modified)
 - **Per-menu metadata** — a **Placement** (per-project controlled vocabulary: Top bar, Footer, Overlay / Fly-out, … with inline add) and a free-text **Description**
-- **Seed from content tree** — generate a starter menu mirroring the in-menu nav nodes, then edit independently
+- **Add to a menu from the audit view** — the audit bar's **Menu** button adds the current page to a menu without leaving the audit. Because menus reference pages that live on the sitemap, it first checks the page is on the sitemap (and prompts you to add it if not); once it is, it opens a chooser of your existing menus (click one to add), with a **+ New menu…** option. If you have no menus yet, it opens a **New menu** dialog (Name / Placement / Description) and adds the page to it.
+- **Seed from content tree** — generate a starter menu mirroring the in-menu sitemap nodes, then edit independently
 - **CMS-agnostic export** — **Export…** writes a neutral, structured description of your menus (all or just the selected one) that any platform's import maps from — no vendor model baked in. Two formats: a flat, readable **Excel** `Menus` sheet or nested **JSON**; page references resolve to their target URLs. CMS-native files are optional add-ons on top.
 - **Broken-reference check** — if a referenced page is deleted/renumbered, the item shows `(missing page)` and a red **⚠ broken refs** toolbar button appears; one click lists every dangling item to re-point or remove before handoff.
 - **Per-menu sitemap** — **Sitemap** draws each menu as a box-tree using the same interactive engine as the Visual Sitemap (below): menus stack with headings, items are colored by kind (page / link / header, headers dashed), and you collapse/expand, pan/zoom, recolor, and export right in the view.
 - Menus travel with the file (both `.transmission` and `.xlsx`)
 
 ### Visual Sitemap
-A fully interactive box-tree you build, refine, and hand off — the **Sitemap** button renders the **content IA** as one tree rooted at your homepage. Click cards to collapse/expand, scroll to zoom, drag to pan, **Fit** to frame.
+A fully interactive box-tree you build, refine, and hand off — the Sitemap Editor's **Visual Sitemap** button renders the **content IA** as one tree rooted at your homepage. Click cards to collapse/expand, scroll to zoom, drag to pan, **Fit** to frame.
 - **Smart layout** — each branch lays out **horizontally** (children fan sideways) or **vertically** (children stack indented below) automatically, controlled by two thresholds in the toolbar: **Vertical from depth** and **or if children ≥**. Right-click any node to **force horizontal / vertical** or override it later.
 - **Color rules** — a small rule engine (Settings → **Colors**): color by depth or by top-level section out of the box, add your own rules (by depth, depth range, section, or value), drag to reorder, and right-click a single node to **set its color**. Uses your **Client brand** palette (Project Settings → Identity) when set.
 - **Settings panel** — **Layout** (card sizes & spacing), **Colors** (rules + per-node overrides), and **Legend** (editable labels) tabs, with **Save as my defaults** so new projects start the way you like.
@@ -302,7 +306,7 @@ The audit bar is structured as a **vertical flow of labeled cluster cards**. Eac
 - **Suggested_KKE badge** — read-only, color-coded, shows the unified GA + Rubric recommendation with source prefix (e.g., `GA: Kill`). ⚠ when sources disagree. Click for the source breakdown popover.
 - **Assess** — runs the rubric against the current row
 - **Notes** — popover for per-page rationale (red dot when notes exist)
-- **Nav** — assigns the page to a navigation node. When a nav assignment exists, a green pill shows the leaf label with a small **×** to clear (confirmation modal lets you optionally delete the now-empty node).
+- **Sitemap** — assigns the page to a sitemap node. When a sitemap assignment exists, a green pill shows the leaf label with a small **×** to clear (confirmation modal lets you optionally delete the now-empty node).
 - **SME readout + Final KKE** — when **Show SME fields** is on, SME Decision shows as a read-only display (set via SME → Import) and Final KKE is a dropdown. Final collapses to a green ✓ chip when it matches the KKE call.
 
 *(Tree and Redirects buttons that used to live here are now in the persistent view switcher at the top of the window.)*
@@ -348,12 +352,12 @@ A system for cataloging the UI design patterns present on each page, helping ens
 - **Consolidate** is a fifth KKE state alongside Keep / Kill / Evolve / Exclude — for pages whose content should be merged into another page in the inventory rather than killed outright
 - Why it exists: most audits include a lot of "near-duplicate" pages (multiple landing pages on the same topic, overlapping FAQs, blog posts that should be one comprehensive guide). Kill discards their value; Evolve leaves cannibalization in place; Consolidate is the merge
 - **Consolidate target picker** — virtual-scrolled, filterable, sortable list of every page in the inventory; pinned source URL + SME Notes hint at the top; current target shown in an indigo callout when reassigning
-- **`Consolidate_Into` column** — stores the destination using the target page's **Computed Path** (new site URL) when one is available, falling back to the inventory URL. The value updates automatically when the target page gains a nav assignment.
+- **`Consolidate_Into` column** — stores the destination using the target page's **Computed Path** (new site URL) when one is available, falling back to the inventory URL. The value updates automatically when the target page gains a sitemap assignment.
 - **Dead target warning** — an amber dot appears on the Consolidate button when the consolidation target has been set to Kill or Exclude (a misconfiguration that needs attention)
 - **"Consolidate → Kill/Exclude target" sidebar filter** — surfaces all pages whose consolidation target has been killed or excluded, so you can resolve the entire set at once
 - **Pre-save sweep** — before writing the file, any stale `Consolidate_Into` values (inventory URLs that now have a computed path) are resolved to the new computed URL automatically
-- **"Shared nav node (2+ pages)" sidebar filter** — surfaces all pages where the NavID is shared with one or more other pages, so you can find consolidation candidates in the sidebar
-- **Consolidation Candidates workflow** — Nav Editor toolbar button opens a bulk-resolve modal: every multi-page nav node listed with its pages, pick a target with a radio button, Apply sets the target to Evolve and the others to Consolidate pointing to the target. Skip defers groups; counter tracks progress. Filter bar above the list lets you exclude rows by KKE state (chip checkboxes for every value present in row data, including typos) or by Group (multi-select, useful for de-scoping a section like "Post Launch")
+- **"Shared sitemap node (2+ pages)" sidebar filter** — surfaces all pages where the NavID is shared with one or more other pages, so you can find consolidation candidates in the sidebar
+- **Consolidation Candidates workflow** — Sitemap Editor toolbar button opens a bulk-resolve modal: every multi-page sitemap node listed with its pages, pick a target with a radio button, Apply sets the target to Evolve and the others to Consolidate pointing to the target. Skip defers groups; counter tracks progress. Filter bar above the list lets you exclude rows by KKE state (chip checkboxes for every value present in row data, including typos) or by Group (multi-select, useful for de-scoping a section like "Post Launch")
 - **"Consolidate (no target)" filter** — surfaces rows where KKE or Final_KKE is Consolidate but `Consolidate_Into` is empty (typically after an SME import where the target wasn't specified)
 - The picker shows the row's SME Notes as a yellow hint when present, since SMEs often write target URLs there
 
@@ -379,10 +383,10 @@ The audit bar's suggestion badge surfaces a unified recommendation drawn from mu
 ### Project Settings
 **Project → Project Settings…** opens a centered, draggable modal with **five tabs**:
 
-1. **Identity** — Client / Project name (shown in progress dashboard and PDFs), Site domain (target for redirects + nav paths), Default redirect destination (fallback for Kill pages without a custom redirect; changing it offers to rewrite matching existing values).
+1. **Identity** — Client / Project name (shown in progress dashboard and PDFs), Site domain (target for redirects + sitemap paths), Default redirect destination (fallback for Kill pages without a custom redirect; changing it offers to rewrite matching existing values).
 2. **KKE States** — Custom KKE states (label + color picker). Stored per-project AND globally so new files inherit them. Each row shows usage count and a **Merge…** button to reassign rows from one state to another (used for typo cleanup). Rogue values (KKE values in row data that aren't in your defined states) appear in a separate sub-section with their own Merge buttons.
 3. **Suggestions** — GA Analytics source (button opens the existing GA KKE configuration dialog), Rubric source (button runs batch rubric), per-source weights with **Save & Recompute** action. Last-run stats shown.
-4. **Migration** — **Page Statuses** (color, rename, reorder, delete with cascade-clear across nav nodes) and **Assignees** (rename, delete with cascade-clear). Inline-addable from anywhere they're picked.
+4. **Migration** — **Page Statuses** (color, rename, reorder, delete with cascade-clear across sitemap nodes) and **Assignees** (rename, delete with cascade-clear). Inline-addable from anywhere they're picked.
 5. **Saved Filters** — list of saved filter bundles with Apply / Delete per row.
 
 All settings are stored in the `KKE_Settings` sheet and travel with the file.
@@ -397,19 +401,19 @@ All settings are stored in the `KKE_Settings` sheet and travel with the file.
 - Shows all Kill pages and pages whose URL changed via navigation mapping
 - The `404` literal in `Redirect_Destination` is treated as a first-class "intentional deindex" — a **404** toggle button next to each row's destination input flips between a destination URL and `404`. Rows marked `404` style as amber-italic and appear in their own section in the Redirect Map Report.
 - Each row displays: status badge, title (clickable — navigates to that row in audit view), current URL, editable destination URL
-- Set per-row destinations manually or pick from the navigation tree (600px wide picker, anchored to right edge)
+- Set per-row destinations manually or pick from the sitemap (600px wide picker, anchored to right edge)
 - **Status filter** — dropdown to filter by KKE status or "URL Changed"
 - **Text search** — filter by URL, title, or destination
 - **Column sorting** — click Status, Title, Current URL, or Destination URL headers (asc/desc/none)
 - **Find/Replace** — toolbar button opens a bar with Find and Replace fields. Find/Replace **filters** the list (shows only matching rows, not just highlights). Exact match checkbox available. Respects status filter and text search. Live match count shown as you type. "Replace All" applies the substitution to all matching destination URLs. Replace value can be blank to clear destinations.
-- **Re-derive from nav** — toolbar button re-syncs redirect destinations from current nav assignments. Useful after reorganizing the nav tree when many existing destinations are out of date. Kill/Consolidate rows get the nav path as their destination; Keep/Evolve rows are updated only if their URL is actually changing; rows with an explicit `404` destination are skipped.
+- **Re-derive from sitemap** — toolbar button re-syncs redirect destinations from current sitemap assignments. Useful after reorganizing the sitemap when many existing destinations are out of date. Kill/Consolidate rows get the sitemap path as their destination; Keep/Evolve rows are updated only if their URL is actually changing; rows with an explicit `404` destination are skipped.
 - **Scroll to current page** — when opening the redirect editor while viewing a page, the editor scrolls to and briefly highlights that page's row
-- **Redirect destination resolution on save** — before saving, all Kill and URL-changed pages have their `Redirect_Destination` column populated with the resolved value (explicit > nav path > default > blank). No more homepage fallback — blank means retired/404.
+- **Redirect destination resolution on save** — before saving, all Kill and URL-changed pages have their `Redirect_Destination` column populated with the resolved value (explicit > sitemap path > default > blank). No more homepage fallback — blank means retired/404.
 - Site domain and default destination are configured in Project Settings (File menu)
 
 ### Reports & Analysis
 - **Redirect Chain Detection** — Reports > Redirect Chain Check scans Kill pages and flags any whose redirect destination is itself a Kill page, catching redirect chains before implementation. Results shown in a dialog.
-- **Nav Coverage Report** — Reports > Nav Coverage Report analyzes the navigation structure: empty leaf nodes (no pages, no children), hub nodes (children but no direct pages), overloaded nodes (5+ pages), and path mismatches (page URL doesn't match computed nav path).
+- **Sitemap Coverage Report** — Reports > Sitemap Coverage Report analyzes the sitemap: empty leaf nodes (no pages, no children), hub nodes (children but no direct pages), overloaded nodes (5+ pages), and path mismatches (page URL doesn't match computed sitemap path).
 
 ### Client Reports
 Client-facing reports available from the Reports menu, all exportable as PDF or HTML (Word-compatible):
@@ -418,7 +422,7 @@ Client-facing reports available from the Reports menu, all exportable as PDF or 
 - **Content Inventory by Section** — per-group breakdown with KKE distribution, sample pages, notes counts
 - **SME Review Status** — overall SME completion, per-Content Owner table (assigned/reviewed/%/approved/changed/unresolved), unresolved conflicts list
 - **Redirect Map Report** — summary (total/kill/URL-changed), redirect chain warnings, full redirect tables grouped by type
-- **Net New Content Brief** — list of nav nodes that need new content (have child pages assigned but no page of their own), with breadcrumb paths, computed URLs, and child page context
+- **Net New Content Brief** — list of sitemap nodes that need new content (have child pages assigned but no page of their own), with breadcrumb paths, computed URLs, and child page context
 - **Migration Checklist** — combined summary: pages to retain, remove, update, redirect; URL changes; net new pages; full tables for evolve pages with notes, redirect map, and URL changes
 - **Component Inventory** — summary stats (pages audited, distinct patterns, one-off count), full per-pattern table (category, complexity, page count, KKE breakdown), one-off pattern flags, and top co-occurring pattern pairs
 - **Content Type Crosswalk** — one row per current content type → renders-as → target (new-CMS) content type → target spec → migration track, with page volume, KKE breakdown, and a "no crosswalk" flag for current types lacking a registry entry. For the CMS architect planning the type migration.
@@ -439,9 +443,10 @@ All reports use a shared infrastructure (`buildReportShell()`, `showReport()`, `
 - **Bulk SME export by content owner** — the SME Export modal has a "Split into separate files by Content Owner" checkbox. Exports each owner's rows as a separate xlsx file into a chosen folder, each with data validation dropdowns.
 - **Changelog / Audit trail** — KKE, SME Decision, and Final KKE changes are logged automatically. The log is written to a `KKE_ChangeLog` sheet on save (Timestamp, Row, URL, Field, Old Value, New Value). The sheet accumulates entries across sessions and is hidden from the data sheet picker.
 
-### Dark Mode
-- Automatically follows macOS system appearance (light/dark)
+### Appearance (Light / Dark / System)
+- **App Settings** (the ⚙ button, or File → App Settings) has an **Appearance** control at the top — a **System / Light / Dark** segmented toggle. Per-user preference; default **System**, which follows the macOS system appearance.
 - Full dark theme with WCAG-compliant contrast
+- **The embedded browser always renders crawled pages as designed** — the webview is never dark-mode-adapted, regardless of this setting or the OS appearance — so reviewing pages in the app stays faithful to how they actually look.
 
 ### Undo/Redo
 - `Cmd+Z` / `Cmd+Shift+Z` for KKE changes
@@ -544,7 +549,7 @@ Column names are auto-detected from common variations. You can override the mapp
 
 | Sheet | Purpose |
 |-------|---------|
-| `NavStructure` | Navigation tree nodes |
+| `NavStructure` | Sitemap nodes |
 | `KKE_Settings` | Project-level key/value store (includes `gaKkeConfig` as JSON) |
 | `KKE_ChangeLog` | Audit trail of KKE / SME / Final KKE changes |
 | `KKE_Glossary` | Tag & group descriptions (Type / Name / Notes, markdown) |
@@ -560,7 +565,7 @@ The app stores project-level settings in a `KKE_Settings` sheet (key/value pairs
 |-----|---------|
 | `clientName` | Client name (shown in progress dashboard and PDF export) |
 | `projectName` | Project name (shown in progress dashboard and PDF export) |
-| `siteDomain` | Target domain for redirect URLs and nav paths |
+| `siteDomain` | Target domain for redirect URLs and sitemap paths |
 | `defaultRedirectUrl` | Default redirect destination for Kill pages |
 | `customKkeStates` | Custom KKE statuses with labels and colors (JSON) |
 
@@ -572,7 +577,7 @@ When a NavStructure sheet is present (or loaded from another file):
 
 | Column | Purpose |
 |--------|---------|
-| `NavID` | Unique nav node identifier |
+| `NavID` | Unique sitemap node identifier |
 | `Nav Destination` | Breadcrumb path |
 | `Computed Path` | URL path segment |
 | `Nav_SortID` | Sortable position value |

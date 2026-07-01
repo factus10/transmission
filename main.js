@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell, clipboard, webContents, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, clipboard, webContents, nativeImage, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const XLSX = require('xlsx');
@@ -189,6 +189,11 @@ function createWindow() {
   const prefs = loadPrefs();
   const wb = prefs.windowBounds || {};
 
+  // Resolve the saved theme so the native window background matches on first
+  // paint (avoids a light flash on launch for dark-mode users).
+  const themePref = prefs.themePref || 'system';
+  const wantDark = themePref === 'dark' || (themePref === 'system' && nativeTheme.shouldUseDarkColors);
+
   mainWindow = new BrowserWindow({
     width: wb.width || 1440,
     height: wb.height || 960,
@@ -197,7 +202,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     titleBarStyle: 'hiddenInset',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: wantDark ? '#1a1a1a' : '#f5f5f5',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -363,7 +368,7 @@ function buildMenu() {
       submenu: [
         { label: 'Audit',           accelerator: 'CmdOrCtrl+1',        click: send('menu-audit-view') },
         { label: 'Table',           accelerator: 'CmdOrCtrl+T',        click: send('menu-table-view') },
-        { label: 'Navigation Tree', accelerator: 'CmdOrCtrl+Shift+T',  click: send('menu-nav-tree') },
+        { label: 'Sitemap',         accelerator: 'CmdOrCtrl+Shift+T',  click: send('menu-nav-tree') },
         { label: 'Redirects',       accelerator: 'CmdOrCtrl+Shift+R',  click: send('menu-redirect-editor') },
         { label: 'Menus',           accelerator: 'CmdOrCtrl+Shift+M',  click: send('menu-menus') },
         { type: 'separator' },
@@ -421,7 +426,7 @@ function buildMenu() {
         { label: 'SME Review Status…',          click: send('menu-report-sme-status') },
         { type: 'separator' },
         { label: 'Menu Report…',                click: send('menu-report-nav-ia') },
-        { label: 'Nav Coverage Report…',        click: send('menu-nav-coverage') },
+        { label: 'Sitemap Coverage Report…',    click: send('menu-nav-coverage') },
         { label: 'Component Inventory…',          click: send('menu-report-design-patterns') },
         { label: 'Content Type Crosswalk…',       click: send('menu-report-content-crosswalk') },
         { type: 'separator' },
@@ -1848,7 +1853,7 @@ ipcMain.handle('package-handoff', async () => {
       '  2. Unzip, then double-click the .transmission file (or File → Open…).',
       '',
       'Everything travels inside the project file: rows and decisions, the',
-      'navigation tree, project settings, glossary and libraries, and the full',
+      'sitemap, project settings, glossary and libraries, and the full',
       'change history. Edits you make are attributed to your username in the',
       'change log.'
     ].join('\n'));
@@ -2095,7 +2100,8 @@ ipcMain.handle('get-prefs', () => {
     designPatternLibrary: prefs.designPatternLibrary || [],
     seenWelcome:       prefs.seenWelcome || false,
     noteTemplates:     prefs.noteTemplates || [],
-    sitemapDefaults:   prefs.sitemapDefaults || null
+    sitemapDefaults:   prefs.sitemapDefaults || null,
+    themePref:         prefs.themePref || 'system'
   };
 });
 
@@ -3240,7 +3246,7 @@ ipcMain.handle('load-audit-template', async () => {
 ipcMain.handle('export-nav-tree', async (event, { format, rows, maxDepth, includePhase }) => {
   const defaultName = format === 'indented' ? 'nav-tree-indented.xlsx' : 'nav-tree-flat.xlsx';
   const result = await dialog.showSaveDialog(mainWindow, {
-    title: 'Export Navigation Tree',
+    title: 'Export Sitemap',
     defaultPath: defaultName,
     filters: [{ name: 'Excel', extensions: ['xlsx'] }]
   });
@@ -3290,7 +3296,7 @@ ipcMain.handle('export-nav-tree', async (event, { format, rows, maxDepth, includ
     }
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    XLSX.utils.book_append_sheet(wb, ws, 'Navigation');
+    XLSX.utils.book_append_sheet(wb, ws, 'Sitemap');
     XLSX.writeFile(wb, result.filePath, { compression: true });
     return { success: true, filePath: result.filePath, count: rows.length };
   } catch (e) {
@@ -3312,7 +3318,7 @@ ipcMain.handle('save-column-map', (event, { columnMap }) => {
 
 ipcMain.handle('load-nav-file', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Open Navigation Structure',
+    title: 'Open Sitemap Structure',
     filters: [
       { name: 'Excel Files', extensions: ['xlsx', 'xls', 'xlsm', 'ods'] }
     ],
@@ -3342,6 +3348,27 @@ ipcMain.handle('load-nav-file', async () => {
 process.on('uncaughtException', (err) => {
   if (err.message?.includes('Render frame was disposed')) return;
   console.error('Uncaught exception:', err);
+});
+
+// Force every <webview> to report prefers-color-scheme: light to the page it
+// loads, so a crawled site renders as designed regardless of the app's theme
+// or the OS appearance. The app chrome's own dark mode is pure CSS (data-theme)
+// and never touches webview contents; this covers sites that self-switch to a
+// dark theme when the OS is dark — the exact case that sent auditors to an
+// external browser. Applied via CDP Emulation, re-asserted on each navigation.
+app.on('web-contents-created', (event, contents) => {
+  if (contents.getType() !== 'webview') return;
+  const forceLight = () => {
+    try {
+      if (!contents.debugger.isAttached()) contents.debugger.attach('1.3');
+      contents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-color-scheme', value: 'light' }]
+      }).catch(() => {});
+    } catch (e) { /* debugger may be unavailable; non-fatal */ }
+  };
+  contents.on('dom-ready', forceLight);
+  contents.on('did-navigate', forceLight);
+  contents.on('did-navigate-in-page', forceLight);
 });
 
 app.whenReady().then(() => {

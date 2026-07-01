@@ -2,7 +2,7 @@
 
 What every report is *for* and when to run it. The audit's value is in the deliverables — this is the map of which one answers which question.
 
-> Prerequisite: an audited file. Most reports work with partial data, but read best once KKE calls, classification, and (for IA reports) the nav tree are in place.
+> Prerequisite: an audited file. Most reports work with partial data, but read best once KKE calls, classification, and (for IA reports) the sitemap are in place.
 
 ---
 
@@ -24,8 +24,8 @@ What every report is *for* and when to run it. The audit's value is in the deliv
 
 ## 2. IA & structure reports
 
-- **Navigation IA…** — the future-state tree with per-node page and redirect counts; flags empty / redirect-only / header nodes. (Also the **IA Report** button in the nav toolbar.)
-- **Nav Coverage Report…** — empty leaves, hubs, overloaded nodes, path mismatches. The gap-finder.
+- **Sitemap & IA…** — the future-state sitemap with per-node page and redirect counts; flags empty / redirect-only / header nodes. (Also the **IA Report** button in the sitemap toolbar.)
+- **Sitemap Coverage Report…** — empty leaves, hubs, overloaded nodes, path mismatches. The gap-finder.
 - **Content Type Crosswalk…** — current → target content-type mapping with page counts; flags types missing a registry entry.
 - **Component Inventory…** — UI-component frequency, one-offs, and co-occurrence (see the **Component Inventory** walkthrough).
 
@@ -35,7 +35,7 @@ What every report is *for* and when to run it. The audit's value is in the deliv
 
 - **Migration Direction Brief…** — per-person worklists for the **Writer / Builder / Migrator** roles, grouped by target spec (see **Build & Direction**). Supports custom templates.
 - **Migration Checklist…** — the retain / remove / update / redirect summary the migration team works from.
-- **Net New Content Brief…** — every nav node that needs brand-new content written.
+- **Net New Content Brief…** — every sitemap node that needs brand-new content written.
 - **Redirect Map Report…** — Kill / URL-changed / intentional-404 redirects (see **Redirects**).
 
 ---
@@ -52,7 +52,7 @@ In any report preview, use the **PDF** or **HTML** export buttons. HTML is best 
 
 - [ ] **Executive Summary** for the client readout
 - [ ] **Content Inventory** as the detailed appendix
-- [ ] IA reports (**Navigation IA**, **Nav Coverage**) if the future tree is in scope
+- [ ] IA reports (**Sitemap & IA**, **Sitemap Coverage**) if the future sitemap is in scope
 - [ ] **Content Type Crosswalk** if migration classification was done
 - [ ] Delivery reports (**Migration Direction Brief**, **Checklist**, **Net New**) for the build team
 - [ ] Each exported in the format the recipient needs (PDF / HTML)

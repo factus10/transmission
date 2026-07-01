@@ -3,6 +3,40 @@
  * All UI logic. Talks to main process only via window.electronAPI.
  */
 
+// ─── Theme (light / dark / system) ────────────────────────────────────────────
+// The effective theme is applied as a data-theme attribute on <html>; all app
+// chrome keys off it in CSS (see styles.css "Theming"). 'system' resolves via
+// matchMedia and re-resolves when the OS appearance changes. The <webview> is
+// never themed by us — its pages are forced to light in main.js.
+let _themePref = 'system';
+function _resolveTheme(pref) {
+  if (pref === 'dark' || pref === 'light') return pref;
+  return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+}
+function _setThemeAttr(pref) {
+  document.documentElement.setAttribute('data-theme', _resolveTheme(pref));
+}
+function applyTheme(pref) {
+  _themePref = (pref === 'dark' || pref === 'light') ? pref : 'system';
+  try { localStorage.setItem('themePref', _themePref); } catch (e) {}
+  _setThemeAttr(_themePref);
+}
+// Apply immediately from the last-known pref so there's no light flash before
+// get-prefs resolves; init() reconciles with the authoritative saved pref.
+(function () {
+  let cached = 'system';
+  try { cached = localStorage.getItem('themePref') || 'system'; } catch (e) {}
+  _themePref = cached;
+  _setThemeAttr(cached);
+})();
+if (window.matchMedia) {
+  try {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if (_themePref === 'system') _setThemeAttr('system');
+    });
+  } catch (e) {}
+}
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 const state = {
@@ -33,7 +67,7 @@ const state = {
 
   // Nav structure
   navTree:         null,     // array of root nodes (from NavStructure sheet)
-  navNodes:        [],       // flat list of all nav nodes
+  navNodes:        [],       // flat list of all sitemap nodes
   navSelectedNode: null,     // currently selected node in the popover
   newNavNodes:     [],       // nodes created by the user (to persist on save)
   navSelectionPath: [],      // current cascading select path
@@ -257,8 +291,9 @@ const els = {
   assessFooter:     $('assess-footer'),
   btnAssessAccept:  $('btn-assess-accept'),
   btnAssessLlm:     $('btn-assess-llm'),
-  // Nav assignment
+  // Sitemap assignment
   btnNav:           $('btn-nav'),
+  btnMenuAssign:    $('btn-menu-assign'),
   navPopover:       $('nav-popover'),
   btnNavClose:      $('btn-nav-close'),
   navSelects:       $('nav-selects'),
@@ -284,6 +319,8 @@ const els = {
 async function init() {
   // Load prefs first
   const prefs = await window.electronAPI.getPrefs();
+  applyTheme(prefs.themePref || 'system');
+  state.themePref = _themePref;
   state.visibleFields = prefs.visibleFields;
   state.tagLibrary    = prefs.tagLibrary;
   state.autoAdvance   = prefs.autoAdvance;
@@ -965,8 +1002,9 @@ function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, she
     state.navNodes = navTree.nodes;
     state.navSortIDFormat = detectSortIDFormat(navTree.nodes);
     els.btnNav.disabled = false;
+    els.btnMenuAssign.disabled = false;
 
-    // One-time auto-cleanup: scrub mojibake from text-bearing nav node fields.
+    // One-time auto-cleanup: scrub mojibake from text-bearing sitemap node fields.
     // sanitizeText handles the Mac-Roman + UTF-8-as-Latin-1 patterns the user's
     // sanitizer already catches on paste/blur; this catches existing data that
     // was loaded from the sheet.
@@ -985,12 +1023,15 @@ function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, she
     if (mojiNodeCount > 0) {
       state.navTreeDirty = true;
       setDirty(true);
-      showToast(`Cleaned mojibake on ${mojiNodeCount} nav node${mojiNodeCount !== 1 ? 's' : ''} · save to commit`, 'success');
+      showToast(`Cleaned mojibake on ${mojiNodeCount} sitemap node${mojiNodeCount !== 1 ? 's' : ''} · save to commit`, 'success');
     }
   } else {
     state.navTree  = null;
     state.navNodes = [];
-    els.btnNav.disabled = true;
+    // Keep the assign buttons live even with an empty sitemap — the audit-bar
+    // "Add to Sitemap" flow can seed the first node straight from a page.
+    els.btnNav.disabled = false;
+    els.btnMenuAssign.disabled = false;
   }
 
   // Sheet picker — show when file has multiple data sheets
@@ -1203,7 +1244,7 @@ function setupGlobalSearch() {
     if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
       e.preventDefault();
       bar.classList.remove('hidden');
-      input.placeholder = _navEditorOpen ? 'Search nav nodes…' : 'Search all columns…';
+      input.placeholder = _navEditorOpen ? 'Search sitemap nodes…' : 'Search all columns…';
       input.focus();
       input.select();
       // If reopened over existing text, re-run so matches reflect the current view.
@@ -1246,7 +1287,7 @@ function globalSearchUpdate() {
     return;
   }
 
-  // In the Nav Tree, search the nav nodes (not the audit rows) and jump to each.
+  // In the Nav Tree, search the sitemap nodes (not the audit rows) and jump to each.
   if (_navEditorOpen) {
     _globalSearchMatches = navSearchMatches(query);
   } else {
@@ -1320,7 +1361,7 @@ function globalSearchNavigate(delta) {
 
   const match = _globalSearchMatches[_globalSearchCurrent];
 
-  // Nav Tree: matches are nav nodes — scroll/flash the node's row.
+  // Nav Tree: matches are sitemap nodes — scroll/flash the node's row.
   if (_navEditorOpen) {
     if (match && match.nodeId) scrollToNavNode(match.nodeId);
     return;
@@ -1859,7 +1900,7 @@ const SHORTCUT_GROUPS = [
     ['⌘S', 'Save now (auto-saves after 2s)'],
     ['⌘1', 'Audit view'],
     ['⌘T', 'Table view'],
-    ['⌘⇧T', 'Navigation tree'],
+    ['⌘⇧T', 'Sitemap'],
     ['⌘⇧R', 'Redirect editor'],
     ['⌘⇧E', 'Export…'],
     ['⌘P', 'Audit progress'],
@@ -1938,7 +1979,7 @@ function openWelcomeDialog() {
       <div class="welcome-step"><span class="welcome-num">3</span>
         <div><b>Filter & batch</b><br>Use the sidebar filters and the bottom action bar to decide many pages at once.</div></div>
       <div class="welcome-step"><span class="welcome-num">4</span>
-        <div><b>Plan the move</b><br>Assign pages to a nav tree, map redirects, then export the migration tracker.</div></div>
+        <div><b>Plan the move</b><br>Assign pages to the sitemap, map redirects, then export the migration tracker.</div></div>
     </div>
     <p class="welcome-tip">Tip: press <kbd>?</kbd> anytime for the full keyboard cheat-sheet.</p>
   `;
@@ -1966,8 +2007,8 @@ const TOUR_STEPS = [
   },
   {
     target: '#view-switcher',
-    title: '2. Four views, one click',
-    body: 'Switch between <b>Audit</b>, <b>Table</b>, <b>Navigation Tree</b>, and <b>Redirects</b> here anytime — or <kbd>⌘1</kbd>/<kbd>⌘T</kbd>/<kbd>⌘⇧T</kbd>/<kbd>⌘⇧R</kbd>.',
+    title: '2. Five views, one click',
+    body: 'Switch between <b>Audit</b>, <b>Table</b>, <b>Sitemap</b>, <b>Redirects</b>, and <b>Menus</b> here anytime — or <kbd>⌘1</kbd>/<kbd>⌘T</kbd>/<kbd>⌘⇧T</kbd>/<kbd>⌘⇧R</kbd>/<kbd>⌘⇧M</kbd>.',
   },
   {
     target: '#field-bar-audit',
@@ -1983,7 +2024,7 @@ const TOUR_STEPS = [
   {
     target: '#view-switcher',
     title: '5. Plan &amp; hand off',
-    body: 'Assign pages to a nav tree, map redirects, then run <b>Migration → Pre-Handoff Check</b> and <b>Export</b> (<kbd>⌘⇧E</kbd>). Press <kbd>?</kbd> anytime for all shortcuts.',
+    body: 'Assign pages to the sitemap, map redirects, then run <b>Migration → Pre-Handoff Check</b> and <b>Export</b> (<kbd>⌘⇧E</kbd>). Press <kbd>?</kbd> anytime for all shortcuts.',
   },
 ];
 
@@ -2147,7 +2188,7 @@ async function promptKillCleanup(origIndex, targetStateLabel = 'Kill') {
   if (result.clearNav) {
     const oldNavID = String(row['NavID'] || '').trim();
     clearNavAssignment(row, origIndex);
-    // Consistency with the manual clearNav(): if the page's nav node is now an orphan leaf
+    // Consistency with the manual clearNav(): if the page's sitemap node is now an orphan leaf
     // (no children, no other pages assigned), offer to remove it from the tree too — otherwise
     // killing/consolidating a page leaves its empty node behind in the IA.
     if (oldNavID && state.navNodes.length > 0) {
@@ -2192,7 +2233,7 @@ function showBulkKillCleanupModal({ total, navCount, redirectCount }) {
     const navChoice = navCount > 0 ? `
       <label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;cursor:pointer;">
         <input type="checkbox" id="_bulk-kill-clear-nav" checked style="margin-top:3px;flex-shrink:0;">
-        <div><div style="font-weight:500;">Clear nav assignment</div>
+        <div><div style="font-weight:500;">Clear sitemap assignment</div>
           <div style="font-size:12px;color:var(--text-muted);">${navCount} of ${total} selected rows</div></div>
       </label>` : '';
     const redirChoice = redirectCount > 0 ? `
@@ -2235,7 +2276,7 @@ function showKillCleanupModal(row, targetStateLabel = 'Kill') {
       <label style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;cursor:pointer;">
         <input type="checkbox" id="_kill-clear-nav" checked style="margin-top:3px;flex-shrink:0;">
         <div style="min-width:0;">
-          <div style="font-weight:500;">Clear nav assignment</div>
+          <div style="font-weight:500;">Clear sitemap assignment</div>
           <div style="font-size:12px;color:var(--text-muted);word-break:break-word;">${escapeHtml(navLabel)}</div>
         </div>
       </label>` : '';
@@ -2626,7 +2667,7 @@ function applyFilter() {
         if (s === '_consolidate-no-target' && rowConsolidateNeedsTarget(row)) return true;
         if (s === '_consolidate-dead-target' && rowConsolidateHasDeadTarget(row)) return true;
         if (s === '_needs-placement') {
-          // Keep/Evolve pages not yet assigned to a nav node (matches the nav-tree "need placement" count).
+          // Keep/Evolve pages not yet assigned to a sitemap node (matches the nav-tree "need placement" count).
           // Fragments are excluded — they have no nav home by design.
           if (!String(row['NavID'] || '').trim() && !isFragmentRow(row)) {
             const eff = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
@@ -2987,7 +3028,7 @@ function renderVisibleRows() {
       r.textContent = 'R';
       r.title = explicitRedirect
         ? 'Redirect: ' + explicitRedirect
-        : 'Redirect (nav): ' + computedPath;
+        : 'Redirect (sitemap): ' + computedPath;
       indicators.appendChild(r);
     }
     const consolidateTarget = String(row[CONSOLIDATE_COL] || '').trim() || consolidateTargetAddr(row);
@@ -5133,7 +5174,7 @@ async function saveFile() {
   showSavingStatus();
 
   // Update Consolidate_Into values to use the target's new computed URL where possible.
-  // This catches rows set up before a target had a nav assignment.
+  // This catches rows set up before a target had a sitemap assignment.
   resolveConsolidateIntoUrls();
 
   // Resolve redirect destinations before saving so the Excel file is complete
@@ -5909,6 +5950,26 @@ function escapeHtml(str) {
 function setupSettings() {
   els.prefAutoAdvance.checked = state.autoAdvance;
   els.prefApiKey.value = state.claudeApiKey;
+
+  // Appearance (theme) segmented control
+  const themeSeg = $('theme-seg');
+  if (themeSeg) {
+    const syncThemeSeg = () => {
+      themeSeg.querySelectorAll('button[data-theme-pref]').forEach(b => {
+        b.classList.toggle('active', b.dataset.themePref === (state.themePref || 'system'));
+      });
+    };
+    syncThemeSeg();
+    themeSeg.querySelectorAll('button[data-theme-pref]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const pref = btn.dataset.themePref || 'system';
+        applyTheme(pref);
+        state.themePref = _themePref;
+        window.electronAPI.savePrefs({ themePref: _themePref });
+        syncThemeSeg();
+      });
+    });
+  }
 
   // Load rubric dir display
   window.electronAPI.getRubricDir().then(dir => {
@@ -6694,7 +6755,7 @@ function renderPageStatusList() {
         showToast('That name is already in use', 'error');
         return;
       }
-      // Cascade rename across nav nodes
+      // Cascade rename across sitemap nodes
       let cascaded = 0;
       state.navNodes.forEach(n => {
         if (n.pageStatus === old) { n.pageStatus = trimmed; cascaded++; }
@@ -6802,7 +6863,7 @@ function renderAssigneeList() {
       const counts = usage.get(name) || { build: 0, write: 0, migrate: 0 };
       const total = counts.build + counts.write + counts.migrate;
       const confirmMsg = total > 0
-        ? `Delete "${name}"? ${total} reference${total !== 1 ? 's' : ''} across nav nodes will be cleared.`
+        ? `Delete "${name}"? ${total} reference${total !== 1 ? 's' : ''} across sitemap nodes will be cleared.`
         : `Delete "${name}"?`;
       if (!(await confirmDialog({ title: 'Delete assignee', message: confirmMsg, confirmLabel: 'Delete', danger: true }))) return;
       let cleared = 0;
@@ -8083,7 +8144,7 @@ function maybeOfferPatternLibrarySeed() {
   banner.innerHTML = `
     <div style="flex:1;min-width:240px;">
       <div style="font-weight:600;margin-bottom:2px;">Pattern Library is empty</div>
-      <div style="color:var(--text-muted);font-size:12px;">Seed with ~12 common page patterns (Hub Landing, Article, Faculty Profile, Form Page, etc.). Each has a Build Guidance and Writer Brief template that drops in when you assign it to a nav node.</div>
+      <div style="color:var(--text-muted);font-size:12px;">Seed with ~12 common page patterns (Hub Landing, Article, Faculty Profile, Form Page, etc.). Each has a Build Guidance and Writer Brief template that drops in when you assign it to a sitemap node.</div>
     </div>
     <button id="pl-seed-yes" class="btn btn-sm btn-primary" style="white-space:nowrap;">Seed defaults</button>
     <button id="pl-seed-edit" class="btn btn-sm" style="white-space:nowrap;">Open editor…</button>
@@ -9240,7 +9301,7 @@ function openConsolidatePicker(sourceIndex) {
   }
 }
 
-// ─── Consolidation candidates (multi-page nav node bulk-resolve) ──────────────
+// ─── Consolidation candidates (multi-page sitemap node bulk-resolve) ──────────────
 
 function buildConsolidationCandidates(filter) {
   // filter (optional): { excludedKkes: Set, excludedGroups: Set }
@@ -9343,7 +9404,7 @@ function openConsolidationCandidates() {
     <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
       <div>
         <div style="font-weight:600;font-size:15px;">Consolidation Candidates</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">Nav nodes with 2+ pages assigned. For each group, pick a target page — others become Consolidate pointing to it.</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">Sitemap nodes with 2+ pages assigned. For each group, pick a target page — others become Consolidate pointing to it.</div>
       </div>
       <button id="_cc-close" class="modal-close" title="Close">×</button>
     </div>
@@ -9361,7 +9422,7 @@ function openConsolidationCandidates() {
     <div id="_cc-counter" style="padding:8px 20px;font-size:12px;color:var(--text-muted);background:var(--bg-field-bar);border-bottom:1px solid var(--border);"></div>
     <div id="_cc-body" style="flex:1;overflow-y:auto;padding:12px 20px;"></div>
     <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
-      <div style="font-size:12px;color:var(--text-muted);">Skipped groups stay in the list across sessions; resolved groups disappear once their nav node has &lt; 2 pages.</div>
+      <div style="font-size:12px;color:var(--text-muted);">Skipped groups stay in the list across sessions; resolved groups disappear once their sitemap node has &lt; 2 pages.</div>
       <button id="_cc-done" class="btn btn-sm btn-primary">Done</button>
     </div>
   `;
@@ -9404,7 +9465,7 @@ function openConsolidationCandidates() {
     counterEl.textContent = counter;
     bodyEl.innerHTML = '';
     if (remaining.length === 0) {
-      bodyEl.innerHTML = '<div style="text-align:center;color:var(--text-muted);font-size:13px;padding:32px 0;">No multi-page nav nodes left to resolve. 🎉</div>';
+      bodyEl.innerHTML = '<div style="text-align:center;color:var(--text-muted);font-size:13px;padding:32px 0;">No multi-page sitemap nodes left to resolve. 🎉</div>';
       return;
     }
     remaining.forEach(group => bodyEl.appendChild(renderCandidateGroup(group, refresh, skipped)));
@@ -9494,7 +9555,7 @@ function renderCandidateGroup(group, onChange, skipped) {
   // Hint
   const hint = document.createElement('div');
   hint.style.cssText = 'font-size:11px;color:var(--text-muted);font-style:italic;';
-  hint.textContent = 'Target keeps its nav assignment and is set to Evolve. Others become Consolidate (target URL = the chosen page) and have their nav cleared.';
+  hint.textContent = 'Target keeps its sitemap assignment and is set to Evolve. Others become Consolidate (target URL = the chosen page) and have their sitemap placement cleared.';
   wrap.appendChild(hint);
 
   // Wire actions
@@ -9545,7 +9606,7 @@ function applyConsolidationGroup(group, targetOrigIndex) {
       row[kkeCol()] = 'Consolidate';
       logChange(origIndex, kkeCol(), oldKke, 'Consolidate');
     }
-    // Clear nav assignment (page is going away, no point being in nav)
+    // Clear sitemap assignment (page is going away, no point being in nav)
     clearNavAssignment(row, origIndex);
     // Clear any explicit redirect destination — let the resolver chase the consolidate target
     const oldRedirect = String(row['Redirect_Destination'] || '');
@@ -9564,13 +9625,19 @@ function applyConsolidationGroup(group, targetOrigIndex) {
   showToast(`Consolidated ${group.rows.length - 1} page${group.rows.length - 1 !== 1 ? 's' : ''} into target.`, 'success');
 }
 
-// ─── Nav assignment ───────────────────────────────────────────────────────────
+// ─── Sitemap assignment ───────────────────────────────────────────────────────────
 
 function setupNav() {
   els.btnNav.addEventListener('click', (e) => {
     e.stopPropagation();
     toggleNavPopover();
   });
+  if (els.btnMenuAssign) {
+    els.btnMenuAssign.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openMenuAssignForRow();
+    });
+  }
   els.btnNavClose.addEventListener('click', closeNavPopover);
   els.btnNavAssign.addEventListener('click', assignNav);
   els.btnNavClear.addEventListener('click', clearNav);
@@ -9653,7 +9720,7 @@ function openNavPopover() {
       els.navCurrent.classList.remove('hidden');
       els.btnNavClear.classList.remove('hidden');
 
-      // Show current slug — derive from stored computed path minus the nav node's path
+      // Show current slug — derive from stored computed path minus the sitemap node's path
       const storedPath = row['Computed Path'] || '';
       const nodeBase = node.computedPath || '';
       let currentSlug = '';
@@ -9682,6 +9749,8 @@ function openNavPopover() {
   els.navNewChild.classList.add('hidden');
   els.btnNavAddChild.classList.add('hidden');
 
+  const navHasNodes = !!(state.navTree && state.navNodes && state.navNodes.length > 0);
+
   // If no current assignment, try to suggest based on parent URL
   if (!currentNavID) {
     els.navPageFields.classList.add('hidden');
@@ -9689,24 +9758,109 @@ function openNavPopover() {
     els.navSlugInput.value = extractSlug(url);
     els.navPageTitleInput.value = pageTitle;
 
-    const suggestion = suggestNavFromUrl(url);
-    if (suggestion && state.navTree) {
-      // Pre-select the suggested node
-      const path = getNavSelectionPath(suggestion.node);
-      buildNavSelects(path);
-      updateNavAssignState(path);
-      // Override slug with the URL-derived one
-      els.navSlugInput.value = suggestion.slug;
-    } else if (state.navTree) {
-      buildNavSelects([]);
+    if (!navHasNodes) {
+      // Empty sitemap — let the user seed its first node straight from this page.
+      renderNavPopoverEmptyState(pageTitle, extractSlug(url));
     } else {
-      els.navSelects.innerHTML = '<p style="font-size:12px;color:var(--text-muted);">No navigation structure loaded. Use "Load File…" to import one.</p>';
+      const suggestion = suggestNavFromUrl(url);
+      if (suggestion) {
+        // Pre-select the suggested node
+        const path = getNavSelectionPath(suggestion.node);
+        buildNavSelects(path);
+        updateNavAssignState(path);
+        // Override slug with the URL-derived one
+        els.navSlugInput.value = suggestion.slug;
+      } else {
+        buildNavSelects([]);
+      }
     }
-  } else if (state.navTree) {
+  } else if (navHasNodes) {
     buildNavSelects([]);
   } else {
-    els.navSelects.innerHTML = '<p style="font-size:12px;color:var(--text-muted);">No navigation structure loaded. Use "Load File…" to import one.</p>';
+    renderNavPopoverEmptyState(pageTitle, extractSlug(row[state.urlColumn] || ''));
   }
+}
+
+/** Render an inline "create the first sitemap node" affordance inside the nav
+ *  popover when the sitemap has no nodes yet — so an empty sitemap no longer
+ *  dead-ends the audit-bar "Add to Sitemap" button. */
+function renderNavPopoverEmptyState(pageTitle, urlSlug) {
+  const label = escapeHtml(pageTitle || 'Home');
+  const slug = escapeHtml(urlSlug || slugify(pageTitle || 'home'));
+  els.navSelects.innerHTML = `
+    <div class="nav-empty-create">
+      <p class="nav-empty-msg">Your sitemap is empty. Create its first node from this page:</p>
+      <div class="nav-empty-field">
+        <label for="nav-root-label">Label</label>
+        <input id="nav-root-label" type="text" value="${label}" placeholder="Section or page name">
+      </div>
+      <div class="nav-empty-field">
+        <label for="nav-root-slug">Slug</label>
+        <input id="nav-root-slug" type="text" value="${slug}" placeholder="url-slug">
+      </div>
+      <button id="nav-root-create" class="btn btn-sm btn-primary">Create &amp; assign</button>
+    </div>`;
+  const createBtn = document.getElementById('nav-root-create');
+  if (createBtn) createBtn.addEventListener('click', createFirstNavNodeFromPage);
+}
+
+/** Seed the first sitemap root node from the current page and assign the page
+ *  to it, reusing the same column writes as assignNav(). */
+function createFirstNavNodeFromPage() {
+  if (state.selectedIndex === null) return;
+  const row = state.editedRows[state.selectedIndex];
+  const labelEl = document.getElementById('nav-root-label');
+  const slugEl  = document.getElementById('nav-root-slug');
+  const label = sanitizeText(((labelEl && labelEl.value) || '').trim()) || 'Home';
+  let slug = slugify(((slugEl && slugEl.value) || '').trim());
+  if (!slug) slug = slugify(label);
+
+  // Ensure the audit columns exist in headers (mirrors assignNav)
+  ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'].forEach(col => {
+    if (!state.headers.includes(col)) state.headers.push(col);
+  });
+
+  const node = createRootNodeFromPage(label, slug);
+
+  const oldEffUrl = effectiveConsolidateUrl(row);
+  row['NavID']           = node.id;
+  row['Nav Destination'] = node.breadcrumb;
+  row['Nav_SortID']      = node.sortID;
+  row['Computed Path']   = node.computedPath || '';
+  resyncConsolidateInto(oldEffUrl, effectiveConsolidateUrl(row));
+
+  setDirty(true);
+  state.navTreeDirty = true;
+  invalidateNavPageCountsCache();
+  closeNavPopover();
+  updateNavBadge(row);
+  renderMetaFields(row, state.selectedIndex);
+  renderVisibleRows();
+  if (_navEditorOpen) renderNavEditor();
+  showToast('Sitemap started — created "' + node.label + '"', 'success');
+}
+
+/** Create a root sitemap node from a page's label/slug. Returns the new node.
+ *  Sibling of createNavChildForPage()/addNavRootNode(). */
+function createRootNodeFromPage(label, slug) {
+  if (!state.navTree)  state.navTree  = [];
+  if (!state.navNodes) state.navNodes = [];
+  const number = String(state.navTree.length + 1);
+  let maxId = 0;
+  for (const n of state.navNodes) {
+    const idNum = parseInt(n.id, 10);
+    if (idNum > maxId) maxId = idNum;
+  }
+  const id = String(maxId + 1).padStart(5, '0');
+  const sortID = buildSortID(number);
+  const newNode = {
+    number, label, path: slug, sortID,
+    parentNumber: '', breadcrumb: label,
+    computedPath: slug, id, children: []
+  };
+  state.navTree.push(newNode);
+  state.navNodes.push(newNode);
+  return newNode;
 }
 
 function closeNavPopover() {
@@ -9837,7 +9991,7 @@ function assignNav() {
       els.navSlugInput.focus();
       return;
     }
-    // Create a child node under the selected nav node
+    // Create a child node under the selected sitemap node
     const childNode = createNavChildForPage(node, pageSlug, pageTitleVal || pageSlug);
     // Capture old effective URL before reassigning (for Consolidate_Into sync)
     const oldEffUrl = effectiveConsolidateUrl(row);
@@ -9875,7 +10029,7 @@ function assignNav() {
   }
 }
 
-/** Create a child nav node under a parent for a specific page. Returns the new node. */
+/** Create a child sitemap node under a parent for a specific page. Returns the new node. */
 function createNavChildForPage(parentNode, slug, label) {
   let maxId = 0;
   for (const n of state.navNodes) {
@@ -9915,7 +10069,7 @@ function createNavChildForPage(parentNode, slug, label) {
  *  but no dedicated child node, create one. */
 function remediateNavAssignments() {
   if (!state.navNodes || state.navNodes.length === 0) {
-    showToast('No nav structure loaded', 'error');
+    showToast('No sitemap loaded', 'error');
     return;
   }
 
@@ -9977,7 +10131,7 @@ function remediateNavAssignments() {
     renderNavEditor();
     showToast(`Remediated: ${created} child node${created !== 1 ? 's' : ''} created`, 'success');
   } else {
-    showToast('All assigned pages already have nav nodes', 'success');
+    showToast('All assigned pages already have sitemap nodes', 'success');
   }
 }
 
@@ -9996,7 +10150,7 @@ function clearNav() {
   updateNavBadge(row);
   renderMetaFields(row, state.selectedIndex);
   renderVisibleRows();
-  showToast('Nav assignment removed');
+  showToast('Sitemap assignment removed');
 
   // Check if the old node is now an orphan leaf — offer to remove it
   if (oldNavID && state.navNodes.length > 0) {
@@ -10024,12 +10178,12 @@ function showOrphanNodeDialog(node) {
 
   const title = document.createElement('div');
   title.style.cssText = 'font-size:14px;font-weight:600;color:var(--text-primary);margin-bottom:8px;';
-  title.textContent = 'Remove empty nav node?';
+  title.textContent = 'Remove empty sitemap node?';
   dialog.appendChild(title);
 
   const desc = document.createElement('div');
   desc.style.cssText = 'font-size:12px;color:var(--text-secondary);margin-bottom:16px;line-height:1.5;';
-  desc.innerHTML = `<strong>${escapeHtml(node.breadcrumb || node.label)}</strong> now has no pages assigned and no children. Would you like to remove it from the navigation tree?`;
+  desc.innerHTML = `<strong>${escapeHtml(node.breadcrumb || node.label)}</strong> now has no pages assigned and no children. Would you like to remove it from the sitemap?`;
   dialog.appendChild(desc);
 
   const buttons = document.createElement('div');
@@ -10069,13 +10223,14 @@ async function loadNavFromFile() {
     state.newNavNodes = [];
     state.navSortIDFormat = detectSortIDFormat(navTree.nodes);
     els.btnNav.disabled = false;
+    els.btnMenuAssign.disabled = false;
 
     // Ensure nav columns exist
     ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'].forEach(col => {
       if (!state.headers.includes(col)) state.headers.push(col);
     });
 
-    showToast('Nav structure loaded (' + navTree.nodes.length + ' items)', 'success');
+    showToast('Sitemap loaded (' + navTree.nodes.length + ' items)', 'success');
     // Rebuild selects if popover is open
     if (!els.navPopover.classList.contains('hidden')) {
       buildNavSelects([]);
@@ -10187,7 +10342,7 @@ function updateNavBadge(row) {
     clear.type = 'button';
     clear.className = 'nb-clear';
     clear.textContent = '×';
-    clear.title = "Remove this page's nav assignment (the node stays in the tree)";
+    clear.title = "Remove this page's sitemap assignment (the node stays in the sitemap)";
     clear.addEventListener('click', (e) => {
       e.stopPropagation();
       if (state.selectedIndex == null) return;
@@ -10230,7 +10385,7 @@ async function promptClearNavAssignment(origIndex, navID, navDest) {
   // The "also delete the now-empty node" option only appears when the node truly becomes empty
   const emptyOption = nodeWillBeEmpty
     ? `<div style="margin-top:10px;padding:10px 12px;background:var(--kke-evolve-bg);border:1px solid var(--kke-evolve);border-radius:4px;font-size:12px;">
-         <strong>Heads up:</strong> after this clear, the nav node will have no pages or descendants anywhere.
+         <strong>Heads up:</strong> after this clear, the sitemap node will have no pages or descendants anywhere.
          <label style="display:flex;align-items:flex-start;gap:8px;margin-top:8px;cursor:pointer;font-size:12px;color:var(--text-primary);">
            <input type="checkbox" id="_nbc-delete-node" style="margin-top:2px;flex-shrink:0;">
            <span>Also delete this now-empty node from the tree.<br><span style="color:var(--text-muted);">Skip this if the node is a placeholder for net-new content. Deleting it removes it permanently from the IA — you'd have to recreate it manually.</span></span>
@@ -10243,11 +10398,11 @@ async function promptClearNavAssignment(origIndex, navID, navDest) {
             : ''));
 
   dialog.innerHTML = `
-    <div style="font-weight:600;font-size:14px;margin-bottom:6px;">Clear nav assignment?</div>
+    <div style="font-weight:600;font-size:14px;margin-bottom:6px;">Clear sitemap assignment?</div>
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">Currently assigned to:</div>
     <div style="font-size:12px;font-family:var(--font-mono);background:var(--bg-field-bar);padding:6px 8px;border-radius:4px;word-break:break-word;">${escapeHtml(navDest)}</div>
     <div style="font-size:13px;color:var(--text-secondary);margin-top:12px;">
-      This removes the page's nav assignment only. The node itself stays in the tree — even if this page was the last one on it. Nodes are often kept as <em>placeholders</em> for net-new content, so deletion is a separate, more deliberate action.
+      This removes the page's sitemap assignment only. The node itself stays in the tree — even if this page was the last one on it. Nodes are often kept as <em>placeholders</em> for net-new content, so deletion is a separate, more deliberate action.
     </div>
     ${emptyOption}
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
@@ -10285,9 +10440,9 @@ async function promptClearNavAssignment(origIndex, navID, navDest) {
 
     if (nodeToDelete) {
       deleteNavNodeFromEditor(nodeToDelete);
-      showToast('Nav assignment cleared and empty node deleted from tree.', 'success');
+      showToast('Sitemap assignment cleared and empty node deleted.', 'success');
     } else {
-      showToast('Nav assignment cleared. Node still in tree.', 'success');
+      showToast('Sitemap assignment cleared. Node still in sitemap.', 'success');
     }
 
     updateNavBadge(row);
@@ -10400,7 +10555,7 @@ function setupNavTree() {
     showToast(`Expanded ${nodes.length} nodes in the sitemap`, 'success');
   });
 
-  // Collapse / expand all nav nodes
+  // Collapse / expand all sitemap nodes
   $('btn-nav-collapse-all').addEventListener('click', () => {
     state.navNodes.forEach(n => { if (n.children && n.children.length > 0) _navCollapsed.add(n.id); });
     renderNavEditor();
@@ -10507,6 +10662,7 @@ function openNavEditor() {
       if (!state.headers.includes(col)) state.headers.push(col);
     });
     els.btnNav.disabled = false;
+    els.btnMenuAssign.disabled = false;
   }
 
   // Close other full-panel views
@@ -10525,7 +10681,7 @@ function openNavEditor() {
 
   renderNavEditor();
 
-  // Highlight the nav node assigned to the currently selected row
+  // Highlight the sitemap node assigned to the currently selected row
   highlightAssignedNavNode();
   if (typeof refreshViewSwitcher === 'function') refreshViewSwitcher();
 }
@@ -10739,6 +10895,155 @@ async function addMenu() {
   showToast('Menu created', 'success');
 }
 
+// ─── Audit-bar "Add to Menu" ──────────────────────────────────────────────────
+// Menus reference sitemap nodes (not audit rows), so a page must be on the
+// sitemap before it can join a menu. This flow routes there first when needed.
+
+/** Entry point for the audit-bar "Add to Menu" button. */
+async function openMenuAssignForRow() {
+  if (state.selectedIndex === null) return;
+  const row = state.editedRows[state.selectedIndex];
+  const navID = row['NavID'] || '';
+  const node = navID ? state.navNodes.find(n => n.id === navID) : null;
+
+  if (!node) {
+    // Not on the sitemap yet — a menu links to sitemap pages, so route there first.
+    const go = await confirmDialog({
+      title: 'Add to the sitemap first',
+      message: 'Menus link to pages on your sitemap, and this page isn’t on the sitemap yet. Add it to the sitemap first, then come back to add it to a menu.',
+      confirmLabel: 'Add to Sitemap…',
+      cancelLabel: 'Cancel',
+    });
+    if (go) toggleNavPopover();
+    return;
+  }
+
+  const menus = getMenus();
+  if (menus.length === 0) {
+    // No menus exist — ask the menu-creation questions, then add the page.
+    const menu = await promptCreateMenuFull();
+    if (menu) addNodeRefToMenu(menu, node);
+    return;
+  }
+
+  openMenuChooser(node);
+}
+
+/** Modal listing existing menus (plus "+ New menu…") to add a node to. */
+function openMenuChooser(node) {
+  const menus = getMenus();
+  const wrap = document.createElement('div');
+  wrap.className = 'menu-assign-list';
+
+  const intro = document.createElement('p');
+  intro.className = 'menu-assign-intro';
+  intro.innerHTML = `Add <strong>${escapeHtml(node.label)}</strong> to a menu:`;
+  wrap.appendChild(intro);
+
+  let modal;
+  menus.forEach(menu => {
+    const count = (menu.items || []).length;
+    const already = menuReferencesNode(menu, node.id);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'menu-assign-option' + (already ? ' is-member' : '');
+    btn.disabled = already;
+    const placement = menu.placement ? ` · ${escapeHtml(menu.placement)}` : '';
+    btn.innerHTML =
+      `<span class="menu-assign-name">${escapeHtml(menu.name)}</span>` +
+      `<span class="menu-assign-meta">${count} item${count !== 1 ? 's' : ''}${placement}${already ? ' · already added' : ''}</span>`;
+    if (!already) btn.addEventListener('click', () => { modal.close(); addNodeRefToMenu(menu, node); });
+    wrap.appendChild(btn);
+  });
+
+  const newBtn = document.createElement('button');
+  newBtn.type = 'button';
+  newBtn.className = 'menu-assign-option menu-assign-new';
+  newBtn.innerHTML = `<span class="menu-assign-name">+ New menu…</span>`;
+  newBtn.addEventListener('click', async () => {
+    modal.close();
+    const menu = await promptCreateMenuFull();
+    if (menu) addNodeRefToMenu(menu, node);
+  });
+  wrap.appendChild(newBtn);
+
+  modal = openModal({
+    title: 'Add to Menu',
+    body: wrap,
+    width: 420,
+    buttons: [{ label: 'Cancel', variant: 'ghost' }],
+  });
+}
+
+/** Ask the full set of new-menu questions (name / placement / description) in one
+ *  modal and create the menu. Resolves the new menu, or null if cancelled. */
+function promptCreateMenuFull() {
+  return new Promise(resolve => {
+    const placements = getMenuPlacementLibrary();
+    const wrap = document.createElement('div');
+    wrap.className = 'menu-create-form';
+    wrap.innerHTML = `
+      <div class="menu-create-field">
+        <label for="mc-name">Name</label>
+        <input id="mc-name" type="text" placeholder="e.g. Primary, Footer, Utility">
+      </div>
+      <div class="menu-create-field">
+        <label for="mc-placement">Placement</label>
+        <select id="mc-placement">
+          <option value="">—</option>
+          ${placements.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="menu-create-field">
+        <label for="mc-desc">Description <span class="menu-create-opt">(optional)</span></label>
+        <textarea id="mc-desc" rows="2" placeholder="What is this menu for?"></textarea>
+      </div>`;
+
+    let resolved = false;
+    openModal({
+      title: 'New menu',
+      body: wrap,
+      width: 440,
+      onClose: () => { if (!resolved) resolve(null); },
+      buttons: [
+        { label: 'Cancel', variant: 'ghost' },
+        { label: 'Create menu', variant: 'primary', primary: true, closeOnClick: false, onClick: (api) => {
+          const nameEl = document.getElementById('mc-name');
+          const name = sanitizeText((nameEl.value || '').trim());
+          if (!name) { nameEl.focus(); showToast('Menu needs a name', 'error'); return; }
+          const placement = document.getElementById('mc-placement').value || '';
+          const description = sanitizeText((document.getElementById('mc-desc').value || '').trim());
+          const menu = { id: genMenuId(), name, placement, description, items: [] };
+          getMenus().push(menu);
+          _menuSelectedId = menu.id;
+          setDirty(true);
+          resolved = true;
+          api.close();
+          resolve(menu);
+        }},
+      ],
+    });
+  });
+}
+
+/** True when the menu already has a ref item pointing at this node. */
+function menuReferencesNode(menu, nodeId) {
+  return (menu.items || []).some(it => it.kind === 'ref' && it.nodeId === nodeId);
+}
+
+/** Push a ref item for a sitemap node into a menu (deduped) and confirm. */
+function addNodeRefToMenu(menu, node) {
+  if (menuReferencesNode(menu, node.id)) {
+    showToast(`Already in "${menu.name}"`, '');
+    return;
+  }
+  if (!Array.isArray(menu.items)) menu.items = [];
+  menu.items.push({ id: genMenuItemId(menu), parentId: '', kind: 'ref', nodeId: node.id, externalUrl: '', label: '' });
+  setDirty(true);
+  if (_menusViewOpen) renderMenusView();
+  showToast(`Added "${node.label}" to "${menu.name}"`, 'success');
+}
+
 async function deleteMenu(menuId) {
   const menu = getMenus().find(m => m.id === menuId);
   if (!menu) return;
@@ -10782,7 +11087,7 @@ function renderMenusList() {
   if (menus.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'menu-list-empty';
-    empty.textContent = 'No menus yet. Create one with “+ New Menu”, or “Seed from content tree” to start from your in-menu nav nodes.';
+    empty.textContent = 'No menus yet. Create one with “+ New Menu”, or “Seed from content tree” to start from your in-menu sitemap nodes.';
     list.appendChild(empty);
     return;
   }
@@ -11136,7 +11441,7 @@ function moveMenuItem(menu, draggedId, targetId, zone) {
 
 function showMenuNodePicker(onPick, opts = {}) {
   if (!state.navNodes || state.navNodes.length === 0) {
-    showToast('No content tree yet — build the nav tree first', 'error');
+    showToast('No sitemap yet — build the sitemap first', 'error');
     return;
   }
   const excludeIds = opts.excludeIds instanceof Set ? opts.excludeIds : new Set();
@@ -11611,7 +11916,7 @@ function openSitemapView(opts) {
   openModal({ title: opts.title, body: container, width: '94vw', buttons: [{ label: 'Done', variant: 'primary' }] });
 }
 
-// Reconcile the nav nodes' `collapse` flag with what the user collapsed/expanded
+// Reconcile the sitemap nodes' `collapse` flag with what the user collapsed/expanded
 // in the sitemap view. The engine only reports collapse on nodes that have
 // children, so a node absent from the set is genuinely expanded → clear its flag.
 // Mutates the live navTree node objects (which Save serializes), keeps the
@@ -11748,7 +12053,7 @@ async function generateMenuSitemap() {
 
 async function exportNavTree(format) {
   if (!state.navTree || state.navNodes.length === 0) {
-    showToast('No navigation tree to export', 'error');
+    showToast('No sitemap to export', 'error');
     return;
   }
 
@@ -11905,7 +12210,7 @@ function renderNavEditor() {
 
   // Pages stats (audit row level)
   const assignedRows = state.editedRows.filter(r => String(r['NavID'] || '').trim()).length;
-  // Keep/Evolve rows that still need a nav assignment
+  // Keep/Evolve rows that still need a sitemap assignment
   const needsPlacement = state.editedRows.filter(r => {
     if (String(r['NavID'] || '').trim()) return false;
     if (isFragmentRow(r)) return false; // fragments have no nav home — not a placement gap
@@ -12001,11 +12306,11 @@ function renderNavEditor() {
     const ph = document.createElement('span');
     ph.textContent = ` · ${needsPlacement} need placement`;
     ph.style.cssText = 'color:var(--kke-evolve);cursor:pointer;text-decoration:underline;';
-    ph.title = 'Keep/Evolve pages not yet assigned to a nav node — click to find them in the sidebar';
+    ph.title = 'Keep/Evolve pages not yet assigned to a sitemap node — click to find them in the sidebar';
     ph.addEventListener('click', () => {
       closeNavEditor();
       applyKkeSpecialFilter('_needs-placement');
-      showToast(`Showing ${needsPlacement} page${needsPlacement !== 1 ? 's' : ''} that need nav placement`, 'info');
+      showToast(`Showing ${needsPlacement} page${needsPlacement !== 1 ? 's' : ''} that need sitemap placement`, 'info');
     });
     statsEl.appendChild(ph);
   }
@@ -12018,12 +12323,12 @@ function renderNavEditor() {
     warn.title = 'Pages assigned to a duplicated ID appear under every node sharing that ID. Fix renumbers duplicates with new unique IDs.';
     warn.addEventListener('click', async () => {
       const ok = await confirmDialog({
-        title: 'Fix duplicate nav IDs',
+        title: 'Fix duplicate sitemap node IDs',
         message:
           `${dupNavIds.length} ID${dupNavIds.length > 1 ? 's are' : ' is'} shared by ${totalNodes} nodes. ` +
           `Fix will renumber the duplicates with new unique IDs (the first node in each group keeps the original ID).\n\n` +
           `After the fix, pages currently assigned to a duplicated ID stay with the first node. ` +
-          `You may need to manually re-assign some pages using the nav picker.\n\nProceed?`,
+          `You may need to manually re-assign some pages using the sitemap picker.\n\nProceed?`,
         confirmLabel: 'Fix',
       });
       if (!ok) return;
@@ -12066,7 +12371,7 @@ function renderNavEditor() {
 
 async function generateNavSitemap() {
   if (!state.navTree || state.navTree.length === 0) {
-    showToast('No navigation structure loaded', 'error');
+    showToast('No sitemap loaded', 'error');
     return;
   }
 
@@ -12074,7 +12379,7 @@ async function generateNavSitemap() {
   const pageCounts = _navPageCountsCache();
   const initialCollapsed = [];
 
-  // Map one nav node → a SitemapNode. `topLabel` is the node's top-level section
+  // Map one sitemap node → a SitemapNode. `topLabel` is the node's top-level section
   // label, stamped onto colorValue so "color by section" tints the whole subtree.
   function navToSitemap(node, topLabel) {
     const kids = (node.children || []);
@@ -12124,7 +12429,7 @@ async function generateNavSitemap() {
   });
 }
 
-/** Get nav nodes visible under the current depth filter. */
+/** Get sitemap nodes visible under the current depth filter. */
 function getNavDepthFilteredNodes() {
   const depthFilter = $('nav-depth-filter').value !== '' ? parseInt($('nav-depth-filter').value) : null;
   const results = [];
@@ -13759,7 +14064,7 @@ function openNavNodeEditor(node) {
   dialog.innerHTML = `
     <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
       <div style="flex:1;min-width:0;">
-        <div style="font-weight:600;font-size:15px;">Edit Nav Node</div>
+        <div style="font-weight:600;font-size:15px;">Edit Sitemap Node</div>
         <div style="font-size:12px;color:var(--text-muted);margin-top:2px;font-family:var(--font-mono);">${escapeHtml(node.number)} · ID ${escapeHtml(node.id)}${pageCount > 0 ? ` · ${pageCount} page${pageCount !== 1 ? 's' : ''}` : ''}</div>
       </div>
       <div class="nne-nav" style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
@@ -13788,7 +14093,7 @@ function openNavNodeEditor(node) {
       <!-- Identity -->
       <div class="nne-section">
         <div class="nne-section-header">
-          <span class="nne-section-pill" style="background:#e2e8f0;color:#334155;">Identity</span>
+          <span class="nne-section-pill nne-pill-identity">Identity</span>
           <span style="font-size:11px;color:var(--text-muted);">Name, address slug, node type, and build phase.</span>
         </div>
         <div style="display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center;margin-top:10px;">
@@ -13831,7 +14136,7 @@ function openNavNodeEditor(node) {
       <!-- Addressing & breadcrumb -->
       <div class="nne-section">
         <div class="nne-section-header">
-          <span class="nne-section-pill" style="background:#ccfbf1;color:#115e59;">Addressing &amp; breadcrumb</span>
+          <span class="nne-section-pill nne-pill-addressing">Addressing &amp; breadcrumb</span>
           <span style="font-size:11px;color:var(--text-muted);">How this node resolves its URL, breadcrumb, and aliases — independent of the tree.</span>
         </div>
         <div style="display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center;margin-top:10px;">
@@ -13871,7 +14176,7 @@ function openNavNodeEditor(node) {
       <!-- Notes -->
       <div class="nne-section">
         <div class="nne-section-header">
-          <span class="nne-section-pill" style="background:#f1f5f9;color:#475569;">Notes</span>
+          <span class="nne-section-pill nne-pill-notes">Notes</span>
           <span style="font-size:11px;color:var(--text-muted);">Internal IA / strategy commentary. Surfaces as a hover tooltip on the node.</span>
         </div>
         <textarea id="_nne-notes" rows="4" style="width:100%;margin-top:10px;padding:8px 10px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono);resize:vertical;box-sizing:border-box;">${escapeHtml(node.notes || '')}</textarea>
@@ -13880,7 +14185,7 @@ function openNavNodeEditor(node) {
       <!-- ── Phase 2, Chunk α: Build section ───────────────────────────────── -->
       <div class="nne-section">
         <div class="nne-section-header">
-          <span class="nne-section-pill" style="background:#dbeafe;color:#1e40af;">Build</span>
+          <span class="nne-section-pill nne-pill-build">Build</span>
           <span style="font-size:11px;color:var(--text-muted);">For the person constructing this page in the new CMS.</span>
         </div>
         <div style="display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center;margin-top:8px;">
@@ -13903,7 +14208,7 @@ function openNavNodeEditor(node) {
       <!-- ── Phase 2, Chunk α: Write section ───────────────────────────────── -->
       <div class="nne-section">
         <div class="nne-section-header">
-          <span class="nne-section-pill" style="background:#f3e8ff;color:#6b21a8;">Write</span>
+          <span class="nne-section-pill nne-pill-write">Write</span>
           <span style="font-size:11px;color:var(--text-muted);">For the content writer. Especially important for net-new pages.</span>
         </div>
         <div style="display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center;margin-top:8px;">
@@ -13920,7 +14225,7 @@ function openNavNodeEditor(node) {
       <!-- ── Phase 1, Chunk 1c: Migrate section ────────────────────────────── -->
       <div class="nne-section">
         <div class="nne-section-header">
-          <span class="nne-section-pill" style="background:#fef3c7;color:#92400e;">Migrate</span>
+          <span class="nne-section-pill nne-pill-migrate">Migrate</span>
           <span style="font-size:11px;color:var(--text-muted);">For the person mapping source content into the new CMS.</span>
         </div>
         <div style="display:grid;grid-template-columns:130px 1fr;gap:8px 12px;align-items:center;margin-top:8px;">
@@ -14049,8 +14354,8 @@ function openNavNodeEditor(node) {
     const childrenCount = node.children ? node.children.length : 0;
     const msg = `Delete "${node.label}"?` +
       (childrenCount > 0 ? `\n\n${childrenCount} child node${childrenCount !== 1 ? 's' : ''} will be promoted to this node's parent.` : '') +
-      (pageCount > 0 ? `\n\n${pageCount} assigned page${pageCount !== 1 ? 's' : ''} will lose their nav assignment.` : '');
-    if (!(await confirmDialog({ title: 'Delete nav node', message: msg, confirmLabel: 'Delete', danger: true }))) return;
+      (pageCount > 0 ? `\n\n${pageCount} assigned page${pageCount !== 1 ? 's' : ''} will lose their sitemap assignment.` : '');
+    if (!(await confirmDialog({ title: 'Delete sitemap node', message: msg, confirmLabel: 'Delete', danger: true }))) return;
     deleteNavNodeFromEditor(node);
     close();
   });
@@ -14216,7 +14521,7 @@ function openNavNodeEditor(node) {
   const nodeTypeSel  = dialog.querySelector('#_nne-node-type');
   const nodeTypeHint = dialog.querySelector('#_nne-node-type-hint');
   const NODE_TYPE_HINTS = {
-    '':         'A normal page with a URL, breadcrumb, and (if in menu) a nav entry.',
+    '':         'A normal page with a URL, breadcrumb, and (if in a menu) a menu entry.',
     'Header':   'Structural grouping only — no page content. Excluded from new/empty counts.',
     'Fragment': 'Shared content embedded into pages (e.g. AEM experience fragment). Keeps its computed path as a repository location, but has no menu entry, breadcrumb, or redirect.',
   };
@@ -14708,7 +15013,7 @@ function suggestNavFromUrl(url) {
     if (lastSlash <= testPath.indexOf('//') + 1) break; // don't go past the origin
     testPath = testPath.substring(0, lastSlash);
 
-    // Find a row with this URL that has a nav assignment
+    // Find a row with this URL that has a sitemap assignment
     for (const row of state.editedRows) {
       let rowUrl = String(row[state.urlColumn] || '');
       try {
@@ -15546,8 +15851,8 @@ function renderKkeFilterOptions() {
     { value: '_sme-pending', text: 'Pending Final KKE' },
     { value: '_consolidate-no-target', text: 'Consolidate (no target)' },
     { value: '_consolidate-dead-target', text: 'Consolidate → Kill/Exclude target' },
-    { value: '_shared-nav', text: 'Shared nav node (2+ pages)' },
-    { value: '_needs-placement', text: 'Needs nav placement (Keep/Evolve, no node)' },
+    { value: '_shared-nav', text: 'Shared sitemap node (2+ pages)' },
+    { value: '_needs-placement', text: 'Needs sitemap placement (Keep/Evolve, no node)' },
     { value: '_suggested-disagree', text: 'Suggested KKE: sources disagree' },
     { value: '_suggested-mismatch', text: 'Suggested KKE: differs from my KKE' }
   ];
@@ -16711,7 +17016,7 @@ async function loadAuditTemplate() {
 function resolveConsolidateIntoUrls() {
   // Consolidate_Into is a derived display (the master's relative new path), backed by the stable
   // _ConsolidateTargetId identity. Recompute every display from its identity so it reflects any
-  // nav assignment / URL override the master has gained since the link was made. Run before save.
+  // sitemap assignment / URL override the master has gained since the link was made. Run before save.
   refreshAllConsolidateDisplays();
 }
 
@@ -16786,7 +17091,7 @@ function resolveRedirectDestinations() {
 
     if (kke === 'kill') {
       if (existing) return; // explicit value already set
-      // Priority: consolidation master > nav node path > default destination > blank
+      // Priority: consolidation master > sitemap node path > default destination > blank
       let resolved = '';
       const consolidateTarget = consolidateTargetAddr(row);
       if (consolidateTarget) {
@@ -17218,7 +17523,7 @@ function reportRedirectMap() {
 // ─── Report: Net New Content Brief ───────────────────────────────────────────
 
 function reportNetNewBrief() {
-  if (!state.navNodes || state.navNodes.length === 0) { showToast('No navigation structure loaded', 'error'); return; }
+  if (!state.navNodes || state.navNodes.length === 0) { showToast('No sitemap loaded', 'error'); return; }
 
   const pageCounts = {};
   state.editedRows.forEach(row => {
@@ -17252,7 +17557,7 @@ function reportNetNewBrief() {
   let body = `
     <h2>Summary</h2>
     <div class="stat-row"><span class="stat-label">Net new pages needed</span><span class="stat-value">${netNew.length}</span></div>
-    <p style="font-size:13px;color:#666;">These navigation nodes have child pages assigned from the existing site audit but no page of their own. New content needs to be developed for each.</p>
+    <p style="font-size:13px;color:#666;">These sitemap nodes have child pages assigned from the existing site audit but no page of their own. New content needs to be developed for each.</p>
   `;
 
   netNew.forEach(({ node, childPages }) => {
@@ -17269,7 +17574,7 @@ function reportNetNewBrief() {
   });
 
   if (netNew.length === 0) {
-    body += `<p style="color:#228b22;">No net new pages needed — all navigation nodes have content assigned.</p>`;
+    body += `<p style="color:#228b22;">No net new pages needed — all sitemap nodes have content assigned.</p>`;
   }
 
   const title = 'Net New Content Brief';
@@ -17280,15 +17585,15 @@ function reportNetNewBrief() {
 
 // ─── Phase 2, Chunk ε: Migration Tracker Export ──────────────────────────────
 // Nav-tree-centric deliverable for the engineering team. Multi-sheet xlsx with:
-//   - Nav Plan       (one row per nav node: URL, pattern, status, assignees, guidance)
-//   - Source Pages   (audit rows joined to their nav node assignment + KKE decision)
+//   - Nav Plan       (one row per sitemap node: URL, pattern, status, assignees, guidance)
+//   - Source Pages   (audit rows joined to their sitemap node assignment + KKE decision)
 //   - Redirects      (Kill rows + URL-changed Keep/Evolve rows + intentional 404s)
 //   - Archive        (Kill rows with rationale, for client reference)
 // Pre-export dialog lets the user opt sheets in/out and decide on phase inclusion.
 
 function openMigrationTrackerExportDialog() {
   if (!state.navNodes || state.navNodes.length === 0) {
-    showToast('Migration Tracker needs a nav tree — none loaded', 'error');
+    showToast('Migration Tracker needs a sitemap — none loaded', 'error');
     return;
   }
 
@@ -17323,7 +17628,7 @@ function openMigrationTrackerExportDialog() {
     </div>
     <div class="modal-body" style="padding:16px;overflow-y:auto;">
       <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px;">
-        Nav-tree-centric deliverable for the engineering team. The Nav Plan sheet enumerates every page in the new site with its pattern, guidance, assignees, and status. Companion sheets give traceability and the redirect manifest.
+        Sitemap-centric deliverable for the engineering team. The Nav Plan sheet enumerates every page in the new site with its pattern, guidance, assignees, and status. Companion sheets give traceability and the redirect manifest.
       </p>
 
       <div class="mte-section">
@@ -17411,7 +17716,7 @@ function openMigrationTrackerExportDialog() {
 async function runMigrationTrackerExport(opts) {
   const sheets = [];
 
-  // Nav Plan — every nav node as a row with build metadata
+  // Nav Plan — every sitemap node as a row with build metadata
   sheets.push(buildNavPlanSheet(opts.plan));
 
   if (opts.sheets.sources) sheets.push(buildSourcePagesSheet(opts.sources));
@@ -17455,7 +17760,7 @@ function readNavExportColumns(root, idPrefix) {
  *  and which columns to include, then export a one-sheet xlsx. */
 function openNavNodesExportDialog() {
   if (!state.navNodes || state.navNodes.length === 0) {
-    showToast('No navigation tree to export', 'error');
+    showToast('No sitemap to export', 'error');
     return;
   }
   const buildSel = document.getElementById('nav-build-filter');
@@ -17476,7 +17781,7 @@ function openNavNodesExportDialog() {
   const body = document.createElement('div');
   body.innerHTML = `
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">
-      Export nav nodes to a one-sheet Excel file. ${filterActive ? 'Your active Nav Tree filter is pre-selected below.' : 'No Nav Tree filter is active — all nodes will be exported.'}
+      Export sitemap nodes to a one-sheet Excel file. ${filterActive ? 'Your active Sitemap filter is pre-selected below.' : 'No Sitemap filter is active — all nodes will be exported.'}
     </div>
     <div style="margin-bottom:14px;">
       <div style="font-weight:600;font-size:12px;margin-bottom:6px;">Rows to export</div>
@@ -17503,7 +17808,7 @@ function openNavNodesExportDialog() {
     </div>`;
 
   openModal({
-    title: 'Export nav nodes → Excel',
+    title: 'Export sitemap nodes → Excel',
     body, width: 560,
     buttons: [
       { label: 'Cancel', variant: 'ghost', value: null },
@@ -17528,7 +17833,7 @@ function openNavNodesExportDialog() {
 
 /** Ship a flat nav-node export (single sheet) to main for xlsx writing. */
 async function runNavNodesExport(nodes, colKeys) {
-  const sheet = buildNavNodesSheet(nodes, colKeys, 'Nav Nodes');
+  const sheet = buildNavNodesSheet(nodes, colKeys, 'Sitemap Nodes');
   const ps = state.projectSettings || {};
   const slug = (ps.projectName || ps.clientName || 'project')
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -17638,7 +17943,7 @@ function navExportContext() {
 }
 
 /**
- * Return nav nodes (in tree/navigation order) filtered for export.
+ * Return sitemap nodes (in tree/navigation order) filtered for export.
  *  opts: { includePhased, includeRefs, respectBuildFilter, buildFilter, phaseFilter }
  *  - respectBuildFilter: when true, keep only nodes that DIRECTLY match `buildFilter`
  *    (the same predicate the on-screen Build filter and its match count use).
@@ -17898,7 +18203,7 @@ const _NAV_IA_ACCENT_COLORS = [
 ];
 
 // Convert a menu's item tree into the pseudo-node shape the report builders
-// consume: ref → the referenced nav node's id (so page counts resolve), header →
+// consume: ref → the referenced sitemap node's id (so page counts resolve), header →
 // nodeType 'Header', link → `_link` URL, broken ref → `_missing`.
 function _menuToReportSection(menu) {
   const items = menu.items || [];
@@ -18314,9 +18619,9 @@ function runPreHandoffCheck() {
   if (hasNav) {
     const dups = detectDuplicateNavIds();
     checks.push({
-      title: 'No duplicate nav IDs',
+      title: 'No duplicate sitemap node IDs',
       items: dups.map(d => `ID <code>${escapeHtml(d.id)}</code> &mdash; ${d.nodes.length} nodes`),
-      fix: `Open the Navigation Tree and click the duplicate-ID warning in the stats bar to auto-renumber.`,
+      fix: `Open the Sitemap and click the duplicate-ID warning in the stats bar to auto-renumber.`,
     });
 
     const pageCounts = {};
@@ -18329,7 +18634,7 @@ function runPreHandoffCheck() {
       !String(n.refNodeId || '').trim()
     );
     checks.push({
-      title: 'No empty nav leaves',
+      title: 'No empty sitemap leaves',
       items: emptyLeaves.map(n => escapeHtml(n.breadcrumb || n.label || n.number || '(unnamed)')),
       fix: `Assign pages to these nodes, mark them Net New, give them a Phase, or remove them before handoff.`,
     });
@@ -18503,7 +18808,7 @@ function openKkeVsSmeView() {
 // "follows this pattern" — no per-row "brief missing" nagging.
 
 async function openAssigneeBriefReport() {
-  if (!state.navNodes || !state.navNodes.length) { showToast('No navigation structure loaded', 'error'); return; }
+  if (!state.navNodes || !state.navNodes.length) { showToast('No sitemap loaded', 'error'); return; }
   const people = new Set();
   state.navNodes.forEach(n => {
     const b = String(n.buildAssignee || '').trim(); if (b) people.add(b);
@@ -18512,7 +18817,7 @@ async function openAssigneeBriefReport() {
   });
   (state.assigneeLibrary || []).forEach(p => { if (p) people.add(p); });
   const list = [...people].sort((a, b) => a.localeCompare(b));
-  if (!list.length) { showToast('No builders, writers, or migrators assigned yet — assign them in the nav node editor', 'info'); return; }
+  if (!list.length) { showToast('No builders, writers, or migrators assigned yet — assign them in the sitemap node editor', 'info'); return; }
 
   // Load any custom templates for this report type.
   let templates = [];
@@ -18585,7 +18890,7 @@ function gatherAssigneeBriefData(role, person) {
   const urlCol = state.urlColumn || 'Address';
   const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
 
-  // Live source pages assigned to each nav node (exclude Kill/Consolidate — those are going away).
+  // Live source pages assigned to each sitemap node (exclude Kill/Consolidate — those are going away).
   const pageCounts = {};
   const assignedByNav = new Map();
   state.editedRows.forEach(r => {
@@ -18739,7 +19044,7 @@ function assigneeBriefBuiltinHtml(data) {
         <td style="padding:4px 6px;">${pill}</td>
         <td style="padding:4px 6px;white-space:nowrap;">${countCell}</td>
       </tr>`;
-      // Assigned source page(s) for this nav node, each flagged if other pages consolidate into it.
+      // Assigned source page(s) for this sitemap node, each flagged if other pages consolidate into it.
       if (p.sourcePages && p.sourcePages.length) {
         const items = p.sourcePages.map(sp => {
           const name = sp.title || sp.url || '(untitled)';
@@ -18807,7 +19112,7 @@ async function buildAssigneeBriefReport(role, person, templatePath) {
 
 function showNavCoverageReport() {
   if (!state.navNodes || state.navNodes.length === 0) {
-    showToast('No navigation structure loaded', 'error');
+    showToast('No sitemap loaded', 'error');
     return;
   }
 
@@ -18864,7 +19169,7 @@ function showNavCoverageReport() {
 
   let html = `<div style="padding:16px;font-size:13px;line-height:1.6;">`;
   html += `<div style="font-weight:600;margin-bottom:12px;">Nav Coverage Report</div>`;
-  html += `<div style="margin-bottom:8px;"><strong>${totalNodes}</strong> nav nodes | <strong>${assignedPages}</strong> pages assigned | <strong>${unassigned}</strong> unassigned</div>`;
+  html += `<div style="margin-bottom:8px;"><strong>${totalNodes}</strong> sitemap nodes | <strong>${assignedPages}</strong> pages assigned | <strong>${unassigned}</strong> unassigned</div>`;
 
   if (emptyLeaves.length > 0) {
     html += `<div style="margin-top:12px;font-weight:600;color:var(--kke-kill);">Empty Leaves (${emptyLeaves.length})</div>`;
@@ -18894,7 +19199,7 @@ function showNavCoverageReport() {
 
   if (pathMismatches.length > 0) {
     html += `<div style="margin-top:12px;font-weight:600;color:var(--kke-kill);">Path Mismatches (${pathMismatches.length})</div>`;
-    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Pages whose URL doesn't end with their computed nav path</div>`;
+    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Pages whose URL doesn't end with their computed sitemap path</div>`;
     pathMismatches.slice(0, 15).forEach(({ url, computed }) => {
       html += `<div style="font-size:12px;padding:2px 0;"><code>${escapeHtml(computed)}</code> ← ${escapeHtml(url)}</div>`;
     });
@@ -18902,7 +19207,7 @@ function showNavCoverageReport() {
   }
 
   if (emptyLeaves.length === 0 && hubs.length === 0 && overloaded.length === 0 && pathMismatches.length === 0) {
-    html += `<div style="color:var(--kke-keep);margin-top:12px;">All nav nodes have page assignments. No issues detected.</div>`;
+    html += `<div style="color:var(--kke-keep);margin-top:12px;">All sitemap nodes have page assignments. No issues detected.</div>`;
   }
 
   html += `</div>`;
@@ -19997,7 +20302,7 @@ let _redirectSort = { col: '', dir: '' }; // col: 'status'|'title'|'source'|'des
 
 function resyncNavBasedRedirects() {
   if (!state.navNodes || !state.navNodes.length) {
-    showToast('No nav tree loaded', 'error'); return;
+    showToast('No sitemap loaded', 'error'); return;
   }
   const urlCol = state.urlColumn || 'Address';
   const baseUrl = getRedirectBaseUrl();
@@ -20023,7 +20328,7 @@ function resyncNavBasedRedirects() {
     let newUrl = '';
 
     if (kke === 'kill' || kke === 'consolidate') {
-      // Kill/Consolidate: redirect destination is the nav node's new path
+      // Kill/Consolidate: redirect destination is the sitemap node's new path
       newUrl = pathToUrl(node.computedPath);
     } else {
       // Keep/Evolve/etc.: only needs a redirect if the URL is actually changing
@@ -20042,15 +20347,15 @@ function resyncNavBasedRedirects() {
   });
 
   if (updated === 0 && skipped === 0) {
-    showToast('All nav-based redirects are already up to date', 'info');
+    showToast('All sitemap-based redirects are already up to date', 'info');
     return;
   }
   if (updated > 0) {
     setDirty(true);
     renderRedirectEditor();
   }
-  let msg = `Re-derived ${updated} redirect${updated !== 1 ? 's' : ''} from current nav paths`;
-  if (skipped > 0) msg += ` · ${skipped} skipped (no nav path)`;
+  let msg = `Re-derived ${updated} redirect${updated !== 1 ? 's' : ''} from current sitemap paths`;
+  if (skipped > 0) msg += ` · ${skipped} skipped (no sitemap path)`;
   showToast(msg, 'success');
 }
 
@@ -20368,7 +20673,7 @@ function renderRedirectEditor() {
 
     // Kill pages
     if (status.toLowerCase() === 'kill') {
-      // Priority: explicit > Consolidate target > nav node path > default destination > blank (retired/404)
+      // Priority: explicit > Consolidate target > sitemap node path > default destination > blank (retired/404)
       let resolvedDest = '';
       const consTarget = consolidateTargetAddr(row);
       if (consTarget) {
@@ -20634,7 +20939,7 @@ function renderRedirectRow(entry, baseUrl) {
   if (state.navTree && state.navNodes.length > 0) {
     const navBtn = document.createElement('button');
     navBtn.className = 're-nav-btn';
-    navBtn.title = 'Pick from navigation tree';
+    navBtn.title = 'Pick from the sitemap';
     navBtn.textContent = '🗂';
     navBtn.addEventListener('click', () => {
       showRedirectNavPicker(entry, destInput, baseUrl);
@@ -20663,7 +20968,7 @@ function renderRedirectRow(entry, baseUrl) {
 }
 
 function showRedirectNavPicker(entry, destInput, baseUrl) {
-  // Build a simple dropdown of all nav nodes
+  // Build a simple dropdown of all sitemap nodes
   const existing = document.querySelector('.re-nav-dropdown');
   if (existing) existing.remove();
 
@@ -20676,7 +20981,7 @@ function showRedirectNavPicker(entry, destInput, baseUrl) {
   searchWrap.style.cssText = 'padding:4px 8px;border-bottom:1px solid var(--border);';
   const searchInput = document.createElement('input');
   searchInput.type = 'text';
-  searchInput.placeholder = 'Search nav nodes…';
+  searchInput.placeholder = 'Search sitemap nodes…';
   searchInput.style.cssText = 'width:100%;border:1px solid var(--border);border-radius:3px;padding:4px 8px;font-size:12px;outline:none;background:var(--bg-surface);color:var(--text-primary);';
   searchWrap.appendChild(searchInput);
   dropdown.appendChild(searchWrap);
@@ -20762,14 +21067,14 @@ async function exportRedirectMap() {
     const status = String(row[kke] || '').trim().toLowerCase();
     const computedPath = String(row['Computed Path'] || '').trim();
 
-    // 1. Kill pages → priority: explicit > nav node path > default > blank (retired)
+    // 1. Kill pages → priority: explicit > sitemap node path > default > blank (retired)
     if (status === 'kill') {
       const customDest = String(row[REDIRECT_DEST_COL] || '').trim();
       let dest = '';
       if (customDest) {
         dest = customDest;
       } else {
-        // Check for nav node assignment
+        // Check for sitemap node assignment
         const navID = row['NavID'] || '';
         if (navID && state.navNodes.length > 0) {
           const node = state.navNodes.find(n => n.id === navID);
@@ -20805,7 +21110,7 @@ async function exportRedirectMap() {
           'Source URL': sourceUrl,
           'Destination URL': customDest || destinationUrl,
           'Status Code': '301',
-          'Reason': 'URL changed by navigation mapping'
+          'Reason': 'URL changed by sitemap mapping'
         });
       }
     }

@@ -64,16 +64,16 @@ Generalize the **Page Template Library** into a **Target Spec Library**: each en
 
 This gives one home for all briefs/direction and one editor, rather than a second parallel library.
 
-## Shared-content space in the nav tree (Fragments)
+## Shared-content space in the sitemap (Fragments)
 
-Use the **reserved `Node_Type` / `Nav_Layer`** NavStructure columns: a node can be a **Fragment / shared-content** node — keeps its **computed path** (repository location, e.g. AEM `/content/experience-fragments/...`) but is **not in menu, no breadcrumb, no redirect**, and renders as its own layer/card in the tree & sitemap. This is also what gives fragments a home for element-level direction + an assignee (no new per-row fields needed).
+Use the **reserved `Node_Type` / `Nav_Layer`** NavStructure columns: a node can be a **Fragment / shared-content** node — keeps its **computed path** (repository location, e.g. AEM `/content/experience-fragments/...`) but is **not in menu, no breadcrumb, no redirect**, and renders as its own layer/card in the sitemap. This is also what gives fragments a home for element-level direction + an assignee (no new per-row fields needed).
 
 Bulk records with **no node** are directed purely at the **type level** — that's correct, not a gap.
 
 ## Downstream behavior must be nature-aware
 
 - **Redirects exclude Fragments** (no public URL → no bogus redirect).
-- **"Need placement" & Nav Coverage** stop flagging Fragments as nav gaps; a Fragment "needs placement" means "no content-space home," a separate check.
+- **"Need placement" & Sitemap Coverage** stop flagging Fragments as sitemap gaps; a Fragment "needs placement" means "no content-space home," a separate check.
 
 ## Roles
 
@@ -92,7 +92,7 @@ Today: **Builder / Writer**. Add a third — **Migrator / Migration owner** — 
 - **Phase 1 — Naming + crosswalk + 3-kind direction. ✅ BUILT (in dev).**
   - 1a — relabels: Page Type→**Content Type**; Nature→**Renders as** (Page / Fragment (embeddable) / Generated); `Target_Content_Type` audit column with non-destructive auto-map + audit-bar hint.
   - 1b — registry extended into a crosswalk (current type · renders-as · **target type** · **→ target spec** · track). **Page Template Library → Target Spec Library**: per-entry **Kind** (Page Template / Content Model), a **Migration mapping** default section (the third direction kind), and a **field schema** for Content Model entries.
-  - 1c — **Migrator** role: `migrateAssignee` on nav nodes (NavStructure `Migrate_Assignee` column, node-editor Migrate section, build filter, Project Settings usage/cascade, Migration Tracker Nav Plan column). The **Writer/Builder Brief report → Migration Direction Brief**: three roles (writer · builder · migrator); migrator direction has no per-node field — its reference is the spec's migration-mapping default.
+  - 1c — **Migrator** role: `migrateAssignee` on sitemap nodes (NavStructure `Migrate_Assignee` column, node-editor Migrate section, build filter, Project Settings usage/cascade, Migration Tracker Nav Plan column). The **Writer/Builder Brief report → Migration Direction Brief**: three roles (writer · builder · migrator); migrator direction has no per-node field — its reference is the spec's migration-mapping default.
 - **Phase 2 — Shared-content nav space. ✅ BUILT (in dev).** Node editor gains a **Node type** select (Page / Header / **Fragment**). Fragment nodes get a `FRAG` badge + tinted/italic row, are excluded from net-new/empty/hub counts (tree + stats), shown in a stats tally, and (being not-in-menu) are naturally absent from the in-menu IA report. NavStructure already round-trips `Node_Type`. *(`Nav_Layer` remains reserved — a single Fragment node type proved sufficient; revisit if multiple repository layers are needed.)*
-- **Phase 3 — Nature-aware downstream. ✅ BUILT (in dev).** `isFragmentRow(row)` (= `Content_Nature === 'Content Object'`). Fragments are skipped in `resolveRedirectDestinations`, the Redirect Editor list, the tracker Redirects sheet, the need-placement count + `_needs-placement` filter, and Nav Coverage (which also now skips Header/Fragment nodes).
+- **Phase 3 — Nature-aware downstream. ✅ BUILT (in dev).** `isFragmentRow(row)` (= `Content_Nature === 'Content Object'`). Fragments are skipped in `resolveRedirectDestinations`, the Redirect Editor list, the tracker Redirects sheet, the need-placement count + `_needs-placement` filter, and Sitemap Coverage (which also now skips Header/Fragment nodes).
 - **Phase 4 — Reporting. ✅ BUILT (in dev).** New **Content Type Crosswalk** report (Reports menu): current type → renders-as → target type → target spec → migration track, with page volume, KKE mix, and a "no crosswalk" flag for unmapped types. Tracker **Source Pages** sheet now carries Content Type / Renders As / Target Content Type. *(The brief report was generalized into the 3-kind Migration Direction Brief earlier, in 1c.)*
