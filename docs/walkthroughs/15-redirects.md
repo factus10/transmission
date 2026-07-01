@@ -9,7 +9,7 @@ How to make sure every URL that's going away lands somewhere sensible — buildi
 ## 0. The mental model
 
 - A redirect is needed for any **Kill** page and any page whose **URL is changing** (its new computed path differs from its current URL). Consolidated pages redirect to their target.
-- You rarely set destinations by hand. The app **resolves** them from a priority order, and re-derives them from the nav tree on demand.
+- You rarely set destinations by hand. The app **resolves** them from a priority order, and re-derives them from the sitemap on demand.
 - One special value matters: **`404`** means "let this URL die — do not write a redirect." It's distinct from blank (which means "TBD").
 
 **Destination priority** (highest wins): custom per-row destination → nav node path → project default destination → blank.

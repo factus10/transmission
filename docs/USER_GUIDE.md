@@ -44,7 +44,7 @@ This guide takes you from *"I've never opened it"* to *"I could run an audit in 
 
 Transmission isn't a database that swallows your data and keeps it somewhere private. It's a workspace that reads and writes **your spreadsheet directly**. When you open a crawl export, the app adds the columns and helper sheets it needs, and from then on every decision you make is written straight back into that same `.xlsx`.
 
-That has one wonderfully freeing consequence: **one file is the whole project.** Hand it to a colleague who also has Transmission and they see exactly what you see — your Keep/Kill/Evolve calls, the navigation tree, project settings, even the full change history. There's nothing else to sync or export. Back up the file and you've backed up everything.
+That has one wonderfully freeing consequence: **one file is the whole project.** Hand it to a colleague who also has Transmission and they see exactly what you see — your Keep/Kill/Evolve calls, the sitemap, project settings, even the full change history. There's nothing else to sync or export. Back up the file and you've backed up everything.
 
 > If you've run content audits before, you may know this pattern as a *content inventory* or a *rationalization* spreadsheet. Transmission keeps that familiar single-file deliverable — it just gives you a far better cockpit for filling it in.
 
@@ -52,7 +52,7 @@ That has one wonderfully freeing consequence: **one file is the whole project.**
 
 Working directly in the `.xlsx` is fine for small files, but every save rebuilds the whole workbook — and on a few thousand rows you'll feel that pause. The fix is one menu item: **File → Save As Project…** (**Cmd+Shift+S**). That converts your open spreadsheet — including everything you've done so far this session — into a **Transmission project file** (`.transmission`), and the app switches over to it on the spot.
 
-A project file keeps the "one file is the whole project" promise — rows, decisions, nav tree, settings, glossary, libraries, and the full change history all live inside it — but saves become **instant**. Edits are committed within a couple of seconds of making them, with no workbook rebuild and no pause, no matter how big the crawl. Put the file wherever the project lives (`Documents/Smeal/smeal.transmission`, say); double-clicking it in Finder opens it in Transmission, and it shows up in **Open Recent** like any other file.
+A project file keeps the "one file is the whole project" promise — rows, decisions, sitemap, settings, glossary, libraries, and the full change history all live inside it — but saves become **instant**. Edits are committed within a couple of seconds of making them, with no workbook rebuild and no pause, no matter how big the crawl. Put the file wherever the project lives (`Documents/Smeal/smeal.transmission`, say); double-clicking it in Finder opens it in Transmission, and it shows up in **Open Recent** like any other file.
 
 Excel doesn't disappear — it just becomes the *deliverable* format instead of the *working* format:
 
@@ -93,7 +93,7 @@ These are the fields you'll fill in as you work. `KKE_Recommendation` comes firs
 
 These behind-the-scenes sheets hold project state and travel with the file:
 
-- **NavStructure** — your future-state navigation tree
+- **NavStructure** — your future-state sitemap
 - **KKE_Settings** — project settings, saved filters, and computed-column configuration
 - **KKE_ChangeLog** — an automatic history of every decision change
 - **KKE_Glossary** — your definitions for tags and groups
@@ -227,6 +227,7 @@ A list of your named filter bundles, each with **Apply** and **Delete**. A bundl
 
 Open App Settings from the **⚙** button (or **File → App Settings**); the subtitle confirms it applies to you across all files.
 
+- **Appearance** — a **System / Light / Dark** segmented toggle at the top of the dialog. **System** (the default) follows your macOS appearance; **Light** and **Dark** pin the app regardless of the OS. This is a per-user preference. *(The embedded browser always renders crawled pages as designed — it is never dark-mode-adapted — so the pages you review look exactly as they do live.)*
 - **Auto-advance** — jump to the next row after you set a KKE call (on by default).
 - **Show SME fields** — reveal the SME Decision / Final KKE / Content Owner controls (also toggled by the **SME** chip above the audit bar).
 - **Show Migration fields** — reveal Content Nature / Migration Track (also the **MIGRATE** chip).
@@ -262,7 +263,7 @@ Your project is set up when:
 - [ ] **Migration** vocabularies are seeded, if you'll reach the build phase
 - [ ] **App Settings** reflect how you like to work
 
-> **A note on dark mode:** Transmission follows your macOS appearance automatically, with WCAG-compliant contrast in both light and dark themes — nothing to configure.
+> **A note on appearance:** Set **App Settings → Appearance** to **System**, **Light**, or **Dark**. System follows your macOS appearance automatically; both themes have WCAG-compliant contrast. Whichever you pick, the embedded browser still renders crawled pages as designed — it is never dark-mode-adapted — so reviewing pages stays faithful.
 
 ---
 
@@ -335,7 +336,7 @@ The field bar has two regions.
 
 **The audit bar** below it is a stack of labeled **cluster** cards. Click a cluster's pill to collapse it to a one-line summary, and click again to expand; your choices stick, per cluster. Here's what each cluster holds:
 
-- **Decide** (blue) — the KKE buttons, the read-only **Suggested_KKE** badge (which shows the recommendation and a ⚠ when its sources disagree), and the **Assess**, **Notes**, and **Nav** actions. With SME fields on, it also shows the SME readout and the **Final** call.
+- **Decide** (blue) — the KKE buttons, the read-only **Suggested_KKE** badge (which shows the recommendation and a ⚠ when its sources disagree), and the **Assess**, **Notes**, **Sitemap**, and **Menu** actions. With SME fields on, it also shows the SME readout and the **Final** call.
 - **Classify** (slate) — Content Type, Theme, Published, Group, Primary Tag, and Tags (see [Tagging, Grouping & the Glossary](#6-tagging-grouping--the-glossary)).
 - **Migrate** (amber, optional) — Renders as and Migration Track (see [Content Types & the Crosswalk](#7-content-types--the-crosswalk)).
 - **CMS** (green) — Source CMS and New CMS admin links.
@@ -347,6 +348,7 @@ The field bar has two regions.
 - **Page thumbnails.** Once you've viewed a page, hovering its sidebar row shows a thumbnail preview — a quick way to recognize a page without clicking back into it. Thumbnails live in memory only and never bloat your file.
 - **Note snippets.** The Notes popover has a **Snippets…** menu for reusable rationale — insert a saved snippet, save the current note as one, or manage the list. Snippets follow you across projects.
 - **Undo and redo.** **Cmd+Z** and **Cmd+Shift+Z** cover KKE changes (up to 100 per session). Tag, note, and nav edits aren't undoable, but they're always saved.
+- **Build navigation without leaving the audit.** The **Sitemap** button places the current page on the sitemap (and if the sitemap is still empty, it offers an inline form — Label prefilled from the title, Slug from the URL — to create its very first node in one click). The **Menu** button adds the page to one of your menus: since menus reference pages that are on the sitemap, it makes sure the page is on the sitemap first, then lets you pick an existing menu, spin up a **+ New menu…**, or (with no menus yet) create your first menu right there. No trip to the Sitemap or Menus view required.
 - **Clean paste.** When you paste into nav labels, slugs, or notes, Transmission strips mojibake, stray HTML entities, and invisible characters — while leaving real accented letters (é, ü, ñ) untouched.
 
 ### Quick self-check
@@ -737,7 +739,7 @@ Transmission sets `Consolidate_Into`, switches the page's call to Consolidate, a
 
 ### Find consolidation groups in bulk
 
-When several pages already share a nav node, they're often consolidation candidates. **Navigation Tree → Consolidation Candidates…** opens a workflow built for exactly this:
+When several pages already share a nav node, they're often consolidation candidates. **Sitemap → Consolidation Candidates…** opens a workflow built for exactly this:
 
 1. It lists every node with 2 or more pages, biggest group first.
 2. For each group, select the radio button on the page that should be the **target**.
@@ -892,26 +894,28 @@ Work down the conflict list, picking the right call for each — or use the bulk
 
 # E. Architect the future site
 
-## 13. Navigation & IA
+## 13. Sitemap & IA
 
 *By the end of this section you'll have built the structure of the new site and placed every page you're keeping onto it — the moment the audit stops being a list and becomes a site.*
 
-> **In a hurry?** The [Navigation & IA walkthrough](walkthroughs/13-navigation-ia.md) is the one-page version.
+> **In a hurry?** The [Sitemap & IA walkthrough](walkthroughs/13-navigation-ia.md) is the one-page version.
 
 ### The mental model
 
-Your audit rows answer one question: *"what do we do with each existing page?"* The **navigation tree** answers a different one: *"what is the new site?"* — its sections, its hierarchy, its URLs.
+Your audit rows answer one question: *"what do we do with each existing page?"* The **sitemap** answers a different one: *"what is the new site?"* — its sections, its hierarchy, its URLs.
 
 You connect the two by **placing** each Keep/Evolve page onto a tree node. A node can carry **no** source pages (it's net-new content you'll write), **one**, or **many** (it's a consolidation target). The tree is the source of truth for breadcrumbs and computed URLs, so renaming a node cascades the change to its descendants and to every page beneath it.
 
-Open the tree with **Cmd+Shift+T** (or the **Navigation Tree** tab). The **stats line** beneath the toolbar is your dashboard — more on reading it below.
+Open the tree with **Cmd+Shift+T** (or the **Sitemap** tab). The **stats line** beneath the toolbar is your dashboard — more on reading it below.
+
+> **Starting from nothing?** You don't have to open the Sitemap first. If the sitemap is still empty, clicking the audit bar's **Sitemap** button offers an inline form (Label prefilled from the page title, Slug from the URL) with a **Create & assign** button that creates the first root node and drops the current page onto it in one step.
 
 ### Place every Keep/Evolve page
 
 Your goal is to drive **need placement** in the stats line down to **0**.
 
 1. In the audit view, set the **KKE filter** to **Keep + Evolve**, then add a field filter for `NavID is blank` and **Apply** — that's exactly the pages still needing a home.
-2. For each one, click **Nav** in the Decide cluster, drill to the right node, and click **Assign**. Use **+ Child** in the picker to create a new node inline if no good home exists yet.
+2. For each one, click **Sitemap** in the Decide cluster, drill to the right node, and click **Assign**. Use **+ Child** in the picker to create a new node inline if no good home exists yet.
 
 > **Tip:** the stats line's **"N need placement"** is a clickable link — it jumps you straight to those rows. Consolidate pages don't need placement; they fold into their target.
 
@@ -966,8 +970,8 @@ So **need placement → 0** confirms every Keep/Evolve page is in the IA, **empt
   - Border encodes build phase (solid = current build, dashed = phased).
   - **Share it:** **Export HTML** writes a single self-contained, **still-interactive** file your client opens in any browser (they can collapse/expand, zoom, and pan — no app required; their tweaks persist in that file's local storage). **Export PDF** prints the current view to one page sized to the tree.
 
-  > **Taming a big tree — collapse repeating patterns.** On a large site, whole branches repeat the same shape (every academic department has Overview / Faculty / Programs / Contact). Showing all of them is noise. Best practice: for any branch whose children follow a content pattern, **pick the best representative and leave it expanded** to show the pattern in full, then **collapse** the rest by clicking their cards. The collapsed siblings still appear as single boxes with a "more underneath" stack, so the structure stays honest while the diagram stays readable. **Collapsing/expanding here is the same setting as the node's `Collapse` checkbox in the nav tree** — they stay in sync both ways: a node checked **Collapse** starts collapsed every time the sitemap opens, and collapsing a node in the sitemap ticks its checkbox (and is saved with the project). So you can shape "what's collapsed by default for the client" right in the diagram.
-- **IA & coverage reports:** the **Visual Sitemap** (above) for structure, plus **Reports → Nav Coverage Report…** and **Reports → Net New Content Brief…**. *(The hand-off report of the navigation itself is now the **Menu Report**, in the Menus view.)*
+  > **Taming a big tree — collapse repeating patterns.** On a large site, whole branches repeat the same shape (every academic department has Overview / Faculty / Programs / Contact). Showing all of them is noise. Best practice: for any branch whose children follow a content pattern, **pick the best representative and leave it expanded** to show the pattern in full, then **collapse** the rest by clicking their cards. The collapsed siblings still appear as single boxes with a "more underneath" stack, so the structure stays honest while the diagram stays readable. **Collapsing/expanding here is the same setting as the node's `Collapse` checkbox in the sitemap** — they stay in sync both ways: a node checked **Collapse** starts collapsed every time the sitemap opens, and collapsing a node in the sitemap ticks its checkbox (and is saved with the project). So you can shape "what's collapsed by default for the client" right in the diagram.
+- **IA & coverage reports:** the **Visual Sitemap** (above) for structure, plus **Reports → Sitemap Coverage Report…** and **Reports → Net New Content Brief…**. *(The hand-off report of the navigation itself is now the **Menu Report**, in the Menus view.)*
 
 To resolve pages that landed on the same node, see the Consolidation Candidates workflow in [Consolidate](#9-consolidate).
 
@@ -982,7 +986,7 @@ To resolve pages that landed on the same node, see the Consolidation Candidates 
 
 #### Assigning a page from the audit bar
 
-Select a row and click **Nav** to open the picker. Cascading dropdowns drill to the node — the slug is auto-detected from the URL (and editable), and the parent is auto-suggested from the URL's hierarchy. **Assign** populates `NavID`, `Nav Destination` (the breadcrumb), `Computed Path`, and `Nav_SortID`. **+ Child** creates a sub-node with its number, ID, sort order, breadcrumb, and path all calculated for you, and **Remove** clears the assignment.
+Select a row and click **Sitemap** to open the picker. Cascading dropdowns drill to the node — the slug is auto-detected from the URL (and editable), and the parent is auto-suggested from the URL's hierarchy. **Assign** populates `NavID`, `Nav Destination` (the breadcrumb), `Computed Path`, and `Nav_SortID`. **+ Child** creates a sub-node with its number, ID, sort order, breadcrumb, and path all calculated for you, and **Remove** clears the assignment. If the sitemap has no nodes yet, the **Sitemap** button instead offers a short inline form to create the first root node and assign the page in one step.
 
 #### The node editor
 
@@ -990,7 +994,7 @@ Double-click a label (or click **✎**) for the full editor. It shows read-only 
 
 > **URL override — when the address shouldn't follow the menu.** Normally a page's URL is built from its place in the tree (`Company > Careers` → `/company/careers`). Sometimes you want the page grouped one way in the navigation but published at a different address — e.g. listed under *Company* in the menu but living at `/careers`. Type that path into **URL override** and the page's URL ignores its ancestors. It's an absolute path from the site root, and it **re-roots the page's sub-pages too**: an override of `careers` on a section makes a child *Open Roles* resolve to `/careers/open-roles` regardless of where the section sits in the menu. Leave it blank to follow the hierarchy as before. Overridden rows show a `↪` next to their path in the tree, and the stats bar tallies how many overrides are in play. Everything downstream — redirects, the Migration Tracker's target URLs, consolidation targets — uses the overridden address automatically.
 
-> **Breadcrumb parent — an arbitrary breadcrumb top.** The trail shown *on the page* is a third, separate axis: it need not match the menu hierarchy **or** the URL. By default a page's breadcrumb walks its physical ancestors, but you can set its **Breadcrumb parent** to *Breadcrumb root* (the trail starts at this page) or to *any other node* (the trail re-roots onto it). Classic case: the Department of Accounting page lives deep under `College of Business > Departments` in the tree, but should read simply **Home > Accounting** on the page — set Accounting's breadcrumb parent to *Breadcrumb root* and it collapses to that, while its own sub-pages inherit the new root (e.g. *Faculty* → **Home > Accounting > Faculty**). The optional **Breadcrumb home label** and **Breadcrumb max depth** live in **Project Settings → Identity**: the home label (e.g. "Home") is prepended to every trail, and the max depth is an advisory flag — nodes whose breadcrumb runs longer get a `⚠` in the tree and a tally in the stats bar, so you know where to plant a root. The node editor shows a live **Page breadcrumb** preview as you set this. (This is display-only — it never changes the URL or the menus.) The rendered page breadcrumb is carried into your deliverables: it's a **Page Breadcrumb** column in the Migration Tracker's Nav Plan and the Nav Tree's column-picker export, and it travels with each referenced page in the menu export.
+> **Breadcrumb parent — an arbitrary breadcrumb top.** The trail shown *on the page* is a third, separate axis: it need not match the menu hierarchy **or** the URL. By default a page's breadcrumb walks its physical ancestors, but you can set its **Breadcrumb parent** to *Breadcrumb root* (the trail starts at this page) or to *any other node* (the trail re-roots onto it). Classic case: the Department of Accounting page lives deep under `College of Business > Departments` in the tree, but should read simply **Home > Accounting** on the page — set Accounting's breadcrumb parent to *Breadcrumb root* and it collapses to that, while its own sub-pages inherit the new root (e.g. *Faculty* → **Home > Accounting > Faculty**). The optional **Breadcrumb home label** and **Breadcrumb max depth** live in **Project Settings → Identity**: the home label (e.g. "Home") is prepended to every trail, and the max depth is an advisory flag — nodes whose breadcrumb runs longer get a `⚠` in the tree and a tally in the stats bar, so you know where to plant a root. The node editor shows a live **Page breadcrumb** preview as you set this. (This is display-only — it never changes the URL or the menus.) The rendered page breadcrumb is carried into your deliverables: it's a **Page Breadcrumb** column in the Migration Tracker's Nav Plan and the Sitemap's column-picker export, and it travels with each referenced page in the menu export.
 
 #### Deleting nodes
 
@@ -1014,7 +1018,7 @@ Behind the editor, the `NavStructure` sheet holds: **Number** (the dotted hierar
 
 ### Menus
 
-The navigation tree describes where content *lives*. **Menus** describe how people *get to it* — and those are not the same thing. A page can sit deep in the content hierarchy but appear in the top bar; the footer often groups links in ways that ignore site structure entirely; a "fly-out" or utility menu is frequently a curated junk-drawer of links that don't fit anywhere else. So menus are modeled as their own independent structures that *point at* your content pages, rather than being tied to the tree.
+The sitemap describes where content *lives*. **Menus** describe how people *get to it* — and those are not the same thing. A page can sit deep in the content hierarchy but appear in the top bar; the footer often groups links in ways that ignore site structure entirely; a "fly-out" or utility menu is frequently a curated junk-drawer of links that don't fit anywhere else. So menus are modeled as their own independent structures that *point at* your content pages, rather than being tied to the sitemap.
 
 Open the **Menus** tab in the view switcher (or **Cmd+Shift+M**). On the left is your list of menus; on the right, the selected menu's contents.
 
@@ -1116,7 +1120,7 @@ When the nodes are annotated, two commands carry the work to engineering: **Migr
 
 ### Going deeper
 
-**Why the migration mapping lives on the spec.** Authoring it once per spec is what lets thousands of scripted records share a single mapping — nobody edits 5,000 News records by hand. The 12 curated defaults (Hub Landing, Article, Faculty Profile, Program/Degree, Department, Event, Form Page, and more) seed from a banner the first time you open a project that has a nav tree.
+**Why the migration mapping lives on the spec.** Authoring it once per spec is what lets thousands of scripted records share a single mapping — nobody edits 5,000 News records by hand. The 12 curated defaults (Hub Landing, Article, Faculty Profile, Program/Degree, Department, Event, Form Page, and more) seed from a banner the first time you open a project that has a sitemap.
 
 **The node's build fields, in full.** Beyond Node type and Pattern, a node carries Page Status, Builder, Build Guidance, Writer, Writer Brief, and Migrator. The markdown fields (Migration Notes, Build Guidance, Writer Brief) each have a formatting toolbar, and **Cmd+B** / **Cmd+I** work inside them.
 
@@ -1177,7 +1181,7 @@ Destinations also resolve automatically on **Save**, so the editor is for review
 
 **The columns.** Status (a KKE badge or "URL Changed"), Title (click to open the audit row), Current URL, the **→** arrow, the editable Destination URL, and the **🗂** nav picker. The toolbar adds a status filter, a text search, and sortable columns that cycle ascending → descending → none.
 
-**Setting a destination.** Type any URL (including a cross-server one), pick a node from the nav tree (a 600px dropdown anchored to the right), or leave it blank to be resolved on save. The **default destination** and **site domain** live in Project Settings; changing the domain rewrites destinations that used the old one. On save, `Redirect_Destination` is filled from the priority chain above — there's no homepage fallback, so a blank means the page is retired and will 404.
+**Setting a destination.** Type any URL (including a cross-server one), pick a node from the sitemap (a 600px dropdown anchored to the right), or leave it blank to be resolved on save. The **default destination** and **site domain** live in Project Settings; changing the domain rewrites destinations that used the old one. On save, `Redirect_Destination` is filled from the priority chain above — there's no homepage fallback, so a blank means the page is retired and will 404.
 
 **How Re-derive decides.** Kill and Consolidate rows take the nav computed path; Keep/Evolve rows update only when the URL is actually changing; rows with an explicit `404` are always skipped; and rows with no nav assignment are left alone. Every result is visible in the editor before you save, so you can review or override.
 
@@ -1204,7 +1208,7 @@ Reports are read-only views, generated on demand from the current file — run t
 ### For information architecture
 
 - **Menu Report** — one section card per menu with its item hierarchy, page-count badges on page references, `↗` on links, `≡` on headers, and a red **missing** badge on broken references. Also available as **Menus → Report**. A tight hand-off doc for colleagues and clients.
-- **Nav Coverage Report** — the gap-finder: empty leaf nodes, hub nodes, overloaded nodes (5+ pages), and path mismatches.
+- **Sitemap Coverage Report** — the gap-finder: empty leaf nodes, hub nodes, overloaded nodes (5+ pages), and path mismatches.
 - **Content Type Crosswalk** — one row per current type → renders → target type → target spec → migration track, with page volume and KKE breakdown, flagging any type with no crosswalk.
 - **Component Inventory** — the UI-component picture (see [Component Inventory](#20-component-inventory)).
 
@@ -1249,9 +1253,9 @@ The Migration Tracker is *the* engineering deliverable — one `.xlsx` with four
 
 Open **Migration → Migration Tracker…**. A dialog lets you toggle which sheets and options to include (for example, whether Kill/Exclude rows appear in Source Pages, and whether phased nodes are included), then exports. The default filename is `{project-slug}-migration-tracker-YYYY-MM-DD.xlsx`. (You can also reach it via **File → Export…**.)
 
-Two controls let you scope the **Nav Plan** sheet: a **column picker** (tick exactly which columns to include) and **Only nodes matching the active Build filter** — when you've set a Build filter in the Nav Tree (say, one assignee or one page status), this exports just the nodes that match it. The toggle shows the active filter and how many nodes match.
+Two controls let you scope the **Nav Plan** sheet: a **column picker** (tick exactly which columns to include) and **Only nodes matching the active Build filter** — when you've set a Build filter in the Sitemap (say, one assignee or one page status), this exports just the nodes that match it. The toggle shows the active filter and how many nodes match.
 
-**Just want the nav nodes, not the whole workbook?** In the Nav Tree, set a **Build** (and/or Phase) filter, then use **Export → Filtered nodes → Excel…**. Pick **Rows** (the matching nodes, or all nodes) and **Columns**, and it writes a single sheet — `{project-slug}-nav-nodes-YYYY-MM-DD.xlsx`.
+**Just want the nav nodes, not the whole workbook?** In the Sitemap, set a **Build** (and/or Phase) filter, then use **Export → Filtered nodes → Excel…**. Pick **Rows** (the matching nodes, or all nodes) and **Columns**, and it writes a single sheet — `{project-slug}-nav-nodes-YYYY-MM-DD.xlsx`.
 
 ### What each sheet carries
 
@@ -1433,8 +1437,9 @@ Internal (hidden from the field bar, saved in the file): `_Flagged`, `_AssessedA
 | **Cmd+F** | Global Search |
 | **Cmd+1** | Audit view |
 | **Cmd+T** | Table view |
-| **Cmd+Shift+T** | Navigation Tree |
+| **Cmd+Shift+T** | Sitemap |
 | **Cmd+Shift+R** | Redirect Editor |
+| **Cmd+Shift+M** | Menus |
 | **Cmd+Shift+E** | Unified Export dialog |
 | **Cmd+P** | Audit Progress dashboard |
 | **Cmd+,** | Preferences |
@@ -1470,7 +1475,7 @@ Hidden from the data-sheet picker; they carry project state and travel with the 
 
 | Sheet | Purpose |
 |-------|---------|
-| **NavStructure** | The nav tree (see [§13](#13-navigation--ia) for the column format) |
+| **NavStructure** | The sitemap (see [§13](#13-sitemap--ia) for the column format) |
 | **KKE_Settings** | Project settings, saved filters, computed-column config (JSON) |
 | **KKE_ChangeLog** | Decision-change audit trail |
 | **KKE_Glossary** | Tag/group definitions |

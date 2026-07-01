@@ -61,7 +61,7 @@ These pair with the in-app **Help → Product Tour** (the live 5-step walkthroug
 |---|-----------|-----------|
 | 1 | On a near-duplicate page, press **4** (Consolidate); the target picker opens. | "Consolidate merges a page into another — pick the survivor." |
 | 2 | Filter the picker, select the canonical page, **Set as target**. | "Search the full inventory and point it at the keeper." |
-| 3 | Open the **Navigation Tree → Consolidation Candidates…**; show a node with 2+ pages. | "Or find candidates in bulk: every nav node with multiple pages." |
+| 3 | Open the **Sitemap → Consolidation Candidates…**; show a node with 2+ pages. | "Or find candidates in bulk: every nav node with multiple pages." |
 | 4 | Pick the target radio in a group → **Apply**; show the others flip to Consolidate. | "One click sets the target to Evolve and the rest to Consolidate — pointing at it." |
 | 5 | Briefly show the sidebar **C** pill / indigo tint on consolidated rows. | "Consolidated pages are flagged, and their redirects follow the target automatically." |
 
@@ -71,12 +71,12 @@ These pair with the in-app **Help → Product Tour** (the live 5-step walkthroug
 
 ## 4 · Migration Planning & Export  (~110s)
 
-**Goal:** nav tree → redirects → pre-flight → export.
+**Goal:** sitemap → redirects → pre-flight → export.
 
 | # | On screen | Narration |
 |---|-----------|-----------|
-| 1 | **Cmd+Shift+T** → Navigation Tree. Drag a node to reparent; edit a label inline. | "Lay out the future-state nav: drag to reorganize, edit labels inline." |
-| 2 | Drag a sidebar selection (or use Nav assign) onto a node. | "Assign your Keep and Evolve pages to where they'll live." |
+| 1 | **Cmd+Shift+T** → Sitemap. Drag a node to reparent; edit a label inline. | "Lay out the future-state nav: drag to reorganize, edit labels inline." |
+| 2 | From the audit bar, click **Sitemap** on a page and assign it to a node. | "Assign your Keep and Evolve pages to where they'll live — right from the audit." |
 | 3 | **Cmd+Shift+R** → Redirect Editor; show Kill + URL-changed rows with destinations. | "Every removed or moved page gets a redirect — review them here." |
 | 4 | **Migration → Pre-Handoff Check**; show the pass/issue report, point at a flagged check. | "Before handoff, one command checks everything: unreviewed pages, dead consolidate targets, redirect chains, empty nav nodes." |
 | 5 | **File → Export… (Cmd+Shift+E)** → choose **Migration Tracker**; show the saved multi-sheet xlsx. | "Then export the migration tracker — a multi-sheet workbook engineering can build from." |
@@ -92,7 +92,7 @@ These pair with the in-app **Help → Product Tour** (the live 5-step walkthroug
 | # | On screen | Narration |
 |---|-----------|-----------|
 | 1 | **Reports → Executive Summary**; show the KKE bar + findings; click **PDF**. | "Stakeholder reports in one click — exec summary, content inventory, and more." |
-| 2 | Briefly open **Reports → Nav Coverage** or **Component Inventory** to show range. | "Plus IA coverage and a component inventory for design-system scoping." |
+| 2 | Briefly open **Reports → Sitemap Coverage** or **Component Inventory** to show range. | "Plus IA coverage and a component inventory for design-system scoping." |
 | 3 | **SME → Export for SME Review**; note the dropdown-validated file. | "Send a subset to a subject-matter expert — they decide in Excel." |
 | 4 | **SME → Import SME Decisions**, then **SME → Compare KKE vs SME**. | "Bring their calls back, and compare auditor vs SME side by side." |
 | 5 | Click a row in the compare view → it jumps to that page; resolve via **Resolve Conflicts**. | "Click through any disagreement and finalize the call." |
