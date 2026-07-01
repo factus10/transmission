@@ -29,7 +29,7 @@
   <div id="view-switcher" role="tablist" aria-label="Switch view">
     <button class="view-tab active" data-view="audit"     role="tab" aria-selected="true">Audit</button>
     <button class="view-tab"        data-view="table"     role="tab" aria-selected="false">Table</button>
-    <button class="view-tab"        data-view="nav-tree"  role="tab" aria-selected="false">Navigation Tree</button>
+    <button class="view-tab"        data-view="nav-tree"  role="tab" aria-selected="false">Sitemap</button>
     <button class="view-tab"        data-view="redirects" role="tab" aria-selected="false">Redirects</button>
     <button class="view-tab"        data-view="menus"     role="tab" aria-selected="false">Menus</button>
   </div>
@@ -201,7 +201,8 @@
                   Notes
                   <span id="notes-indicator" class="notes-indicator hidden"></span>
                 </button>
-                <button id="btn-nav" class="btn btn-sm btn-ghost" title="Assign navigation destination" disabled>Nav</button>
+                <button id="btn-nav" class="btn btn-sm btn-ghost" title="Sitemap placement for this page" disabled>Sitemap</button>
+                <button id="btn-menu-assign" class="btn btn-sm btn-ghost" title="Add this page to a navigation menu" disabled>Menu</button>
                 <!-- Tree + Redirects buttons removed in Chunk iii — use the view switcher at the top of the window -->
               </div>
               <!-- SME readout + Final dropdown — toggled by "Show SME fields" -->
@@ -396,7 +397,7 @@
           </label>
           <input id="redirect-search" type="text" class="re-search-input" placeholder="Filter by URL or title…">
           <button id="btn-redirect-find-replace" class="btn btn-sm btn-ghost" title="Find and replace in destination URLs">Find/Replace</button>
-          <button id="btn-redirect-resync-nav" class="btn btn-sm btn-ghost" title="For every Kill/Consolidate row with a nav assignment, recompute its redirect destination from the current nav path. Rows without a nav assignment are left untouched.">Re-derive from nav</button>
+          <button id="btn-redirect-resync-nav" class="btn btn-sm btn-ghost" title="For every Kill/Consolidate row placed on the sitemap, recompute its redirect destination from the current sitemap path. Rows not on the sitemap are left untouched.">Re-derive from sitemap</button>
           <span style="flex:1"></span>
           <span id="redirect-editor-stats"></span>
           <button id="btn-redirect-editor-close" class="btn btn-sm btn-ghost">Back to Audit</button>
@@ -426,10 +427,10 @@
       <div id="nav-editor" class="hidden">
         <div id="nav-editor-toolbar">
           <div class="nav-tb-row1">
-            <span class="nav-editor-title">Navigation Structure</span>
+            <span class="nav-editor-title">Sitemap</span>
             <button id="btn-nav-editor-add-root" class="btn btn-sm btn-ghost">+ Root Node</button>
-            <button id="btn-nav-remediate" class="btn btn-sm btn-ghost" title="Ensure all assigned pages have child nodes in the nav tree">Remediate</button>
-            <button id="btn-nav-consolidate-candidates" class="btn btn-sm btn-ghost" title="Find nav nodes with 2+ pages and consolidate them in bulk">Consolidation Candidates…</button>
+            <button id="btn-nav-remediate" class="btn btn-sm btn-ghost" title="Ensure all assigned pages have child nodes in the sitemap">Remediate</button>
+            <button id="btn-nav-consolidate-candidates" class="btn btn-sm btn-ghost" title="Find sitemap nodes with 2+ pages and consolidate them in bulk">Consolidation Candidates…</button>
             <div class="ne-export-wrap" style="position:relative;">
               <button id="btn-nav-export" class="btn btn-sm btn-ghost">Export ▾</button>
               <div id="nav-export-menu" class="ne-export-menu hidden">
@@ -481,7 +482,7 @@
             <button id="btn-nav-collapse-all" class="btn btn-sm btn-ghost" title="Collapse all nodes">Collapse All</button>
             <button id="btn-nav-expand-all" class="btn btn-sm btn-ghost" title="Expand all nodes">Expand All</button>
             <div class="nav-tb-sep"></div>
-            <button id="btn-nav-sitemap" class="btn btn-sm btn-ghost" title="Generate visual sitemap from visible nodes">Sitemap</button>
+            <button id="btn-nav-sitemap" class="btn btn-sm btn-ghost" title="Generate the Visual Sitemap diagram from visible nodes">Visual Sitemap</button>
             <span style="flex:1"></span>
             <button id="btn-nav-editor-close" class="btn btn-sm btn-ghost">Back to Audit</button>
           </div>
@@ -533,7 +534,7 @@
           <button id="btn-menu-add" class="btn btn-sm btn-ghost">+ New Menu</button>
           <button id="btn-menu-seed" class="btn btn-sm btn-ghost" title="Create a menu from the content tree's in-menu nodes">Seed from content tree</button>
           <button id="btn-menu-export" class="btn btn-sm btn-ghost" title="Export menus as a neutral, CMS-agnostic structure (Excel or JSON)">Export…</button>
-          <button id="btn-menu-sitemap" class="btn btn-sm btn-ghost" title="Visualize each menu as a tree diagram">Sitemap</button>
+          <button id="btn-menu-sitemap" class="btn btn-sm btn-ghost" title="See each menu as a tree diagram — a map of the structure, not the menu as rendered on the site">Menu Diagram</button>
           <button id="btn-menu-report" class="btn btn-sm btn-ghost" title="Tight hand-off report of the menus (PDF / HTML)">Report</button>
           <button id="btn-menu-check" class="btn btn-sm btn-ghost hidden" title="Menu items pointing at deleted pages">⚠ broken refs</button>
           <span style="flex:1"></span>
@@ -657,6 +658,17 @@
       <button id="btn-settings-close" class="modal-close" title="Close">×</button>
     </div>
     <div id="settings-body">
+      <div class="setting-group">
+        <label class="setting-label">Appearance</label>
+        <div class="setting-row-inline">
+          <div id="theme-seg" class="theme-seg" role="group" aria-label="Appearance">
+            <button type="button" data-theme-pref="system">System</button>
+            <button type="button" data-theme-pref="light">Light</button>
+            <button type="button" data-theme-pref="dark">Dark</button>
+          </div>
+        </div>
+        <span class="setting-hint">The embedded web browser always shows pages as designed, regardless of this setting.</span>
+      </div>
       <label class="setting-row">
         <input type="checkbox" id="pref-auto-advance">
         <span>Auto-advance to next row after assigning KKE status</span>
@@ -757,11 +769,11 @@
           </div>
           <div class="setting-divider"></div>
           <div class="setting-group">
-            <label class="setting-label">Site domain <span class="setting-hint">(target domain for redirects and nav paths)</span></label>
+            <label class="setting-label">Site domain <span class="setting-hint">(target domain for redirects and sitemap paths)</span></label>
             <input type="text" id="ps-site-domain" class="setting-input" placeholder="e.g. https://example.com">
           </div>
           <div class="setting-group">
-            <label class="setting-label">Default redirect destination <span class="setting-hint">(fallback when no nav node assigned)</span></label>
+            <label class="setting-label">Default redirect destination <span class="setting-hint">(fallback when no sitemap node assigned)</span></label>
             <input type="text" id="ps-default-redirect" class="setting-input" placeholder="e.g. /home or https://example.com/">
           </div>
           <div class="setting-divider"></div>
@@ -840,7 +852,7 @@
         <!-- Migration tab — Page Statuses + Assignees libraries -->
         <div class="ps-tab-content hidden" data-tab="migration">
           <p style="color:var(--text-muted);font-size:12px;margin:0 0 14px;">
-            Manages controlled vocabularies used on nav nodes during the build phase. Both can also be added inline from the node editor while you're working.
+            Manages controlled vocabularies used on sitemap nodes during the build phase. Both can also be added inline from the node editor while you're working.
           </p>
 
           <div class="ps-section">
@@ -904,7 +916,7 @@
   <!-- ── Nav assignment popover ──────────────────────────────────────────────── -->
   <div id="nav-popover" class="hidden">
     <div id="nav-popover-header">
-      <span class="popover-title">Assign Navigation</span>
+      <span class="popover-title">Sitemap Placement</span>
       <button id="btn-nav-close" class="modal-close" title="Close">×</button>
     </div>
     <div id="nav-popover-body">
@@ -949,7 +961,7 @@
       <button id="btn-nav-add-child" class="btn btn-sm btn-ghost hidden" title="Add a child node under the selected item">+ Child</button>
       <button id="btn-nav-assign" class="btn btn-sm btn-primary" disabled>Assign</button>
       <button id="btn-nav-clear" class="btn btn-sm btn-ghost hidden">Remove</button>
-      <button id="btn-nav-load" class="btn btn-sm btn-ghost" title="Load nav structure from another file">Load File…</button>
+      <button id="btn-nav-load" class="btn btn-sm btn-ghost" title="Load sitemap from another file">Load File…</button>
     </div>
   </div>
 
@@ -979,7 +991,7 @@
   <div id="navtree-overlay" class="hidden"></div>
   <div id="navtree-modal" class="hidden">
     <div id="navtree-header">
-      <span class="modal-title">Navigation Tree</span>
+      <span class="modal-title">Sitemap</span>
       <button id="btn-navtree-close" class="modal-close" title="Close">×</button>
     </div>
     <div id="navtree-body"></div>
