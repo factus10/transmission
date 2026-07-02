@@ -1124,6 +1124,11 @@ function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, she
   // Phase 2, Chunk β: offer to seed PatternLibrary if empty (only if nav tree exists)
   maybeOfferPatternLibrarySeed();
 
+  // Backfill the derived Page_Breadcrumb on every placed row (idempotent). Left
+  // un-dirtied on open — it's derived, so it's recomputed on every relevant edit
+  // and travels out with the next real save.
+  recomputeAllPageBreadcrumbs();
+
   // Triage Non-200 Pages: toast if there are unhandled non-200 pages
   maybeOfferNon200Triage();
 
@@ -2159,7 +2164,7 @@ function updateNoSelectionState() {
 }
 
 function clearNavAssignment(row, origIndex) {
-  ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'].forEach(c => {
+  ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID', 'Page_Breadcrumb'].forEach(c => {
     const old = row[c];
     if (old) logChange(origIndex, c, old, '');
     row[c] = '';
@@ -6158,6 +6163,10 @@ function setupSettings() {
     if (val) state.projectSettings.breadcrumbHomeLabel = val;
     else delete state.projectSettings.breadcrumbHomeLabel;
     setDirty(true);
+    // Home prefix feeds every page breadcrumb → refresh the derived row column.
+    recomputeAllPageBreadcrumbs();
+    if (state.selectedIndex !== null) renderMetaFields(state.editedRows[state.selectedIndex], state.selectedIndex);
+    if (_tableViewOpen) renderTableView();
     if (_navEditorOpen) renderNavEditor();
   });
   const _bcMax = $('ps-breadcrumb-maxdepth');
@@ -9827,6 +9836,7 @@ function createFirstNavNodeFromPage() {
   row['Nav Destination'] = node.breadcrumb;
   row['Nav_SortID']      = node.sortID;
   row['Computed Path']   = node.computedPath || '';
+  row['Page_Breadcrumb'] = pageBreadcrumbOf(node);
   resyncConsolidateInto(oldEffUrl, effectiveConsolidateUrl(row));
 
   setDirty(true);
@@ -10000,6 +10010,7 @@ function assignNav() {
     row['Nav Destination'] = childNode.breadcrumb;
     row['Nav_SortID']      = childNode.sortID;
     row['Computed Path']   = childNode.computedPath;
+    row['Page_Breadcrumb'] = pageBreadcrumbOf(childNode);
     // Update any Consolidate_Into values that referenced this page
     resyncConsolidateInto(oldEffUrl, effectiveConsolidateUrl(row));
 
@@ -10017,6 +10028,7 @@ function assignNav() {
     row['Nav Destination'] = node.breadcrumb;
     row['Nav_SortID']      = node.sortID;
     row['Computed Path']   = node.computedPath || '';
+    row['Page_Breadcrumb'] = pageBreadcrumbOf(node);
     // Update any Consolidate_Into values that referenced this page
     resyncConsolidateInto(oldEffUrl, effectiveConsolidateUrl(row));
 
@@ -10144,6 +10156,7 @@ function clearNav() {
   row['Nav Destination'] = '';
   row['Computed Path']   = '';
   row['Nav_SortID']      = '';
+  row['Page_Breadcrumb'] = '';
 
   setDirty(true);
   closeNavPopover();
@@ -13087,6 +13100,32 @@ function hasBreadcrumbOverride(node) {
   return bp === BREADCRUMB_ROOT || (!!bp && bp !== '');
 }
 
+/** The on-page breadcrumb string for an audit row, derived from its assigned
+ *  sitemap node (honors breadcrumb overrides + Home prefix). '' when unplaced or
+ *  the assignment dangles. This is the *page* breadcrumb — distinct from the
+ *  row's `Nav Destination`, which is the physical IA label chain. */
+function computeRowPageBreadcrumb(row) {
+  const navID = row['NavID'] || '';
+  if (!navID) return '';
+  const node = state.navNodes.find(n => n.id === navID);
+  return node ? pageBreadcrumbOf(node) : '';
+}
+
+/** Recompute `Page_Breadcrumb` for every placed row. Covers breadcrumb-axis
+ *  edits that don't run through cascadeNavChangesToRows() — breadcrumb-parent
+ *  overrides, the Home label, the depth cap — and backfills on file open.
+ *  Returns the number of rows whose value actually changed. */
+function recomputeAllPageBreadcrumbs() {
+  if (!Array.isArray(state.editedRows)) return 0;
+  if (!state.headers.includes('Page_Breadcrumb')) state.headers.push('Page_Breadcrumb');
+  let changed = 0;
+  state.editedRows.forEach(row => {
+    const next = computeRowPageBreadcrumb(row);
+    if ((row['Page_Breadcrumb'] || '') !== next) { row['Page_Breadcrumb'] = next; changed++; }
+  });
+  return changed;
+}
+
 function recalcDerivedFields(node) {
   // Rebuild breadcrumb: walk up parents. The IA stays label-based and is NOT
   // affected by URL overrides — overrides change only the URL, not the tree.
@@ -13429,6 +13468,7 @@ function cascadeNavChangesToRows(oldPaths) {
 
     row['Nav Destination'] = node.breadcrumb || node.label;
     row['Nav_SortID'] = node.sortID || '';
+    row['Page_Breadcrumb'] = pageBreadcrumbOf(node);
 
     // Preserve page-specific slug suffix
     const storedPath = row['Computed Path'] || '';
@@ -14576,6 +14616,11 @@ function openNavNodeEditor(node) {
     if (newBAssignee !== (node.buildAssignee || '')) { node.buildAssignee  = newBAssignee; state.navTreeDirty = true; setDirty(true); }
     if (newWAssignee !== (node.writeAssignee || '')) { node.writeAssignee  = newWAssignee; state.navTreeDirty = true; setDirty(true); }
     if (newMAssignee !== (node.migrateAssignee || '')) { node.migrateAssignee = newMAssignee; state.navTreeDirty = true; setDirty(true); }
+
+    // Breadcrumb-parent / label edits change the on-page breadcrumb for this node
+    // and its descendants; the bcParent axis doesn't cascade, so refresh the
+    // derived Page_Breadcrumb on every placed row.
+    recomputeAllPageBreadcrumbs();
   }
 
   // Expose for the prev/next navTo handler defined above.
@@ -14647,6 +14692,7 @@ function deleteNavNodeFromEditor(node) {
       row['Nav Destination'] = '';
       row['Computed Path'] = '';
       row['Nav_SortID'] = '';
+      row['Page_Breadcrumb'] = '';
     }
   });
 
@@ -14965,11 +15011,13 @@ function executeDeleteNavNode(node, mode, assignAction, reassignTarget) {
       row['Nav Destination'] = reassignTarget.breadcrumb || reassignTarget.label;
       row['Computed Path']   = reassignTarget.computedPath || '';
       row['Nav_SortID']      = reassignTarget.sortID || '';
+      row['Page_Breadcrumb'] = pageBreadcrumbOf(reassignTarget);
     } else {
       row['NavID'] = '';
       row['Nav Destination'] = '';
       row['Computed Path'] = '';
       row['Nav_SortID'] = '';
+      row['Page_Breadcrumb'] = '';
     }
     if (oldNavId !== row['NavID']) {
       logChange(origIdx, 'NavID', oldNavId, row['NavID']);
