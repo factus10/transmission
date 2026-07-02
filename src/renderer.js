@@ -6127,6 +6127,12 @@ function setupSettings() {
     // Re-evaluate redirects if the editor is open
     if (_redirectEditorOpen) onSiteDomainChange();
   });
+  if ($('ps-sitemap-show-root')) $('ps-sitemap-show-root').addEventListener('change', () => {
+    // Default is "show"; only store the setting when turned off (keeps files clean).
+    if ($('ps-sitemap-show-root').checked) delete state.projectSettings.sitemapShowSiteRoot;
+    else state.projectSettings.sitemapShowSiteRoot = false;
+    setDirty(true);
+  });
   let _defaultRedirectDebounce;
   $('ps-default-redirect').addEventListener('input', () => {
     clearTimeout(_defaultRedirectDebounce);
@@ -6525,6 +6531,7 @@ function toggleProjectSettingsPopover() {
   $('ps-default-redirect').value = ps.defaultRedirectUrl || '';
   if ($('ps-breadcrumb-home')) $('ps-breadcrumb-home').value = ps.breadcrumbHomeLabel || '';
   if ($('ps-breadcrumb-maxdepth')) $('ps-breadcrumb-maxdepth').value = ps.breadcrumbMaxDepth || '';
+  if ($('ps-sitemap-show-root')) $('ps-sitemap-show-root').checked = ps.sitemapShowSiteRoot !== false;
   renderBrandPalette();
   // KKE States tab
   renderCustomKkeList();
@@ -12415,14 +12422,21 @@ async function generateNavSitemap() {
   }
 
   const ps = state.projectSettings || {};
-  // Single synthetic site root; the nav top-level nodes become its sections.
   const sections = state.navTree.map(sec => navToSitemap(sec, sec.label || '(section)'));
-  const roots = [{
-    id: '__site__',
-    label: ps.siteDomain || ps.clientName || ps.projectName || 'Home',
-    root: true,
-    children: sections,
-  }];
+  // By default, wrap the tree in one synthetic "site" root (labeled from the
+  // domain / client / project) so it reads as a single anchored tree. When
+  // `sitemapShowSiteRoot` is false, the sitemap's own top-level node(s) become
+  // the root(s) instead — no extra layer above e.g. a "Home" node. The engine
+  // lays out N stacked roots, so multiple top-levels each become a root box.
+  const showSiteRoot = ps.sitemapShowSiteRoot !== false;
+  const roots = showSiteRoot
+    ? [{
+        id: '__site__',
+        label: ps.siteDomain || ps.clientName || ps.projectName || 'Home',
+        root: true,
+        children: sections,
+      }]
+    : sections.map(s => ({ ...s, root: true }));
 
   const palette = (Array.isArray(ps.brandPalette) && ps.brandPalette.length) ? ps.brandPalette : SITEMAP_DEFAULT_PALETTE;
   const sectionLabels = [...new Set(state.navTree.map(s => s.label || '(section)'))];
