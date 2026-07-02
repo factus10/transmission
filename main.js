@@ -47,6 +47,8 @@ const AUDIT_COLUMNS = ['KKE_Recommendation', 'Tags', 'Notes', '_Flagged', '_Asse
                        'Target_Content_Type',
                        // Design pattern inventory
                        'Design_Patterns',
+                       // Derived: the page's on-page breadcrumb (from its sitemap node's breadcrumb axis)
+                       'Page_Breadcrumb',
                        // Internal: stable identity (master page's current Address) backing Consolidate_Into
                        '_ConsolidateTargetId'];
 const NAV_COLUMNS   = ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'];
@@ -117,6 +119,8 @@ function injectAndOrderAuditColumns(headers, rows, columnMap) {
                      'Target_Content_Type',
                      // Design pattern inventory
                      'Design_Patterns',
+                     // Derived: the page's on-page breadcrumb (from its sitemap node's breadcrumb axis)
+                     'Page_Breadcrumb',
                      // Internal: stable identity (master page's current Address) backing Consolidate_Into
                      '_ConsolidateTargetId'];
   auditCols.forEach(col => {
