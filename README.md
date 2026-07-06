@@ -219,7 +219,7 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - **Batch AI assessment** — assess all filtered rows via the Claude API
 
 ### Sitemap Assignment
-- Load a `NavStructure` sheet (or import from another file) to assign pages to the sitemap
+- Load a `Sitemap` sheet (or import from another file) to assign pages to the sitemap
 - Cascading dropdown selection with breadcrumb preview
 - Create child nodes on the fly
 - URL-based suggestions — the app tries to match pages to sitemap nodes based on URL hierarchy
@@ -237,13 +237,13 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - **Menu item toggle** — InMenu column to mark nodes as visible/hidden in navigation menus
 - **Duplicate slug detection** — slugs that conflict with siblings are highlighted in red
 - **Slug validation** — slugs are validated on assignment to prevent duplicates
-- **Duplicate NavID detection** — when 2+ sitemap nodes share the same `ID`, the toolbar shows a red ⚠ link with the count. Click → confirms → renumbers duplicates with new unique IDs (the first node in each group keeps the original). Pages assigned to the shared ID stay with the first node; the rest may need manual reassignment via the sitemap picker.
+- **Duplicate Sitemap_ID detection** — when 2+ sitemap nodes share the same `ID`, the toolbar shows a red ⚠ link with the count. Click → confirms → renumbers duplicates with new unique IDs (the first node in each group keeps the original). Pages assigned to the shared ID stay with the first node; the rest may need manual reassignment via the sitemap picker.
 - **Consolidation Candidates** — toolbar button opens a bulk-resolve modal listing every sitemap node with 2+ assigned pages. Pick a target with a radio button, Apply makes the target Evolve and the rest Consolidate pointing to the target. Filter bar lets you exclude rows by KKE state or Group (e.g. de-scope an entire "Post Launch" section in one click).
 - **Net new badge** — nodes that have child pages assigned but no page of their own show a yellow "NEW" badge in the Pages column, with a subtle yellow row tint. Reference (alias) nodes are excluded — they don't count toward NEW or empty stats since they don't own content. Stats bar shows the count.
 - **Empty branch indicator** — `○` shows for both empty leaves and parents whose entire subtree has no pages (no descendants with content either). Tooltip distinguishes the two cases. Helps spot redundant aspirational structure for cleanup.
-- **External URL** — assign an external URL to a sitemap node via the link button in the actions column. Nodes with a URL show a link icon in the Pages column and the URL in blue italic in the Computed Path column. Stored in a `URL` column in the NavStructure sheet.
-- **Phase property** — mark nodes as `Future` / `Stretch` / `Archived` for content the client wants but isn't building yet. Phased nodes get a colored dashed border, italicized label, and a small `FUTURE`/`STRETCH`/`ARCHIVED` pill in the Pages column. Toolbar adds a `Phase` filter (All / Current only / Non-current only) and a count to the stats line. Stored in a `Phase` column in NavStructure.
-- **Node notes** — every node has a markdown notes field accessible from the modal node editor. Notes surface as a hover tooltip on the node label and a small `·` indicator. Stored in a `Notes` column in NavStructure.
+- **External URL** — assign an external URL to a sitemap node via the link button in the actions column. Nodes with a URL show a link icon in the Pages column and the URL in blue italic in the Computed Path column. Stored in a `URL` column in the Sitemap sheet.
+- **Phase property** — mark nodes as `Future` / `Stretch` / `Archived` for content the client wants but isn't building yet. Phased nodes get a colored dashed border, italicized label, and a small `FUTURE`/`STRETCH`/`ARCHIVED` pill in the Pages column. Toolbar adds a `Phase` filter (All / Current only / Non-current only) and a count to the stats line. Stored in a `Phase` column in the Sitemap sheet.
+- **Node notes** — every node has a markdown notes field accessible from the modal node editor. Notes surface as a hover tooltip on the node label and a small `·` indicator. Stored in a `Notes` column in the Sitemap sheet.
 - **Modal node editor** — `✎` button on each row opens a full property editor: read-only context (number / ID / parent / breadcrumb / computed path / page count), editable Label / Slug / In Menu / External URL / Phase / Notes, live preview of derived breadcrumb and computed path as you type. Cmd/Ctrl+Enter saves; Esc cancels.
 - **Delete with reassign** — `✕` button always confirms. When pages are assigned, the dialog offers radio-button options: reassign to parent, reassign to another node (search picker), or clear assignments. Children are promoted to the parent unless you choose Delete-all.
 - **Depth filter** — dropdown in the toolbar to filter the tree to a specific depth level ("All", "Top level", "Level 1", etc.). "Set Menu" and "Clear Menu" buttons apply to all visible nodes at the current depth.
@@ -255,7 +255,7 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - Page counts per node with gap detection (empty nodes highlighted)
 - **URL override** — a node can publish at an address independent of its place in the menu (`Url_Path`); the override re-roots its sub-pages too. Containment and URL are separate axes.
 - **Breadcrumb parent** — set an arbitrary on-page breadcrumb top, independent of both the tree and the URL: mark a node a *breadcrumb root* or re-root it onto any other node (`Breadcrumb_Parent`); sub-pages inherit. Optional project "Home" prefix and advisory max-depth flag live in Project Settings → Identity. A deep `College of Business > Departments > Accounting` page can read simply **Home > Accounting**. The rendered page breadcrumb is exported as a column in the Migration Tracker Nav Plan, the Sitemap column-picker export, and the menu export.
-- Full NavStructure sheet rewrite on save (preserves all extension columns including Phase, Notes, RefNodeID, InMenu, URL, Url_Path, Breadcrumb_Parent)
+- Full Sitemap sheet rewrite on save (preserves all extension columns including Phase, Notes, RefNodeID, InMenu, URL, Url_Path, Breadcrumb_Parent)
 
 ### Menus
 - Open the **Menus** tab (or `Cmd+Shift+M`) — a full-width view for building **independent navigation menus** that *reference* content-tree pages, decoupled from where pages live in the hierarchy
@@ -351,12 +351,13 @@ A system for cataloging the UI design patterns present on each page, helping ens
 ### Consolidate (Content Merging)
 - **Consolidate** is a fifth KKE state alongside Keep / Kill / Evolve / Exclude — for pages whose content should be merged into another page in the inventory rather than killed outright
 - Why it exists: most audits include a lot of "near-duplicate" pages (multiple landing pages on the same topic, overlapping FAQs, blog posts that should be one comprehensive guide). Kill discards their value; Evolve leaves cannibalization in place; Consolidate is the merge
-- **Consolidate target picker** — virtual-scrolled, filterable, sortable list of every page in the inventory; pinned source URL + SME Notes hint at the top; current target shown in an indigo callout when reassigning
+- **Consolidate target picker** — virtual-scrolled, filterable, sortable list of every page in the inventory; pinned source URL + SME Notes hint at the top; current target shown in an indigo callout when reassigning, with a **"Go to page →"** link that jumps straight to the target row
+- **Duplicate-destination guard** — marking a page Keep/Evolve (or assigning its sitemap node) when another Keep/Evolve page already shares that destination triggers a **"Did you mean to Consolidate?"** prompt naming the other page, with a one-click **Consolidate into it**. Catches accidental duplicate placements as they happen, not just when the Consolidation Candidates workflow is later run
 - **`Consolidate_Into` column** — stores the destination using the target page's **Computed Path** (new site URL) when one is available, falling back to the inventory URL. The value updates automatically when the target page gains a sitemap assignment.
 - **Dead target warning** — an amber dot appears on the Consolidate button when the consolidation target has been set to Kill or Exclude (a misconfiguration that needs attention)
 - **"Consolidate → Kill/Exclude target" sidebar filter** — surfaces all pages whose consolidation target has been killed or excluded, so you can resolve the entire set at once
 - **Pre-save sweep** — before writing the file, any stale `Consolidate_Into` values (inventory URLs that now have a computed path) are resolved to the new computed URL automatically
-- **"Shared sitemap node (2+ pages)" sidebar filter** — surfaces all pages where the NavID is shared with one or more other pages, so you can find consolidation candidates in the sidebar
+- **"Shared sitemap node (2+ pages)" sidebar filter** — surfaces all pages where the Sitemap_ID is shared with one or more other pages, so you can find consolidation candidates in the sidebar
 - **Consolidation Candidates workflow** — Sitemap Editor toolbar button opens a bulk-resolve modal: every multi-page sitemap node listed with its pages, pick a target with a radio button, Apply sets the target to Evolve and the others to Consolidate pointing to the target. Skip defers groups; counter tracks progress. Filter bar above the list lets you exclude rows by KKE state (chip checkboxes for every value present in row data, including typos) or by Group (multi-select, useful for de-scoping a section like "Post Launch")
 - **"Consolidate (no target)" filter** — surfaces rows where KKE or Final_KKE is Consolidate but `Consolidate_Into` is empty (typically after an SME import where the target wasn't specified)
 - The picker shows the row's SME Notes as a yellow hint when present, since SMEs often write target URLs there
@@ -549,7 +550,7 @@ Column names are auto-detected from common variations. You can override the mapp
 
 | Sheet | Purpose |
 |-------|---------|
-| `NavStructure` | Sitemap nodes |
+| `Sitemap` | Sitemap nodes (legacy name: `NavStructure`, still auto-detected and upgraded on open) |
 | `KKE_Settings` | Project-level key/value store (includes `gaKkeConfig` as JSON) |
 | `KKE_ChangeLog` | Audit trail of KKE / SME / Final KKE changes |
 | `KKE_Glossary` | Tag & group descriptions (Type / Name / Notes, markdown) |
@@ -571,18 +572,21 @@ The app stores project-level settings in a `KKE_Settings` sheet (key/value pairs
 
 ### Navigation Columns
 
-When a NavStructure sheet is present (or loaded from another file):
+When a Sitemap sheet is present (or loaded from another file):
 
 **On data rows (the main data sheet):**
 
 | Column | Purpose |
 |--------|---------|
-| `NavID` | Unique sitemap node identifier |
-| `Nav Destination` | Breadcrumb path |
+| `Sitemap_ID` | Unique sitemap node identifier (legacy name: `NavID`) |
+| `Sitemap_Destination` | Breadcrumb path (legacy name: `Nav Destination`) |
 | `Computed Path` | URL path segment |
-| `Nav_SortID` | Sortable position value |
+| `Sitemap_SortID` | Sortable position value (legacy name: `Nav_SortID`) |
 
-**On NavStructure sheet (per-node columns):**
+Older files carrying the legacy column names are upgraded automatically the
+first time they're opened — see `renameLegacyNavColumns()` in `main.js`.
+
+**On Sitemap sheet (per-node columns):**
 
 | Column | Purpose |
 |--------|---------|
@@ -593,7 +597,7 @@ When a NavStructure sheet is present (or loaded from another file):
 | `ParentNumber` | Parent node's Number (for tree assembly) |
 | `Computed Path` | Full slug path from root |
 | `Breadcrumb` | Display path joined with ` > ` |
-| `ID` | Stable unique ID — what data rows' NavID points at |
+| `ID` | Stable unique ID — what data rows' Sitemap_ID points at |
 | `RefNodeID` | If set, this node is an alias to another node |
 | `InMenu` | `Y` if the node should appear in navigation menus |
 | `URL` | External URL — node renders as a link rather than a page |

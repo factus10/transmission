@@ -93,7 +93,7 @@ These are the fields you'll fill in as you work. `KKE_Recommendation` comes firs
 
 These behind-the-scenes sheets hold project state and travel with the file:
 
-- **NavStructure** — your future-state sitemap
+- **Sitemap** — your future-state sitemap
 - **KKE_Settings** — project settings, saved filters, and computed-column configuration
 - **KKE_ChangeLog** — an automatic history of every decision change
 - **KKE_Glossary** — your definitions for tags and groups
@@ -419,7 +419,7 @@ When you just want to *find* a page rather than narrow the list, press **Cmd+F**
 
 - [ ] Your search **scope** matches what you're hunting for
 - [ ] You're multi-checking the KKE filter when you mean "either/or"
-- [ ] Field filters are layered for precise slices (e.g. `NavID is blank`)
+- [ ] Field filters are layered for precise slices (e.g. `Sitemap_ID is blank`)
 - [ ] Slices you'll reuse are saved as named filters
 - [ ] You reach for **Cmd+F** for one-off lookups
 
@@ -733,7 +733,7 @@ When you consolidate page A into page B, A's content merges **into** B. A points
 1. Select the source page and press **4** (or click **Consolidate**). The **Consolidate into…** picker opens — a searchable, sortable list of your whole inventory, with the source URL and any SME notes pinned at the top.
 2. Click a page to select it, then double-click it (or use **Set as target**) to confirm.
 
-Transmission sets `Consolidate_Into`, switches the page's call to Consolidate, and clears its sitemap assignment. To change the target later, click Consolidate again (the current target is highlighted); **Clear target** removes both the target and the call.
+Transmission sets `Consolidate_Into`, switches the page's call to Consolidate, and clears its sitemap assignment. To change the target later, click Consolidate again — the current target is highlighted, with a **Go to page →** link that jumps straight to it if you want to check what you're merging into; **Clear target** removes both the target and the call.
 
 > **Tip:** mark the **target** page **Evolve** and add a note about what's merging in. Don't leave it Unreviewed, don't mark it Keep (receiving content *is* a change), and never mark it Kill (content can't merge into a dead page).
 
@@ -748,6 +748,10 @@ When several pages already share a sitemap node, they're often consolidation can
 In one click, the target becomes Evolve (preserving a deliberate Keep/Evolve), the rest become Consolidate pointing at it, and their nav and explicit redirects are cleared. **Skip** defers a group that legitimately shares a node. A counter tracks *"X to resolve · Y skipped · Z hidden · N total,"* and a filter bar lets you scope by **Include KKE** or **Exclude groups** so you can set a whole section aside without touching individual calls.
 
 > **Why this beats one-at-a-time:** it's roughly one Apply per group instead of four clicks per page, and it enforces the right shape every time — target = Evolve, the rest = Consolidate pointing at it.
+
+### Catch duplicates as they happen
+
+You don't have to remember to run Consolidation Candidates to catch a duplicate — Transmission also flags it the moment it happens. If you mark a page **Keep** or **Evolve** (or assign it to a sitemap node) and another **Keep/Evolve** page already sits at that same destination, a **"Did you mean to Consolidate?"** prompt appears naming the other page, with a one-click **Consolidate into it**. Only one page can occupy a given destination, so a second Keep/Evolve landing there is almost always a mistake rather than a deliberate choice — this catches it right away instead of at the sitemap-node level days later.
 
 ### Catch broken targets
 
@@ -768,7 +772,7 @@ Two sidebar filters keep consolidations honest — clear both before you ship:
 
 **How the redirect is chased.** On save, a Consolidate page's destination is computed in order: the target's *future* computed path if it has a sitemap assignment, then — if the target is itself Consolidate — the final destination down the chain (cycle-safe), then the target's own explicit redirect, and finally the target's current URL. It updates automatically whenever the target's sitemap assignment changes, so you never maintain these by hand.
 
-**Spotting them at a glance.** A Consolidate row takes on an indigo tint and a small `C` pill once a target is set, and the Consolidate button shows a dot. The **Shared sitemap node (2+ pages)** filter is a lighter-touch alternative to the Candidates workflow — it simply surfaces every page whose `NavID` is shared, for cases you'd rather review one by one.
+**Spotting them at a glance.** A Consolidate row takes on an indigo tint and a small `C` pill once a target is set, and the Consolidate button shows a dot. The **Shared sitemap node (2+ pages)** filter is a lighter-touch alternative to the Candidates workflow — it simply surfaces every page whose `Sitemap_ID` is shared, for cases you'd rather review one by one.
 
 **When an SME asks for a Consolidate.** SME imports may carry `Change: Consolidate` (sometimes with a target hinted in their notes). Filter to **Consolidate (no target)**, click each row's Consolidate button — the picker shows the SME's notes in a yellow callout — and pick the target. The picker won't overwrite the SME's imposed Final KKE; it just fills in the destination.
 
@@ -922,7 +926,7 @@ Open the tree with **Cmd+Shift+T** (or the **Sitemap** tab). The **stats line** 
 
 Your goal is to drive **need placement** in the stats line down to **0**.
 
-1. In the audit view, set the **KKE filter** to **Keep + Evolve**, then add a field filter for `NavID is blank` and **Apply** — that's exactly the pages still needing a home.
+1. In the audit view, set the **KKE filter** to **Keep + Evolve**, then add a field filter for `Sitemap_ID is blank` and **Apply** — that's exactly the pages still needing a home.
 2. For each one, click **Sitemap** in the Decide cluster, drill to the right node, and click **Assign**. Use **+ Child** in the picker to create a new node inline if no good home exists yet.
 
 > **Tip:** the stats line's **"N need placement"** is a clickable link — it jumps you straight to those rows. Consolidate pages don't need placement; they fold into their target.
@@ -956,7 +960,7 @@ Two badges tell you where the tree is incomplete:
 - **NEW** (yellow) — a net-new node: it has descendant pages but no source page of its own. Expected for brand-new sections; a flag if you didn't mean it.
 - **Empty leaf** (red) — a node with no pages *and* no redirects pointing through it. Assign content, mark it net-new, phase it, or delete it before hand-off.
 
-If any `NavID` is assigned to two nodes, a **⚠ N duplicate IDs** link appears in the stats line — click it to auto-renumber the duplicates.
+If any `Sitemap_ID` is assigned to two nodes, a **⚠ N duplicate IDs** link appears in the stats line — click it to auto-renumber the duplicates.
 
 ### Track coverage from the stats line
 
@@ -987,14 +991,14 @@ To resolve pages that landed on the same node, see the Consolidation Candidates 
 
 - [ ] **need placement = 0** — every Keep/Evolve page sits on a node
 - [ ] No **empty** leaf nodes left unexplained
-- [ ] No **duplicate NavID** warning, and no red duplicate-slug highlights
+- [ ] No **duplicate Sitemap_ID** warning, and no red duplicate-slug highlights
 - [ ] Out-of-scope work is **phased**, and net-new sections are intentional
 
 ### Going deeper
 
 #### Assigning a page from the audit bar
 
-Select a row and click **Sitemap** to open the picker. Cascading dropdowns drill to the node — the slug is auto-detected from the URL (and editable), and the parent is auto-suggested from the URL's hierarchy. **Assign** populates `NavID`, `Nav Destination` (the breadcrumb), `Computed Path`, and `Nav_SortID`. **+ Child** creates a sub-node with its number, ID, sort order, breadcrumb, and path all calculated for you, and **Remove** clears the assignment. If the sitemap has no nodes yet, the **Sitemap** button instead offers a short inline form to create the first root node and assign the page in one step.
+Select a row and click **Sitemap** to open the picker. Cascading dropdowns drill to the node — the slug is auto-detected from the URL (and editable), and the parent is auto-suggested from the URL's hierarchy. **Assign** populates `Sitemap_ID`, `Sitemap_Destination` (the breadcrumb), `Computed Path`, and `Sitemap_SortID`. **+ Child** creates a sub-node with its number, ID, sort order, breadcrumb, and path all calculated for you, and **Remove** clears the assignment. If the sitemap has no nodes yet, the **Sitemap** button instead offers a short inline form to create the first root node and assign the page in one step.
 
 #### The node editor
 
@@ -1020,9 +1024,9 @@ A link icon means an external URL, an arrow means a reference, **NEW** means net
 
 The reference picker is a wide (880px) dialog, sorted hierarchically and indented by depth with top-level nodes in bold; a numeric search matches from the start (`2.2` finds 2.2.1) while a text search matches anywhere. The **Visual Sitemap** (see [See it and report on it](#see-it-and-report-on-it) above) draws the IA as an interactive box-tree with smart horizontal/vertical layout, an editable color-rule engine, collapse/expand, and interactive-HTML + PDF export.
 
-#### The NavStructure sheet
+#### The Sitemap sheet
 
-Behind the editor, the `NavStructure` sheet holds: **Number** (the dotted hierarchy like `1.1.2`), **Label**, **ID**, **Path** (slug), **SortID**, **ParentNumber**, **Computed Path**, and **Breadcrumb** — plus extension columns for the external `URL`, the `Url_Path` URL override, the `Breadcrumb_Parent` breadcrumb re-root, the `Collapse` sitemap flag, `Phase`, `Notes`, `Node_Type`, `InMenu` (legacy), the reference, and the build-metadata fields (Build Pattern, Page Status, the three assignees, Build Guidance, Writer Brief). The whole sheet is rewritten on save.
+Behind the editor, the `Sitemap` sheet (legacy name: `NavStructure` — older files are upgraded automatically on open) holds: **Number** (the dotted hierarchy like `1.1.2`), **Label**, **ID**, **Path** (slug), **SortID**, **ParentNumber**, **Computed Path**, and **Breadcrumb** — plus extension columns for the external `URL`, the `Url_Path` URL override, the `Breadcrumb_Parent` breadcrumb re-root, the `Collapse` sitemap flag, `Phase`, `Notes`, `Node_Type`, `InMenu` (legacy), the reference, and the build-metadata fields (Build Pattern, Page Status, the three assignees, Build Guidance, Writer Brief). The whole sheet is rewritten on save.
 
 ### Menus
 
@@ -1305,7 +1309,7 @@ The **Pre-Handoff Check** rolls every validation Transmission knows how to run i
 5. No duplicate nav IDs *(nav-tree files only)*.
 6. No empty nav leaves *(nav-tree files only)*.
 
-Each failing check lists a sample of the pages plus a one-line fix (which filter to use, which editor to open); the nav checks are skipped automatically if the file has no NavStructure. Work top-down — clear unreviewed pages first (they cascade into the other checks), then consolidations, then redirects, then nav — re-running after each batch. The check is itself a report, so you can export it to **PDF / HTML** as evidence that the audit passed its gate.
+Each failing check lists a sample of the pages plus a one-line fix (which filter to use, which editor to open); the nav checks are skipped automatically if the file has no Sitemap sheet. Work top-down — clear unreviewed pages first (they cascade into the other checks), then consolidations, then redirects, then nav — re-running after each batch. The check is itself a report, so you can export it to **PDF / HTML** as evidence that the audit passed its gate.
 
 ### The change log
 
@@ -1483,7 +1487,7 @@ Hidden from the data-sheet picker; they carry project state and travel with the 
 
 | Sheet | Purpose |
 |-------|---------|
-| **NavStructure** | The sitemap (see [§13](#13-sitemap--ia) for the column format) |
+| **Sitemap** | The sitemap (see [§13](#13-sitemap--ia) for the column format) |
 | **KKE_Settings** | Project settings, saved filters, computed-column config (JSON) |
 | **KKE_ChangeLog** | Decision-change audit trail |
 | **KKE_Glossary** | Tag/group definitions |

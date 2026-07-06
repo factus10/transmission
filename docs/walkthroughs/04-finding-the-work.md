@@ -45,7 +45,7 @@ For anything the built-in filters don't cover, **+ Field filter**:
 1. Pick a **field**, an **operator** — `is blank`, `is not blank`, `contains`, `does not contain`, `equals`, `not equals`, `starts with`, `ends with` — and a **value**.
 2. **Apply**. Active filters show as removable **chips**; add as many as you need (they AND together).
 
-> Common move: KKE = **Keep + Evolve**, then **+ Field filter** `NavID is blank` to find pages that still need a nav home. The **Unclassified** button is a one-click shortcut for `Content Nature is blank`.
+> Common move: KKE = **Keep + Evolve**, then **+ Field filter** `Sitemap_ID is blank` to find pages that still need a nav home. The **Unclassified** button is a one-click shortcut for `Content Nature is blank`.
 
 ---
 
@@ -73,7 +73,7 @@ This is distinct from the sidebar filter: it finds and navigates rather than red
 
 - [ ] Search **scope** set to match what you're looking for (URL vs Title vs All)
 - [ ] KKE filter using **multi-check** where you mean "either" (Keep + Evolve)
-- [ ] Field filters layered for precise slices (e.g. `NavID is blank`)
+- [ ] Field filters layered for precise slices (e.g. `Sitemap_ID is blank`)
 - [ ] Recurring slices saved as **named filters**
 - [ ] **Cmd+F** for one-off lookups, sidebar filters for work sets
 

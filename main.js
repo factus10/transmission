@@ -51,7 +51,7 @@ const AUDIT_COLUMNS = ['KKE_Recommendation', 'Tags', 'Notes', '_Flagged', '_Asse
                        'Page_Breadcrumb',
                        // Internal: stable identity (master page's current Address) backing Consolidate_Into
                        '_ConsolidateTargetId'];
-const NAV_COLUMNS   = ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'];
+const NAV_COLUMNS   = ['Sitemap_ID', 'Sitemap_Destination', 'Computed Path', 'Sitemap_SortID'];
 
 // Candidate names for auto-detecting audit columns (first match wins, case-insensitive)
 const KKE_CANDIDATES  = ['KKE_Recommendation', 'KKE Rec', 'KKE Recommendation', 'KKE', 'Recommendation'];
@@ -146,6 +146,31 @@ function injectAndOrderAuditColumns(headers, rows, columnMap) {
   const postUrlCols = [columnMap.tags, columnMap.notes, columnMap.group, columnMap.primaryTag];
   postUrlCols.forEach((col, i) => {
     moveCol(col, afterUrl + i);
+  });
+}
+
+// Historical column names — renamed for client-facing clarity (a raw "NavID"/
+// "Nav Destination" column read as internal jargon when clients opened an
+// exported spreadsheet). Old files carry the old names forever unless upgraded,
+// so every file open transparently renames them in place: the header text and
+// every row's key move from old → new, with no data loss. Shared by the xlsx
+// reader and the .transmission project reader (same call-site pattern as
+// `injectAndOrderAuditColumns` above). Once renamed, the very next save writes
+// the new name back to disk — no separate DB/xlsx schema change needed.
+const LEGACY_NAV_COLUMN_RENAMES = [
+  ['NavID', 'Sitemap_ID'],
+  ['Nav Destination', 'Sitemap_Destination'],
+  ['Nav_SortID', 'Sitemap_SortID'],
+];
+
+function renameLegacyNavColumns(headers, rows) {
+  LEGACY_NAV_COLUMN_RENAMES.forEach(([oldName, newName]) => {
+    if (!headers.includes(oldName) || headers.includes(newName)) return;
+    headers[headers.indexOf(oldName)] = newName;
+    rows.forEach(r => {
+      r[newName] = r[oldName];
+      delete r[oldName];
+    });
   });
 }
 
@@ -494,8 +519,10 @@ function readWorkbook(filePath, targetSheet) {
     const workbook  = XLSX.readFile(filePath, { type: 'file', cellDates: true });
     const allSheetNames = workbook.SheetNames;
 
-    // Structural sheets (not selectable as data sheets)
-    const structuralNames = new Set(['navstructure', 'kke_settings', 'kke_changelog', 'kke_glossary', 'contenttyperegistry', 'patternlibrary', 'designpatternlibrary']);
+    // Structural sheets (not selectable as data sheets). 'navstructure' is the
+    // legacy name for the sitemap-tree sheet (now written as 'Sitemap') — kept
+    // here so older files still hide it from the data-sheet picker pre-migration.
+    const structuralNames = new Set(['navstructure', 'sitemap', 'kke_settings', 'kke_changelog', 'kke_glossary', 'contenttyperegistry', 'patternlibrary', 'designpatternlibrary']);
     const dataSheets = allSheetNames.filter(s => !structuralNames.has(s.toLowerCase()));
 
     // Pick which sheet to load
@@ -590,19 +617,23 @@ function readWorkbook(filePath, targetSheet) {
       return obj;
     });
 
+    renameLegacyNavColumns(headers, rows);
     injectAndOrderAuditColumns(headers, rows, columnMap);
 
-    // Check for NavStructure sheet
+    // Check for the sitemap-tree sheet — 'Sitemap' going forward, 'NavStructure'
+    // in older files (matched case-insensitively either way).
     let navTree = null;
-    const navSheetName = allSheetNames.find(s => s.toLowerCase() === 'navstructure');
+    const navSheetName = allSheetNames.find(s => ['navstructure', 'sitemap'].includes(s.toLowerCase()));
     if (navSheetName) {
       navTree = parseNavSheet(workbook.Sheets[navSheetName]);
       if (navTree) {
         NAV_COLUMNS.forEach(col => {
           if (!headers.includes(col)) headers.push(col);
         });
-        // Store nav sheet info for formula generation on save
-        navSheetInfo = { sheetName: navSheetName, columns: navTree.columns };
+        // Store nav sheet info for formula generation on save. Canonicalize to
+        // 'Sitemap' regardless of the on-disk name — writeWorkbook() physically
+        // renames the sheet the next time this file is saved.
+        navSheetInfo = { sheetName: 'Sitemap', columns: navTree.columns };
       }
     } else {
       navSheetInfo = null;
@@ -695,6 +726,7 @@ function readProject(filePath) {
     // audit columns added since the project was last saved.
     const columnMap = computeColumnMap(headers, filePath,
       (projectSettings.columnMap && typeof projectSettings.columnMap === 'object') ? projectSettings.columnMap : null);
+    renameLegacyNavColumns(headers, rows);
     injectAndOrderAuditColumns(headers, rows, columnMap);
     rows.forEach((r, i) => { r._rowIndex = i + 1; });
 
@@ -707,7 +739,7 @@ function readProject(filePath) {
         });
       }
     }
-    // No xlsx behind a project — exports build NavStructure from scratch.
+    // No xlsx behind a project — exports build the Sitemap sheet from scratch.
     navSheetInfo = null;
 
     // Default library keys, matching readWorkbook
@@ -1424,10 +1456,23 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
     }
     const sheetsWeEdit = new Set([targetSheet]);
 
-    // Full rewrite of NavStructure sheet (nav editor edits)
+    // One-time migration: rename a legacy 'NavStructure' sheet to 'Sitemap' in
+    // place (same client-facing rename as the data sheet's Sitemap_ID /
+    // Sitemap_Destination columns). Renaming the actual sheet object here —
+    // not just navSheetInfo — means the "rewrite existing sheet" branch below
+    // finds it under the new name and updates it in place, rather than leaving
+    // a stale duplicate 'NavStructure' sheet behind.
+    const legacyNavSheetName = workbook.SheetNames.find(s => s.toLowerCase() === 'navstructure');
+    if (legacyNavSheetName && legacyNavSheetName !== 'Sitemap' && !workbook.SheetNames.includes('Sitemap')) {
+      workbook.Sheets['Sitemap'] = workbook.Sheets[legacyNavSheetName];
+      delete workbook.Sheets[legacyNavSheetName];
+      workbook.SheetNames[workbook.SheetNames.indexOf(legacyNavSheetName)] = 'Sitemap';
+    }
+
+    // Full rewrite of Sitemap sheet (nav editor edits)
     if (allNavNodes && allNavNodes.length > 0) {
       if (navSheetInfo && workbook.Sheets[navSheetInfo.sheetName]) {
-        // Rewrite existing NavStructure sheet
+        // Rewrite existing Sitemap sheet
         const nsName = navSheetInfo.sheetName;
         sheetsWeEdit.add(nsName);
         const nsWs = workbook.Sheets[nsName];
@@ -1552,9 +1597,9 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
 
         workbook.Sheets[nsName] = XLSX.utils.aoa_to_sheet(rebuilt);
       } else {
-        // Create new NavStructure sheet — full column set, so projects (which
+        // Create new Sitemap sheet — full column set, so projects (which
         // always export from scratch) round-trip notes/phase/build metadata.
-        const nsName = 'NavStructure';
+        const nsName = 'Sitemap';
         const nsHeaders = ['ID', 'Number', 'ParentNumber', 'Label', 'Path', 'SortID', 'Computed Path', 'Breadcrumb',
                            'RefNodeID', 'InMenu', 'URL', 'Url_Path', 'Breadcrumb_Parent', 'Collapse', 'Notes', 'Phase', 'Node_Type', 'Nav_Layer',
                            'Build_Pattern', 'Build_Guidance', 'Writer_Brief', 'Page_Status',
@@ -1582,7 +1627,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
         };
       }
     }
-    // Append new nav nodes to NavStructure sheet (legacy: from nav popover child creation)
+    // Append new nav nodes to Sitemap sheet (legacy: from nav popover child creation)
     else if (newNavNodes && newNavNodes.length > 0 && navSheetInfo) {
       const nsName = navSheetInfo.sheetName;
       sheetsWeEdit.add(nsName);
@@ -1591,7 +1636,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
         const nsData = XLSX.utils.sheet_to_json(nsWs, { header: 1, defval: '' });
         const nsHeaders = nsData[0].map(String);
 
-        // Column indices in NavStructure
+        // Column indices in Sitemap
         const colIdx = {
           number:       nsHeaders.indexOf('Number'),
           label:        nsHeaders.indexOf('Label'),
@@ -3318,7 +3363,7 @@ ipcMain.handle('save-column-map', (event, { columnMap }) => {
   return { success: true };
 });
 
-// ─── Nav Structure IPC ───────────────────────────────────────────────────────
+// ─── Sitemap IPC ──────────────────────────────────────────────────────────────
 
 ipcMain.handle('load-nav-file', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -3332,9 +3377,9 @@ ipcMain.handle('load-nav-file', async () => {
   if (!result.canceled && result.filePaths.length > 0) {
     try {
       const wb = XLSX.readFile(result.filePaths[0], { type: 'file', cellDates: true });
-      const navSheetName = wb.SheetNames.find(s => s.toLowerCase() === 'navstructure');
+      const navSheetName = wb.SheetNames.find(s => ['navstructure', 'sitemap'].includes(s.toLowerCase()));
       if (!navSheetName) {
-        dialog.showErrorBox('No NavStructure Sheet', 'The selected file does not contain a sheet named "NavStructure".');
+        dialog.showErrorBox('No Sitemap Sheet', 'The selected file does not contain a sheet named "Sitemap".');
         return null;
       }
       return parseNavSheet(wb.Sheets[navSheetName]);

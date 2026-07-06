@@ -9,7 +9,7 @@ How to install the app, open your first crawl export, and understand what the fi
 ## 0. The mental model
 
 - The app is a **viewer and editor for your spreadsheet** — it doesn't own a database. Your `.xlsx` *is* the project.
-- On open, it **injects its audit columns** (KKE_Recommendation, Tags, Notes, …) if they aren't already there, and adds a handful of **structural sheets** (NavStructure, KKE_Settings, etc.) to hold project state.
+- On open, it **injects its audit columns** (KKE_Recommendation, Tags, Notes, …) if they aren't already there, and adds a handful of **structural sheets** (Sitemap, KKE_Settings, etc.) to hold project state.
 - Everything you do saves **back into that same file**. Hand the file to a colleague with the app and they see exactly your state — decisions, sitemap, settings, change log.
 - So: **one file = one project**, fully portable.
 
@@ -39,7 +39,7 @@ On open, the app ensures these exist (and adds them if missing):
 
 - **Audit columns** — KKE_Recommendation lands first; Tags, Notes, Group, Primary Tag sit right after the URL column; the rest (SME, migration, CMS, Design_Patterns…) are appended. See the *Audit Columns* reference.
 - **Structural sheets** (hidden from the data-sheet picker), each carrying part of the project:
-  - **NavStructure** — the future-state sitemap.
+  - **Sitemap** — the future-state sitemap.
   - **KKE_Settings** — project settings, saved filters, computed-column config.
   - **KKE_ChangeLog** — the audit trail of decision changes.
   - **KKE_Glossary**, **ContentTypeRegistry**, **PatternLibrary** (Target Spec Library), **DesignPatternLibrary** (Component Library).
