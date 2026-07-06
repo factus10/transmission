@@ -77,7 +77,7 @@ Set a node's **Node type** to **Fragment / shared content** for content that's e
 - are excluded from hub / empty / net-new counts and get their own stats tally;
 - render with a **FRAG** badge in the tree.
 
-A row whose **Renders as** = **Fragment (embeddable)** (stored as `Content Object`) is treated the same way downstream — skipped in redirect resolution and nav-coverage checks.
+A row whose **Renders as** = **Fragment (embeddable)** (stored as `Content Object`) is treated the same way downstream — skipped in redirect resolution and sitemap-coverage checks.
 
 ---
 
@@ -114,8 +114,8 @@ The output groups that person's pages **by pattern / target spec**, leads each g
 
 Once nodes are annotated:
 
-- **Migration → Migration Tracker…** — the multi-sheet xlsx (Nav Plan with all build metadata, Source Pages, Redirects, Archive). See the **Migration Tracker** walkthrough for what each sheet carries.
-- **Migration → Pre-Handoff Check…** — runs every validation at once (unreviewed pages, bad consolidate targets, redirect chains, duplicate nav IDs, empty nav leaves). Fix what it flags, re-run, then export. See the **Pre-flight & hand-off** walkthrough.
+- **Migration → Migration Tracker…** — the multi-sheet xlsx (Sitemap Plan with all build metadata, Source Pages, Redirects, Archive). See the **Migration Tracker** walkthrough for what each sheet carries.
+- **Migration → Pre-Handoff Check…** — runs every validation at once (unreviewed pages, bad consolidate targets, redirect chains, duplicate sitemap IDs, empty sitemap leaves). Fix what it flags, re-run, then export. See the **Pre-flight & hand-off** walkthrough.
 
 ---
 

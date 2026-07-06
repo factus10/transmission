@@ -44,7 +44,7 @@ The list below is a feature catalog, not a how-to.
 - **Welcome dialog + 5-step Product Tour** — a spotlight walkthrough on first launch; re-openable from the Help menu
 - **Keyboard cheat-sheet** — press `?` anywhere (or Help → Keyboard Shortcuts, `Cmd+/`)
 - **Searchable help** — the Help window has a sticky search box (Cmd+F focuses it) that filters sections live
-- **Pre-Handoff Check** (Migration menu) — one command runs every pre-flight check (unreviewed rows, consolidate targets, redirect chains, duplicate nav IDs, empty nav leaves) into a single exportable pass/issue report
+- **Pre-Handoff Check** (Migration menu) — one command runs every pre-flight check (unreviewed rows, consolidate targets, redirect chains, duplicate sitemap IDs, empty sitemap leaves) into a single exportable pass/issue report
 - **AI Suggest for Unreviewed** (Project menu) — fills `Suggested_KKE` for undecided pages via the rubric + Claude (requires your API key); never touches your human KKE
 - **Compare KKE vs SME** (SME menu) — full-screen side-by-side of auditor vs SME decisions, click-through to any row
 - **Page thumbnails** — hover a visited row in the sidebar to preview its screenshot (captured on visit, kept in memory only)
@@ -107,14 +107,14 @@ The migration delivery deliverable lives on the **sitemap**: each node carries B
 - **Page Statuses + Assignees** managed in **Project Settings → Migration** tab. Both are inline-addable from the node editor (`+ New…`) with auto-color-cycling for new statuses. Assignee usage counts now span build / write / migrate.
 - **Markdown toolbars** on the node editor's Build Guidance, Writer Brief, and Migration Notes textareas (bold/italic/code/link/lists/headings/quote).
 - **Prev/Next navigation** through nodes in tree pre-order, directly from the node editor header.
-- **Positive build indicators** on every nav row: status pill, `P` (pattern), `G` (build guidance), `W` (writer brief), assignee chips. Indicators only appear when the field is set, so blank rows stay clean.
+- **Positive build indicators** on every sitemap row: status pill, `P` (pattern), `G` (build guidance), `W` (writer brief), assignee chips. Indicators only appear when the field is set, so blank rows stay clean.
 - **Migration Direction Brief** (`Reports → Migration Direction Brief…`) — a per-person worklist for any of the three roles (Writer / Builder / Migrator), grouped by spec, leading with the type-level reference and listing the pages that follow it.
-- **Migration Tracker Export** (`File → Export…` → Migration Tracker, or `Migration → Migration Tracker…`) produces a multi-sheet xlsx for engineering: Nav Plan (with a Migrator column), Source Pages (with Content Type / Renders As / Target Content Type), Redirects, Archive.
+- **Migration Tracker Export** (`File → Export…` → Migration Tracker, or `Migration → Migration Tracker…`) produces a multi-sheet xlsx for engineering: Sitemap Plan (with a Migrator column), Source Pages (with Content Type / Renders As / Target Content Type), Redirects, Archive.
 
 ### Shared-content (Fragment) sitemap nodes
 - A sitemap node's **Node type** can be **Page**, **Header / organizing level**, or **Fragment / shared content**.
 - **Fragment nodes** represent embedded/shared content (e.g. an AEM experience fragment): they keep their computed path as a repository location but have **no menu entry, breadcrumb, or redirect**. They render as their own layer in the tree (a `FRAG` badge + tinted row) and are excluded from net-new / empty counts and the in-menu IA.
-- **Nature-aware downstream** — pages that render as a Fragment are excluded from redirects (no public URL) and from the need-placement / nav-coverage checks (a fragment has no nav home by design).
+- **Nature-aware downstream** — pages that render as a Fragment are excluded from redirects (no public URL) and from the need-placement / sitemap-coverage checks (a fragment has no sitemap home by design).
 
 ### SME Review Workflow
 A dedicated **SME** top-level menu for subject-matter-expert review:
@@ -249,12 +249,12 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - **Depth filter** — dropdown in the toolbar to filter the tree to a specific depth level ("All", "Top level", "Level 1", etc.). "Set Menu" and "Clear Menu" buttons apply to all visible nodes at the current depth.
 - **Pages column indicators** — link icon (external URL), arrow icon (reference to another node), NEW (net new page needed), empty circle (empty leaf or empty branch), or numeric page count (clickable). Reference nodes never show NEW or ○.
 - **Reference picker** — 880px wide dialog with nodes sorted hierarchically by sortID, indented by depth, top-level nodes bold. Search by node number matches from start; text search matches anywhere.
-- **Wide scrollbar** — the nav editor's vertical scrollbar is widened to 14px so it's grabbable without hitting the window edge resize cursor.
+- **Wide scrollbar** — the sitemap editor's vertical scrollbar is widened to 14px so it's grabbable without hitting the window edge resize cursor.
 - **Sanitizer on label/slug edits** — paste handlers strip mojibake (`‚Äô` → `'`), HTML entities, NBSP, zero-width chars, vertical tabs, etc. Multi-character mojibake patterns only — bare accented characters (`é`, `ü`, `ñ`) are left alone.
 - **Menu Report** — a tight, hand-off-ready report of your menus (**Menus → Report**, or **Reports → Menu Report…**): one section card per menu with its item hierarchy, page-count badges on page references, `↗` on external links, `≡` on headers, and a red **missing** badge on broken references. Exports to PDF / HTML. (This is the former nav "IA Report", now fed by the independent menus.)
 - Page counts per node with gap detection (empty nodes highlighted)
 - **URL override** — a node can publish at an address independent of its place in the menu (`Url_Path`); the override re-roots its sub-pages too. Containment and URL are separate axes.
-- **Breadcrumb parent** — set an arbitrary on-page breadcrumb top, independent of both the tree and the URL: mark a node a *breadcrumb root* or re-root it onto any other node (`Breadcrumb_Parent`); sub-pages inherit. Optional project "Home" prefix and advisory max-depth flag live in Project Settings → Identity. A deep `College of Business > Departments > Accounting` page can read simply **Home > Accounting**. The rendered page breadcrumb is exported as a column in the Migration Tracker Nav Plan, the Sitemap column-picker export, and the menu export.
+- **Breadcrumb parent** — set an arbitrary on-page breadcrumb top, independent of both the tree and the URL: mark a node a *breadcrumb root* or re-root it onto any other node (`Breadcrumb_Parent`); sub-pages inherit. Optional project "Home" prefix and advisory max-depth flag live in Project Settings → Identity. A deep `College of Business > Departments > Accounting` page can read simply **Home > Accounting**. The rendered page breadcrumb is exported as a column in the Migration Tracker Sitemap Plan, the Sitemap column-picker export, and the menu export.
 - Full Sitemap sheet rewrite on save (preserves all extension columns including Phase, Notes, RefNodeID, InMenu, URL, Url_Path, Breadcrumb_Parent)
 
 ### Menus
@@ -399,7 +399,7 @@ All settings are stored in the `KKE_Settings` sheet and travel with the file.
 
 ### Redirect Editor
 - Click **Redirects** in the view switcher (or `Cmd+Shift+R`) to open a **full-width** redirect map editor (sidebar is hidden)
-- Shows all Kill pages and pages whose URL changed via navigation mapping
+- Shows all Kill pages and pages whose URL changed via sitemap mapping
 - The `404` literal in `Redirect_Destination` is treated as a first-class "intentional deindex" — a **404** toggle button next to each row's destination input flips between a destination URL and `404`. Rows marked `404` style as amber-italic and appear in their own section in the Redirect Map Report.
 - Each row displays: status badge, title (clickable — navigates to that row in audit view), current URL, editable destination URL
 - Set per-row destinations manually or pick from the sitemap (600px wide picker, anchored to right edge)
@@ -570,7 +570,7 @@ The app stores project-level settings in a `KKE_Settings` sheet (key/value pairs
 | `defaultRedirectUrl` | Default redirect destination for Kill pages |
 | `customKkeStates` | Custom KKE statuses with labels and colors (JSON) |
 
-### Navigation Columns
+### Sitemap Columns
 
 When a Sitemap sheet is present (or loaded from another file):
 

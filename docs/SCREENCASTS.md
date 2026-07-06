@@ -75,7 +75,7 @@ These pair with the in-app **Help → Product Tour** (the live 5-step walkthroug
 
 | # | On screen | Narration |
 |---|-----------|-----------|
-| 1 | **Cmd+Shift+T** → Sitemap. Drag a node to reparent; edit a label inline. | "Lay out the future-state nav: drag to reorganize, edit labels inline." |
+| 1 | **Cmd+Shift+T** → Sitemap. Drag a node to reparent; edit a label inline. | "Lay out the future-state sitemap: drag to reorganize, edit labels inline." |
 | 2 | From the audit bar, click **Sitemap** on a page and assign it to a node. | "Assign your Keep and Evolve pages to where they'll live — right from the audit." |
 | 3 | **Cmd+Shift+R** → Redirect Editor; show Kill + URL-changed rows with destinations. | "Every removed or moved page gets a redirect — review them here." |
 | 4 | **Migration → Pre-Handoff Check**; show the pass/issue report, point at a flagged check. | "Before handoff, one command checks everything: unreviewed pages, dead consolidate targets, redirect chains, empty sitemap nodes." |
