@@ -25,7 +25,7 @@ Goal: drive **need placement** in the stats line to **0**.
 
 "Need placement" = Keep/Evolve rows with no sitemap node yet. To find and assign them:
 
-1. **Audit** view (**Cmd+1**) → **KKE** filter → check **Keep** + **Evolve** → **+ Field filter** → field `NavID`, operator **is blank** → **Apply**.
+1. **Audit** view (**Cmd+1**) → **KKE** filter → check **Keep** + **Evolve** → **+ Field filter** → field `Sitemap_ID`, operator **is blank** → **Apply**.
 2. For each row, click **Sitemap** (in the **DECIDE** cluster) → drill to the right node → **Assign**. Use **+ Child** in the picker footer to create a new node inline if no good home exists yet.
 3. To place many similar pages at once: multi-select them in the sidebar (**Cmd/Shift-click**), then **drag the selection onto a node** in the tree.
 
@@ -80,7 +80,7 @@ Two badges tell you where the tree is incomplete:
 - **NEW** (yellow, in the Pages column) — a **net-new** node: it has descendant pages but no source page of its own. Expected for brand-new sections; a flag if you didn't mean it.
 - **Empty leaf** (red) — a node with no pages *and* no redirects pointing at it. Either assign content, mark it net-new, phase it, or delete it before hand-off.
 
-A **⚠ N duplicate IDs** link appears in the stats line if any NavID is assigned to two nodes — click it to auto-renumber the duplicates.
+A **⚠ N duplicate IDs** link appears in the stats line if any Sitemap_ID is assigned to two nodes — click it to auto-renumber the duplicates.
 
 ---
 
@@ -126,7 +126,7 @@ If several pages landed on one node, they may be consolidation candidates:
 
 - [ ] **need placement = 0** — every Keep/Evolve page sits on a node
 - [ ] No **empty** leaf nodes left unexplained (assign / net-new / phase / delete)
-- [ ] No **duplicate NavID** warning in the stats line
+- [ ] No **duplicate Sitemap_ID** warning in the stats line
 - [ ] No red **duplicate-slug** highlights within a branch
 - [ ] **In menu** set correctly on every node that belongs in navigation
 - [ ] Phased work is marked **Future / Stretch / Archived**, not left in the current build

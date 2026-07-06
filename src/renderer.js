@@ -66,7 +66,7 @@ const state = {
   lastClickedPos: null,      // position in filteredRows for shift-click range
 
   // Nav structure
-  navTree:         null,     // array of root nodes (from NavStructure sheet)
+  navTree:         null,     // array of root nodes (from the Sitemap sheet)
   navNodes:        [],       // flat list of all sitemap nodes
   navSelectedNode: null,     // currently selected node in the popover
   newNavNodes:     [],       // nodes created by the user (to persist on save)
@@ -721,6 +721,7 @@ function bindStaticEvents() {
     refreshRowInList(state.selectedIndex);
     // Phase 1, Chunk C: refresh migration ghost suggestion (KKE drives the suggestion)
     populateMigrationFields(row);
+    if (newVal === 'Keep' || newVal === 'Evolve') await maybeWarnDuplicateDestination(state.selectedIndex);
     if (state.autoAdvance && newVal) navigateRow(+1);
   });
 
@@ -2164,7 +2165,7 @@ function updateNoSelectionState() {
 }
 
 function clearNavAssignment(row, origIndex) {
-  ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID', 'Page_Breadcrumb'].forEach(c => {
+  ['Sitemap_ID', 'Sitemap_Destination', 'Computed Path', 'Sitemap_SortID', 'Page_Breadcrumb'].forEach(c => {
     const old = row[c];
     if (old) logChange(origIndex, c, old, '');
     row[c] = '';
@@ -2185,22 +2186,22 @@ function clearRedirectDestination(row, origIndex) {
 
 async function promptKillCleanup(origIndex, targetStateLabel = 'Kill') {
   const row = state.editedRows[origIndex];
-  const hasNav = String(row['NavID'] || '').trim();
+  const hasNav = String(row['Sitemap_ID'] || '').trim();
   const hasRedirect = String(row['Redirect_Destination'] || '').trim();
   if (!hasNav && !hasRedirect) return true;
   const result = await showKillCleanupModal(row, targetStateLabel);
   if (result === null) return false;
   if (result.clearNav) {
-    const oldNavID = String(row['NavID'] || '').trim();
+    const oldSitemapId = String(row['Sitemap_ID'] || '').trim();
     clearNavAssignment(row, origIndex);
     // Consistency with the manual clearNav(): if the page's sitemap node is now an orphan leaf
     // (no children, no other pages assigned), offer to remove it from the tree too — otherwise
     // killing/consolidating a page leaves its empty node behind in the IA.
-    if (oldNavID && state.navNodes.length > 0) {
-      const node = state.navNodes.find(n => n.id === oldNavID);
+    if (oldSitemapId && state.navNodes.length > 0) {
+      const node = state.navNodes.find(n => n.id === oldSitemapId);
       if (node) {
         const hasChildren = node.children && node.children.length > 0;
-        const otherPages = state.editedRows.some(r => String(r['NavID'] || '').trim() === oldNavID);
+        const otherPages = state.editedRows.some(r => String(r['Sitemap_ID'] || '').trim() === oldSitemapId);
         if (!hasChildren && !otherPages) showOrphanNodeDialog(node);
       }
     }
@@ -2213,7 +2214,7 @@ async function promptBulkKillCleanup(origIndexes) {
   let navCount = 0, redirectCount = 0;
   origIndexes.forEach(i => {
     const r = state.editedRows[i];
-    if (String(r['NavID'] || '').trim()) navCount++;
+    if (String(r['Sitemap_ID'] || '').trim()) navCount++;
     if (String(r['Redirect_Destination'] || '').trim()) redirectCount++;
   });
   if (navCount === 0 && redirectCount === 0) return true;
@@ -2221,7 +2222,7 @@ async function promptBulkKillCleanup(origIndexes) {
   if (result === null) return false;
   if (result.clearNav) {
     origIndexes.forEach(i => {
-      if (String(state.editedRows[i]['NavID'] || '').trim()) clearNavAssignment(state.editedRows[i], i);
+      if (String(state.editedRows[i]['Sitemap_ID'] || '').trim()) clearNavAssignment(state.editedRows[i], i);
     });
   }
   if (result.clearRedirect) {
@@ -2273,8 +2274,8 @@ function showBulkKillCleanupModal({ total, navCount, redirectCount }) {
 function showKillCleanupModal(row, targetStateLabel = 'Kill') {
   return new Promise(resolve => {
     let settled = false;
-    const hasNav = String(row['NavID'] || '').trim();
-    const navLabel = String(row['Nav Destination'] || row['Computed Path'] || hasNav || '').trim();
+    const hasNav = String(row['Sitemap_ID'] || '').trim();
+    const navLabel = String(row['Sitemap_Destination'] || row['Computed Path'] || hasNav || '').trim();
     const hasRedirect = String(row['Redirect_Destination'] || '').trim();
 
     const navChoice = hasNav ? `
@@ -2638,12 +2639,12 @@ function applyFilter() {
     const statusValues = kf.filter(v => !specialFilters.has(v));
     const specials = kf.filter(v => specialFilters.has(v));
 
-    // Precompute shared NavIDs (NavIDs assigned to 2+ rows) if needed
+    // Precompute shared Sitemap_IDs (Sitemap_IDs assigned to 2+ rows) if needed
     let sharedNavIds = null;
     if (specials.includes('_shared-nav')) {
       const counts = new Map();
       state.editedRows.forEach(r => {
-        const id = String(r['NavID'] || '').trim();
+        const id = String(r['Sitemap_ID'] || '').trim();
         if (id) counts.set(id, (counts.get(id) || 0) + 1);
       });
       sharedNavIds = new Set();
@@ -2674,13 +2675,13 @@ function applyFilter() {
         if (s === '_needs-placement') {
           // Keep/Evolve pages not yet assigned to a sitemap node (matches the nav-tree "need placement" count).
           // Fragments are excluded — they have no nav home by design.
-          if (!String(row['NavID'] || '').trim() && !isFragmentRow(row)) {
+          if (!String(row['Sitemap_ID'] || '').trim() && !isFragmentRow(row)) {
             const eff = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
             if (eff === 'Keep' || eff === 'Evolve') return true;
           }
         }
         if (s === '_shared-nav' && sharedNavIds) {
-          const id = String(row['NavID'] || '').trim();
+          const id = String(row['Sitemap_ID'] || '').trim();
           if (id && sharedNavIds.has(id)) return true;
         }
         if (s === '_suggested-disagree') {
@@ -2711,7 +2712,7 @@ function applyFilter() {
 
   // Nav tree filter
   if (_navTreeFilter) {
-    rows = rows.filter(({ row }) => String(row['NavID'] || '').trim() === _navTreeFilter);
+    rows = rows.filter(({ row }) => String(row['Sitemap_ID'] || '').trim() === _navTreeFilter);
   }
 
   state.filteredRows = rows;
@@ -3007,7 +3008,7 @@ function renderVisibleRows() {
     // Nav + Redirect indicators
     const indicators = document.createElement('div');
     indicators.className = 'row-indicators';
-    const hasNav = String(row['NavID'] || '').trim();
+    const hasNav = String(row['Sitemap_ID'] || '').trim();
     const explicitRedirect = String(row[REDIRECT_DEST_COL] || '').trim();
     // Implicit redirect: computed path differs from current URL path
     const computedPath = String(row['Computed Path'] || '').trim();
@@ -3024,7 +3025,7 @@ function renderVisibleRows() {
       const n = document.createElement('span');
       n.className = 'row-ind row-ind-nav';
       n.textContent = 'N';
-      n.title = 'Assigned to nav: ' + (row['Nav Destination'] || row['Computed Path'] || hasNav);
+      n.title = 'Assigned to nav: ' + (row['Sitemap_Destination'] || row['Computed Path'] || hasNav);
       indicators.appendChild(n);
     }
     if (hasRedirect) {
@@ -3371,7 +3372,7 @@ function renderMetaFields(row, origIndex) {
   ]);
 
   // Fields that always get their own row
-  const fullWidthFields = new Set(['Nav Destination', 'Computed Path']);
+  const fullWidthFields = new Set(['Sitemap_Destination', 'Computed Path']);
 
   // Content-adaptive sizing
   function sizeClass(header, value) {
@@ -9077,6 +9078,67 @@ function clearConsolidateTarget(origIndex) {
   updateConsolidateIndicator(row);
 }
 
+// ─── Duplicate-destination guard ──────────────────────────────────────────────
+// Only one page can occupy a given sitemap destination. If a page is Keep/Evolve
+// and another Keep/Evolve page already shares its Sitemap_ID, that's almost always a
+// mistake — the newer one should Consolidate into the pre-existing one instead.
+
+/** Other Keep/Evolve rows sharing this row's sitemap destination (Sitemap_ID). Empty if this row isn't
+ *  Keep/Evolve or has no destination assigned yet. */
+function findEvolveDestinationConflicts(origIndex) {
+  const row = state.editedRows[origIndex];
+  const navId = String(row['Sitemap_ID'] || '').trim();
+  if (!navId) return [];
+  const kke = String(row[kkeCol()] || '').trim();
+  if (kke !== 'Keep' && kke !== 'Evolve') return [];
+  const urlCol = state.urlColumn || 'Address';
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
+  const conflicts = [];
+  state.editedRows.forEach((r, i) => {
+    if (i === origIndex) return;
+    if (String(r['Sitemap_ID'] || '').trim() !== navId) return;
+    const rk = String(r[kkeCol()] || '').trim();
+    if (rk !== 'Keep' && rk !== 'Evolve') return;
+    conflicts.push({
+      origIndex: i,
+      url: String(r[urlCol] || '').trim(),
+      title: titleCol ? String(r[titleCol] || '').trim() : '',
+    });
+  });
+  return conflicts;
+}
+
+/** If this row's destination conflicts with another Keep/Evolve page, offer to Consolidate into
+ *  it instead. Called after setting KKE to Keep/Evolve and after assigning a sitemap destination. */
+async function maybeWarnDuplicateDestination(origIndex) {
+  const conflicts = findEvolveDestinationConflicts(origIndex);
+  if (!conflicts.length) return;
+  const row = state.editedRows[origIndex];
+  const node = state.navNodes.find(n => n.id === String(row['Sitemap_ID'] || '').trim());
+  const destLabel = node ? (node.breadcrumb || node.label) : 'this sitemap destination';
+
+  if (conflicts.length === 1) {
+    const other = conflicts[0];
+    const otherLabel = other.title ? `${other.title}\n${other.url}` : other.url;
+    const consolidate = await confirmDialog({
+      title: 'Did you mean to Consolidate?',
+      message: `Another page is already assigned to the same destination (${destLabel}) and marked Keep/Evolve:\n\n${otherLabel}\n\nOnly one page can occupy that destination — consolidate this page into it instead?`,
+      confirmLabel: 'Consolidate into it',
+      cancelLabel: 'No, keep both',
+    });
+    if (consolidate) await applyConsolidateTarget(origIndex, other.url);
+  } else {
+    const list = conflicts.map(c => `• ${c.title ? c.title + ' — ' : ''}${c.url}`).join('\n');
+    const openPicker = await confirmDialog({
+      title: 'Did you mean to Consolidate?',
+      message: `${conflicts.length} other pages already share this destination (${destLabel}) and are marked Keep/Evolve:\n\n${list}\n\nOnly one page can occupy that destination — pick one to consolidate into?`,
+      confirmLabel: 'Choose target…',
+      cancelLabel: 'No, keep all',
+    });
+    if (openPicker) openConsolidatePicker(origIndex);
+  }
+}
+
 // ─── Consolidate picker ───────────────────────────────────────────────────────
 
 function openConsolidatePicker(sourceIndex) {
@@ -9123,14 +9185,17 @@ function openConsolidatePicker(sourceIndex) {
       <div style="font-size:12px;font-family:var(--font-mono);word-break:break-all;background:var(--bg-field-bar);padding:4px 8px;border-radius:4px;">${escapeHtml(sourceUrl) || '<em>(no URL)</em>'}</div>
       ${currentTarget ? `
         <div style="margin-top:10px;padding:8px 10px;background:var(--kke-consolidate-bg);border:1px solid var(--kke-consolidate);border-radius:4px;">
-          <div style="font-size:11px;color:var(--kke-consolidate);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px;">Currently consolidating to</div>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:2px;">
+            <div style="font-size:11px;color:var(--kke-consolidate);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Currently consolidating to</div>
+            <button id="_cp-goto-target" class="btn btn-sm btn-ghost" style="flex-shrink:0;">Go to page →</button>
+          </div>
           <div style="font-size:12px;font-family:var(--font-mono);word-break:break-all;color:var(--kke-consolidate);">${escapeHtml(currentTarget)}</div>
           <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Pick a different page below to reassign, or use <strong>Clear target</strong> to remove.</div>
         </div>
       ` : ''}
       ${smeNotes ? `
         <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">SME Notes (possible hint):</div>
-        <div style="font-size:12px;background:#fef9c3;border:1px solid #fde047;padding:6px 8px;border-radius:4px;white-space:pre-wrap;word-break:break-word;">${escapeHtml(smeNotes)}</div>
+        <div class="cp-hint-box" style="font-size:12px;padding:6px 8px;border-radius:4px;white-space:pre-wrap;word-break:break-word;">${escapeHtml(smeNotes)}</div>
       ` : ''}
       ${notesHint && !smeNotes ? `
         <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">Notes:</div>
@@ -9289,6 +9354,16 @@ function openConsolidatePicker(sourceIndex) {
   dialog.querySelector('#_cp-close').addEventListener('click', close);
   overlay.addEventListener('click', close);
   setBtn.addEventListener('click', confirmAndClose);
+  dialog.querySelector('#_cp-goto-target')?.addEventListener('click', () => {
+    const targetIdx = state.editedRows.findIndex(r => String(r[urlCol] || '').trim() === currentTarget);
+    if (targetIdx < 0) { showToast('Target page not found in this file', 'error'); return; }
+    close();
+    if (_tableViewOpen) closeTableView();
+    if (_navEditorOpen) closeNavEditor();
+    if (_redirectEditorOpen) closeRedirectEditor();
+    if (_menusViewOpen) closeMenusView();
+    selectRow(targetIdx);
+  });
   clearBtn.addEventListener('click', () => {
     close();
     clearConsolidateTarget(sourceIndex);
@@ -9324,10 +9399,10 @@ function buildConsolidationCandidates(filter) {
   const excludedKkes   = filter?.excludedKkes   || new Set();
   const excludedGroups = filter?.excludedGroups || new Set();
 
-  // Group rows by NavID
-  const groups = new Map(); // NavID → [{ origIndex, row }]
+  // Group rows by Sitemap_ID
+  const groups = new Map(); // Sitemap_ID → [{ origIndex, row }]
   state.editedRows.forEach((row, origIndex) => {
-    const id = String(row['NavID'] || '').trim();
+    const id = String(row['Sitemap_ID'] || '').trim();
     if (!id) return;
     const kke = String(row[kkeCol()] || '').trim();
     const grp = String(row[groupCol()] || '').trim();
@@ -9531,7 +9606,7 @@ function renderCandidateGroup(group, onChange, skipped) {
   h.innerHTML = `
     <div>
       <div style="font-weight:600;font-size:13px;">${escapeHtml(group.breadcrumb)}</div>
-      <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(group.computedPath || '')} · ${group.rows.length} pages · NavID ${escapeHtml(group.navId)}</div>
+      <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(group.computedPath || '')} · ${group.rows.length} pages · Sitemap_ID ${escapeHtml(group.navId)}</div>
     </div>
     <div style="display:flex;gap:6px;flex-shrink:0;">
       <button class="btn btn-sm btn-ghost _cc-skip">Skip</button>
@@ -9665,7 +9740,7 @@ function setupNav() {
   els.navSlugInput.addEventListener('change', () => {
     if (state.selectedIndex === null) return;
     const row = state.editedRows[state.selectedIndex];
-    const navID = row['NavID'] || '';
+    const navID = row['Sitemap_ID'] || '';
     if (!navID) return; // not assigned yet — slug is used on Assign click
     const node = state.navNodes.find(n => n.id === navID);
     if (!node) return;
@@ -9725,12 +9800,12 @@ function openNavPopover() {
 
   // Show current assignment
   const row = state.editedRows[state.selectedIndex];
-  const currentNavID = row['NavID'] || '';
+  const currentSitemapId = row['Sitemap_ID'] || '';
   const fullTitle = row['Title 1'] || row['Title'] || '';
   const pageTitle = extractPageTitle(fullTitle);
 
-  if (currentNavID) {
-    const node = state.navNodes.find(n => n.id === currentNavID);
+  if (currentSitemapId) {
+    const node = state.navNodes.find(n => n.id === currentSitemapId);
     if (node) {
       els.navCurrentLabel.textContent = node.breadcrumb || node.label;
       els.navCurrent.classList.remove('hidden');
@@ -9768,7 +9843,7 @@ function openNavPopover() {
   const navHasNodes = !!(state.navTree && state.navNodes && state.navNodes.length > 0);
 
   // If no current assignment, try to suggest based on parent URL
-  if (!currentNavID) {
+  if (!currentSitemapId) {
     els.navPageFields.classList.add('hidden');
     const url = row[state.urlColumn] || '';
     els.navSlugInput.value = extractSlug(url);
@@ -9832,16 +9907,16 @@ function createFirstNavNodeFromPage() {
   if (!slug) slug = slugify(label);
 
   // Ensure the audit columns exist in headers (mirrors assignNav)
-  ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'].forEach(col => {
+  ['Sitemap_ID', 'Sitemap_Destination', 'Computed Path', 'Sitemap_SortID'].forEach(col => {
     if (!state.headers.includes(col)) state.headers.push(col);
   });
 
   const node = createRootNodeFromPage(label, slug);
 
   const oldEffUrl = effectiveConsolidateUrl(row);
-  row['NavID']           = node.id;
-  row['Nav Destination'] = node.breadcrumb;
-  row['Nav_SortID']      = node.sortID;
+  row['Sitemap_ID']           = node.id;
+  row['Sitemap_Destination'] = node.breadcrumb;
+  row['Sitemap_SortID']      = node.sortID;
   row['Computed Path']   = node.computedPath || '';
   row['Page_Breadcrumb'] = pageBreadcrumbOf(node);
   resyncConsolidateInto(oldEffUrl, effectiveConsolidateUrl(row));
@@ -9989,7 +10064,7 @@ function navSlugExistsInBranch(parentNode, slug, excludeNodeId) {
   );
 }
 
-function assignNav() {
+async function assignNav() {
   if (!state.navSelectedNode || state.selectedIndex === null) return;
   const node = state.navSelectedNode;
   const row = state.editedRows[state.selectedIndex];
@@ -9997,7 +10072,7 @@ function assignNav() {
   const pageTitleVal = els.navPageTitleInput.value.trim();
 
   // Ensure columns exist in headers
-  ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'].forEach(col => {
+  ['Sitemap_ID', 'Sitemap_Destination', 'Computed Path', 'Sitemap_SortID'].forEach(col => {
     if (!state.headers.includes(col)) state.headers.push(col);
   });
 
@@ -10013,9 +10088,9 @@ function assignNav() {
     // Capture old effective URL before reassigning (for Consolidate_Into sync)
     const oldEffUrl = effectiveConsolidateUrl(row);
     // Assign the row to the new child node
-    row['NavID']           = childNode.id;
-    row['Nav Destination'] = childNode.breadcrumb;
-    row['Nav_SortID']      = childNode.sortID;
+    row['Sitemap_ID']           = childNode.id;
+    row['Sitemap_Destination'] = childNode.breadcrumb;
+    row['Sitemap_SortID']      = childNode.sortID;
     row['Computed Path']   = childNode.computedPath;
     row['Page_Breadcrumb'] = pageBreadcrumbOf(childNode);
     // Update any Consolidate_Into values that referenced this page
@@ -10031,9 +10106,9 @@ function assignNav() {
   } else {
     // Assign directly to the selected node
     const oldEffUrl = effectiveConsolidateUrl(row);
-    row['NavID']           = node.id;
-    row['Nav Destination'] = node.breadcrumb;
-    row['Nav_SortID']      = node.sortID;
+    row['Sitemap_ID']           = node.id;
+    row['Sitemap_Destination'] = node.breadcrumb;
+    row['Sitemap_SortID']      = node.sortID;
     row['Computed Path']   = node.computedPath || '';
     row['Page_Breadcrumb'] = pageBreadcrumbOf(node);
     // Update any Consolidate_Into values that referenced this page
@@ -10045,6 +10120,7 @@ function assignNav() {
     renderMetaFields(row, state.selectedIndex);
     renderVisibleRows();
     showToast('Nav assigned: ' + node.label, 'success');
+    await maybeWarnDuplicateDestination(state.selectedIndex);
   }
 }
 
@@ -10096,7 +10172,7 @@ function remediateNavAssignments() {
   const oldPaths = snapshotNavPaths();
 
   for (const row of state.editedRows) {
-    const navID = row['NavID'] || '';
+    const navID = row['Sitemap_ID'] || '';
     if (!navID) continue;
 
     const node = state.navNodes.find(n => n.id === navID);
@@ -10119,10 +10195,10 @@ function remediateNavAssignments() {
     const existingChild = (node.children || []).find(c => c.path === pageSlug);
     if (existingChild) {
       // Reassign to the existing child node if not already
-      if (row['NavID'] !== existingChild.id) {
-        row['NavID'] = existingChild.id;
-        row['Nav Destination'] = existingChild.breadcrumb;
-        row['Nav_SortID'] = existingChild.sortID;
+      if (row['Sitemap_ID'] !== existingChild.id) {
+        row['Sitemap_ID'] = existingChild.id;
+        row['Sitemap_Destination'] = existingChild.breadcrumb;
+        row['Sitemap_SortID'] = existingChild.sortID;
       }
       continue;
     }
@@ -10133,9 +10209,9 @@ function remediateNavAssignments() {
     const childNode = createNavChildForPage(node, pageSlug, label);
 
     // Reassign the row to the new child
-    row['NavID'] = childNode.id;
-    row['Nav Destination'] = childNode.breadcrumb;
-    row['Nav_SortID'] = childNode.sortID;
+    row['Sitemap_ID'] = childNode.id;
+    row['Sitemap_Destination'] = childNode.breadcrumb;
+    row['Sitemap_SortID'] = childNode.sortID;
     row['Computed Path'] = childNode.computedPath;
     created++;
   }
@@ -10157,12 +10233,12 @@ function remediateNavAssignments() {
 function clearNav() {
   if (state.selectedIndex === null) return;
   const row = state.editedRows[state.selectedIndex];
-  const oldNavID = row['NavID'] || '';
+  const oldSitemapId = row['Sitemap_ID'] || '';
 
-  row['NavID']           = '';
-  row['Nav Destination'] = '';
+  row['Sitemap_ID']           = '';
+  row['Sitemap_Destination'] = '';
   row['Computed Path']   = '';
-  row['Nav_SortID']      = '';
+  row['Sitemap_SortID']      = '';
   row['Page_Breadcrumb'] = '';
 
   setDirty(true);
@@ -10173,11 +10249,11 @@ function clearNav() {
   showToast('Sitemap assignment removed');
 
   // Check if the old node is now an orphan leaf — offer to remove it
-  if (oldNavID && state.navNodes.length > 0) {
-    const node = state.navNodes.find(n => n.id === oldNavID);
+  if (oldSitemapId && state.navNodes.length > 0) {
+    const node = state.navNodes.find(n => n.id === oldSitemapId);
     if (node) {
       const hasChildren = node.children && node.children.length > 0;
-      const otherPages = state.editedRows.some(r => r['NavID'] === oldNavID);
+      const otherPages = state.editedRows.some(r => r['Sitemap_ID'] === oldSitemapId);
       if (!hasChildren && !otherPages) {
         showOrphanNodeDialog(node);
       }
@@ -10246,7 +10322,7 @@ async function loadNavFromFile() {
     els.btnMenuAssign.disabled = false;
 
     // Ensure nav columns exist
-    ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'].forEach(col => {
+    ['Sitemap_ID', 'Sitemap_Destination', 'Computed Path', 'Sitemap_SortID'].forEach(col => {
       if (!state.headers.includes(col)) state.headers.push(col);
     });
 
@@ -10344,8 +10420,8 @@ function attachSanitizer(el, onCommit) {
 }
 
 function updateNavBadge(row) {
-  const navDest = String(row['Nav Destination'] || '');
-  const navID = String(row['NavID'] || '').trim();
+  const navDest = String(row['Sitemap_Destination'] || '');
+  const navID = String(row['Sitemap_ID'] || '').trim();
   // Remove any existing badge
   const existing = els.btnNav.querySelector('.nav-badge');
   if (existing) existing.remove();
@@ -10382,14 +10458,14 @@ async function promptClearNavAssignment(origIndex, navID, navDest) {
   if (navID) {
     state.editedRows.forEach((r, i) => {
       if (i === origIndex) return;
-      if (String(r['NavID'] || '').trim() === navID) stillHasOtherPages++;
+      if (String(r['Sitemap_ID'] || '').trim() === navID) stillHasOtherPages++;
     });
     const node = state.navNodes && state.navNodes.find(n => n.id === navID);
     if (node) {
       const pageCounts = {};
       state.editedRows.forEach((r, i) => {
         if (i === origIndex) return; // simulate post-clear
-        const id = String(r['NavID'] || '').trim();
+        const id = String(r['Sitemap_ID'] || '').trim();
         if (id) pageCounts[id] = (pageCounts[id] || 0) + 1;
       });
       hasDescendantPages_ = hasDescendantPages(node, pageCounts);
@@ -10450,7 +10526,7 @@ async function promptClearNavAssignment(origIndex, navID, navDest) {
   clearBtn.addEventListener('click', () => {
     const row = state.editedRows[origIndex];
     const alsoDeleteNode = !!(deleteCb && deleteCb.checked);
-    // Resolve node BEFORE clearing the assignment (clearing zeros out NavID)
+    // Resolve node BEFORE clearing the assignment (clearing zeros out Sitemap_ID)
     const nodeToDelete = alsoDeleteNode && navID
       ? state.navNodes.find(n => n.id === navID)
       : null;
@@ -10678,7 +10754,7 @@ function openNavEditor() {
     state.navNodes = [];
     state.navSortIDFormat = { segWidth: 4, maxLevels: 9 };
     // Ensure nav columns exist in headers
-    ['NavID', 'Nav Destination', 'Computed Path', 'Nav_SortID'].forEach(col => {
+    ['Sitemap_ID', 'Sitemap_Destination', 'Computed Path', 'Sitemap_SortID'].forEach(col => {
       if (!state.headers.includes(col)) state.headers.push(col);
     });
     els.btnNav.disabled = false;
@@ -10708,7 +10784,7 @@ function openNavEditor() {
 
 function highlightAssignedNavNode() {
   if (state.selectedIndex === null) return;
-  const navID = state.editedRows[state.selectedIndex]?.['NavID'];
+  const navID = state.editedRows[state.selectedIndex]?.['Sitemap_ID'];
   if (!navID) return;
 
   // Expand collapsed ancestors so the node is visible
@@ -10923,7 +10999,7 @@ async function addMenu() {
 async function openMenuAssignForRow() {
   if (state.selectedIndex === null) return;
   const row = state.editedRows[state.selectedIndex];
-  const navID = row['NavID'] || '';
+  const navID = row['Sitemap_ID'] || '';
   const node = navID ? state.navNodes.find(n => n.id === navID) : null;
 
   if (!node) {
@@ -11884,7 +11960,7 @@ function openSitemapView(opts) {
       vlHgap: eff.vlHgap, pad: eff.pad, showNumbers: eff.showNumbers !== false,
       colorRules: eff.colorRules, legendLabels: eff.legendLabels, nodeOverrides: eff.nodeOverrides
     },
-    // Nav uses node.collapse (the Nav Tree checkbox / NavStructure column) as the
+    // Nav uses node.collapse (the Nav Tree checkbox / Sitemap sheet's Collapse column) as the
     // single source of truth for "starts collapsed" — so always seed from it, and
     // never let a stale saved view-state shadow a checkbox change. Menus have no
     // such flag, so they fall back to their own persisted collapse view-state.
@@ -11940,7 +12016,7 @@ function openSitemapView(opts) {
 // in the sitemap view. The engine only reports collapse on nodes that have
 // children, so a node absent from the set is genuinely expanded → clear its flag.
 // Mutates the live navTree node objects (which Save serializes), keeps the
-// NavStructure Collapse column and the Nav Tree checkboxes in sync.
+// Sitemap sheet's Collapse column and the Nav Tree checkboxes in sync.
 function applySitemapCollapseToNav(collapsedIds) {
   const set = new Set(collapsedIds || []);
   let changed = false;
@@ -12086,10 +12162,10 @@ async function exportNavTree(format) {
     includePhase = answer === 'include';
   }
 
-  // Precompute pages-per-NavID for the status column
+  // Precompute pages-per-Sitemap_ID for the status column
   const pageCounts = {};
   state.editedRows.forEach(r => {
-    const id = String(r['NavID'] || '').trim();
+    const id = String(r['Sitemap_ID'] || '').trim();
     if (id) pageCounts[id] = (pageCounts[id] || 0) + 1;
   });
   function statusFor(node) {
@@ -12197,7 +12273,7 @@ function fixDuplicateNavIds() {
   let renumbered = 0;
   let affectedPages = 0;
   dups.forEach(({ id, nodes }) => {
-    affectedPages += state.editedRows.filter(r => String(r['NavID'] || '') === id).length;
+    affectedPages += state.editedRows.filter(r => String(r['Sitemap_ID'] || '') === id).length;
     // Keep the first node's ID; renumber the rest
     for (let i = 1; i < nodes.length; i++) {
       maxId++;
@@ -12217,11 +12293,11 @@ function renderNavEditor() {
   populateNavBuildFilter();
   // Phase 2, Chunk δ: invalidate per-node page count cache used by build indicators
   invalidateNavPageCountsCache();
-  // Count pages per node — exclude Kill/Consolidate rows (going away; NavID is a redirect
+  // Count pages per node — exclude Kill/Consolidate rows (going away; Sitemap_ID is a redirect
   // hint, not evidence that the page lives at this node).
   const pageCounts = {};
   state.editedRows.forEach(row => {
-    const navID = row['NavID'] || '';
+    const navID = row['Sitemap_ID'] || '';
     if (!navID) return;
     const effective = String(row[finalKkeCol()] || row[kkeCol()] || '').trim().toLowerCase();
     if (effective === 'kill' || effective === 'consolidate') return;
@@ -12229,10 +12305,10 @@ function renderNavEditor() {
   });
 
   // Pages stats (audit row level)
-  const assignedRows = state.editedRows.filter(r => String(r['NavID'] || '').trim()).length;
+  const assignedRows = state.editedRows.filter(r => String(r['Sitemap_ID'] || '').trim()).length;
   // Keep/Evolve rows that still need a sitemap assignment
   const needsPlacement = state.editedRows.filter(r => {
-    if (String(r['NavID'] || '').trim()) return false;
+    if (String(r['Sitemap_ID'] || '').trim()) return false;
     if (isFragmentRow(r)) return false; // fragments have no nav home — not a placement gap
     const effective = String(r[finalKkeCol()] || r[kkeCol()] || '').trim();
     return effective === 'Keep' || effective === 'Evolve';
@@ -12302,7 +12378,7 @@ function renderNavEditor() {
     statsText += ` · ⚠ ${totalWarnings} readiness`;
   }
 
-  // Duplicate-NavID warning + Fix button (replaces stats span content if duplicates exist)
+  // Duplicate-Sitemap_ID warning + Fix button (replaces stats span content if duplicates exist)
   const dupNavIds = detectDuplicateNavIds();
   const statsEl = $('nav-editor-stats');
   statsEl.textContent = statsText;
@@ -12957,7 +13033,7 @@ function toggleNavPageList(wrapper, node, depth) {
   // Find all rows assigned to this node
   const pages = [];
   state.editedRows.forEach((row, origIndex) => {
-    if (String(row['NavID'] || '') === node.id) {
+    if (String(row['Sitemap_ID'] || '') === node.id) {
       pages.push({ origIndex, row });
     }
   });
@@ -13061,7 +13137,7 @@ function computeNodeUrlPath(node) {
 
 // ─── Breadcrumb axis ─────────────────────────────────────────────────────────
 // The on-page breadcrumb is decoupled from physical containment. node.breadcrumb
-// stays the full label chain (IA context / Nav Destination); the *page* breadcrumb
+// stays the full label chain (IA context / Sitemap_Destination); the *page* breadcrumb
 // walks node.breadcrumbParentId where set (default = physical parent), letting a
 // page set an arbitrary breadcrumb top regardless of where it sits in the tree.
 //   breadcrumbParentId: ''       → inherit physical parent (default)
@@ -13117,9 +13193,9 @@ function hasBreadcrumbOverride(node) {
 /** The on-page breadcrumb string for an audit row, derived from its assigned
  *  sitemap node (honors breadcrumb overrides + Home prefix). '' when unplaced or
  *  the assignment dangles. This is the *page* breadcrumb — distinct from the
- *  row's `Nav Destination`, which is the physical IA label chain. */
+ *  row's `Sitemap_Destination`, which is the physical IA label chain. */
 function computeRowPageBreadcrumb(row) {
-  const navID = row['NavID'] || '';
+  const navID = row['Sitemap_ID'] || '';
   if (!navID) return '';
   const node = state.navNodes.find(n => n.id === navID);
   return node ? pageBreadcrumbOf(node) : '';
@@ -13475,13 +13551,13 @@ function cascadeNavChangesToRows(oldPaths) {
   };
 
   state.editedRows.forEach(row => {
-    const navID = row['NavID'] || '';
+    const navID = row['Sitemap_ID'] || '';
     if (!navID) return;
     const node = state.navNodes.find(n => n.id === navID);
     if (!node) return;
 
-    row['Nav Destination'] = node.breadcrumb || node.label;
-    row['Nav_SortID'] = node.sortID || '';
+    row['Sitemap_Destination'] = node.breadcrumb || node.label;
+    row['Sitemap_SortID'] = node.sortID || '';
     row['Page_Breadcrumb'] = pageBreadcrumbOf(node);
 
     // Preserve page-specific slug suffix
@@ -14011,10 +14087,10 @@ let _navPageCountsCacheMap = null;
 function _navPageCountsCache() {
   if (_navPageCountsCacheMap) return _navPageCountsCacheMap;
   _navPageCountsCacheMap = {};
-  // Exclude Kill/Consolidate rows — those pages are going away; their NavID is a
+  // Exclude Kill/Consolidate rows — those pages are going away; their Sitemap_ID is a
   // redirect hint, not evidence that the page lives at that node.
   (state.editedRows || []).forEach(r => {
-    const id = String(r['NavID'] || '').trim();
+    const id = String(r['Sitemap_ID'] || '').trim();
     if (!id) return;
     const effective = String(r[finalKkeCol()] || r[kkeCol()] || '').trim().toLowerCase();
     if (effective === 'kill' || effective === 'consolidate') return;
@@ -14096,7 +14172,7 @@ function openNavNodeEditor(node) {
   const refTarget = node.refNodeId ? state.navNodes.find(n => n.id === node.refNodeId) : null;
   const bcParentNode = (node.breadcrumbParentId && node.breadcrumbParentId !== BREADCRUMB_ROOT)
     ? state.navNodes.find(n => n.id === node.breadcrumbParentId) : null;
-  const pageCount = state.editedRows.filter(r => String(r['NavID'] || '') === node.id).length;
+  const pageCount = state.editedRows.filter(r => String(r['Sitemap_ID'] || '') === node.id).length;
 
   if (!reusing) {
     overlay = document.createElement('div');
@@ -14698,14 +14774,14 @@ function deleteNavNodeFromEditor(node) {
   const flatIdx = state.navNodes.indexOf(node);
   if (flatIdx >= 0) state.navNodes.splice(flatIdx, 1);
 
-  // Clear NavID on rows that pointed to this node
+  // Clear Sitemap_ID on rows that pointed to this node
   state.editedRows.forEach((row, i) => {
-    if (String(row['NavID'] || '') === node.id) {
-      logChange(i, 'NavID', node.id, '');
-      row['NavID'] = '';
-      row['Nav Destination'] = '';
+    if (String(row['Sitemap_ID'] || '') === node.id) {
+      logChange(i, 'Sitemap_ID', node.id, '');
+      row['Sitemap_ID'] = '';
+      row['Sitemap_Destination'] = '';
       row['Computed Path'] = '';
-      row['Nav_SortID'] = '';
+      row['Sitemap_SortID'] = '';
       row['Page_Breadcrumb'] = '';
     }
   });
@@ -14785,7 +14861,7 @@ function deleteNavNode(node) {
   // Always confirm — deletion is destructive.
   const allIds = new Set([node.id]);
   collectAllDescendants(node).forEach(d => allIds.add(d.id));
-  const assignedPages = state.editedRows.filter(r => allIds.has(r['NavID']));
+  const assignedPages = state.editedRows.filter(r => allIds.has(r['Sitemap_ID']));
   const hasChildren = node.children && node.children.length > 0;
   const parent = node.parentNumber ? state.navNodes.find(n => n.number === node.parentNumber) : null;
   showDeleteConfirmDialog(node, assignedPages.length, hasChildren, parent);
@@ -15013,28 +15089,28 @@ function executeDeleteNavNode(node, mode, assignAction, reassignTarget) {
 
   // Handle assignments for deleted nodes
   state.editedRows.forEach((row, origIdx) => {
-    if (!idsToDelete.has(row['NavID'])) return;
-    const oldNavId = row['NavID'];
+    if (!idsToDelete.has(row['Sitemap_ID'])) return;
+    const oldNavId = row['Sitemap_ID'];
     if (assignAction === 'parent' && parent) {
-      row['NavID']           = parent.id;
-      row['Nav Destination'] = parent.breadcrumb || parent.label;
+      row['Sitemap_ID']           = parent.id;
+      row['Sitemap_Destination'] = parent.breadcrumb || parent.label;
       row['Computed Path']   = parent.computedPath || '';
-      row['Nav_SortID']      = parent.sortID || '';
+      row['Sitemap_SortID']      = parent.sortID || '';
     } else if (assignAction === 'other' && reassignTarget) {
-      row['NavID']           = reassignTarget.id;
-      row['Nav Destination'] = reassignTarget.breadcrumb || reassignTarget.label;
+      row['Sitemap_ID']           = reassignTarget.id;
+      row['Sitemap_Destination'] = reassignTarget.breadcrumb || reassignTarget.label;
       row['Computed Path']   = reassignTarget.computedPath || '';
-      row['Nav_SortID']      = reassignTarget.sortID || '';
+      row['Sitemap_SortID']      = reassignTarget.sortID || '';
       row['Page_Breadcrumb'] = pageBreadcrumbOf(reassignTarget);
     } else {
-      row['NavID'] = '';
-      row['Nav Destination'] = '';
+      row['Sitemap_ID'] = '';
+      row['Sitemap_Destination'] = '';
       row['Computed Path'] = '';
-      row['Nav_SortID'] = '';
+      row['Sitemap_SortID'] = '';
       row['Page_Breadcrumb'] = '';
     }
-    if (oldNavId !== row['NavID']) {
-      logChange(origIdx, 'NavID', oldNavId, row['NavID']);
+    if (oldNavId !== row['Sitemap_ID']) {
+      logChange(origIdx, 'Sitemap_ID', oldNavId, row['Sitemap_ID']);
     }
   });
 
@@ -15086,7 +15162,7 @@ function suggestNavFromUrl(url) {
       }
 
       if (rowUrl.toLowerCase() === testPath.toLowerCase()) {
-        const navID = row['NavID'] || '';
+        const navID = row['Sitemap_ID'] || '';
         if (navID) {
           const node = state.navNodes.find(n => n.id === navID);
           if (node) {
@@ -16692,7 +16768,7 @@ function openUnifiedExportDialog() {
         </button>
         <button type="button" class="xpd-option" data-kind="decisions">
           <div class="xpd-option-title">Audit Decisions</div>
-          <div class="xpd-option-desc">Just the audit columns (URL · KKE · Tags · Notes · Group · Primary Tag · NavID). ${decisionCount} row${decisionCount !== 1 ? 's' : ''} have at least one decision.</div>
+          <div class="xpd-option-desc">Just the audit columns (URL · KKE · Tags · Notes · Group · Primary Tag · Sitemap_ID). ${decisionCount} row${decisionCount !== 1 ? 's' : ''} have at least one decision.</div>
           <div class="xpd-option-format">→ CSV / JSON</div>
         </button>
         <button type="button" class="xpd-option" data-kind="redirects">
@@ -16759,7 +16835,7 @@ async function exportFilteredRows() {
 async function exportAuditDecisions() {
   if (state.editedRows.length === 0) { showToast('No data to export', 'error'); return; }
   const urlCol = state.urlColumn || 'Address';
-  const auditHeaders = [urlCol, kkeCol(), tagsCol(), notesCol(), groupCol(), primaryTagCol(), 'NavID', 'Nav Destination'];
+  const auditHeaders = [urlCol, kkeCol(), tagsCol(), notesCol(), groupCol(), primaryTagCol(), 'Sitemap_ID', 'Sitemap_Destination'];
   const validHeaders = auditHeaders.filter(h => state.headers.includes(h));
   const rows = state.editedRows.map(row => {
     const obj = {};
@@ -17160,7 +17236,7 @@ function resolveRedirectDestinations() {
         resolved = resolveFinalUrl(consolidateTarget, new Set([selfUrl]));
       }
       if (!resolved) {
-        const navID = row['NavID'] || '';
+        const navID = row['Sitemap_ID'] || '';
         if (navID && state.navNodes && state.navNodes.length > 0) {
           const node = state.navNodes.find(n => n.id === navID);
           if (node && node.computedPath) {
@@ -17589,7 +17665,7 @@ function reportNetNewBrief() {
 
   const pageCounts = {};
   state.editedRows.forEach(row => {
-    const navID = row['NavID'] || '';
+    const navID = row['Sitemap_ID'] || '';
     if (navID) pageCounts[navID] = (pageCounts[navID] || 0) + 1;
   });
 
@@ -17606,7 +17682,7 @@ function reportNetNewBrief() {
       const childPages = [];
       function collectChildPages(n) {
         state.editedRows.forEach(r => {
-          if (r['NavID'] === n.id) childPages.push(r);
+          if (r['Sitemap_ID'] === n.id) childPages.push(r);
         });
         (n.children || []).forEach(collectChildPages);
       }
@@ -17675,7 +17751,7 @@ function openMigrationTrackerExportDialog() {
   const totalNodes = state.navNodes.length;
   const phasedNodes = state.navNodes.filter(n => String(n.phase || '').trim()).length;
   const refNodes = state.navNodes.filter(n => n.refNodeId).length;
-  const assignedRows = state.editedRows.filter(r => String(r['NavID'] || '').trim()).length;
+  const assignedRows = state.editedRows.filter(r => String(r['Sitemap_ID'] || '').trim()).length;
   const killRows = state.editedRows.filter(r => String((r[finalKkeCol()] || r[kkeCol()]) || '').trim() === 'Kill').length;
   // Active Build filter (from the Nav Tree toolbar) — lets the Nav Plan sheet be scoped to it.
   const _bfSel = document.getElementById('nav-build-filter');
@@ -17967,7 +18043,7 @@ function navExportContext() {
   const assignedUrls = {};
   const assignedRowsByNode = {};
   (state.editedRows || []).forEach(r => {
-    const id = String(r['NavID'] || '').trim();
+    const id = String(r['Sitemap_ID'] || '').trim();
     if (!id) return;
     const eff = String(r[finalKkeCol()] || r[kkeCol()] || '').trim().toLowerCase();
     if (eff === 'kill' || eff === 'consolidate') return;
@@ -18071,7 +18147,7 @@ function buildSourcePagesSheet(sourceOpts) {
     const effective = finalK || kke;
     if (effective === 'Kill' && !sourceOpts.includeKill) return;
     if (effective === 'Exclude' && !sourceOpts.includeExclude) return;
-    const navID = String(r['NavID'] || '').trim();
+    const navID = String(r['Sitemap_ID'] || '').trim();
     const node = navID ? navById.get(navID) : null;
     aoa.push([
       r[urlCol] || '',
@@ -18202,7 +18278,7 @@ function reportMigrationChecklist() {
   let netNewCount = 0;
   if (state.navNodes) {
     const pageCounts = {};
-    state.editedRows.forEach(r => { const id = r['NavID'] || ''; if (id) pageCounts[id] = (pageCounts[id] || 0) + 1; });
+    state.editedRows.forEach(r => { const id = r['Sitemap_ID'] || ''; if (id) pageCounts[id] = (pageCounts[id] || 0) + 1; });
     state.navNodes.forEach(n => {
       const c = pageCounts[n.id] || 0;
       const hc = n.children && n.children.length > 0;
@@ -18687,7 +18763,7 @@ function runPreHandoffCheck() {
     });
 
     const pageCounts = {};
-    state.editedRows.forEach(r => { const id = String(r['NavID'] || '').trim(); if (id) pageCounts[id] = (pageCounts[id] || 0) + 1; });
+    state.editedRows.forEach(r => { const id = String(r['Sitemap_ID'] || '').trim(); if (id) pageCounts[id] = (pageCounts[id] || 0) + 1; });
     const emptyLeaves = state.navNodes.filter(n =>
       (pageCounts[n.id] || 0) === 0 &&
       !(n.children && n.children.length) &&
@@ -18712,7 +18788,7 @@ function runPreHandoffCheck() {
     <div style="font-weight:600;font-size:14px;color:${allGood ? 'var(--accent-text)' : 'var(--text-primary)'};">
       ${allGood ? '&#10003; Ready for handoff' : `&#9888; ${totalIssues} issue${totalIssues !== 1 ? 's' : ''} across ${issueChecks.length} check${issueChecks.length !== 1 ? 's' : ''}`}
     </div>
-    <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${passCount} of ${checks.length} checks passed${hasNav ? '' : ' &middot; nav-tree checks skipped (no NavStructure)'}</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${passCount} of ${checks.length} checks passed${hasNav ? '' : ' &middot; nav-tree checks skipped (no Sitemap sheet)'}</div>
   </div>`;
 
   checks.forEach(c => {
@@ -18956,7 +19032,7 @@ function gatherAssigneeBriefData(role, person) {
   const pageCounts = {};
   const assignedByNav = new Map();
   state.editedRows.forEach(r => {
-    const id = String(r['NavID'] || '').trim();
+    const id = String(r['Sitemap_ID'] || '').trim();
     if (!id) return;
     const eff = String(r[finalKkeCol()] || r[kkeCol()] || '').trim().toLowerCase();
     if (eff === 'kill' || eff === 'consolidate') return;
@@ -18980,7 +19056,7 @@ function gatherAssigneeBriefData(role, person) {
     const cur = String(row[urlCol] || '').trim();
     const seen = new Set();
     (consolidateInto.get(cur) || []).forEach(src => {
-      const sid = String(src[urlCol] || '') || String(src['NavID'] || '');
+      const sid = String(src[urlCol] || '') || String(src['Sitemap_ID'] || '');
       if (!seen.has(sid)) seen.add(sid);
     });
     return seen.size;
@@ -19183,7 +19259,7 @@ function showNavCoverageReport() {
   // Count pages per node
   const pageCounts = {};
   state.editedRows.forEach(row => {
-    const navID = row['NavID'] || '';
+    const navID = row['Sitemap_ID'] || '';
     if (navID) pageCounts[navID] = (pageCounts[navID] || 0) + 1;
   });
 
@@ -19210,7 +19286,7 @@ function showNavCoverageReport() {
 
   // Check path mismatches
   state.editedRows.forEach((row, origIndex) => {
-    const navID = row['NavID'] || '';
+    const navID = row['Sitemap_ID'] || '';
     if (!navID) return;
     const computed = String(row['Computed Path'] || '').trim();
     const url = String(row[urlCol] || '').trim();
@@ -19226,7 +19302,7 @@ function showNavCoverageReport() {
 
   // Build report
   const totalNodes = state.navNodes.length;
-  const assignedPages = state.editedRows.filter(r => String(r['NavID'] || '').trim()).length;
+  const assignedPages = state.editedRows.filter(r => String(r['Sitemap_ID'] || '').trim()).length;
   const unassigned = state.editedRows.length - assignedPages;
 
   let html = `<div style="padding:16px;font-size:13px;line-height:1.6;">`;
@@ -20374,10 +20450,10 @@ function resyncNavBasedRedirects() {
   };
 
   let updated = 0;
-  let skipped = 0; // rows with NavID but node not found / no computed path
+  let skipped = 0; // rows with Sitemap_ID but node not found / no computed path
 
   state.editedRows.forEach((row, origIndex) => {
-    const navID = String(row['NavID'] || '').trim();
+    const navID = String(row['Sitemap_ID'] || '').trim();
     if (!navID) return;
 
     const existing = String(row['Redirect_Destination'] || '').trim();
@@ -20751,7 +20827,7 @@ function renderRedirectEditor() {
         }
       }
       if (!resolvedDest) {
-        const navID = row['NavID'] || '';
+        const navID = row['Sitemap_ID'] || '';
         if (navID && state.navNodes.length > 0) {
           const node = state.navNodes.find(n => n.id === navID);
           if (node && node.computedPath) {
@@ -21137,7 +21213,7 @@ async function exportRedirectMap() {
         dest = customDest;
       } else {
         // Check for sitemap node assignment
-        const navID = row['NavID'] || '';
+        const navID = row['Sitemap_ID'] || '';
         if (navID && state.navNodes.length > 0) {
           const node = state.navNodes.find(n => n.id === navID);
           if (node && node.computedPath) {

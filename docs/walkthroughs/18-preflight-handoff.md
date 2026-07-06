@@ -25,7 +25,7 @@ The final pass before you ship: one command that runs every validation, plus the
 5. **No duplicate nav IDs** — *(nav-tree files only)*.
 6. **No empty nav leaves** — *(nav-tree files only)*.
 
-Each failing check lists a sample of the offending pages and a one-line fix (which filter to use, which editor to open). Nav checks are skipped automatically if the file has no NavStructure.
+Each failing check lists a sample of the offending pages and a one-line fix (which filter to use, which editor to open). Nav checks are skipped automatically if the file has no Sitemap sheet.
 
 > Work top-down: clear unreviewed pages first (they cascade into the other checks), then consolidations, then redirects, then nav. Re-run after each batch.
 
