@@ -22,9 +22,9 @@ Capture these views to showcase the app's features. Use the Stanford OHS crawl (
 9. **Notes popover** — notes popover open with some rationale text
 10. **Meta fields** — field bar showing Screaming Frog metadata (Title, Status Code, etc.)
 
-### Navigation
-11. **Nav editor (Tree view)** — full-panel tree editor showing hierarchy with indented nodes, labels, slugs, computed paths
-12. **Nav assignment popover** — cascading dropdowns with an assigned node showing in the green box at top
+### Sitemap
+11. **Sitemap editor (Tree view)** — full-panel tree editor showing hierarchy with indented nodes, labels, slugs, computed paths
+12. **Sitemap assignment popover** — cascading dropdowns with an assigned node showing in the green box at top
 13. **Drag-to-assign** — sidebar row being dragged onto a tree node (if capturable)
 
 ### Redirect Editor
@@ -52,7 +52,7 @@ Capture these views to showcase the app's features. Use the Stanford OHS crawl (
 25. **Help window** — separate help window open alongside the main app window
 
 ### Dark Mode
-26. **Dark mode** — any main view (audit view or nav editor) in macOS dark mode
+26. **Dark mode** — any main view (audit view or sitemap editor) in macOS dark mode
 
 ### Menu Bar
 27. **File menu** — showing Open, Open Recent, Save, Import/Merge, Export…
@@ -85,7 +85,7 @@ Capture these views to showcase the app's features. Use the Stanford OHS crawl (
 ## Tips
 
 - Use the Stanford OHS crawl for realistic data
-- Assign a mix of KKE statuses to several rows first so badges and the progress bar have color; assign a few pages to nav nodes and set 2–3 SME decisions so the migration, IA, and KKE-vs-SME shots have content
+- Assign a mix of KKE statuses to several rows first so badges and the progress bar have color; assign a few pages to sitemap nodes and set 2–3 SME decisions so the migration, IA, and KKE-vs-SME shots have content
 - Window size around 1440x900 captures well without feeling cramped
 - Capture light mode first, then switch system appearance for the dark mode shot
 - For the thumbnail shot, visit a few rows first (so they're cached) before hovering

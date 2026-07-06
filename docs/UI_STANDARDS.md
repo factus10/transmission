@@ -35,7 +35,7 @@ All five live near the top of `renderer.js` under "Unified dialog system." Read 
 
 ```js
 if (!(await confirmDialog({
-  title: 'Delete nav node',
+  title: 'Delete sitemap node',
   message: `Delete "${node.label}"?\n\n${pageCount} pages will lose their assignment.`,
   confirmLabel: 'Delete',
   danger: true,            // red primary button for destructive actions

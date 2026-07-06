@@ -3023,9 +3023,9 @@ function renderVisibleRows() {
     const hasRedirect = explicitRedirect || implicitRedirect;
     if (hasNav) {
       const n = document.createElement('span');
-      n.className = 'row-ind row-ind-nav';
-      n.textContent = 'N';
-      n.title = 'Assigned to nav: ' + (row['Sitemap_Destination'] || row['Computed Path'] || hasNav);
+      n.className = 'row-ind row-ind-sitemap';
+      n.textContent = 'S';
+      n.title = 'Assigned to sitemap: ' + (row['Sitemap_Destination'] || row['Computed Path'] || hasNav);
       indicators.appendChild(n);
     }
     if (hasRedirect) {
@@ -10102,7 +10102,7 @@ async function assignNav() {
     updateNavBadge(row);
     renderMetaFields(row, state.selectedIndex);
     renderVisibleRows();
-    showToast('Nav child created: ' + childNode.breadcrumb, 'success');
+    showToast('Sitemap child created: ' + childNode.breadcrumb, 'success');
   } else {
     // Assign directly to the selected node
     const oldEffUrl = effectiveConsolidateUrl(row);
@@ -10119,7 +10119,7 @@ async function assignNav() {
     updateNavBadge(row);
     renderMetaFields(row, state.selectedIndex);
     renderVisibleRows();
-    showToast('Nav assigned: ' + node.label, 'success');
+    showToast('Sitemap assigned: ' + node.label, 'success');
     await maybeWarnDuplicateDestination(state.selectedIndex);
   }
 }
@@ -16778,7 +16778,7 @@ function openUnifiedExportDialog() {
         </button>
         <button type="button" class="xpd-option" data-kind="migration">
           <div class="xpd-option-title">Migration Tracker</div>
-          <div class="xpd-option-desc">Nav-tree-centric deliverable for engineering. Multi-sheet xlsx (Nav Plan · Source Pages · Redirects · Archive).</div>
+          <div class="xpd-option-desc">Sitemap-centric deliverable for engineering. Multi-sheet xlsx (Sitemap Plan · Source Pages · Redirects · Archive).</div>
           <div class="xpd-option-format">→ xlsx</div>
         </button>
         <button type="button" class="xpd-option" data-kind="profile">
@@ -17722,8 +17722,8 @@ function reportNetNewBrief() {
 // ─── Report: Migration Checklist ─────────────────────────────────────────────
 
 // ─── Phase 2, Chunk ε: Migration Tracker Export ──────────────────────────────
-// Nav-tree-centric deliverable for the engineering team. Multi-sheet xlsx with:
-//   - Nav Plan       (one row per sitemap node: URL, pattern, status, assignees, guidance)
+// Sitemap-centric deliverable for the engineering team. Multi-sheet xlsx with:
+//   - Sitemap Plan   (one row per sitemap node: URL, pattern, status, assignees, guidance)
 //   - Source Pages   (audit rows joined to their sitemap node assignment + KKE decision)
 //   - Redirects      (Kill rows + URL-changed Keep/Evolve rows + intentional 404s)
 //   - Archive        (Kill rows with rationale, for client reference)
@@ -17753,7 +17753,7 @@ function openMigrationTrackerExportDialog() {
   const refNodes = state.navNodes.filter(n => n.refNodeId).length;
   const assignedRows = state.editedRows.filter(r => String(r['Sitemap_ID'] || '').trim()).length;
   const killRows = state.editedRows.filter(r => String((r[finalKkeCol()] || r[kkeCol()]) || '').trim() === 'Kill').length;
-  // Active Build filter (from the Nav Tree toolbar) — lets the Nav Plan sheet be scoped to it.
+  // Active Build filter (from the Sitemap toolbar) — lets the Sitemap Plan sheet be scoped to it.
   const _bfSel = document.getElementById('nav-build-filter');
   const buildFilter = _bfSel ? _bfSel.value : '';
   const buildLabel = (_bfSel && _bfSel.selectedIndex >= 0) ? _bfSel.options[_bfSel.selectedIndex].text : '';
@@ -17766,19 +17766,19 @@ function openMigrationTrackerExportDialog() {
     </div>
     <div class="modal-body" style="padding:16px;overflow-y:auto;">
       <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px;">
-        Sitemap-centric deliverable for the engineering team. The Nav Plan sheet enumerates every page in the new site with its pattern, guidance, assignees, and status. Companion sheets give traceability and the redirect manifest.
+        Sitemap-centric deliverable for the engineering team. The Sitemap Plan sheet enumerates every page in the new site with its pattern, guidance, assignees, and status. Companion sheets give traceability and the redirect manifest.
       </p>
 
       <div class="mte-section">
         <div class="mte-section-title">Sheets to include</div>
-        <label class="mte-opt"><input type="checkbox" id="_mte-sheet-plan" checked disabled> <strong>Nav Plan</strong> <span class="mte-count">${totalNodes} node${totalNodes !== 1 ? 's' : ''}</span></label>
+        <label class="mte-opt"><input type="checkbox" id="_mte-sheet-plan" checked disabled> <strong>Sitemap Plan</strong> <span class="mte-count">${totalNodes} node${totalNodes !== 1 ? 's' : ''}</span></label>
         <label class="mte-opt"><input type="checkbox" id="_mte-sheet-sources" checked> <strong>Source Pages</strong> <span class="mte-count">${assignedRows} assigned audit row${assignedRows !== 1 ? 's' : ''}</span></label>
         <label class="mte-opt"><input type="checkbox" id="_mte-sheet-redirects" checked> <strong>Redirects</strong> <span class="mte-count">Kill rows + URL changes</span></label>
         <label class="mte-opt"><input type="checkbox" id="_mte-sheet-archive" checked> <strong>Archive</strong> <span class="mte-count">${killRows} Kill row${killRows !== 1 ? 's' : ''}</span></label>
       </div>
 
       <div class="mte-section">
-        <div class="mte-section-title">Nav Plan options</div>
+        <div class="mte-section-title">Sitemap Plan options</div>
         <label class="mte-opt"><input type="checkbox" id="_mte-include-phased" ${phasedNodes > 0 ? '' : 'disabled'}> Include phased nodes <span class="mte-count">${phasedNodes} Future / Stretch / Archived</span></label>
         <label class="mte-opt"><input type="checkbox" id="_mte-include-refs" ${refNodes > 0 ? '' : 'disabled'}> Include reference nodes <span class="mte-count">${refNodes} alias node${refNodes !== 1 ? 's' : ''}</span></label>
         <label class="mte-opt"><input type="checkbox" id="_mte-build-filter" ${buildFilter ? '' : 'disabled'}> Only nodes matching the active Build filter <span class="mte-count">${buildFilter ? escapeHtml(buildLabel) + ' · ' + buildMatchCount + ' match' + (buildMatchCount === 1 ? '' : 'es') : 'no Build filter set'}</span></label>
@@ -17786,7 +17786,7 @@ function openMigrationTrackerExportDialog() {
 
       <div class="mte-section">
         <div class="mte-section-title" style="display:flex;align-items:center;justify-content:space-between;">
-          <span>Nav Plan columns</span>
+          <span>Sitemap Plan columns</span>
           <span style="display:flex;gap:6px;">
             <button type="button" id="_mte-col-all" class="btn btn-sm btn-ghost">All</button>
             <button type="button" id="_mte-col-none" class="btn btn-sm btn-ghost">None</button>
@@ -17854,7 +17854,7 @@ function openMigrationTrackerExportDialog() {
 async function runMigrationTrackerExport(opts) {
   const sheets = [];
 
-  // Nav Plan — every sitemap node as a row with build metadata
+  // Sitemap Plan — every sitemap node as a row with build metadata
   sheets.push(buildNavPlanSheet(opts.plan));
 
   if (opts.sheets.sources) sheets.push(buildSourcePagesSheet(opts.sources));
@@ -17976,7 +17976,7 @@ async function runNavNodesExport(nodes, colKeys) {
   const slug = (ps.projectName || ps.clientName || 'project')
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   const stamp = new Date().toISOString().slice(0, 10);
-  const defaultName = `${slug || 'project'}-nav-nodes-${stamp}.xlsx`;
+  const defaultName = `${slug || 'project'}-sitemap-nodes-${stamp}.xlsx`;
   try {
     const result = await window.electronAPI.exportMigrationTracker({ defaultName, sheets: [sheet] });
     if (result?.success) {
@@ -17989,8 +17989,8 @@ async function runNavNodesExport(nodes, colKeys) {
   }
 }
 
-/** Column catalog for nav-node exports — shared by the Nav Plan sheet (Migration
- *  Tracker) and the Nav Tree "Filtered nodes → Excel" export. Each entry:
+/** Column catalog for nav-node exports — shared by the Sitemap Plan sheet (Migration
+ *  Tracker) and the Sitemap "Filtered nodes → Excel" export. Each entry:
  *  { key, label (header), wch (width), get(node, ctx) }. Order here is the export order. */
 function navExportColumnDefs() {
   return [
@@ -18113,7 +18113,7 @@ function buildNavNodesSheet(nodes, colKeys, sheetName) {
   const ctx = navExportContext();
   const aoa = [chosen.map(d => d.label)];
   nodes.forEach(n => aoa.push(chosen.map(d => d.get(n, ctx))));
-  return { name: sheetName || 'Nav Plan', aoa, cols: chosen.map(d => ({ wch: d.wch })) };
+  return { name: sheetName || 'Sitemap Plan', aoa, cols: chosen.map(d => ({ wch: d.wch })) };
 }
 
 function buildNavPlanSheet(planOpts) {
@@ -18123,7 +18123,7 @@ function buildNavPlanSheet(planOpts) {
     respectBuildFilter: !!planOpts.respectBuildFilter,
     buildFilter:        planOpts.buildFilter || '',
   });
-  return buildNavNodesSheet(nodes, planOpts.columns, 'Nav Plan');
+  return buildNavNodesSheet(nodes, planOpts.columns, 'Sitemap Plan');
 }
 
 function buildSourcePagesSheet(sourceOpts) {
@@ -18137,7 +18137,7 @@ function buildSourcePagesSheet(sourceOpts) {
     'Source URL', 'Title', 'KKE', 'Final KKE', 'Suggested KKE',
     'Content Type', 'Renders As', 'Target Content Type',
     'Group', 'Primary Tag',
-    'Target Nav Breadcrumb', 'Target Computed Path', 'Target Pattern', 'Target Status',
+    'Target Sitemap Breadcrumb', 'Target Computed Path', 'Target Pattern', 'Target Status',
     'Notes'
   ]];
 
@@ -19306,7 +19306,7 @@ function showNavCoverageReport() {
   const unassigned = state.editedRows.length - assignedPages;
 
   let html = `<div style="padding:16px;font-size:13px;line-height:1.6;">`;
-  html += `<div style="font-weight:600;margin-bottom:12px;">Nav Coverage Report</div>`;
+  html += `<div style="font-weight:600;margin-bottom:12px;">Sitemap Coverage Report</div>`;
   html += `<div style="margin-bottom:8px;"><strong>${totalNodes}</strong> sitemap nodes | <strong>${assignedPages}</strong> pages assigned | <strong>${unassigned}</strong> unassigned</div>`;
 
   if (emptyLeaves.length > 0) {
@@ -19361,7 +19361,7 @@ function showNavCoverageReport() {
 
 async function exportNavCoveragePdf(format) {
   const bodyHtml = $('progress-body').innerHTML;
-  const title = 'Nav Coverage Report';
+  const title = 'Sitemap Coverage Report';
   const defaultName = reportDefaultName(title);
   await exportReport(title, bodyHtml, defaultName, format || 'pdf');
 }

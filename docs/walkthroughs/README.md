@@ -27,7 +27,7 @@ Every label, menu path, and shortcut here is verified against the 2.4.1 source �
 12. [Multi-auditor Merge](12-multi-auditor-merge.md) — combining parallel audits
 
 **E. Architect the future site**
-13. [Sitemap & IA](13-navigation-ia.md) — build the sitemap, place pages, references, phases
+13. [Sitemap & IA](13-sitemap-ia.md) — build the sitemap, place pages, references, phases
 14. [Build & Direction](14-build-direction.md) — Target Specs, build metadata, Builder/Writer/Migrator
 
 **F. Ship it**

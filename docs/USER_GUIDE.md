@@ -347,9 +347,9 @@ The field bar has two regions.
 
 - **Page thumbnails.** Once you've viewed a page, hovering its sidebar row shows a thumbnail preview — a quick way to recognize a page without clicking back into it. Thumbnails live in memory only and never bloat your file.
 - **Note snippets.** The Notes popover has a **Snippets…** menu for reusable rationale — insert a saved snippet, save the current note as one, or manage the list. Snippets follow you across projects.
-- **Undo and redo.** **Cmd+Z** and **Cmd+Shift+Z** cover KKE changes (up to 100 per session). Tag, note, and nav edits aren't undoable, but they're always saved.
-- **Build navigation without leaving the audit.** The **Sitemap** button places the current page on the sitemap (and if the sitemap is still empty, it offers an inline form — Label prefilled from the title, Slug from the URL — to create its very first node in one click). The **Menu** button adds the page to one of your menus: since menus reference pages that are on the sitemap, it makes sure the page is on the sitemap first, then lets you pick an existing menu, spin up a **+ New menu…**, or (with no menus yet) create your first menu right there. No trip to the Sitemap or Menus view required.
-- **Clean paste.** When you paste into nav labels, slugs, or notes, Transmission strips mojibake, stray HTML entities, and invisible characters — while leaving real accented letters (é, ü, ñ) untouched.
+- **Undo and redo.** **Cmd+Z** and **Cmd+Shift+Z** cover KKE changes (up to 100 per session). Tag, note, and sitemap edits aren't undoable, but they're always saved.
+- **Build the sitemap without leaving the audit.** The **Sitemap** button places the current page on the sitemap (and if the sitemap is still empty, it offers an inline form — Label prefilled from the title, Slug from the URL — to create its very first node in one click). The **Menu** button adds the page to one of your menus: since menus reference pages that are on the sitemap, it makes sure the page is on the sitemap first, then lets you pick an existing menu, spin up a **+ New menu…**, or (with no menus yet) create your first menu right there. No trip to the Sitemap or Menus view required.
+- **Clean paste.** When you paste into sitemap labels, slugs, or notes, Transmission strips mojibake, stray HTML entities, and invisible characters — while leaving real accented letters (é, ü, ñ) untouched.
 
 ### Quick self-check
 
@@ -390,7 +390,7 @@ Click the **KKE filter** to open a checkbox list. Check as many as you like and 
 - **Duplicates** (identical Title, H1, or Meta Description)
 - **SME conflicts** and **SME pending**
 - **Consolidate (no target)** and **Consolidate (dead target)**
-- **Shared nav** and **Needs placement**
+- **Shared sitemap node** and **Needs placement**
 - **Suggested disagrees** and **Suggested ≠ your call**
 
 Use the **Group** dropdown next to it to narrow to a single content group.
@@ -616,7 +616,7 @@ In the **Migrate** cluster, the **Track** field shows a dashed ghost suggestion 
 - **Renders as** (stored as `Content_Nature`) — **Page** (a hand-authored standalone), **Content Object** (a record like an article or bio, shown in the UI as "Fragment (embeddable)"), or **Generated** (a system-rendered view over records). This is a *delivery* concern, not a quality one — a page can be Keep and any of the three.
 - **Migration Track** — Scripted, Migrate Records, Configure, Manual Rebuild, Merge, or Kill/Redirect. The technical architect owns this call; the registry and the ghost suggestion just give it a head start.
 
-**Fragments have no public URL.** In the Navigation Editor you can set a node's **Node type → Fragment / shared content**. A Fragment keeps a computed path as a repository location but has no menu entry, breadcrumb, or redirect; it shows a `FRAG` badge and sits outside the net-new/empty counts. Anything that renders as a Fragment is automatically left out of the redirect plan (no URL to redirect) and the needs-placement check (a fragment has no nav home by design — that's correct, not a gap).
+**Fragments have no public URL.** In the Sitemap editor you can set a node's **Node type → Fragment / shared content**. A Fragment keeps a computed path as a repository location but has no menu entry, breadcrumb, or redirect; it shows a `FRAG` badge and sits outside the net-new/empty counts. Anything that renders as a Fragment is automatically left out of the redirect plan (no URL to redirect) and the needs-placement check (a fragment has no sitemap home by design — that's correct, not a gap).
 
 **The reports.** The **Content Type Crosswalk** report gives the CMS architect the whole current → target map; the **Migration Direction Brief** turns the per-spec direction into per-person worklists (both in [Producing the Outputs](#16-producing-the-outputs)).
 
@@ -745,7 +745,7 @@ When several pages already share a sitemap node, they're often consolidation can
 2. For each group, select the radio button on the page that should be the **target**.
 3. Click **Apply**.
 
-In one click, the target becomes Evolve (preserving a deliberate Keep/Evolve), the rest become Consolidate pointing at it, and their nav and explicit redirects are cleared. **Skip** defers a group that legitimately shares a node. A counter tracks *"X to resolve · Y skipped · Z hidden · N total,"* and a filter bar lets you scope by **Include KKE** or **Exclude groups** so you can set a whole section aside without touching individual calls.
+In one click, the target becomes Evolve (preserving a deliberate Keep/Evolve), the rest become Consolidate pointing at it, and their sitemap placement and explicit redirects are cleared. **Skip** defers a group that legitimately shares a node. A counter tracks *"X to resolve · Y skipped · Z hidden · N total,"* and a filter bar lets you scope by **Include KKE** or **Exclude groups** so you can set a whole section aside without touching individual calls.
 
 > **Why this beats one-at-a-time:** it's roughly one Apply per group instead of four clicks per page, and it enforces the right shape every time — target = Evolve, the rest = Consolidate pointing at it.
 
@@ -902,7 +902,7 @@ Work down the conflict list, picking the right call for each — or use the bulk
 
 *By the end of this section you'll have built the structure of the new site and placed every page you're keeping onto it — the moment the audit stops being a list and becomes a site.*
 
-> **In a hurry?** The [Sitemap & IA walkthrough](walkthroughs/13-navigation-ia.md) is the one-page version.
+> **In a hurry?** The [Sitemap & IA walkthrough](walkthroughs/13-sitemap-ia.md) is the one-page version.
 
 ### The mental model
 
@@ -1006,7 +1006,7 @@ Double-click a label (or click **✎**) for the full editor. It shows read-only 
 
 > **URL override — when the address shouldn't follow the menu.** Normally a page's URL is built from its place in the tree (`Company > Careers` → `/company/careers`). Sometimes you want the page grouped one way in the navigation but published at a different address — e.g. listed under *Company* in the menu but living at `/careers`. Type that path into **URL override** and the page's URL ignores its ancestors. It's an absolute path from the site root, and it **re-roots the page's sub-pages too**: an override of `careers` on a section makes a child *Open Roles* resolve to `/careers/open-roles` regardless of where the section sits in the menu. Leave it blank to follow the hierarchy as before. Overridden rows show a `↪` next to their path in the tree, and the stats bar tallies how many overrides are in play. Everything downstream — redirects, the Migration Tracker's target URLs, consolidation targets — uses the overridden address automatically.
 
-> **Breadcrumb parent — an arbitrary breadcrumb top.** The trail shown *on the page* is a third, separate axis: it need not match the menu hierarchy **or** the URL. By default a page's breadcrumb walks its physical ancestors, but you can set its **Breadcrumb parent** to *Breadcrumb root* (the trail starts at this page) or to *any other node* (the trail re-roots onto it). Classic case: the Department of Accounting page lives deep under `College of Business > Departments` in the tree, but should read simply **Home > Accounting** on the page — set Accounting's breadcrumb parent to *Breadcrumb root* and it collapses to that, while its own sub-pages inherit the new root (e.g. *Faculty* → **Home > Accounting > Faculty**). The optional **Breadcrumb home label** and **Breadcrumb max depth** live in **Project Settings → Identity**: the home label (e.g. "Home") is prepended to every trail, and the max depth is an advisory flag — nodes whose breadcrumb runs longer get a `⚠` in the tree and a tally in the stats bar, so you know where to plant a root. The node editor shows a live **Page breadcrumb** preview as you set this. (This is display-only — it never changes the URL or the menus.) The rendered page breadcrumb is carried into your deliverables: it's a **Page Breadcrumb** column in the Migration Tracker's Nav Plan and the Sitemap's column-picker export, and it travels with each referenced page in the menu export.
+> **Breadcrumb parent — an arbitrary breadcrumb top.** The trail shown *on the page* is a third, separate axis: it need not match the menu hierarchy **or** the URL. By default a page's breadcrumb walks its physical ancestors, but you can set its **Breadcrumb parent** to *Breadcrumb root* (the trail starts at this page) or to *any other node* (the trail re-roots onto it). Classic case: the Department of Accounting page lives deep under `College of Business > Departments` in the tree, but should read simply **Home > Accounting** on the page — set Accounting's breadcrumb parent to *Breadcrumb root* and it collapses to that, while its own sub-pages inherit the new root (e.g. *Faculty* → **Home > Accounting > Faculty**). The optional **Breadcrumb home label** and **Breadcrumb max depth** live in **Project Settings → Identity**: the home label (e.g. "Home") is prepended to every trail, and the max depth is an advisory flag — nodes whose breadcrumb runs longer get a `⚠` in the tree and a tally in the stats bar, so you know where to plant a root. The node editor shows a live **Page breadcrumb** preview as you set this. (This is display-only — it never changes the URL or the menus.) The rendered page breadcrumb is carried into your deliverables: it's a **Page Breadcrumb** column in the Migration Tracker's Sitemap Plan and the Sitemap's column-picker export, and it travels with each referenced page in the menu export.
 
 #### Deleting nodes
 
@@ -1265,13 +1265,13 @@ The Migration Tracker is *the* engineering deliverable — one `.xlsx` with four
 
 Open **Migration → Migration Tracker…**. A dialog lets you toggle which sheets and options to include (for example, whether Kill/Exclude rows appear in Source Pages, and whether phased nodes are included), then exports. The default filename is `{project-slug}-migration-tracker-YYYY-MM-DD.xlsx`. (You can also reach it via **File → Export…**.)
 
-Two controls let you scope the **Nav Plan** sheet: a **column picker** (tick exactly which columns to include) and **Only nodes matching the active Build filter** — when you've set a Build filter in the Sitemap (say, one assignee or one page status), this exports just the nodes that match it. The toggle shows the active filter and how many nodes match.
+Two controls let you scope the **Sitemap Plan** sheet: a **column picker** (tick exactly which columns to include) and **Only nodes matching the active Build filter** — when you've set a Build filter in the Sitemap (say, one assignee or one page status), this exports just the nodes that match it. The toggle shows the active filter and how many nodes match.
 
-**Just want the sitemap nodes, not the whole workbook?** In the Sitemap, set a **Build** (and/or Phase) filter, then use **Export → Filtered nodes → Excel…**. Pick **Rows** (the matching nodes, or all nodes) and **Columns**, and it writes a single sheet — `{project-slug}-nav-nodes-YYYY-MM-DD.xlsx`.
+**Just want the sitemap nodes, not the whole workbook?** In the Sitemap, set a **Build** (and/or Phase) filter, then use **Export → Filtered nodes → Excel…**. Pick **Rows** (the matching nodes, or all nodes) and **Columns**, and it writes a single sheet — `{project-slug}-sitemap-nodes-YYYY-MM-DD.xlsx`.
 
 ### What each sheet carries
 
-- **Nav Plan** — one row per sitemap node, with all the build metadata: page status, build pattern, builder/writer/migrator, guidance and briefs, source-page count, the assigned **source-page URL(s)**, the **consolidated-in URL(s)** (any old pages being merged into those assigned pages), net-new flag, phase, in-menu, and external URL. The build team's master plan.
+- **Sitemap Plan** — one row per sitemap node, with all the build metadata: page status, build pattern, builder/writer/migrator, guidance and briefs, source-page count, the assigned **source-page URL(s)**, the **consolidated-in URL(s)** (any old pages being merged into those assigned pages), net-new flag, phase, in-menu, and external URL. The build team's master plan.
 - **Source Pages** — your audit rows joined to their sitemap node: KKE / Final / Suggested calls, Content Type / Renders As / Target, Group, Primary Tag, and the target breadcrumb, path, pattern, and status. The "where does each old page go" map.
 - **Redirects** — Kill rows plus URL changes; an intentional `404` surfaces as "(404) — intentional deindex."
 - **Archive** — the Kill rows with their notes and tags, for client reference.
@@ -1282,7 +1282,7 @@ Each sheet has a frozen header row and pre-tuned column widths, ready to work in
 
 - [ ] The **Pre-Handoff Check** is clean before you export
 - [ ] The dialog's toggles are set for this particular hand-off
-- [ ] The **Nav Plan** carries the build metadata the team needs
+- [ ] The **Sitemap Plan** carries the build metadata the team needs
 - [ ] The **Redirects** sheet matches your redirect map
 - [ ] You exported with a clear, dated filename
 
@@ -1306,10 +1306,10 @@ The **Pre-Handoff Check** rolls every validation Transmission knows how to run i
 2. Consolidate pages point to a target.
 3. Consolidate targets are live (not Kill/Exclude).
 4. No redirect chains.
-5. No duplicate nav IDs *(nav-tree files only)*.
-6. No empty nav leaves *(nav-tree files only)*.
+5. No duplicate sitemap IDs *(sitemap files only)*.
+6. No empty sitemap leaves *(sitemap files only)*.
 
-Each failing check lists a sample of the pages plus a one-line fix (which filter to use, which editor to open); the nav checks are skipped automatically if the file has no Sitemap sheet. Work top-down — clear unreviewed pages first (they cascade into the other checks), then consolidations, then redirects, then nav — re-running after each batch. The check is itself a report, so you can export it to **PDF / HTML** as evidence that the audit passed its gate.
+Each failing check lists a sample of the pages plus a one-line fix (which filter to use, which editor to open); the sitemap checks are skipped automatically if the file has no Sitemap sheet. Work top-down — clear unreviewed pages first (they cascade into the other checks), then consolidations, then redirects, then sitemap — re-running after each batch. The check is itself a report, so you can export it to **PDF / HTML** as evidence that the audit passed its gate.
 
 ### The change log
 
@@ -1318,7 +1318,7 @@ Every change to a decision field — KKE, SME Decision, Final KKE, and the auto-
 ### Quick self-check
 
 - [ ] The Pre-Handoff Check reports **Ready for handoff** (0 issues)
-- [ ] All applicable checks pass (nav checks may legitimately be N/A)
+- [ ] All applicable checks pass (sitemap checks may legitimately be N/A)
 - [ ] You exported the check as evidence, if your process needs it
 - [ ] A final **Save** wrote the change log
 - [ ] Your outputs are generated: reports, the **Redirect Map**, and the **Migration Tracker**
