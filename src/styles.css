@@ -5376,5 +5376,12 @@ body.dragging-modal, body.dragging-modal * { cursor: grabbing !important; }
 .theme-seg button:last-child { border-right: none; }
 .theme-seg button.active { background: var(--accent); color: #fff; }
 
+/* ── Consolidate picker ───────────────────────────────────────────────────── */
+/* SME-notes hint box: was hardcoded #fef9c3/#fde047 with no explicit text color,
+   so in dark mode it inherited light --text-primary over a light-yellow
+   background — unreadable. Themed explicitly here instead. */
+.cp-hint-box { background: #fef9c3; border: 1px solid #fde047; color: #713f12; }
+:root[data-theme="dark"] .cp-hint-box { background: #422006; border-color: #92400e; color: #fcd34d; }
+
 /* ── Utilities ────────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }

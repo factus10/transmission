@@ -30,6 +30,8 @@ When several pages already share one sitemap node, they're likely consolidation 
 - **Sitemap → Consolidation Candidates…** lists every node with **2+** assigned pages, largest first.
 - For each group, pick the **target** (set to **Evolve**); the rest become **Consolidate** pointing at it, with their nav + explicit redirects cleared. Skip a group to leave it untouched for the session.
 
+You'll also get flagged automatically, without running this workflow: marking a page Keep/Evolve (or assigning its sitemap node) when another Keep/Evolve page already sits at that destination pops a **"Did you mean to Consolidate?"** prompt naming the other page, with a one-click **Consolidate into it**.
+
 ---
 
 ## 3. Catch broken targets
