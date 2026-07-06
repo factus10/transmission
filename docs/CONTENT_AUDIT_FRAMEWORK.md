@@ -55,13 +55,13 @@ Six values, not four. The two missing from KKE are **Replace** and **Split**:
 ### 2.3 URL Fate — What happens to the URL?
 
 - **Preserve** — URL stays exactly as it is
-- **Move** — URL changes via nav reorganization (the page is Keep but lives at a new path)
+- **Move** — URL changes via sitemap reorganization (the page is Keep but lives at a new path)
 - **Redirect** — URL retires, redirect points elsewhere
 - **404** — URL retires, no redirect (deliberate, e.g. for thin or noisy URLs)
 
 URL fate is **mostly independent** of content fate:
 
-- A Keep page can get a new URL because nav reorganized. Same content, different address.
+- A Keep page can get a new URL because the sitemap reorganized. Same content, different address.
 - A Kill page can have no redirect (intentional 404 for low-value or duplicate URLs).
 - A Consolidate page always redirects (to the target).
 - An Evolve page can keep its URL or move it.
@@ -113,13 +113,13 @@ Mid-audit, the client de-scopes a section. Pages are valid content, just not in 
 
 ### Pattern B: The Implicit Consolidate
 
-For years, auditors used "assign N pages to one nav node" as a covert *these should merge* signal. The data didn't say it; the human reading the audit had to infer it from page counts. We added Consolidate as an explicit KKE state to fix this.
+For years, auditors used "assign N pages to one sitemap node" as a covert *these should merge* signal. The data didn't say it; the human reading the audit had to infer it from page counts. We added Consolidate as an explicit KKE state to fix this.
 
 **Lesson:** Any pattern auditors are communicating with implicit conventions is a missing first-class concept. There are probably others.
 
 ### Pattern C: Keep But Moved
 
-High-quality page; its URL is changing because nav is being reorganized. KKE = Keep. `Redirect_Destination` = the new URL. Two pieces of information about one page in two columns. The KKE column alone doesn't tell the migration team "this URL is changing."
+High-quality page; its URL is changing because the sitemap is being reorganized. KKE = Keep. `Redirect_Destination` = the new URL. Two pieces of information about one page in two columns. The KKE column alone doesn't tell the migration team "this URL is changing."
 
 **Underlying issue:** Content Fate (preserve) and URL Fate (move) are independent.
 
@@ -240,7 +240,7 @@ This is a non-breaking evolution. Old audits work unchanged; new audits can use 
 - **Tagging.** Tags / Groups / Primary Tag handle dimensions of *categorization* (what is this page about?) rather than *disposition* (what should we do with it?). The two are orthogonal and the current vocabulary serves them fine.
 - **Content quality.** Rubrics handle "is this page good?" — separate from disposition.
 - **Migration mechanics.** Redirect maps, URL changes, content briefs are downstream of disposition. The framework provides inputs to those processes; it isn't those processes.
-- **Information architecture.** Nav assignments are a parallel concern. A page can have any disposition independent of where it fits (or doesn't) in the future IA.
+- **Information architecture.** Sitemap assignments are a parallel concern. A page can have any disposition independent of where it fits (or doesn't) in the future IA.
 
 ## 7. Open Questions
 

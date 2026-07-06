@@ -382,7 +382,7 @@
       <p class="help-mm"><strong>Mental model —</strong> filters are stackable and AND-ed (text <em>and</em> KKE <em>and</em> group <em>and</em> field filters). The list always reflects the current filter, and the Multi-bar acts on exactly that set.</p>
       <ul>
         <li><strong>Search</strong> with a scope selector: All fields / URL / Title.</li>
-        <li><strong>KKE filter</strong> is a checkbox dropdown (multi-select, OR-ed) including special filters: Unreviewed, Flagged, Duplicates, SME conflicts/pending, Consolidate (no/dead target), Shared nav, Needs placement, Suggested disagrees / &ne; your call.</li>
+        <li><strong>KKE filter</strong> is a checkbox dropdown (multi-select, OR-ed) including special filters: Unreviewed, Flagged, Duplicates, SME conflicts/pending, Consolidate (no/dead target), Shared sitemap node, Needs placement, Suggested disagrees / &ne; your call.</li>
         <li><strong>Field filters</strong> (<strong>+ Field filter</strong>) on any column: is blank / is not blank / contains / equals / starts with / ends with. <strong>Unclassified</strong> is a shortcut for <code>Content Nature is blank</code>.</li>
         <li><strong>Save</strong> a combination (text + scope + KKE + group + field filters) and recall it; <strong>Cmd+F</strong> Global Search finds &amp; navigates across all rows. In the <strong>Sitemap</strong>, <strong>Cmd+F</strong> searches the sitemap nodes instead (label, breadcrumb, number, path, notes, pattern, assignees) and the ◀/▶ buttons jump &amp; scroll to each match, expanding collapsed branches as needed.</li>
       </ul>
@@ -399,7 +399,7 @@
       <p class="help-mm"><strong>Mental model —</strong> the <strong>Multi-bar</strong> acts on a target set: your <em>multi-selection</em> if any, otherwise the <em>filtered rows</em>. The label says which (<em>"Apply to N selected/filtered:"</em>).</p>
       <ul>
         <li><strong>Define the target:</strong> filter only, or multi-select (<code>Cmd+click</code> toggle, <code>Shift+click</code> range). Selection wins when both apply.</li>
-        <li><strong>Apply an action:</strong> Set KKE · Set Published Status · Set Content Type · Set Content Theme · Set Group · Set Primary Tag · Add Tag → pick value → Apply. Kill-cleanup prompts fire for pages with nav/redirects.</li>
+        <li><strong>Apply an action:</strong> Set KKE · Set Published Status · Set Content Type · Set Content Theme · Set Group · Set Primary Tag · Add Tag → pick value → Apply. Kill-cleanup prompts fire for pages with a sitemap assignment/redirects.</li>
         <li><strong>Batch assess:</strong> <strong>Project &rarr; Run Rubric on filtered rows…</strong> scores the set into Suggested_KKE.</li>
       </ul>
       <h4>Good end-state</h4>
@@ -465,7 +465,7 @@
     <section class="help-section">
       <p class="help-mm"><strong>Mental model —</strong> <strong>Consolidate</strong> merges a page's content <em>into</em> another (recorded in <code>Consolidate_Into</code>); the target survives (usually Evolve). Consolidated pages need no sitemap placement; the redirect resolver chases the target (cycle-safe). The app warns on a <strong>dead target</strong>.</p>
       <ul>
-        <li><strong>One page:</strong> press <code>4</code> / click <strong>Consolidate</strong> → pick the target in the picker (sets <code>Consolidate_Into</code> + KKE, clears nav).</li>
+        <li><strong>One page:</strong> press <code>4</code> / click <strong>Consolidate</strong> → pick the target in the picker (sets <code>Consolidate_Into</code> + KKE, clears sitemap placement).</li>
         <li><strong>In bulk:</strong> <strong>Sitemap &rarr; Consolidation Candidates…</strong> lists nodes with 2+ pages; pick the target (→ Evolve), the rest become Consolidate.</li>
         <li><strong>Automatic catch:</strong> marking a page Keep/Evolve (or assigning its sitemap node) when another Keep/Evolve page already sits at that destination pops a <strong>"Did you mean to Consolidate?"</strong> prompt with a one-click target.</li>
         <li><strong>Jump to the target:</strong> reopen the picker (click Consolidate again) and use <strong>Go to page &rarr;</strong> next to the current target.</li>
@@ -537,7 +537,7 @@
         <li>Open with <code>Cmd+Shift+T</code> (or the <strong>Sitemap</strong> tab). Drive <strong>need placement &rarr; 0</strong>: KKE = Keep + Evolve, field filter <code>Sitemap_ID is blank</code>, then the audit bar's <strong>Sitemap</strong> button &rarr; <strong>Assign</strong> (use <strong>+ Child</strong> to create a node inline). <strong>Starting empty?</strong> With no nodes yet, the <strong>Sitemap</strong> button offers an inline form (Label from the title, Slug from the URL) to create the first root node and assign the page in one step — no need to open the Sitemap view first.</li>
         <li><strong>Shape:</strong> rename/re-slug inline (cascades), drag to reorder/reparent, <strong>+ Root Node</strong> / row <strong>+</strong>, <strong>&#10697;</strong> clone, <strong>Remediate</strong>. Set <strong>Node type</strong>, <strong>Collapse</strong> (bulk <strong>Collapse &#10003; / Expand</strong> &mdash; summarizes a subtree in the Visual Sitemap), <strong>Reference</strong>, <strong>Phase</strong>.</li>
         <li><strong>Gaps:</strong> <strong>NEW</strong> = net-new; red <strong>empty leaf</strong> = assign / net-new / phase / delete; <strong>&#9888; duplicate IDs</strong> auto-renumbers. Read the stats line.</li>
-        <li><strong>Decouple the three axes</strong> (all in the node editor): <strong>URL override</strong> (<code>&#8618;</code>) publishes a page at an address off its menu position, re-rooting sub-pages; <strong>Breadcrumb parent</strong> (<code>&#8624;</code>) sets an arbitrary on-page breadcrumb top (e.g. deep <em>Accounting</em> reads <strong>Home &gt; Accounting</strong>) &mdash; optional Home prefix + advisory depth cap in <strong>Project Settings &rarr; Identity</strong>, and a <strong>Page Breadcrumb</strong> column in the Migration Tracker / nav &amp; menu exports; and <strong>Menus</strong> (below) are independent of the tree. Containment, URL, breadcrumb, and menus are four separate things.</li>
+        <li><strong>Decouple the three axes</strong> (all in the node editor): <strong>URL override</strong> (<code>&#8618;</code>) publishes a page at an address off its menu position, re-rooting sub-pages; <strong>Breadcrumb parent</strong> (<code>&#8624;</code>) sets an arbitrary on-page breadcrumb top (e.g. deep <em>Accounting</em> reads <strong>Home &gt; Accounting</strong>) &mdash; optional Home prefix + advisory depth cap in <strong>Project Settings &rarr; Identity</strong>, and a <strong>Page Breadcrumb</strong> column in the Migration Tracker / sitemap &amp; menu exports; and <strong>Menus</strong> (below) are independent of the tree. Containment, URL, breadcrumb, and menus are four separate things.</li>
         <li><strong>Visual Sitemap</strong> (toolbar <strong>Visual Sitemap</strong>): the content IA as one interactive box tree rooted at the homepage. Click cards to collapse/expand, scroll to zoom, drag to pan, <strong>Fit</strong>. Branches auto-lay-out <strong>horizontal vs vertical</strong> by two thresholds (<strong>Vertical from depth</strong>, <strong>or if children &ge;</strong>); right-click a node to force a direction or set its color. <strong>Settings</strong> panel: <strong>Layout</strong> (sizes/gaps), <strong>Colors</strong> (a rule engine &mdash; by depth / section / value, plus per-node overrides), <strong>Legend</strong> (editable labels), and <strong>Save as my defaults</strong>. Export an <strong>interactive HTML</strong> file for the client (collapse/zoom in any browser) or a one-page <strong>PDF</strong>. Also <strong>Sitemap Coverage</strong> &amp; <strong>Net New Content Brief</strong> (the navigation hand-off report is now the <strong>Menu Report</strong>, in the Menus view).</li>
       </ul>
       <h3>Menus</h3>
@@ -586,7 +586,7 @@
       <p class="help-mm"><strong>Mental model —</strong> a redirect is needed for any Kill page and any page whose URL is changing. The app resolves destinations by priority (<strong>custom &rarr; sitemap node path &rarr; project default &rarr; blank</strong>). The literal <code>404</code> means "let it die" (distinct from blank = TBD).</p>
       <ul>
         <li>Open with the <strong>Redirects</strong> tab / <code>Cmd+Shift+R</code> (lists Kill + URL-changed pages; fragments excluded).</li>
-        <li><strong>Set efficiently:</strong> <strong>Re-derive from nav</strong>, the per-row sitemap picker, the <strong>404</strong> toggle, and <strong>Find/Replace</strong> (filters to matches; Replace All). Destinations also resolve on Save.</li>
+        <li><strong>Set efficiently:</strong> <strong>Re-derive from sitemap</strong>, the per-row sitemap picker, the <strong>404</strong> toggle, and <strong>Find/Replace</strong> (filters to matches; Replace All). Destinations also resolve on Save.</li>
         <li><strong>Validate &amp; export:</strong> <strong>Migration &rarr; Redirect Chain Check…</strong>; <strong>Export Redirect Map (CSV)…</strong>; <strong>Reports &rarr; Redirect Map Report…</strong> (Kill / URL-changed / intentional 404s).</li>
       </ul>
       <h4>Good end-state</h4>
@@ -617,14 +617,14 @@
       <p class="help-mm"><strong>Mental model —</strong> the engineering deliverable: one multi-sheet <code>.xlsx</code> generated from current state, re-exported as the audit evolves. Run the Pre-Handoff Check first.</p>
       <ul>
         <li><strong>Migration &rarr; Migration Tracker…</strong> &mdash; toggle sheets/options, then export (<code>{project}-migration-tracker-YYYY-MM-DD.xlsx</code>).</li>
-        <li><strong>Sheets:</strong> <strong>Nav Plan</strong> (build metadata per node) · <strong>Source Pages</strong> (audit rows joined to nodes) · <strong>Redirects</strong> (Kill + URL changes; <code>404</code> as intentional deindex) · <strong>Archive</strong> (Kill rows + notes/tags).</li>
-        <li><strong>Scope the Nav Plan:</strong> pick which columns appear, and tick <strong>Only nodes matching the active Build filter</strong> to export just the nodes that match the Build filter you set in the Sitemap (e.g. one assignee, one status).</li>
-        <li><strong>Quick one-sheet export:</strong> in the Sitemap, set a <strong>Build</strong> (and/or Phase) filter, then <strong>Export &rarr; Filtered nodes → Excel…</strong> &mdash; choose columns and export just those rows to a single sheet (<code>{project}-nav-nodes-YYYY-MM-DD.xlsx</code>).</li>
+        <li><strong>Sheets:</strong> <strong>Sitemap Plan</strong> (build metadata per node) · <strong>Source Pages</strong> (audit rows joined to nodes) · <strong>Redirects</strong> (Kill + URL changes; <code>404</code> as intentional deindex) · <strong>Archive</strong> (Kill rows + notes/tags).</li>
+        <li><strong>Scope the Sitemap Plan:</strong> pick which columns appear, and tick <strong>Only nodes matching the active Build filter</strong> to export just the nodes that match the Build filter you set in the Sitemap (e.g. one assignee, one status).</li>
+        <li><strong>Quick one-sheet export:</strong> in the Sitemap, set a <strong>Build</strong> (and/or Phase) filter, then <strong>Export &rarr; Filtered nodes → Excel…</strong> &mdash; choose columns and export just those rows to a single sheet (<code>{project}-sitemap-nodes-YYYY-MM-DD.xlsx</code>).</li>
       </ul>
       <h4>Good end-state</h4>
       <ul class="help-check">
         <li>Pre-Handoff clean before export; toggles set for this hand-off</li>
-        <li>Nav Plan carries the build metadata; Redirects matches the map; dated filename</li>
+        <li>Sitemap Plan carries the build metadata; Redirects matches the map; dated filename</li>
       </ul>
     </section>
 
@@ -632,7 +632,7 @@
     <section class="help-section">
       <p class="help-mm"><strong>Mental model —</strong> the <strong>Pre-Handoff Check</strong> rolls every validation into one pass/issue report — a gate, not a fix. Fix what it flags, re-run, repeat until clean. The change log is the automatic audit trail.</p>
       <ul>
-        <li><strong>Migration &rarr; Pre-Handoff Check…</strong> checks: every page has a KKE call · Consolidate targets set &amp; live · no redirect chains · no duplicate nav IDs · no empty nav leaves (nav checks skipped without a Sitemap sheet). Work top-down, re-running after each batch.</li>
+        <li><strong>Migration &rarr; Pre-Handoff Check…</strong> checks: every page has a KKE call · Consolidate targets set &amp; live · no redirect chains · no duplicate sitemap IDs · no empty sitemap leaves (sitemap checks skipped without a Sitemap sheet). Work top-down, re-running after each batch.</li>
         <li><strong>Change log:</strong> KKE / SME / Final changes are appended to the <code>KKE_ChangeLog</code> sheet on save (accumulates across sessions).</li>
       </ul>
       <h4>Good end-state</h4>
@@ -728,7 +728,7 @@
         <tr><th>Column</th><th>Type</th><th>Purpose</th></tr>
         <tr><td><code>Sitemap_ID</code></td><td>ID</td><td>Assigned sitemap node identifier</td></tr>
         <tr><td><code>Sitemap_Destination</code></td><td>Text</td><td>Breadcrumb path (e.g., "About > Team")</td></tr>
-        <tr><td><code>Computed Path</code></td><td>URL path</td><td>Generated URL segment from nav hierarchy (or a node's <strong>URL override</strong>, set in the node editor, which decouples the address from the menu and re-roots its sub-pages)</td></tr>
+        <tr><td><code>Computed Path</code></td><td>URL path</td><td>Generated URL segment from the sitemap hierarchy (or a node's <strong>URL override</strong>, set in the node editor, which decouples the address from the menu and re-roots its sub-pages)</td></tr>
         <tr><td><code>Sitemap_SortID</code></td><td>Number</td><td>Sort position within the sitemap</td></tr>
       </table>
 
@@ -873,7 +873,7 @@
       <h4>Sitemap, redirects &amp; hand-off</h4>
       <ul>
         <li>Place every Keep/Evolve page (need placement &rarr; 0) before deriving redirects.</li>
-        <li>Re-derive redirects from nav after restructuring; run the chain check before export.</li>
+        <li>Re-derive redirects from the sitemap after restructuring; run the chain check before export.</li>
         <li>Run the <strong>Pre-Handoff Check</strong> last &mdash; fix what it flags, then export the Migration Tracker.</li>
       </ul>
     </section>

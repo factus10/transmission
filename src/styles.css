@@ -607,7 +607,7 @@ html, body {
   border-radius: 2px;
   cursor: default;
 }
-.row-ind-nav      { background: var(--kke-keep-bg);   color: var(--kke-keep); }
+.row-ind-sitemap  { background: var(--kke-keep-bg);   color: var(--kke-keep); }
 .row-ind-redirect { background: var(--kke-evolve-bg); color: var(--kke-evolve); }
 .row-ind-consolidate { background: var(--kke-consolidate-bg); color: var(--kke-consolidate); }
 .row-ind-consolidate-missing { background: var(--kke-kill-bg); color: var(--kke-kill); }
