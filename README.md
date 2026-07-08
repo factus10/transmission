@@ -2,7 +2,7 @@
 
 A macOS desktop app for auditing website content. Load a Screaming Frog crawl export (or any spreadsheet with URLs), review each page in an embedded browser, and record Keep/Kill/Evolve decisions directly in the file.
 
-**Version 2.4.1** — "How Soon Is Now?"
+**Version 2.5.2** — "How Soon Is Now?"
 
 ---
 
@@ -48,6 +48,7 @@ The list below is a feature catalog, not a how-to.
 - **AI Suggest for Unreviewed** (Project menu) — fills `Suggested_KKE` for undecided pages via the rubric + Claude (requires your API key); never touches your human KKE
 - **Compare KKE vs SME** (SME menu) — full-screen side-by-side of auditor vs SME decisions, click-through to any row
 - **Page thumbnails** — hover a visited row in the sidebar to preview its screenshot (captured on visit, kept in memory only)
+- **Check for Updates** — checks automatically at launch and via **Help → Check for Updates…**; when a newer version is out, shows a **What's New** changelog (opened in a small internal browser window) and a **Download** link. Installs are still manual (drag the new build to Applications) — nothing downloads or installs itself.
 - **Consistent dialogs** — every modal closes on Esc / backdrop-click, with a unified close button and footer layout
 
 ### View Switcher (persistent tab strip)
@@ -266,6 +267,7 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - **Per-menu metadata** — a **Placement** (per-project controlled vocabulary: Top bar, Footer, Overlay / Fly-out, … with inline add) and a free-text **Description**
 - **Add to a menu from the audit view** — the audit bar's **Menu** button adds the current page to a menu without leaving the audit. Because menus reference pages that live on the sitemap, it first checks the page is on the sitemap (and prompts you to add it if not); once it is, it opens a chooser of your existing menus (click one to add), with a **+ New menu…** option. If you have no menus yet, it opens a **New menu** dialog (Name / Placement / Description) and adds the page to it.
 - **Seed from content tree** — generate a starter menu mirroring the in-menu sitemap nodes, then edit independently
+- **Duplicate a menu** — clone a menu (and its full item tree) as a starting point for an alternate variant — e.g. testing a different mega-menu structure to show a client — without touching the original. The copy is selected immediately and pre-picked in the Export dialog's "just this menu" scope.
 - **CMS-agnostic export** — **Export…** writes a neutral, structured description of your menus (all or just the selected one) that any platform's import maps from — no vendor model baked in. Two formats: a flat, readable **Excel** `Menus` sheet or nested **JSON**; page references resolve to their target URLs. CMS-native files are optional add-ons on top.
 - **Broken-reference check** — if a referenced page is deleted/renumbered, the item shows `(missing page)` and a red **⚠ broken refs** toolbar button appears; one click lists every dangling item to re-point or remove before handoff.
 - **Per-menu sitemap** — **Sitemap** draws each menu as a box-tree using the same interactive engine as the Visual Sitemap (below): menus stack with headings, items are colored by kind (page / link / header, headers dashed), and you collapse/expand, pan/zoom, recolor, and export right in the view.

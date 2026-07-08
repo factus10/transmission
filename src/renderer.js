@@ -465,6 +465,8 @@ function bindIPCListeners() {
   if (window.electronAPI.onMenuKkeVsSme) window.electronAPI.onMenuKkeVsSme(() => openKkeVsSmeView());
   if (window.electronAPI.onMenuAssigneeBrief) window.electronAPI.onMenuAssigneeBrief(() => openAssigneeBriefReport());
   if (window.electronAPI.onMenuWelcome)   window.electronAPI.onMenuWelcome(() => openWelcomeDialog());
+  if (window.electronAPI.onMenuCheckUpdates) window.electronAPI.onMenuCheckUpdates(() => checkForUpdates({ silent: false }));
+  if (window.electronAPI.onUpdateCheckResult) window.electronAPI.onUpdateCheckResult(result => { if (result && result.available) showUpdateModal(result); });
   if (window.electronAPI.onMenuProductTour) window.electronAPI.onMenuProductTour(() => startProductTour());
   if (window.electronAPI.onMenuShortcuts) window.electronAPI.onMenuShortcuts(() => openShortcutHelp());
   window.electronAPI.onMenuSettings(() => toggleSettingsPopover());
@@ -1998,6 +2000,43 @@ function openWelcomeDialog() {
       { label: 'Take a quick tour', variant: 'ghost', onClick: () => { startProductTour(); }, closeOnClick: true },
       { label: 'Open a file', variant: 'primary', primary: true, onClick: () => { window.electronAPI.openFileDialog(); } },
     ],
+  });
+}
+
+// ─── Update check ──────────────────────────────────────────────────────────────
+
+function showUpdateModal(result) {
+  const body = document.createElement('div');
+  body.className = 'modal-message';
+  const published = result.publishedAt ? ` (${escapeHtml(result.publishedAt)})` : '';
+  body.innerHTML =
+    `<p>Transmission <b>v${escapeHtml(result.latest)}</b> is available${published}. You're on v${escapeHtml(result.current)}.</p>` +
+    (result.notes ? `<p>${escapeHtml(result.notes)}</p>` : '');
+  openModal({
+    title: 'Update Available',
+    body,
+    width: 460,
+    buttons: [
+      { label: 'Later', variant: 'ghost' },
+      { label: "What's New", variant: 'ghost', closeOnClick: false,
+        onClick: () => { window.electronAPI.openChangelogWindow(result.changelogUrl); } },
+      { label: `Download v${result.latest}`, variant: 'primary', primary: true,
+        onClick: () => { window.electronAPI.openExternal(result.downloadUrl); } },
+    ],
+  });
+}
+
+function checkForUpdates({ silent = false } = {}) {
+  if (!silent) showToast('Checking for updates…');
+  window.electronAPI.checkForUpdates().then(result => {
+    if (!result || result.error) {
+      if (!silent) showToast('Could not check for updates' + (result && result.error ? ': ' + result.error : ''), 'error');
+      return;
+    }
+    if (result.available) showUpdateModal(result);
+    else if (!silent) showToast(`You're up to date (v${result.current})`, 'success');
+  }).catch(() => {
+    if (!silent) showToast('Could not check for updates', 'error');
   });
 }
 
@@ -11140,6 +11179,33 @@ function addNodeRefToMenu(menu, node) {
   showToast(`Added "${node.label}" to "${menu.name}"`, 'success');
 }
 
+function duplicateMenu(menuId) {
+  const menu = getMenus().find(m => m.id === menuId);
+  if (!menu) return;
+  const idMap = {};
+  (menu.items || []).forEach((it, i) => { idMap[it.id] = 'mi-' + String(i + 1).padStart(4, '0'); });
+  const items = (menu.items || []).map(it => ({
+    id: idMap[it.id],
+    parentId: it.parentId && idMap[it.parentId] ? idMap[it.parentId] : '',
+    kind: it.kind,
+    nodeId: it.nodeId || '',
+    externalUrl: it.externalUrl || '',
+    label: it.label || '',
+  }));
+  const clone = {
+    id: genMenuId(),
+    name: (menu.name || 'Menu') + ' (copy)',
+    placement: menu.placement || '',
+    description: menu.description || '',
+    items,
+  };
+  getMenus().push(clone);
+  _menuSelectedId = clone.id;
+  setDirty(true);
+  renderMenusView();
+  showToast('Menu duplicated', 'success');
+}
+
 async function deleteMenu(menuId) {
   const menu = getMenus().find(m => m.id === menuId);
   if (!menu) return;
@@ -11338,6 +11404,7 @@ function renderMenuDetail() {
   head.appendChild(_menuAddBtn('+ Page', () => addMenuItemRef(menu)));
   head.appendChild(_menuAddBtn('+ Link', () => addMenuItemLink(menu)));
   head.appendChild(_menuAddBtn('+ Header', () => addMenuItemHeader(menu)));
+  head.appendChild(_menuAddBtn('Duplicate menu', () => duplicateMenu(menu.id)));
   head.appendChild(_menuAddBtn('Delete menu', () => deleteMenu(menu.id)));
   detail.appendChild(head);
 

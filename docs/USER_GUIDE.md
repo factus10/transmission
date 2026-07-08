@@ -1,6 +1,6 @@
 # Transmission — User Guide
 
-**Version 2.4.1 "How Soon Is Now?"**
+**Version 2.5.2 "How Soon Is Now?"**
 macOS (Apple Silicon + Intel)
 
 ---
@@ -72,6 +72,8 @@ Excel doesn't disappear — it just becomes the *deliverable* format instead of 
 3. You'll be greeted by a **Welcome** dialog, where you can open a file, view the keyboard shortcuts, or take a quick **Product Tour**.
 
 > **Tip:** you can reopen any of that later from the **Help** menu — **Getting Started** (the welcome screen), **Product Tour** (a 5-step guided spotlight), or **Keyboard Shortcuts** (also `Cmd+/`, or just press `?` anywhere in the app).
+
+Transmission also checks for a newer version each time it launches, and you can check any time via **Help → Check for Updates…**. If one's out, you'll see the new version number with a **What's New** button (opens the changelog in a small in-app window) and a **Download** button (opens the release page in your browser). Installing is still a manual drag-to-Applications, same as the first install — nothing downloads or replaces the running app on its own.
 
 ### Open your first file
 
@@ -1040,6 +1042,7 @@ Open the **Menus** tab in the view switcher (or **Cmd+Shift+M**). On the left is
 - **Add three kinds of item:** **+ Page** references a content page (search and pick it; it shows the live label and target path, and flags the reference if that page is later removed), **+ Link** is an external/utility URL like a login, and **+ Header** is a label-only heading for grouping (footer columns, mega sections). Change an item's kind anytime with the little **page / link / header** dropdown on its left.
 - **Drag the ⋮⋮ grip** to reorder items or nest them — drop onto the top/bottom third of a row to place it before/after, or the middle to nest it inside. Each menu can be flat or as deep as you like.
 - The same page can appear in **as many menus as you want**, at any depth — referencing it in the footer doesn't remove it from the primary nav.
+- **Duplicate menu** clones the selected menu — name, placement, description, and the whole item tree — as a fresh copy you can edit into an alternate variant without disturbing the original. Handy for testing two paths (e.g. a different mega-menu structure) to review with a client side by side: duplicate, adjust the copy, then use **Export…** with the "just this menu" scope (pre-selected on the new copy) to hand over only that variant.
 
 Menus travel with the file (both `.transmission` projects and `.xlsx` exports), so they're saved alongside everything else.
 

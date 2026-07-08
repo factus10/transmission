@@ -47,7 +47,7 @@ Note: **Table View** (Cmd+T), **Sitemap** (Cmd+Shift+T), and **Redirect Editor**
 - **Migration** — Migration Tracker · Migration Checklist · Net New Brief · Redirect Map Report · Redirect Chain Check · Sitemap Coverage · Export Redirect Map (CSV)
 - **Reports** — Executive Summary · Content Inventory · SME Review Status (narrative reports only)
 - **SME** — Export / Import / Resolve
-- **Help** — standard
+- **Help** — Getting Started · Product Tour · Keyboard Shortcuts · Transmission Help · Check for Updates…
 
 Platform-conditional Preferences placement: `process.platform === 'darwin'` → app menu; otherwise → File menu. `buildMenu()` uses a `send(channel)` factory to reduce boilerplate.
 
@@ -189,6 +189,10 @@ A `.transmission` file is a **SQLite database** (better-sqlite3, WAL mode) that 
 | renderer → main | `export-report-html` | `{ html, defaultName }` → `{ success, filePath?, error? }` — saves HTML report file |
 | renderer → main | `export-sitemap-pdf` | `{ html, defaultName }` → `{ success, filePath?, error? }` — loads a print-mode sitemap HTML (from `SitemapTemplate.build`) in a hidden window, waits for `document.title==='READY'`, then `printToPDF({ preferCSSPageSize:true })` to one page sized to the tree |
 | main → renderer | `menu-non200-triage` | none — opens non-200 triage dialog |
+| renderer → main | `check-for-updates` | none → `{ available, current, latest, notes, changelogUrl, downloadUrl, publishedAt } \| { error }` — fetches `update-manifest.json` and compares to `app.getVersion()` |
+| renderer → main | `open-changelog-window` | url string — opens the changelog URL in a small internal `BrowserWindow` (rejects untrusted hosts) |
+| main → renderer | `menu-check-updates` | none — Help → Check for Updates… |
+| main → renderer | `update-check-result` | update-check result object — pushed once, ~3s after launch, only when `available` is true |
 
 `FileData` = `{ filePath, headers, rows, urlColumn, navTree?, projectSettings? }`
 
@@ -555,7 +559,7 @@ Toggled via **Cmd+Shift+M**, the **Menus** view-switcher tab, or View → Menus 
 
 **Item kind is changeable in place** via a `<select>` on the kind badge → `changeMenuItemKind(menu, item, newKind)`: leaving `ref` materializes the inherited label first; → `ref` opens the node picker if there's no target yet; → `link`/`header` clears `nodeId` (and `externalUrl` for header).
 
-**Other ops:** `addMenu` / `deleteMenu`, `addMenuItemRef` (→ `showMenuNodePicker`, a searchable content-node picker) / `addMenuItemLink` / `addMenuItemHeader`, `removeMenuItem` (reparents orphans to the removed item's parent), `seedMenuFromContentTree` (builds a menu mirroring in-menu nav nodes, falls back to all nodes). Setup in `setupMenusView()`; the other views' open functions call `closeMenusView()` and vice-versa.
+**Other ops:** `addMenu` / `deleteMenu` / `duplicateMenu` (deep-clones a menu — name gets a " (copy)" suffix, item IDs are freshly minted and `parentId` remapped to the clone's own items so the hierarchy round-trips; items still reference the same content nodes/links as the source, for editing into a divergent variant — e.g. an alternate mega-menu path to review with a client — without touching the original; selects the new copy and defaults the Export dialog's "just this menu" scope to it), `addMenuItemRef` (→ `showMenuNodePicker`, a searchable content-node picker) / `addMenuItemLink` / `addMenuItemHeader`, `removeMenuItem` (reparents orphans to the removed item's parent), `seedMenuFromContentTree` (builds a menu mirroring in-menu nav nodes, falls back to all nodes). Setup in `setupMenusView()`; the other views' open functions call `closeMenusView()` and vice-versa.
 
 **Export (`btn-menu-export` → `openMenuExportDialog()` → `runMenuExport(list, format)`):** CMS-agnostic — a neutral structured representation any CMS import maps from; **no vendor's nav model is baked in** (CMS-native files would be optional opt-in adapters layered on top). Two formats: **xlsx** (`buildMenuExportSheet()` → a flat `Menus` sheet via the existing `export-migration-tracker` IPC; columns Menu/Placement/Description/Depth/Trail/Label/Kind/Target URL/Target Page/Node ID/Item ID/Parent Item ID) and **JSON** (`menuToJsonTree()` → nested per-menu items via the `save-text-file` IPC, which now takes optional `filters`). `menuExportTargetUrl()` resolves a `ref` to its node's `computedPath` (domain-prefixed) and a `link` to its external URL. Dialog scope = all menus / the selected one.
 
@@ -598,6 +602,21 @@ Reports: Executive Summary, Content Inventory by Section, SME Review Status, Red
 Page counts in both `renderNavEditor()` and `_navPageCountsCache()` exclude Kill/Consolidate rows so those pages do not inflate live-page tallies.
 
 **Default redirect URL propagation**: when `defaultRedirectUrl` is changed in Project Settings, the app checks for existing redirect destinations matching the old value and offers to update them all via a confirmation dialog showing the count of affected pages.
+
+---
+
+## Update check
+
+Manual, notify-and-link — **not** silent auto-download/install. On launch (main.js `app.whenReady()`, ~3s after `createWindow()`) and via **Help → Check for Updates…**, main fetches the update manifest, compares `manifest.version` to `app.getVersion()` (`compareVersions()`, dotted-numeric — no external semver dep), and returns `{ available, current, latest, notes, changelogUrl, downloadUrl, publishedAt }` (or `{ error }`).
+
+- **Why a separate repo**: the main source repo (`factus10/transmission`) is **private**, so `raw.githubusercontent.com` / `github.com` URLs into it 404 for the app (no GitHub credentials at runtime) — and GitHub Pages can't be enabled on a private repo without a paid plan. The manifest + changelog instead live in **[`factus10/transmission-updates`](https://github.com/factus10/transmission-updates)**, a small dedicated **public** repo containing only `update-manifest.json`, `changelog.html`, `index.html`, and `.nojekyll` — no app source, no client data — published via GitHub Pages at `https://factus10.github.io/transmission-updates/`.
+- **Manifest**: `UPDATE_MANIFEST_URL` in main.js points at `https://factus10.github.io/transmission-updates/update-manifest.json`. `changelogUrl` and `downloadUrl` inside it must resolve to a trusted host (`isTrustedUpdateUrl()` allowlists `factus10.github.io` / `github.com`, https-only) — `performUpdateCheck()` throws if either isn't, and `openChangelogWindow()` silently no-ops on an untrusted URL.
+- **Release step (manual — do this on every release)**: bump the version in `package.json` and add a `CHANGELOG.md` entry as usual, then in a checkout of `transmission-updates`: bump `version` / `publishedAt` / `notes` in `update-manifest.json`, regenerate `changelog.html` from this repo's `CHANGELOG.md` (rendered with `marked`, the same lib already a dependency here — see the generator used when this feature was built, not checked in), and push. Nothing here automates that sync yet.
+- **Known limitation**: `downloadUrl` still points at the **private** repo's GitHub Releases (`github.com/factus10/transmission/releases/latest`), so it only resolves for a browser already logged into GitHub as a collaborator on that repo — it is not truly public. Fine for the current small-team usage; revisit (e.g. mirror release assets to the public repo, or make the source repo public) if broader distribution is ever needed.
+- **Startup path**: `performUpdateCheck()` runs once; if `available`, main pushes the result to the renderer via `update-check-result` (`mainWindow.webContents.send`). Any failure (offline, bad manifest, untrusted host) is swallowed — a startup check should never interrupt the user with an error.
+- **Manual path**: Help → Check for Updates… sends `menu-check-updates`; the renderer calls `window.electronAPI.checkForUpdates()` (invoke/handle over `check-for-updates`) and always shows feedback — a toast either way (`"You're up to date (vX.Y.Z)"` / an error toast) or, when available, `showUpdateModal()`.
+- **`showUpdateModal(result)`** (renderer.js) is the shared UI for both paths: an `openModal()` dialog with **Later** (dismiss), **What's New** (`window.electronAPI.openChangelogWindow(result.changelogUrl)` — loads the changelog page in a small internal `BrowserWindow`, not the system browser), and **Download vX.Y.Z** (`openExternal(result.downloadUrl)` → the GitHub Releases page, opened in the system browser since installs are still manual drag-to-Applications — no `electron-updater`/Squirrel wiring).
+- **No changelog packaging**: the "what's new" viewer just points at the live, separately-hosted changelog page — nothing changelog-related ships inside the `.dmg`.
 
 ---
 
