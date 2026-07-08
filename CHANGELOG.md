@@ -4,6 +4,72 @@ All notable changes to Transmission are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 major-version codenames drawn from The Smiths.
 
+## [2.5.3] — "How Soon Is Now?"
+
+### Added
+- **Duplicate Consolidate-destination guard.** Setting a page to Keep/Evolve
+  when another page already targets the same Sitemap node now offers to
+  Consolidate it into that page instead — catching the mistake the moment it
+  happens, as a proactive complement to the bulk Consolidation Candidates
+  workflow.
+- **Check for Updates.** Transmission checks for a newer version at startup
+  and via **Help → Check for Updates…**, with a "What's New" changelog viewer
+  and a link to download the latest release.
+- **Duplicate menu.** Clone a menu — name, placement, description, and its
+  full item tree — as a starting point for an alternate variant (e.g.
+  testing a different mega-menu structure) without touching the original.
+  The copy is selected immediately and pre-picked in the Export dialog's
+  "just this menu" scope.
+
+### Changed
+- **Nav → Sitemap rename finished** across the UI, exports, and docs — the
+  remaining `Nav_*` audit/export columns are renamed to `Sitemap_*` for
+  clients (e.g. `Sitemap_Destination`, `Sitemap_ID`, `Sitemap_SortID`).
+
+## [2.5.2] — "How Soon Is Now?"
+
+### Added
+- **Visual Sitemap site-root toggle** — a "Show a site root box in the Visual
+  Sitemap" setting (Project Settings → Identity) suppresses the synthetic
+  site-root box; when off, the sitemap's own top-level node(s) become the
+  root(s) instead, so single- and multi-section sites both lay out cleanly.
+
+## [2.5.1] — "How Soon Is Now?"
+
+### Added
+- **`Page_Breadcrumb` audit column** — the derived on-page breadcrumb for a
+  row's assigned sitemap node, honoring the breadcrumb-parent override axis
+  and the Home-label prefix. Distinct from `Sitemap_Destination` (the
+  physical IA label chain). Read-only; shown in Table View by default.
+
+## [2.5.0] — "How Soon Is Now?"
+
+A "content cockpit" release: the Visual Sitemap is rewritten from the ground
+up as a self-contained engine, consolidation gets a sturdier data model, and
+the audit bar gains direct sitemap assignment and dark mode.
+
+### Added
+- **Visual Sitemap rewritten as a self-contained engine.** The
+  D3-in-a-hidden-window renderer is retired; one portable engine
+  (`src/sitemap-template.js`) now powers the in-app view (via an Electron
+  `<webview>`), the client-shareable HTML export, and the print/PDF export.
+  Threshold-based per-node horizontal/vertical layout, a color-rule engine,
+  and a Settings panel (Layout / Colors / Legend) replace the old renderer.
+  The `d3` and `mermaid` dependencies are fully removed.
+- **Two-column Consolidate target model** — the consolidation target is now
+  stored as a stable page identity (`_ConsolidateTargetId`) plus a derived,
+  always-fresh relative-path display (`Consolidate_Into`), so the link
+  survives the target page later being placed in the nav tree or gaining a
+  URL override.
+- Offer to remove an orphaned nav node when its last assigned page is Killed
+  or Consolidated away.
+- **Dark mode** for the app chrome.
+
+### Changed
+- The Sitemap is reframed as **content organization**, decoupled from URL and
+  breadcrumb; pages can now be assigned to a sitemap node directly from the
+  audit bar.
+
 ## [2.4.1] — "How Soon Is Now?"
 
 ### Changed
