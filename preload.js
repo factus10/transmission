@@ -12,6 +12,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getCurrentPath: ()        => ipcRenderer.invoke('get-current-path'),
   openExternal:   (url)     => ipcRenderer.invoke('open-external', url),
 
+  // ── Update check ──────────────────────────────────────────────────────────
+  checkForUpdates:     ()    => ipcRenderer.invoke('check-for-updates'),
+  openChangelogWindow: (url) => ipcRenderer.invoke('open-changelog-window', url),
+  onMenuCheckUpdates:  (cb)  => ipcRenderer.on('menu-check-updates', () => cb()),
+  onUpdateCheckResult: (cb)  => ipcRenderer.on('update-check-result', (e, result) => cb(result)),
+
   // ── Preferences (visible fields + tag library) ───────────────────────────
   getPrefs:  ()       => ipcRenderer.invoke('get-prefs'),
   savePrefs: (updates) => ipcRenderer.invoke('save-prefs', updates),

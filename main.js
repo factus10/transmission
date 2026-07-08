@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell, clipboard, webContents, nativeImage, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, clipboard, webContents, nativeImage, nativeTheme, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const XLSX = require('xlsx');
@@ -9,6 +9,7 @@ const { ProjectStore, PROJECT_EXT } = require('./project-store');
 
 let mainWindow = null;
 let helpWindow = null;
+let changelogWindow = null;
 let currentFilePath = null;
 let currentSheetName = null;
 let navSheetInfo = null;  // { sheetName, columns: { id, breadcrumb, computedPath, sortID } }
@@ -33,6 +34,19 @@ try {
     }
   }
 } catch (e) { /* non-fatal — start with fresh prefs */ }
+
+// ─── Update check ─────────────────────────────────────────────────────────────
+// The main source repo (factus10/transmission) is private, so raw.githubusercontent.com
+// / github.com URLs into it 404 for an unauthenticated app. The manifest + changelog
+// instead live in a small dedicated PUBLIC repo (factus10/transmission-updates,
+// published via GitHub Pages) that holds nothing but those two files — no source code,
+// no client data. Bump `version` / `publishedAt` / `notes` in that repo's
+// update-manifest.json (and copy the changelog) on each release; see CLAUDE.md
+// "Update check" for the exact steps. The release DMG itself still lives on the
+// private repo's GitHub Releases, so the Download link only resolves for logged-in
+// collaborators — see the CLAUDE.md note.
+const UPDATE_MANIFEST_URL = 'https://factus10.github.io/transmission-updates/update-manifest.json';
+const UPDATE_TRUSTED_HOSTS = new Set(['factus10.github.io', 'github.com']);
 
 // ─── Audit columns injected if not present in the xlsx ───────────────────────
 // These are the three write-fields the app manages for every crawl file.
@@ -486,7 +500,9 @@ function buildMenu() {
         { label: 'Product Tour', click: send('menu-product-tour') },
         { label: 'Keyboard Shortcuts', accelerator: 'CmdOrCtrl+/', click: send('menu-shortcuts') },
         { type: 'separator' },
-        { label: 'Transmission Help', click: () => openHelpWindow() }
+        { label: 'Transmission Help', click: () => openHelpWindow() },
+        { type: 'separator' },
+        { label: 'Check for Updates…', click: send('menu-check-updates') }
       ]
     }
   ];
@@ -2122,6 +2138,73 @@ function openHelpWindow() {
   helpWindow.on('closed', () => { helpWindow = null; });
 }
 
+// ─── Update check ─────────────────────────────────────────────────────────────
+
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) return diff > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+// Only ever load/open manifest-supplied URLs that point at hosts we publish
+// to — the manifest is fetched over the network, so this is a floor against
+// a compromised or malformed response redirecting the user's browser/window.
+function isTrustedUpdateUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && UPDATE_TRUSTED_HOSTS.has(u.hostname);
+  } catch (e) { return false; }
+}
+
+async function performUpdateCheck() {
+  const current = app.getVersion();
+  const response = await net.fetch(UPDATE_MANIFEST_URL);
+  if (!response.ok) throw new Error(`Update check failed (HTTP ${response.status})`);
+  const manifest = await response.json();
+  if (!manifest || typeof manifest.version !== 'string') throw new Error('Malformed update manifest');
+  if (!isTrustedUpdateUrl(manifest.changelogUrl) || !isTrustedUpdateUrl(manifest.downloadUrl)) {
+    throw new Error('Update manifest points to an untrusted host');
+  }
+  return {
+    available: compareVersions(manifest.version, current) > 0,
+    current, latest: manifest.version,
+    notes: manifest.notes || '',
+    changelogUrl: manifest.changelogUrl,
+    downloadUrl: manifest.downloadUrl,
+    publishedAt: manifest.publishedAt || null,
+  };
+}
+
+ipcMain.handle('check-for-updates', async () => {
+  try { return await performUpdateCheck(); }
+  catch (err) { return { error: err.message }; }
+});
+
+ipcMain.handle('open-changelog-window', (event, url) => { openChangelogWindow(url); });
+
+function openChangelogWindow(url) {
+  if (!isTrustedUpdateUrl(url)) return;
+  if (changelogWindow && !changelogWindow.isDestroyed()) {
+    changelogWindow.loadURL(url);
+    changelogWindow.focus();
+    return;
+  }
+  changelogWindow = new BrowserWindow({
+    width: 760,
+    height: 820,
+    minWidth: 400,
+    minHeight: 300,
+    title: "What's New — Transmission",
+    webPreferences: { nodeIntegration: false, contextIsolation: true }
+  });
+  changelogWindow.loadURL(url);
+  changelogWindow.on('closed', () => { changelogWindow = null; });
+}
+
 // Preferences (visible fields + tag library)
 ipcMain.handle('get-prefs', () => {
   const prefs = loadPrefs();
@@ -3426,6 +3509,18 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+
+  // Silent startup update check — only interrupt the user if there's actually
+  // something new; network hiccups here should never surface an error dialog.
+  setTimeout(() => {
+    performUpdateCheck()
+      .then(result => {
+        if (result.available && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update-check-result', result);
+        }
+      })
+      .catch(() => { /* silent */ });
+  }, 3000);
 });
 
 // Finder double-click / dock drop of a .transmission (or xlsx) file.
