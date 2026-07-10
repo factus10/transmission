@@ -2388,6 +2388,14 @@ function returnToAuditView() {
   if (_redirectEditorOpen) closeRedirectEditor();
   if (_menusViewOpen) closeMenusView();
   refreshViewSwitcher();
+  // The sidebar's virtual-scrolled row list is unrendered (zero-height container)
+  // while any full-width view is open — anything that mutated state.editedRows/
+  // filteredRows and re-rendered in the meantime (bulk sitemap actions, promoting
+  // a hub node from the node editor, etc.) painted against that zero height and
+  // left stale/truncated row items behind. Force one fresh, correctly-sized paint
+  // now that the sidebar is visible again, rather than leaving that until the next
+  // unrelated filter change happens to trigger one.
+  renderVisibleRows();
 }
 
 // ─── Saved Filters ────────────────────────────────────────────────────────────
@@ -3020,6 +3028,13 @@ function renderVisibleRows() {
 
   const scrollTop    = els.rowListWrap.scrollTop;
   const viewHeight   = els.rowListWrap.clientHeight;
+  // The sidebar is hidden (zero height) while any full-width view (Table,
+  // Sitemap, Redirects, Menus) is open. Computing the visible range against a
+  // zero viewHeight would paint only a handful of rows near the top of the
+  // list; skip the paint entirely rather than leave that truncated result
+  // sitting in the DOM for when the sidebar becomes visible again (see
+  // returnToAuditView(), which repaints once the container is actually sized).
+  if (viewHeight <= 0) return;
   const startIdx     = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
   const endIdx       = Math.min(filteredRows.length, Math.ceil((scrollTop + viewHeight) / ROW_HEIGHT) + OVERSCAN);
 
