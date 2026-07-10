@@ -6,6 +6,20 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.6.1] — "How Soon Is Now?"
+
+### Fixed
+- **Sidebar row list could get stuck truncated after using a full-width
+  view.** The virtual-scrolled row list sizes itself off the sidebar
+  container's height, which is zero while the Sitemap, Table, Redirects, or
+  Menus view is hiding it. Anything that mutated row data and re-rendered
+  during that window — bulk sitemap assignment, Create Sitemap from Audit,
+  promoting a hub node from the node editor — painted a truncated list that
+  stuck around after returning to the Audit view, until an unrelated filter
+  change happened to force a fresh render. The row list now skips painting
+  while hidden and always repaints fresh the moment the Audit view is shown
+  again.
+
 ## [2.6.0] — "How Soon Is Now?"
 
 ### Added
