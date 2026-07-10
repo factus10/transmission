@@ -13,6 +13,7 @@ dist-unsigned/
 
 # Local editor / tooling
 .claude/
+.codegraph/
 .DS_Store
 *.log
 

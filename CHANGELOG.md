@@ -4,6 +4,91 @@ All notable changes to Transmission are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 major-version codenames drawn from The Smiths.
 
+## [Unreleased]
+
+## [2.6.0] — "How Soon Is Now?"
+
+### Added
+- **"External link" Visual Sitemap color rule.** A new color-rule condition
+  matches nodes that point off-site (a nav node with an external URL, or a
+  `Link`-kind menu item) so they can be colored distinctly from ordinary
+  pages regardless of section or depth. A one-click **"Mark external links"**
+  button in the Colors tab adds it at the top of the rule list; it's also
+  selectable manually via **+ Add rule**.
+- **"Color by field" Visual Sitemap color rule.** Color the sitemap by
+  **Phase**, **Node Type**, **Page Status**, **Build Pattern**, or any of the
+  three **assignee** roles — pick a field in the Colors tab and click
+  **Color by field** for one rule per value actually in use (including a
+  bucket for "not set," so gaps are visible at a glance). Page Status reuses
+  the same colors you've already assigned it in Project Settings, so the
+  sitemap and the rest of the app agree on what each status looks like.
+- **Treemap.** A new squarified-treemap view of the content inventory
+  (Sitemap toolbar → **Treemap**, next to Visual Sitemap) — boxes sized by
+  page count, colored by KKE decision, top-level section, or (at full depth)
+  any tracked build field. Pick **Depth** and **Color by** in a small dialog
+  and Generate; pan/zoom/Fit, a legend, and Export HTML/PDF match the Visual
+  Sitemap. Hand-rolled, no charting library added.
+- **Add and clone menu items directly under another item.** Every menu item
+  row now has its own **+** (add a Page/Link/Header as that item's child,
+  no more adding at the bottom and dragging it into place) and **⧉**
+  (duplicate the item and its whole subtree as a sibling, ready to edit into
+  a variant elsewhere in the menu).
+- **Bulk sitemap assignment.** Select or filter a batch of pages (e.g. the
+  "Needs sitemap placement" filter), then **Assign to Sitemap…** in the
+  bulk-action bar to place all of them at once — pick an existing sitemap
+  node or create a new bucket (top-level or nested) as the destination. Each
+  page becomes its own child node, with slug and label auto-derived from its
+  URL and title; pages already on the sitemap are skipped. Built for getting
+  dozens or hundreds of pages placed fast, then reorganizing with the
+  Sitemap editor's existing drag-and-drop.
+- **Create Sitemap from Audit.** A new **Project → Create Sitemap from
+  Audit…** tool auto-generates a whole starter tree from the crawl's own
+  URLs in one pass — pick how many URL segments become nested sections
+  (bucket depth) and whether to include Kill/Exclude/unreviewed pages, then
+  Generate. `/about/leadership` becomes **About → Leadership** on its own.
+  Safe to run on a file that already has a sitemap, or run again later — it
+  only merges into matching section names, never replaces or deletes.
+- **Hub node → content page.** A net-new ("NEW") sitemap node's editor now
+  shows an amber banner explaining the gap, with a **Create Page** button
+  that promotes it into a real spreadsheet row — a new Keep page, tagged
+  `net-new`, assigned to the node — so it flows through the rest of the
+  audit and migration tracker like any other page. The banner also points
+  at the Build section's Page Status field for tracking "Not Started" →
+  "In Progress" before it's promoted.
+
+### Changed
+- The Menus view's item toolbar (**+ Page / + Link / + Header / Duplicate
+  menu / Delete menu**) now stays pinned to the top of the panel while
+  scrolling a long menu.
+
+### Fixed
+- **SME Review workflow only recognized the exact `Change: X` format.** A
+  bare status value with no prefix (e.g. an SME just typing `Kill` instead of
+  `Change: Kill`) was silently invisible everywhere — the conflict filter,
+  the resolve dialog, the progress dashboard, and the SME Review Status
+  report all missed it. It's now recognized the same as an explicit
+  `Change:`, and the override value is never required to match one of the
+  project's currently-configured KKE states — an SME's own wording (typo,
+  custom term, whatever) carries through into `Final_KKE` rather than being
+  dropped. The two "pick a value" dropdowns involved (the resolve dialog's
+  Final KKE select, and Table View's inline SME_Decision/Final_KKE editor)
+  now keep an out-of-vocabulary value visible and pre-selected instead of
+  silently losing it.
+- **Client reports were nearly unreadable in dark mode.** Executive Summary,
+  Content Inventory, Menu Report, and the other client-facing reports are
+  built with colors hardcoded for a white background (the same markup doubles
+  as the exported HTML/PDF, which always renders on white). The live in-app
+  preview now forces that same white surface instead of inheriting the app's
+  dark panel background, which had made near-black report text nearly
+  invisible.
+- **Per-menu Sitemap diagram could render items detached from their menu.**
+  Menu item ids are only unique within their own menu, but the diagram merges
+  every menu into one shared engine instance that indexed node positions by
+  id globally — two different menus reusing the same local item id (routine
+  and expected) could silently overwrite each other's computed position,
+  making one item appear to float unattached. Node ids in this diagram are
+  now namespaced per menu.
+
 ## [2.5.3] — "How Soon Is Now?"
 
 ### Added
