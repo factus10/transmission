@@ -163,9 +163,34 @@
         case 'depthRange': return depth >= c.min && depth <= c.max;
         case 'parentId': return INDEX[node.id] && INDEX[node.id].parentId === c.parentId;
         case 'value': return (node.colorValue || '') === c.value;
+        case 'external': return !!node.external;
+        case 'field': return String((node.fields && node.fields[c.field]) || '') === c.value;
         case 'always': return true;
         default: return false;
       }
+    }
+
+    // Generic "color by any host-declared field" support. The engine has no
+    // built-in knowledge of which fields exist — the host (renderer.js) passes
+    // DATA.fieldDefs = [{key, label, valueLabels?, valueColors?}], and every
+    // node carries its raw field values on node.fields. Adding a new colorable
+    // dimension is a host-side change only; nothing here needs to change.
+    function fieldDefOf(key) {
+      return (DATA.fieldDefs || []).filter(function (f) { return f.key === key; })[0];
+    }
+    function fieldValueLabel(key, val) {
+      var def = fieldDefOf(key);
+      if (def && def.valueLabels && (val in def.valueLabels)) return def.valueLabels[val];
+      return val || '(none)';
+    }
+    function distinctFieldValues(key) {
+      var seen = {}, out = [];
+      for (var id in INDEX) {
+        var v = (INDEX[id].node.fields && INDEX[id].node.fields[key]) || '';
+        if (!(v in seen)) { seen[v] = 1; out.push(v); }
+      }
+      out.sort(function (a, b) { if (a === '') return 1; if (b === '') return -1; return a < b ? -1 : a > b ? 1 : 0; });
+      return out;
     }
     function resolveColor(node) {
       var ov = S.nodeOverrides[node.id];
@@ -649,6 +674,8 @@
         case 'depthRange': return 'Depth ' + c.min + '–' + c.max;
         case 'parentId': return 'Child of ' + (INDEX[c.parentId] ? INDEX[c.parentId].node.label : c.parentId);
         case 'value': return 'Tag: ' + c.value;
+        case 'external': return 'Links to another site';
+        case 'field': { var def = fieldDefOf(c.field); return (def ? def.label : c.field) + ': ' + fieldValueLabel(c.field, c.value); }
         case 'always': return 'All other nodes';
         default: return c.type;
       }
@@ -669,7 +696,14 @@
         '<button class="sp-btn" id="sp-add-rule">+ Add rule</button>' +
         '<button class="sp-btn" id="sp-gen-depth">Color by depth</button>' +
         '<button class="sp-btn" id="sp-gen-section">Color by top-level section</button>' +
+        '<button class="sp-btn" id="sp-mark-external">Mark external links</button>' +
         '</div>';
+      if (DATA.fieldDefs && DATA.fieldDefs.length) {
+        html += '<div class="sp-rule-add">' +
+          '<select id="sp-field-select">' + DATA.fieldDefs.map(function (f) { return '<option value="' + f.key + '">' + esc(f.label) + '</option>'; }).join('') + '</select>' +
+          '<button class="sp-btn" id="sp-gen-field">Color by field</button>' +
+          '</div>';
+      }
       // node color overrides list
       var ovIds = Object.keys(S.nodeOverrides).filter(function (id) { return S.nodeOverrides[id].color; });
       if (ovIds.length) {
@@ -708,6 +742,19 @@
       $('sp-add-rule').addEventListener('click', function () { openRuleEditor(); });
       $('sp-gen-depth').addEventListener('click', function () { S.colorRules = genDepthRules(); render(); pushState(); renderColorsTab(); });
       $('sp-gen-section').addEventListener('click', function () { S.colorRules = genSectionRules(); render(); pushState(); renderColorsTab(); });
+      $('sp-mark-external').addEventListener('click', function () {
+        if (S.colorRules.some(function (r) { return r.condition && r.condition.type === 'external'; })) { flash(this, 'Already added'); return; }
+        // Unshifted to the very top: external links should stand out regardless of
+        // whatever depth/section scheme is already active, so it must win first-match.
+        S.colorRules.unshift({ id: 'r-external', label: 'Links to another site', condition: { type: 'external' }, color: '#c77b1f' });
+        render(); pushState(); renderColorsTab();
+      });
+      if ($('sp-gen-field')) {
+        $('sp-gen-field').addEventListener('click', function () {
+          S.colorRules = genFieldRules($('sp-field-select').value);
+          render(); pushState(); renderColorsTab();
+        });
+      }
       Array.prototype.forEach.call(document.querySelectorAll('.sp-ov-del'), function (b) {
         b.addEventListener('click', function () { setOverride(b.getAttribute('data-id'), 'color', null); renderColorsTab(); });
       });
@@ -738,6 +785,20 @@
       rules.push({ id: 'r-fallback', label: 'Everything else', condition: { type: 'always' }, color: FALLBACK_COLOR });
       return rules;
     }
+    function genFieldRules(key) {
+      // One value-rule per distinct value actually present for this field (including
+      // blank, so gaps are visible), reusing a host-supplied color per value when
+      // available (e.g. Page Status already has user-assigned colors elsewhere in the
+      // app) and falling back to the palette otherwise.
+      var pal = DATA.palette || ['#2d6a9f', '#1e7a4e', '#7a3a9f', '#9f6a1e', '#2d7a7a', '#7a2d2d'];
+      var def = fieldDefOf(key) || {};
+      var rules = distinctFieldValues(key).map(function (v, i) {
+        var color = (def.valueColors && def.valueColors[v]) || pal[i % pal.length];
+        return { id: 'r-field-' + key + '-' + i, label: fieldValueLabel(key, v), condition: { type: 'field', field: key, value: v }, color: color };
+      });
+      rules.push({ id: 'r-fallback', label: 'Everything else', condition: { type: 'always' }, color: FALLBACK_COLOR });
+      return rules;
+    }
     function dedupeParentRules(rules) {
       var seen = {}; return rules.filter(function (r) { var key = (r.condition && r.condition.parentId) || r.id; if (seen[key]) return false; seen[key] = 1; return true; });
     }
@@ -753,6 +814,7 @@
       var ov = document.createElement('div');
       ov.className = 'sp-overlay'; ov.style.zIndex = 2000;
       var sectsOpts = topLevelSections().map(function (s) { return '<option value="' + s.id + '">' + esc(s.label) + '</option>'; }).join('');
+      var fieldOpt = (DATA.fieldDefs && DATA.fieldDefs.length) ? '<option value="field">A specific field value</option>' : '';
       ov.innerHTML =
         '<div class="sp-modal" style="width:340px;">' +
         '<div class="sp-head"><span>Add color rule</span><button class="sp-x" id="re-x">✕</button></div>' +
@@ -761,6 +823,8 @@
         '<option value="depth">Nodes at depth</option>' +
         '<option value="depthRange">Depth range</option>' +
         '<option value="parentId">Children of a section</option>' +
+        fieldOpt +
+        '<option value="external">Links to another site</option>' +
         '<option value="always">All other nodes</option>' +
         '</select></label>' +
         '<div id="re-args"></div>' +
@@ -776,6 +840,18 @@
         if (t === 'depth') box.innerHTML = '<label class="sp-field"><span>Depth</span><input type="number" id="re-depth" value="1" min="0"></label>';
         else if (t === 'depthRange') box.innerHTML = '<label class="sp-field"><span>Min depth</span><input type="number" id="re-min" value="1" min="0"></label><label class="sp-field"><span>Max depth</span><input type="number" id="re-max" value="2" min="0"></label>';
         else if (t === 'parentId') box.innerHTML = '<label class="sp-field"><span>Section</span><select id="re-parent">' + sectsOpts + '</select></label>';
+        else if (t === 'field') {
+          var fieldOpts = (DATA.fieldDefs || []).map(function (f) { return '<option value="' + f.key + '">' + esc(f.label) + '</option>'; }).join('');
+          box.innerHTML = '<label class="sp-field"><span>Field</span><select id="re-field">' + fieldOpts + '</select></label>' +
+                           '<label class="sp-field"><span>Value</span><select id="re-fieldval"></select></label>';
+          var refreshFieldVals = function () {
+            var fk = box.querySelector('#re-field').value;
+            var vals = distinctFieldValues(fk);
+            box.querySelector('#re-fieldval').innerHTML = vals.map(function (v) { return '<option value="' + esc(v) + '">' + esc(fieldValueLabel(fk, v)) + '</option>'; }).join('');
+          };
+          box.querySelector('#re-field').addEventListener('change', refreshFieldVals);
+          refreshFieldVals();
+        }
         else box.innerHTML = '';
       }
       renderArgs();
@@ -790,6 +866,7 @@
         if (t === 'depth') cond.value = parseInt(ov.querySelector('#re-depth').value, 10) || 0;
         else if (t === 'depthRange') { cond.min = parseInt(ov.querySelector('#re-min').value, 10) || 0; cond.max = parseInt(ov.querySelector('#re-max').value, 10) || 0; }
         else if (t === 'parentId') cond.parentId = ov.querySelector('#re-parent').value;
+        else if (t === 'field') { cond.field = ov.querySelector('#re-field').value; cond.value = ov.querySelector('#re-fieldval').value; }
         var rule = { id: 'r-' + Date.now(), label: ov.querySelector('#re-label').value || condSummary(cond), condition: cond, color: ov.querySelector('#re-color').value };
         // insert before any trailing 'always' rule
         var idx = S.colorRules.length;

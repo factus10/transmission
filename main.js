@@ -434,6 +434,7 @@ function buildMenu() {
       submenu: [
         { label: 'Project Settings…',     click: send('menu-project-settings') },
         { label: 'Triage Non-200 Pages…', click: send('menu-non200-triage') },
+        { label: 'Create Sitemap from Audit…', click: send('menu-create-sitemap-from-audit') },
         { type: 'separator' },
         { label: 'Edit Glossary…',        click: send('menu-glossary') },
         { label: 'Content Type Registry…', click: send('menu-content-type-registry') },

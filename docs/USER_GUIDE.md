@@ -461,13 +461,24 @@ If you've both selected rows and applied a filter, your **selection wins**.
 
 ### Apply an action
 
-1. Pick an **Action** — Set KKE, Set Published Status, Set Content Type, Set Content Theme, Set Group, Set Primary Tag, or Add Tag.
+1. Pick an **Action** — Set KKE, Set Published Status, Set Content Type, Set Content Theme, Set Group, Set Primary Tag, Add Tag, or **Assign to Sitemap…**.
 2. Choose the **value** (every list except *Add Tag* offers a `— Clear` option at the top, so bulk-clearing a field is easy).
 3. Click **Apply**. Every change is written to the audit trail.
 
 **Clear selection** drops your multi-selection and hands the target back to the filter.
 
 > **Heads-up:** bulk-setting **Kill** on pages that already have a sitemap assignment or redirect triggers the same cleanup prompt as a single Kill — so you decide whether to clear those too, rather than leaving redirects pointing nowhere.
+
+### Placing many pages on the sitemap at once
+
+**Assign to Sitemap…** works differently from the other bulk actions — there's no value to pick, just **Apply**, which opens a small dialog. Filter to the pages you want placed (the **Needs sitemap placement** KKE filter is the obvious starting point), then choose a destination:
+
+- **Use an existing node** — pick any node already in the sitemap; every target page becomes a new child underneath it.
+- **Create a new bucket** — name a fresh node (top-level, or nested under a node you pick) and every target page lands under that instead.
+
+Either way, each page gets its own child node — slug and label are auto-derived from its URL and title, and duplicates are automatically de-duplicated (`-2`, `-3`, …). Pages already placed on the sitemap are skipped and called out in the confirmation. This is a *speed* tool, not a precision one: the goal is getting dozens or hundreds of pages onto the sitemap in one action, then reorganizing them into their final structure with the Sitemap editor's drag-and-drop.
+
+> **Starting from a blank sitemap?** **Project → Create Sitemap from Audit…** goes one step further than Assign to Sitemap — it reads every eligible page's URL and builds the whole starter tree for you in one pass, no destination to pick. `/about/leadership` becomes **About → Leadership** automatically. Pick a **Bucket depth** (how many URL segments become nested sections — 2 is a good default; anything deeper folds into one page under the deepest bucket) and whether to include Kill/Exclude/unreviewed pages, then Generate. Safe to run again later, too — it only merges (matching section names it already created), never replaces, so it won't duplicate work you've since reorganized by hand.
 
 ### Score in bulk instead of deciding by hand
 
@@ -959,7 +970,7 @@ Not everything in the tree ships in this build. In the node editor, set **Phase*
 
 Two badges tell you where the tree is incomplete:
 
-- **NEW** (yellow) — a net-new node: it has descendant pages but no source page of its own. Expected for brand-new sections; a flag if you didn't mean it.
+- **NEW** (yellow) — a net-new node: it has descendant pages but no source page of its own. Expected for brand-new sections; a flag if you didn't mean it. Double-click it to open the editor — an amber banner explains why it's flagged, points at the **Page Status** field (Build section) for tracking "Not Started" → "In Progress" as the content strategist works it, and a **Create Page** button turns it into a real page: a new spreadsheet row (Keep, tagged `net-new`), assigned to the node, so it shows up everywhere a normal page does — audit view, exports, the migration tracker. Once it has a page, the NEW badge clears on its own.
 - **Empty leaf** (red) — a node with no pages *and* no redirects pointing through it. Assign content, mark it net-new, phase it, or delete it before hand-off.
 
 If any `Sitemap_ID` is assigned to two nodes, a **⚠ N duplicate IDs** link appears in the stats line — click it to auto-renumber the duplicates.
@@ -978,11 +989,13 @@ So **need placement → 0** confirms every Keep/Evolve page is in the IA, **empt
   - **Smart layout** — each branch lays out **horizontally** (children fan sideways below the parent) or **vertically** (children stack below-and-indented) automatically. Two toolbar dropdowns decide which, whichever fires first: **Vertical from depth** (go vertical at this depth) and **or if children ≥** (go vertical for any node with this many children). Right-click any node with children to **force horizontal / force vertical** or clear the override; nodes you've overridden show a dashed outline.
   - **Settings** (button → panel, three tabs):
     - **Layout** — card width/height and every gap, in pixels; previews live.
-    - **Colors** — a rule engine. Each card's top band is colored by the **first matching rule** (or a per-node override). Start from **Color by depth** or **Color by top-level section**, then add your own rules (by depth, depth range, section, or value), recolor or delete them, and drag to reorder. Right-click a single node → **Set color** to override just that node. Uses your **Client brand** palette (Project Settings → Identity) when set.
+    - **Colors** — a rule engine. Each card's top band is colored by the **first matching rule** (or a per-node override). Start from **Color by depth** or **Color by top-level section**, then add your own rules (by depth, depth range, section, value, or **links to another site**), recolor or delete them, and drag to reorder. **Mark external links** is a one-click shortcut that adds an external-link rule to the top of the list — above whatever depth/section scheme you already have — so off-site destinations stand out no matter where they sit in the tree. **Color by field** lets you pick any of **Phase**, **Node Type**, **Page Status**, **Build Pattern**, or the three **assignee** roles and generates one rule per value actually in use on your tree (plus a "not set" bucket, so you can spot gaps at a glance) — Page Status reuses the same colors you already assigned it in Project Settings → Migration, so it looks consistent everywhere. Right-click a single node → **Set color** to override just that node. Uses your **Client brand** palette (Project Settings → Identity) when set.
     - **Legend** — edit the legend's labels for the client-facing exports.
     - **Save as my defaults** stores the current layout/colors/legend as your app-wide starting point for new projects; **Reset to defaults** restores them.
   - Border encodes build phase (solid = current build, dashed = phased).
   - **Share it:** **Export HTML** writes a single self-contained, **still-interactive** file your client opens in any browser (they can collapse/expand, zoom, and pan — no app required; their tweaks persist in that file's local storage). **Export PDF** prints the current view to one page sized to the tree.
+
+- **Treemap** (toolbar **Treemap**, next to Visual Sitemap) shows the same content as space-filling boxes sized by page count — good for "how much of the site is what" at a glance. Pick **Depth** and **Color by** in a small dialog, then **Generate**; there's no live in-webview settings panel here, so changing either means reopening the dialog. **Depth** rolls deeper levels up into the box above them — Depth 2 shows each top-level section broken into its direct children; **Unlimited** shows the real tree at whatever depth it actually goes. **Color by KKE decision** (each box's dominant Keep/Kill/Evolve/Consolidate/Exclude call, with the composition percentage) or **top-level section** work at any depth; **Phase**, **Node Type**, **Page Status**, **Build Pattern**, or an **assignee** role are only offered at **Unlimited** depth, since a rolled-up box has no single value to report for those. Pan/zoom/Fit, a legend, and the same **Export HTML** / **Export PDF** as the Visual Sitemap.
 
   > **Taming a big tree — collapse repeating patterns.** On a large site, whole branches repeat the same shape (every academic department has Overview / Faculty / Programs / Contact). Showing all of them is noise. Best practice: for any branch whose children follow a content pattern, **pick the best representative and leave it expanded** to show the pattern in full, then **collapse** the rest by clicking their cards. The collapsed siblings still appear as single boxes with a "more underneath" stack, so the structure stays honest while the diagram stays readable. **Collapsing/expanding here is the same setting as the node's `Collapse` checkbox in the sitemap** — they stay in sync both ways: a node checked **Collapse** starts collapsed every time the sitemap opens, and collapsing a node in the sitemap ticks its checkbox (and is saved with the project). So you can shape "what's collapsed by default for the client" right in the diagram.
 - **IA & coverage reports:** the **Visual Sitemap** (above) for structure, plus **Reports → Sitemap Coverage Report…** and **Reports → Net New Content Brief…**. *(The hand-off report of the navigation itself is now the **Menu Report**, in the Menus view.)*
@@ -1039,8 +1052,9 @@ Open the **Menus** tab in the view switcher (or **Cmd+Shift+M**). On the left is
 - **Create as many menus as you need** — Primary, Mega, Utility, Footer, a search fly-out, whatever this client has. Names are arbitrary. **Drag the menus** in the left list to reorder them.
 - **Seed from content tree** opens a small dialog: pick a starting **branch** of the content tree (or all top-level sections) and a **depth**, name the menu, and it mirrors that subtree as page references — then you edit it freely, independent of the tree.
 - Each menu carries two bits of context: a **Placement** (a per-project controlled vocabulary — Top bar, Footer, Overlay / Fly-out, etc. — add your own with "+ New…") and a free-text **Description** for the "what the heck is this and how does it behave" note that helps both you and the client.
-- **Add three kinds of item:** **+ Page** references a content page (search and pick it; it shows the live label and target path, and flags the reference if that page is later removed), **+ Link** is an external/utility URL like a login, and **+ Header** is a label-only heading for grouping (footer columns, mega sections). Change an item's kind anytime with the little **page / link / header** dropdown on its left.
-- **Drag the ⋮⋮ grip** to reorder items or nest them — drop onto the top/bottom third of a row to place it before/after, or the middle to nest it inside. Each menu can be flat or as deep as you like.
+- **Add three kinds of item:** **+ Page** references a content page (search and pick it; it shows the live label and target path, and flags the reference if that page is later removed), **+ Link** is an external/utility URL like a login, and **+ Header** is a label-only heading for grouping (footer columns, mega sections). These toolbar buttons always add at the root — change an item's kind anytime with the little **page / link / header** dropdown on its left.
+- **Drag the ⋮⋮ grip** to reorder items or nest them — drop onto the top/bottom third of a row to place it before/after, or the middle to nest it inside. Each menu can be flat or as deep as you like. The item toolbar stays pinned at the top of the panel as you scroll a long menu, so it's always in reach.
+- **Add a child directly** — hover any item and click its **+** to add a Page/Link/Header right under it, no drag required afterward. Click its **⧉** to duplicate that item and everything nested under it as a sibling, ready to edit into a variant elsewhere in the same menu.
 - The same page can appear in **as many menus as you want**, at any depth — referencing it in the footer doesn't remove it from the primary nav.
 - **Duplicate menu** clones the selected menu — name, placement, description, and the whole item tree — as a fresh copy you can edit into an alternate variant without disturbing the original. Handy for testing two paths (e.g. a different mega-menu structure) to review with a client side by side: duplicate, adjust the copy, then use **Export…** with the "just this menu" scope (pre-selected on the new copy) to hand over only that variant.
 
