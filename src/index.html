@@ -112,6 +112,7 @@
           <option value="group">Set Group</option>
           <option value="primary-tag">Set Primary Tag</option>
           <option value="add-tag">Add Tag</option>
+          <option value="assign-nav">Assign to Sitemap…</option>
         </select>
         <select id="multi-value" class="group-select hidden" style="font-size:12px;padding:3px 6px;"></select>
         <button id="btn-multi-apply" class="btn btn-sm btn-primary hidden">Apply</button>
@@ -483,6 +484,7 @@
             <button id="btn-nav-expand-all" class="btn btn-sm btn-ghost" title="Expand all nodes">Expand All</button>
             <div class="nav-tb-sep"></div>
             <button id="btn-nav-sitemap" class="btn btn-sm btn-ghost" title="Generate the Visual Sitemap diagram from visible nodes">Visual Sitemap</button>
+            <button id="btn-nav-treemap" class="btn btn-sm btn-ghost" title="Content inventory as a treemap, sized by page count">Treemap</button>
             <span style="flex:1"></span>
             <button id="btn-nav-editor-close" class="btn btn-sm btn-ghost">Back to Audit</button>
           </div>
@@ -1127,6 +1129,7 @@
   <div id="toast"></div>
 
   <script src="sitemap-template.js"></script>
+  <script src="treemap-template.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

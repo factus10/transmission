@@ -143,6 +143,29 @@ function smeNotesCol()     { return state.columnMap.smeNotes; }
 function contentOwnerCol() { return state.columnMap.contentOwner; }
 function finalKkeCol()     { return state.columnMap.finalKke; }
 
+/** Parses an SME_Decision cell into a normalized decision. Recognizes
+ *  "Approve"/"Accept", the documented "Change: <value>" override, AND a bare
+ *  status value with no prefix at all — SMEs don't reliably follow the
+ *  Change: convention. The override value is never checked against the
+ *  project's current KKE vocabulary (allKkeStates()); it's whatever text the
+ *  SME wrote, known state or not. A bare value that just restates the row's
+ *  own KKE_Recommendation (case-insensitive) counts as an implicit approval,
+ *  not an override — only an explicit "Change:" is unconditionally a change. */
+function parseSmeDecision(smeRaw, currentKke) {
+  const sme = String(smeRaw || '').trim();
+  if (!sme) return { reviewed: false, agree: false, changed: false, value: '' };
+  if (/^(approve|accept)$/i.test(sme)) return { reviewed: true, agree: true, changed: false, value: '' };
+  if (/^change:/i.test(sme)) {
+    const value = sme.replace(/^change:\s*/i, '').trim();
+    return { reviewed: true, agree: false, changed: !!value, value };
+  }
+  const kke = String(currentKke || '').trim();
+  if (kke && sme.toLowerCase() === kke.toLowerCase()) {
+    return { reviewed: true, agree: true, changed: false, value: '' };
+  }
+  return { reviewed: true, agree: false, changed: true, value: sme };
+}
+
 // ─── Status code utilities ────────────────────────────────────────────────────
 
 const STATUS_CODE_LABELS = {
@@ -525,6 +548,9 @@ function bindIPCListeners() {
   window.electronAPI.onMenuMergeAuditor(() => mergeAuditorDecisions());
   if (window.electronAPI.onMenuNon200Triage) {
     window.electronAPI.onMenuNon200Triage(() => openNon200TriageDialog());
+  }
+  if (window.electronAPI.onMenuCreateSitemapFromAudit) {
+    window.electronAPI.onMenuCreateSitemapFromAudit(() => openCreateSitemapFromAuditDialog());
   }
 }
 
@@ -2702,8 +2728,7 @@ function applyFilter() {
         if (s === '_flagged' && String(row['_Flagged'] || '').trim() === '1') return true;
         if (s === '_duplicates' && _duplicateSet.has(origIndex)) return true;
         if (s === '_sme-conflicts') {
-          const sme = String(row[smeDecisionCol()] || '').trim();
-          if (sme && sme.startsWith('Change:')) return true;
+          if (parseSmeDecision(row[smeDecisionCol()], kke).changed) return true;
         }
         if (s === '_sme-pending') {
           const final_ = String(row[finalKkeCol()] || '').trim();
@@ -3516,7 +3541,7 @@ function populateAuditFields(row) {
   populateContentThemeSelect(row['Content_Theme'] || '');
 
   // SME Decision
-  populateSmeDecisionSelect(row[smeDecisionCol()] || '');
+  populateSmeDecisionSelect(row[smeDecisionCol()] || '', row[kkeCol()] || '');
 
   // Final KKE — collapses to a ✓ chip when it matches the KKE call
   populateFinalKkeSelect(row[finalKkeCol()] || '', row[kkeCol()] || '');
@@ -3864,7 +3889,7 @@ function populatePrimaryTagSelect(currentValue) {
 
 // SME decision is now displayed read-only (was a dropdown; SME values come from
 // the SME → Import workflow and shouldn't be edited inline).
-function populateSmeDecisionSelect(currentValue) {
+function populateSmeDecisionSelect(currentValue, kkeValue) {
   const el = $('sme-decision-display');
   if (!el) return;
   const v = String(currentValue || '').trim();
@@ -3872,8 +3897,9 @@ function populateSmeDecisionSelect(currentValue) {
   el.classList.toggle('sme-decision-display-empty', !v);
   // Tint the readout based on the SME's actual call
   el.classList.remove('sme-approve', 'sme-change');
-  if (v === 'Approve') el.classList.add('sme-approve');
-  else if (v.startsWith('Change:')) el.classList.add('sme-change');
+  const decision = parseSmeDecision(v, kkeValue);
+  if (decision.agree) el.classList.add('sme-approve');
+  else if (decision.changed) el.classList.add('sme-change');
 }
 
 function populateFinalKkeSelect(currentValue, kkeValue) {
@@ -10198,6 +10224,449 @@ function createNavChildForPage(parentNode, slug, label) {
   return newNode;
 }
 
+/** Returns a slug for `label` that doesn't collide with any non-alias sibling
+ *  under `siblings` (case-insensitive), appending -2, -3, … as needed. */
+function uniqueSiblingSlug(siblings, baseSlug) {
+  const used = new Set((siblings || []).filter(c => !c.refNodeId).map(c => (c.path || '').toLowerCase()));
+  let slug = baseSlug, n = 2;
+  while (used.has(slug.toLowerCase())) slug = `${baseSlug}-${n++}`;
+  return slug;
+}
+
+/** Create a "bucket" node to bulk-assign pages under — either a new child of
+ *  `parentNode`, or (parentNode == null) a fresh top-level root, mirroring
+ *  addNavRootNode()'s shape. Used by the Multi-bar's Assign to Sitemap action. */
+function createBucketNode(label, parentNode) {
+  const cleanLabel = sanitizeText(label || '').trim() || 'New Section';
+  const baseSlug = slugify(cleanLabel) || 'section';
+
+  if (parentNode) {
+    const slug = uniqueSiblingSlug(parentNode.children, baseSlug);
+    return createNavChildForPage(parentNode, slug, cleanLabel);
+  }
+
+  if (!state.navTree) state.navTree = [];
+  if (!state.navNodes) state.navNodes = [];
+  const slug = uniqueSiblingSlug(state.navTree, baseSlug);
+  let maxId = 0;
+  for (const n of state.navNodes) {
+    const idNum = parseInt(n.id, 10);
+    if (idNum > maxId) maxId = idNum;
+  }
+  const id = String(maxId + 1).padStart(5, '0');
+  const number = String(state.navTree.length + 1);
+  const sortID = buildSortID(number);
+  const newNode = {
+    number, label: cleanLabel, path: slug, sortID,
+    parentNumber: '', breadcrumb: cleanLabel,
+    computedPath: slug, id, children: []
+  };
+  state.navTree.push(newNode);
+  state.navNodes.push(newNode);
+  return newNode;
+}
+
+/** Finds an existing sibling bucket by label (case-insensitive, alias/ref nodes
+ *  excluded) under `parentNode` (null = top level), or creates one via
+ *  createBucketNode() if none matches. This is what lets createSitemapFromAudit
+ *  merge into an already-existing sitemap instead of ever creating duplicate
+ *  top-level sections — e.g. a real "/about" landing page and a synthesized
+ *  "About" bucket for "/about/team" resolve to the very same node regardless
+ *  of which URL is processed first (a node can be both a page and a container
+ *  for its own children, same as anywhere else in this data model). */
+function findOrCreateBucketNode(label, parentNode) {
+  const siblings = parentNode ? (parentNode.children || []) : (state.navTree || []);
+  const cleanLabel = sanitizeText(label || '').trim();
+  const existing = siblings.find(n => !n.refNodeId && (n.label || '').trim().toLowerCase() === cleanLabel.toLowerCase());
+  if (existing) return existing;
+  return createBucketNode(label, parentNode);
+}
+
+/** Directly assigns `row` to `node` itself (not a new child under it) — the
+ *  same field set as assignNav()'s "assign directly to the selected node"
+ *  branch, factored out so batch callers (createSitemapFromAudit,
+ *  promoteHubNodeToRow) can reuse it without going through the single-row
+ *  nav-popover UI. No UI refresh — callers own that. */
+function assignRowToNodeDirect(row, node) {
+  row['Sitemap_ID']          = node.id;
+  row['Sitemap_Destination'] = node.breadcrumb;
+  row['Sitemap_SortID']      = node.sortID;
+  row['Computed Path']       = node.computedPath || '';
+  row['Page_Breadcrumb']     = pageBreadcrumbOf(node);
+}
+
+/** Core loop for bulk-assigning rows as new child pages under `bucketNode` —
+ *  auto-derives each child's slug from the row's URL and its label from the
+ *  row's title, skips rows already on the sitemap. No UI refresh; callers
+ *  that touch many buckets in one pass (createSitemapFromAudit) batch the
+ *  refresh once at the end instead of once per bucket via bulkAssignRowsToBucket
+ *  below. Returns { assigned, skipped }. */
+function bulkAssignRowsToBucketCore(targets, bucketNode) {
+  ['Sitemap_ID', 'Sitemap_Destination', 'Computed Path', 'Sitemap_SortID', 'Page_Breadcrumb'].forEach(col => {
+    if (!state.headers.includes(col)) state.headers.push(col);
+  });
+
+  let assigned = 0, skipped = 0;
+  for (const origIndex of targets) {
+    const row = state.editedRows[origIndex];
+    if (!row || String(row['Sitemap_ID'] || '').trim()) { skipped++; continue; }
+
+    const url = String(row[state.urlColumn] || '').trim();
+    const baseSlug = slugify(extractSlug(url) || '') || 'page';
+    const slug = uniqueSiblingSlug(bucketNode.children, baseSlug);
+    const label = extractPageTitle(row['Title 1'] || row['Title'] || '') || slug;
+
+    const childNode = createNavChildForPage(bucketNode, slug, label);
+    row['Sitemap_ID']          = childNode.id;
+    row['Sitemap_Destination'] = childNode.breadcrumb;
+    row['Sitemap_SortID']      = childNode.sortID;
+    row['Computed Path']       = childNode.computedPath;
+    row['Page_Breadcrumb']     = pageBreadcrumbOf(childNode);
+    assigned++;
+  }
+  return { assigned, skipped };
+}
+
+/** Bulk-assign many rows (by origIndex) as new child pages under `bucketNode`,
+ *  one child node per row (this is about fast initial placement, not
+ *  reorganizing existing placements — use the Sitemap editor's drag-and-drop
+ *  for that). Returns { assigned, skipped }. */
+function bulkAssignRowsToBucket(targets, bucketNode) {
+  const result = bulkAssignRowsToBucketCore(targets, bucketNode);
+  if (result.assigned > 0) {
+    resyncConsolidateInto();
+    state.navTreeDirty = true;
+    setDirty(true);
+    invalidateNavPageCountsCache();
+    if (_navEditorOpen) renderNavEditor();
+    renderVisibleRows();
+    if (state.selectedIndex !== null) {
+      const selRow = state.editedRows[state.selectedIndex];
+      if (selRow) { updateNavBadge(selRow); renderMetaFields(selRow, state.selectedIndex); }
+    }
+  }
+  return result;
+}
+
+/** Auto-generates a starter sitemap tree from the audit's own URL structure,
+ *  for files with no sitemap yet (or extending one that already exists — this
+ *  never replaces or deletes anything, only merges: findOrCreateBucketNode()
+ *  reuses an existing top-level/nested node when its label already matches,
+ *  so re-running this after manually organizing part of the tree is safe).
+ *
+ *  For each eligible row, walks up to `maxDepth` of its URL's path segments as
+ *  nested buckets (find-or-create, so pages sharing a path prefix land under
+ *  the same section). If the row's full path fits within maxDepth, it's
+ *  assigned directly to the deepest bucket reached (handles a section landing
+ *  page like "/about" merging into the very node that "/about/team" also nests
+ *  under). If the path is deeper than maxDepth, the remaining depth is folded
+ *  into one leaf child via bulkAssignRowsToBucketCore — a "starter tree" is
+ *  about speed of initial placement, not perfect fidelity beyond the cap.
+ *
+ *  opts: { maxDepth (default 2), includeAllRows (default false — Keep/Evolve
+ *  only, same gate as the "Needs sitemap placement" filter) }. */
+function createSitemapFromAudit(opts = {}) {
+  const maxDepth = Math.max(1, opts.maxDepth || 2);
+  const includeAllRows = !!opts.includeAllRows;
+
+  ['Sitemap_ID', 'Sitemap_Destination', 'Computed Path', 'Sitemap_SortID', 'Page_Breadcrumb'].forEach(col => {
+    if (!state.headers.includes(col)) state.headers.push(col);
+  });
+
+  const beforeNodeCount = state.navNodes.length;
+  let directAssigned = 0, skippedPlaced = 0, skippedNoUrl = 0, skippedRoot = 0, skippedKke = 0;
+  const overflowByNode = new Map(); // deepest bucket reached -> [origIndex, ...]
+
+  state.editedRows.forEach((row, origIndex) => {
+    if (String(row['Sitemap_ID'] || '').trim()) { skippedPlaced++; return; }
+    const url = String(row[state.urlColumn] || '').trim();
+    if (!url) { skippedNoUrl++; return; }
+    if (!includeAllRows) {
+      const kke = String(row[kkeCol()] || '').trim();
+      if (kke !== 'Keep' && kke !== 'Evolve') { skippedKke++; return; }
+    }
+    const segments = urlPathSegments(url);
+    if (!segments.length) { skippedRoot++; return; } // homepage / root URL — nothing to walk
+
+    const walkSegs = segments.slice(0, maxDepth);
+    let node = null, parent = null;
+    for (const seg of walkSegs) {
+      node = findOrCreateBucketNode(titleCaseFromSlug(seg), parent);
+      parent = node;
+    }
+    if (segments.length <= maxDepth) {
+      assignRowToNodeDirect(row, node);
+      directAssigned++;
+    } else {
+      if (!overflowByNode.has(node)) overflowByNode.set(node, []);
+      overflowByNode.get(node).push(origIndex);
+    }
+  });
+
+  let overflowAssigned = 0;
+  overflowByNode.forEach((origIndexes, node) => {
+    overflowAssigned += bulkAssignRowsToBucketCore(origIndexes, node).assigned;
+  });
+
+  const assigned = directAssigned + overflowAssigned;
+  if (assigned > 0) {
+    resyncConsolidateInto();
+    state.navTreeDirty = true;
+    setDirty(true);
+    invalidateNavPageCountsCache();
+    if (_navEditorOpen) renderNavEditor();
+    renderVisibleRows();
+    if (state.selectedIndex !== null) {
+      const selRow = state.editedRows[state.selectedIndex];
+      if (selRow) { updateNavBadge(selRow); renderMetaFields(selRow, state.selectedIndex); }
+    }
+  }
+
+  return {
+    assigned, skippedPlaced, skippedNoUrl, skippedRoot, skippedKke,
+    nodesCreated: state.navNodes.length - beforeNodeCount,
+  };
+}
+
+/** Promotes a hub node (⚑ "NEW" — has descendant pages assigned but none of
+ *  its own) into a real spreadsheet row, assigned directly to the node — the
+ *  same push-to-state.rows-and-editedRows pattern as the existing "New Page"
+ *  button (addNewRow()), so it flows through the rest of the audit and
+ *  migration tracker like any other page. Once promoted, the node naturally
+ *  stops rendering as a hub (isHub requires a zero direct-page count) — no
+ *  separate "promoted" flag needed. Returns the new row's origIndex, or null
+ *  if cancelled / the node already has a direct page / the URL collides. */
+async function promoteHubNodeToRow(node) {
+  if (!node) return null;
+  const pageCount = (_navPageCountsCache() || {})[node.id] || 0;
+  if (pageCount > 0) { showToast('This node already has a page assigned', 'error'); return null; }
+
+  if (!(await confirmDialog({
+    title: 'Create page for this section',
+    message: `Create a new page for "${node.label}"? It's added to the audit as a new Keep page assigned to this sitemap node, so it flows through the rest of the audit and migration tracker like any other page.`,
+    confirmLabel: 'Create Page',
+  }))) return null;
+
+  const base = getRedirectBaseUrl();
+  const path = node.computedPath || '';
+  const url = base ? (base + '/' + path) : ('/' + path);
+  if (state.editedRows.some(r => String(r[state.urlColumn] || '').trim().toLowerCase() === url.toLowerCase())) {
+    showToast('A page with that URL already exists', 'error');
+    return null;
+  }
+
+  ['Sitemap_ID', 'Sitemap_Destination', 'Computed Path', 'Sitemap_SortID', 'Page_Breadcrumb'].forEach(col => {
+    if (!state.headers.includes(col)) state.headers.push(col);
+  });
+
+  const newRow = {};
+  state.headers.forEach(h => { newRow[h] = ''; });
+  newRow[state.urlColumn] = url;
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : '');
+  if (titleCol) newRow[titleCol] = node.label || '';
+  newRow[kkeCol()] = 'Keep';
+  if (tagsCol()) {
+    newRow[tagsCol()] = 'net-new';
+    if (!state.tagLibrary.includes('net-new')) {
+      state.tagLibrary.push('net-new');
+      state.tagLibrary.sort();
+      window.electronAPI.savePrefs({ tagLibrary: state.tagLibrary });
+    }
+  }
+
+  state.rows.push(newRow);
+  state.editedRows.push(newRow);
+  const origIndex = state.editedRows.length - 1;
+  assignRowToNodeDirect(newRow, node);
+
+  setDirty(true);
+  invalidateNavPageCountsCache();
+  if (_navEditorOpen) renderNavEditor();
+  applyFilter();
+  showToast(`Created page for "${node.label}"`, 'success');
+  return origIndex;
+}
+
+/** Multi-bar "Assign to Sitemap" action: pick an existing node, or create a new
+ *  bucket node, then bulk-assign `targets` (origIndex array) under it. */
+function openBulkNavAssignDialog(targets, onDone) {
+  const eligible = targets.filter(i => {
+    const row = state.editedRows[i];
+    return row && !String(row['Sitemap_ID'] || '').trim();
+  }).length;
+  const alreadyPlaced = targets.length - eligible;
+
+  if (eligible === 0) {
+    showToast('All selected pages are already on the sitemap', 'error');
+    return;
+  }
+
+  let chosenNode = null;
+  let newBucketParent = null;
+
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:14px;font-size:13px;';
+  body.innerHTML = `
+    <div style="color:var(--text-muted);line-height:1.5;">
+      Assign <b>${eligible}</b> of ${targets.length} page${targets.length !== 1 ? 's' : ''} to a sitemap location.
+      ${alreadyPlaced > 0 ? `${alreadyPlaced} already on the sitemap will be skipped. ` : ''}
+      Each page becomes a new child node here — slug and label are auto-derived from its URL and title. Reorganize freely afterward with the Sitemap editor's drag-and-drop.
+    </div>
+    <div style="border:1px solid var(--border);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;">
+      <div style="font-weight:600;">Use an existing node</div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button id="_bna-pick-existing" type="button" class="btn btn-sm btn-ghost">Choose node…</button>
+        <span id="_bna-existing-label" style="color:var(--text-muted);font-size:12px;">None chosen</span>
+      </div>
+    </div>
+    <div style="text-align:center;color:var(--text-muted);font-size:11px;">— or —</div>
+    <div style="border:1px solid var(--border);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;">
+      <div style="font-weight:600;">Create a new bucket</div>
+      <input id="_bna-new-label" type="text" placeholder="e.g. Migrated Content" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;" />
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="color:var(--text-secondary);font-size:12px;">Under</span>
+        <button id="_bna-pick-parent" type="button" class="btn btn-sm btn-ghost">Top level</button>
+        <button id="_bna-clear-parent" type="button" class="btn btn-sm btn-ghost hidden" title="Reset to top level">×</button>
+      </div>
+    </div>
+  `;
+
+  const existingLabelEl = body.querySelector('#_bna-existing-label');
+  const newLabelInput   = body.querySelector('#_bna-new-label');
+  const parentBtn       = body.querySelector('#_bna-pick-parent');
+  const clearParentBtn  = body.querySelector('#_bna-clear-parent');
+
+  const footer = document.createElement('div');
+  footer.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:4px;';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button'; cancelBtn.className = 'btn btn-sm btn-ghost'; cancelBtn.textContent = 'Cancel';
+  const assignBtn = document.createElement('button');
+  assignBtn.type = 'button'; assignBtn.className = 'btn btn-sm btn-primary';
+  assignBtn.textContent = `Assign ${eligible} page${eligible !== 1 ? 's' : ''}`;
+  assignBtn.disabled = true;
+  footer.appendChild(cancelBtn);
+  footer.appendChild(assignBtn);
+  body.appendChild(footer);
+
+  function refreshAssignBtn() {
+    assignBtn.disabled = !(chosenNode || newLabelInput.value.trim());
+  }
+
+  body.querySelector('#_bna-pick-existing').addEventListener('click', () => {
+    showMenuNodePicker((node) => {
+      chosenNode = node;
+      newLabelInput.value = '';
+      existingLabelEl.textContent = node.breadcrumb || node.label;
+      existingLabelEl.style.color = 'var(--text-primary)';
+      refreshAssignBtn();
+    }, { title: 'Choose a sitemap location' });
+  });
+
+  newLabelInput.addEventListener('input', () => {
+    if (newLabelInput.value.trim() && chosenNode) {
+      chosenNode = null;
+      existingLabelEl.textContent = 'None chosen';
+      existingLabelEl.style.color = 'var(--text-muted)';
+    }
+    refreshAssignBtn();
+  });
+
+  parentBtn.addEventListener('click', () => {
+    showMenuNodePicker((node) => {
+      newBucketParent = node;
+      parentBtn.textContent = node.breadcrumb || node.label;
+      clearParentBtn.classList.remove('hidden');
+    }, { title: 'Choose a parent for the new bucket' });
+  });
+  clearParentBtn.addEventListener('click', () => {
+    newBucketParent = null;
+    parentBtn.textContent = 'Top level';
+    clearParentBtn.classList.add('hidden');
+  });
+
+  const modal = openModal({ title: 'Assign to Sitemap', body, width: 480, buttons: [] });
+  cancelBtn.addEventListener('click', () => modal.close());
+
+  assignBtn.addEventListener('click', () => {
+    const bucket = chosenNode || createBucketNode(newLabelInput.value, newBucketParent);
+    const { assigned, skipped } = bulkAssignRowsToBucket(targets, bucket);
+    modal.close();
+    showToast(`Assigned ${assigned} page${assigned !== 1 ? 's' : ''} to "${bucket.label}"` + (skipped ? ` — ${skipped} skipped` : ''), 'success');
+    if (onDone) onDone();
+  });
+}
+
+/** Project → Create Sitemap from Audit… config dialog. Picks a bucket depth and
+ *  whether to include Kill/Exclude/unreviewed rows, then runs
+ *  createSitemapFromAudit(). Safe to run on a file that already has a sitemap
+ *  (see that function's doc comment — merges, never replaces). */
+function openCreateSitemapFromAuditDialog() {
+  if (!state.editedRows.length) { showToast('Open a file first', 'error'); return; }
+
+  const countEligible = (includeAll) => state.editedRows.filter(row => {
+    if (String(row['Sitemap_ID'] || '').trim()) return false;
+    if (!String(row[state.urlColumn] || '').trim()) return false;
+    if (includeAll) return true;
+    const kke = String(row[kkeCol()] || '').trim();
+    return kke === 'Keep' || kke === 'Evolve';
+  }).length;
+
+  const hasExistingTree = state.navTree && state.navTree.length > 0;
+
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:14px;font-size:13px;';
+  body.innerHTML = `
+    ${hasExistingTree ? `<div style="background:var(--bg-field-bar);border:1px solid var(--border);border-radius:6px;padding:10px 12px;color:var(--text-secondary);line-height:1.5;">This project already has a sitemap (${state.navTree.length} top-level section${state.navTree.length !== 1 ? 's' : ''}). This tool only merges — it reuses an existing section when its name matches, and only places pages that aren't on the sitemap yet. It never removes or replaces anything.</div>` : ''}
+    <div style="color:var(--text-muted);line-height:1.5;">Auto-generates a starter sitemap tree from each page's URL — e.g. <code>/about/leadership</code> becomes <b>About &gt; Leadership</b>. Reorganize freely afterward with the Sitemap editor's drag-and-drop.</div>
+    <div>Eligible pages: <b id="_csa-count">${countEligible(false)}</b></div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <label style="color:var(--text-secondary);" for="_csa-depth">Bucket depth</label>
+      <select id="_csa-depth" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;">
+        <option value="1">1 level</option>
+        <option value="2" selected>2 levels</option>
+        <option value="3">3 levels</option>
+        <option value="4">4 levels</option>
+      </select>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;">
+      <input type="checkbox" id="_csa-include-all" />
+      Include Kill / Exclude / unreviewed pages too
+    </label>
+  `;
+
+  const countEl = body.querySelector('#_csa-count');
+  const includeAllCb = body.querySelector('#_csa-include-all');
+  includeAllCb.addEventListener('change', () => {
+    countEl.textContent = countEligible(includeAllCb.checked);
+  });
+
+  const footer = document.createElement('div');
+  footer.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:4px;';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button'; cancelBtn.className = 'btn btn-sm btn-ghost'; cancelBtn.textContent = 'Cancel';
+  const genBtn = document.createElement('button');
+  genBtn.type = 'button'; genBtn.className = 'btn btn-sm btn-primary'; genBtn.textContent = 'Generate';
+  footer.appendChild(cancelBtn);
+  footer.appendChild(genBtn);
+  body.appendChild(footer);
+
+  const modal = openModal({ title: 'Create Sitemap from Audit', body, width: 480, buttons: [] });
+  cancelBtn.addEventListener('click', () => modal.close());
+
+  genBtn.addEventListener('click', () => {
+    const maxDepth = parseInt(body.querySelector('#_csa-depth').value, 10) || 2;
+    const includeAllRows = includeAllCb.checked;
+    const result = createSitemapFromAudit({ maxDepth, includeAllRows });
+    modal.close();
+    if (result.assigned === 0) {
+      showToast('No eligible pages found to place', 'error');
+      return;
+    }
+    const skippedTotal = result.skippedPlaced + result.skippedKke;
+    showToast(`Created ${result.nodesCreated} sitemap node${result.nodesCreated !== 1 ? 's' : ''}, placed ${result.assigned} page${result.assigned !== 1 ? 's' : ''}` + (skippedTotal ? ` — ${skippedTotal} skipped` : ''), 'success');
+  });
+}
+
 /** Remediate: scan all assigned pages and ensure each has a proper child node
  *  in the nav tree. If a page has a slug (computed path extends beyond its node's path)
  *  but no dedicated child node, create one. */
@@ -10702,6 +11171,7 @@ function setupNavTree() {
 
   // Sitemap generator
   $('btn-nav-sitemap').addEventListener('click', generateNavSitemap);
+  $('btn-nav-treemap').addEventListener('click', openTreemapConfigDialog);
 
   // (The IA / Menu Report moved to the Menus view — Menus → Report.)
 
@@ -11017,6 +11487,10 @@ function setupMenusView() {
   const rep = $('btn-menu-report'); if (rep) rep.addEventListener('click', reportMenus);
   const chk = $('btn-menu-check'); if (chk) chk.addEventListener('click', openMenuOrphansDialog);
   const close = $('btn-menus-view-close'); if (close) close.addEventListener('click', () => returnToAuditView());
+  // Wired once here (not per-row-render) — closes any open "add child" popover on an outside click.
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.mi-add-child.open').forEach(el => el.classList.remove('open'));
+  });
 }
 
 async function addMenu() {
@@ -11488,6 +11962,44 @@ function buildMenuItemRow(menu, item, depth) {
     row.appendChild(url);
   }
 
+  const addChildWrap = document.createElement('span');
+  addChildWrap.className = 'mi-add-child';
+  const addChildBtn = document.createElement('span');
+  addChildBtn.className = 'mi-add-child-btn';
+  addChildBtn.textContent = '+';
+  addChildBtn.title = 'Add a child item under this one';
+  addChildBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wasOpen = addChildWrap.classList.contains('open');
+    document.querySelectorAll('.mi-add-child.open').forEach(el => el.classList.remove('open'));
+    if (!wasOpen) addChildWrap.classList.add('open');
+  });
+  addChildWrap.appendChild(addChildBtn);
+  const addChildMenu = document.createElement('div');
+  addChildMenu.className = 'mi-add-child-menu';
+  [['ref', '+ Page'], ['link', '+ Link'], ['header', '+ Header']].forEach(([kind, text]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = text;
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      addChildWrap.classList.remove('open');
+      if (kind === 'ref') addMenuItemRef(menu, item.id);
+      else if (kind === 'link') addMenuItemLink(menu, item.id);
+      else addMenuItemHeader(menu, item.id);
+    });
+    addChildMenu.appendChild(b);
+  });
+  addChildWrap.appendChild(addChildMenu);
+  row.appendChild(addChildWrap);
+
+  const clone = document.createElement('span');
+  clone.className = 'mi-clone';
+  clone.textContent = '⧉';
+  clone.title = 'Duplicate this item (and its children) as a sibling';
+  clone.addEventListener('click', () => cloneMenuItem(menu, item));
+  row.appendChild(clone);
+
   const del = document.createElement('span');
   del.className = 'mi-del';
   del.textContent = '✕';
@@ -11499,32 +12011,77 @@ function buildMenuItemRow(menu, item, depth) {
   return row;
 }
 
-function addMenuItemRef(menu) { pickMenuItemRef(menu, null); }
+function addMenuItemRef(menu, parentId = '') { pickMenuItemRef(menu, null, parentId); }
 
-function pickMenuItemRef(menu, existingItem) {
+function pickMenuItemRef(menu, existingItem, parentId = '') {
   showMenuNodePicker((node) => {
     if (existingItem) {
       existingItem.nodeId = node.id;
     } else {
-      menu.items.push({ id: genMenuItemId(menu), parentId: '', kind: 'ref', nodeId: node.id, externalUrl: '', label: '' });
+      menu.items.push({ id: genMenuItemId(menu), parentId, kind: 'ref', nodeId: node.id, externalUrl: '', label: '' });
     }
     setDirty(true);
     renderMenusView();
   });
 }
 
-async function addMenuItemLink(menu) {
+async function addMenuItemLink(menu, parentId = '') {
   const label = await showPrompt('New link', 'Link label (e.g. Login, MyPSU)');
   if (label === null) return;
-  menu.items.push({ id: genMenuItemId(menu), parentId: '', kind: 'link', nodeId: '', externalUrl: '', label: sanitizeText(label || '').trim() });
+  menu.items.push({ id: genMenuItemId(menu), parentId, kind: 'link', nodeId: '', externalUrl: '', label: sanitizeText(label || '').trim() });
   setDirty(true); renderMenusView();
 }
 
-async function addMenuItemHeader(menu) {
+async function addMenuItemHeader(menu, parentId = '') {
   const label = await showPrompt('New header', 'Header / group label (label-only, no link)');
   if (label === null) return;
-  menu.items.push({ id: genMenuItemId(menu), parentId: '', kind: 'header', nodeId: '', externalUrl: '', label: sanitizeText(label || '').trim() });
+  menu.items.push({ id: genMenuItemId(menu), parentId, kind: 'header', nodeId: '', externalUrl: '', label: sanitizeText(label || '').trim() });
   setDirty(true); renderMenusView();
+}
+
+/** Deep-clones a menu item and its full subtree as a sibling immediately
+ *  after the original (and its own subtree) — same "duplicate to adjust
+ *  independently" pattern as duplicateMenu() and the nav tree's clone-branch.
+ *  Only the top item gets a "(copy)" suffix, and only when it has a real
+ *  label — a blank 'ref' label means "inherit the page's label," and cloning
+ *  shouldn't turn that into the literal string " (copy)". */
+function cloneMenuItem(menu, item) {
+  const items = menu.items || [];
+  const childrenOf = (pid) => items.filter(it => (it.parentId || '') === (pid || ''));
+
+  let maxNum = 0;
+  items.forEach(it => { const n = parseInt(String(it.id).replace(/\D/g, ''), 10); if (n > maxNum) maxNum = n; });
+  const nextId = () => { maxNum++; return 'mi-' + String(maxNum).padStart(4, '0'); };
+
+  const clones = [];
+  function cloneRecursive(src, newParentId, isTop) {
+    const clone = {
+      id: nextId(),
+      parentId: newParentId,
+      kind: src.kind,
+      nodeId: src.nodeId || '',
+      externalUrl: src.externalUrl || '',
+      label: (isTop && src.label) ? (src.label + ' (copy)') : (src.label || ''),
+    };
+    clones.push(clone);
+    childrenOf(src.id).forEach(child => cloneRecursive(child, clone.id, false));
+    return clone;
+  }
+  cloneRecursive(item, item.parentId || '', true);
+
+  // Insert right after the original item's entire subtree, so the clone's
+  // subtree doesn't interleave with the original's in the flat array.
+  const originalSubtreeIds = new Set();
+  (function collect(id) { originalSubtreeIds.add(id); childrenOf(id).forEach(c => collect(c.id)); })(item.id);
+  let insertAt = items.length;
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (originalSubtreeIds.has(items[i].id)) { insertAt = i + 1; break; }
+  }
+  items.splice(insertAt, 0, ...clones);
+
+  setDirty(true);
+  renderMenusView();
+  showToast('Item duplicated', 'success');
 }
 
 function changeMenuItemKind(menu, item, newKind) {
@@ -12019,6 +12576,7 @@ function openSitemapView(opts) {
     storageKey: sitemapProjectSlug() + '-' + opts.context,
     palette: palette,
     rootColor: opts.rootColor || SITEMAP_ROOT_COLOR,
+    fieldDefs: opts.fieldDefs || [],
     appDefaults: sitemapAppDefaults(),
     settings: {
       vertDepth: eff.vertDepth, childThresh: eff.childThresh,
@@ -12106,13 +12664,13 @@ function applySitemapCollapseToNav(collapsedIds) {
   }
 }
 
-async function sitemapExportClient(baseData, st, slug) {
+async function sitemapExportClient(baseData, st, slug, templateModule) {
   const data = Object.assign({}, baseData, {
     mode: 'client',
     settings: (st && st.settings) || baseData.settings,
     initialCollapsed: (st && st.collapsed) || baseData.initialCollapsed
   });
-  const html = window.SitemapTemplate.build(data);
+  const html = (templateModule || window.SitemapTemplate).build(data);
   const r = await window.electronAPI.saveTextFile({
     content: html,
     defaultName: (slug || 'sitemap') + '.html',
@@ -12122,17 +12680,171 @@ async function sitemapExportClient(baseData, st, slug) {
   else if (r && r.error && r.error !== 'Cancelled') showToast('Export failed: ' + r.error, 'error');
 }
 
-async function sitemapExportPdf(baseData, st, slug) {
+async function sitemapExportPdf(baseData, st, slug, templateModule) {
   const data = Object.assign({}, baseData, {
     mode: 'print',
     settings: (st && st.settings) || baseData.settings,
     initialCollapsed: (st && st.collapsed) || baseData.initialCollapsed
   });
-  const html = window.SitemapTemplate.build(data);
+  const html = (templateModule || window.SitemapTemplate).build(data);
   showToast('Generating PDF…');
   const r = await window.electronAPI.exportSitemapPdf({ html, defaultName: (slug || 'sitemap') + '.pdf' });
   if (r && r.success) showToast('Exported PDF', 'success');
   else if (r && r.error && r.error !== 'Cancelled') showToast('PDF export failed: ' + r.error, 'error');
+}
+
+const TREEMAP_MSG_PREFIX = '@@TREEMAP@@';   // must match MSG_PREFIX in the treemap engine
+
+// Opens the interactive treemap modal for a built tree. Deliberately much
+// smaller than openSitemapView(): no live settings panel, no state
+// round-trip — depth/color-by are chosen once up front (openTreemapConfigDialog())
+// and the resulting view is static aside from pan/zoom/export.
+// opts: { title, roots, legend, slug, canvasWidth?, canvasHeight? }
+function openTreemapView(opts) {
+  if (!window.TreemapTemplate) { showToast('Treemap engine unavailable', 'error'); return; }
+
+  const baseData = {
+    title: opts.title,
+    roots: opts.roots,
+    legend: opts.legend || [],
+    canvasWidth: opts.canvasWidth,
+    canvasHeight: opts.canvasHeight,
+  };
+
+  const html = window.TreemapTemplate.build(Object.assign({ mode: 'app' }, baseData));
+  const wv = document.createElement('webview');
+  wv.setAttribute('src', 'data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  wv.style.cssText = 'width:100%;height:100%;border:0;flex:1;';
+
+  const container = document.createElement('div');
+  container.style.cssText = 'width:100%;height:80vh;display:flex;';
+  container.appendChild(wv);
+
+  wv.addEventListener('console-message', (e) => {
+    if (!e || !e.message || e.message.indexOf(TREEMAP_MSG_PREFIX) !== 0) return;
+    let msg; try { msg = JSON.parse(e.message.slice(TREEMAP_MSG_PREFIX.length)); } catch (_) { return; }
+    if (msg.type === 'export') {
+      if (msg.format === 'client') sitemapExportClient(baseData, null, opts.slug, window.TreemapTemplate);
+      else if (msg.format === 'pdf') sitemapExportPdf(baseData, null, opts.slug, window.TreemapTemplate);
+    }
+  });
+
+  openModal({ title: opts.title, body: container, width: '94vw', buttons: [{ label: 'Done', variant: 'primary' }] });
+}
+
+/** Legend entries for the current color-by mode — {color, label}[]. */
+function buildTreemapLegend(ctx) {
+  if (ctx.colorBy === 'section') {
+    return Object.keys(ctx.sectionColors).map(label => ({ color: ctx.sectionColors[label], label }));
+  }
+  if (ctx.colorBy === 'kke') {
+    const labels = ['Keep', 'Evolve', 'Kill', 'Consolidate', 'Exclude'];
+    (state.customKkeStates || []).forEach(s => { if (s && s.label && !labels.includes(s.label)) labels.push(s.label); });
+    return labels.map(label => ({ color: treemapKkeColor(label), label }));
+  }
+  const def = ctx.fieldDefs.find(f => f.key === ctx.colorBy);
+  const map = ctx.fieldColorMaps[ctx.colorBy] || {};
+  return Object.keys(map).map(val => ({
+    color: map[val],
+    label: (def && def.valueLabels && (val in def.valueLabels)) ? def.valueLabels[val] : (val || '(not set)'),
+  }));
+}
+
+/** Builds the treemap from the current sitemap tree and opens the view.
+ *  opts: { depth: number|null, colorBy: 'section'|'kke'|<field key> } */
+function generateNavTreemap(opts) {
+  if (!state.navTree || state.navTree.length === 0) { showToast('No sitemap loaded', 'error'); return; }
+
+  const depthLimit = opts.depth || null;
+  const colorBy = opts.colorBy || 'kke';
+
+  const ctx = {
+    colorBy,
+    subtreeCounts: computeSubtreePageCounts(),
+    kkeBreakdown: computeSubtreeKkeBreakdown(),
+    sectionColors: computeSectionColorMap(),
+    fieldDefs: navSitemapFieldDefs(),
+    fieldColorMaps: {},
+  };
+  if (colorBy !== 'section' && colorBy !== 'kke') {
+    const def = ctx.fieldDefs.find(f => f.key === colorBy);
+    ctx.fieldColorMaps[colorBy] = computeFieldColorMap(colorBy, def);
+  }
+
+  const roots = state.navTree.map(sec => buildTreemapNode(sec, sec.label || '(section)', depthLimit, 1, ctx));
+  const legend = buildTreemapLegend(ctx);
+  const ps = state.projectSettings || {};
+  const title = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
+
+  openTreemapView({
+    title: (title ? title + ' — ' : '') + 'Treemap',
+    roots,
+    legend,
+    slug: sitemapProjectSlug() + '-treemap',
+  });
+}
+
+/** Pre-render config dialog: pick Depth + Color-by, then Generate opens the
+ *  treemap. No live in-webview settings for v1 — changing either means
+ *  reopening this dialog. Color-by's field options (Phase / Page Status /
+ *  Build Pattern / assignees) only make sense per-node, so they're hidden
+ *  whenever a depth limit would roll multiple nodes into one box. */
+function openTreemapConfigDialog() {
+  if (!state.navTree || state.navTree.length === 0) { showToast('No sitemap loaded', 'error'); return; }
+
+  const fieldDefs = navSitemapFieldDefs();
+  const depthOptions = [
+    { value: '1', label: '1 — top-level sections only' },
+    { value: '2', label: '2 (recommended)' },
+    { value: '3', label: '3' },
+    { value: '', label: 'Unlimited — full tree' },
+  ];
+
+  const body = document.createElement('div');
+  body.innerHTML = `
+    <label style="display:block;margin-bottom:12px;">
+      <span style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px;">Depth</span>
+      <select id="_tmc-depth" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-surface);">
+        ${depthOptions.map(o => `<option value="${o.value}"${o.value === '2' ? ' selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
+      </select>
+    </label>
+    <label style="display:block;">
+      <span style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px;">Color by</span>
+      <select id="_tmc-colorby" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-surface);"></select>
+    </label>
+    <p style="font-size:11px;color:var(--text-muted);margin-top:12px;line-height:1.5;">
+      Deeper levels roll up into the box above them, so only <b>Unlimited</b> depth can color by a per-page field like Page Status — limited depths color by section or KKE decision instead.
+    </p>
+  `;
+
+  function refreshColorByOptions() {
+    const unlimited = body.querySelector('#_tmc-depth').value === '';
+    const sel = body.querySelector('#_tmc-colorby');
+    const prev = sel.value;
+    let opts = [
+      { value: 'kke', label: 'KKE decision' },
+      { value: 'section', label: 'Top-level section' },
+    ];
+    if (unlimited) opts = opts.concat(fieldDefs.map(f => ({ value: f.key, label: f.label })));
+    sel.innerHTML = opts.map(o => `<option value="${o.value}">${escapeHtml(o.label)}</option>`).join('');
+    if (opts.some(o => o.value === prev)) sel.value = prev;
+  }
+  body.querySelector('#_tmc-depth').addEventListener('change', refreshColorByOptions);
+  refreshColorByOptions();
+
+  openModal({
+    title: 'Treemap',
+    body,
+    width: 400,
+    buttons: [
+      { label: 'Cancel', variant: 'ghost' },
+      { label: 'Generate', variant: 'primary', primary: true, onClick: () => {
+          const depthVal = body.querySelector('#_tmc-depth').value;
+          const colorBy = body.querySelector('#_tmc-colorby').value;
+          generateNavTreemap({ depth: depthVal ? parseInt(depthVal, 10) : null, colorBy });
+        } },
+    ],
+  });
 }
 
 // Project Settings → Identity: editable list of client brand hex colors, used by
@@ -12181,10 +12893,17 @@ async function generateMenuSitemap() {
     .map(it => {
       const kids = buildItems(menu, it.id);
       const node = {
-        id: it.id,
+        // Namespaced by menu id: item ids are only unique *within* their own
+        // menu (genMenuItemId scopes to menu.items), but this diagram merges
+        // every menu's tree into one shared rendering engine instance that
+        // indexes node positions by id globally — two different menus reusing
+        // the same item id (routine and expected) would silently overwrite
+        // each other's computed position, rendering one in the wrong spot.
+        id: menu.id + ':' + it.id,
         label: menuItemLabel(it) || '(item)',
         colorValue: kindOf(it),          // colored by item kind by default
         menu: it.kind !== 'header',      // dashed border for headers (grouping, not a destination)
+        external: it.kind === 'link',
       };
       if (kids.length) { node.collapsible = true; node.children = kids; }
       return node;
@@ -12553,6 +13272,20 @@ async function generateNavSitemap() {
       label: node.label || '(unnamed)',
       colorValue: topLabel,
       menu: !String(node.phase || '').trim(),   // solid = current build, dashed = phased
+      external: !!String(node.url || '').trim(),
+      // Raw values for the generic "color by field" rule engine — see
+      // navSitemapFieldDefs(). Adding a new colorable dimension is just one
+      // more key here + one more entry in that list; the engine itself never
+      // needs to change.
+      fields: {
+        phase: node.phase || '',
+        nodeType: node.nodeType || '',
+        pageStatus: node.pageStatus || '',
+        buildPattern: node.buildPattern || '',
+        buildAssignee: node.buildAssignee || '',
+        writeAssignee: node.writeAssignee || '',
+        migrateAssignee: node.migrateAssignee || '',
+      },
     };
     if (count > 0) out.sub = count + (count === 1 ? ' page' : ' pages');
     if (kids.length) {
@@ -12596,7 +13329,92 @@ async function generateNavSitemap() {
     rootColor: SITEMAP_ROOT_COLOR,
     initialCollapsed,
     collapseToNavNodes: true,   // node.collapse (Nav Tree checkbox) is the source of truth
+    fieldDefs: navSitemapFieldDefs(),
   });
+}
+
+// Declares which raw node fields the Visual Sitemap's "Color by field" picker
+// offers, matching navToSitemap()'s node.fields keys above. Menus don't carry
+// these fields at all, so generateMenuSitemap() simply omits fieldDefs — the
+// engine hides the picker whenever the host doesn't declare any.
+function navSitemapFieldDefs() {
+  const pageStatusColors = {};
+  (state.pageStatusLibrary || []).forEach(s => { if (s && s.name) pageStatusColors[s.name] = s.color; });
+  return [
+    { key: 'phase', label: 'Phase' },
+    { key: 'nodeType', label: 'Node Type', valueLabels: { '': 'Page', Header: 'Header', Fragment: 'Fragment' } },
+    { key: 'pageStatus', label: 'Page Status', valueColors: pageStatusColors },
+    { key: 'buildPattern', label: 'Build Pattern' },
+    { key: 'buildAssignee', label: 'Builder' },
+    { key: 'writeAssignee', label: 'Writer' },
+    { key: 'migrateAssignee', label: 'Migrator' },
+  ];
+}
+
+// ─── Treemap data builder ──────────────────────────────────────────────────
+
+function computeSectionColorMap() {
+  const palette = SITEMAP_DEFAULT_PALETTE;
+  const map = {};
+  (state.navTree || []).forEach((sec, i) => { map[sec.label || '(section)'] = palette[i % palette.length]; });
+  return map;
+}
+
+/** One color per distinct raw value of `fieldKey` across all nav nodes,
+ *  reusing a fieldDef's valueColors (e.g. Page Status's colors) where given. */
+function computeFieldColorMap(fieldKey, fieldDef) {
+  const palette = SITEMAP_DEFAULT_PALETTE;
+  const values = [...new Set((state.navNodes || []).map(n => n[fieldKey] || ''))];
+  values.sort((a, b) => { if (a === '') return 1; if (b === '') return -1; return a < b ? -1 : a > b ? 1 : 0; });
+  const map = {};
+  values.forEach((v, i) => {
+    map[v] = (fieldDef && fieldDef.valueColors && fieldDef.valueColors[v]) || palette[i % palette.length];
+  });
+  return map;
+}
+
+function resolveTreemapNodeColor(node, topLabel, ctx) {
+  if (ctx.colorBy === 'section') return ctx.sectionColors[topLabel] || '#9aa0ab';
+  if (ctx.colorBy === 'kke') {
+    const dom = dominantKke(ctx.kkeBreakdown[node.id] || {});
+    return dom ? treemapKkeColor(dom) : '#9aa0ab';
+  }
+  const fieldMap = ctx.fieldColorMaps[ctx.colorBy];
+  return (fieldMap && fieldMap[node[ctx.colorBy] || '']) || '#9aa0ab';
+}
+
+function treemapSubtitle(node, value, ctx) {
+  const pages = value + (value === 1 ? ' page' : ' pages');
+  if (ctx.colorBy === 'kke') {
+    const breakdown = ctx.kkeBreakdown[node.id] || {};
+    const dom = dominantKke(breakdown);
+    if (dom && value > 0) return pages + ' · ' + Math.round((breakdown[dom] / value) * 100) + '% ' + dom;
+    return pages;
+  }
+  if (ctx.colorBy === 'section') return pages;
+  const def = (ctx.fieldDefs || []).find(f => f.key === ctx.colorBy);
+  const val = node[ctx.colorBy] || '';
+  const label = (def && def.valueLabels && (val in def.valueLabels)) ? def.valueLabels[val] : (val || '(not set)');
+  return pages + ' · ' + label;
+}
+
+/** Recursive treemap node builder, analogous to navToSitemap(). Below
+ *  ctx.depthLimit it recurses normally; at the limit it stops and reports the
+ *  node's *subtree* totals instead of children — the "rollup" behavior that
+ *  keeps a depth-limited treemap's box sizes/colors meaningful. `depthLimit`
+ *  of null/undefined means unlimited (never rolls up). */
+function buildTreemapNode(node, topLabel, depthLimit, currentDepth, ctx) {
+  const value = ctx.subtreeCounts[node.id] || 0;
+  const isRolledUp = depthLimit != null && currentDepth >= depthLimit;
+  const kids = (!isRolledUp && node.children && node.children.length) ? node.children : [];
+  const out = { id: node.id, label: node.label || '(unnamed)', value };
+  if (kids.length) {
+    out.children = kids.map(c => buildTreemapNode(c, topLabel, depthLimit, currentDepth + 1, ctx));
+  } else {
+    out.color = resolveTreemapNodeColor(node, topLabel, ctx);
+    out.subtitle = treemapSubtitle(node, value, ctx);
+  }
+  return out;
 }
 
 /** Get sitemap nodes visible under the current depth filter. */
@@ -12861,7 +13679,7 @@ function renderNavEditorNode(node, pageCounts, depth, dupSlugs, depthFilter) {
   } else if (isHub) {
     countCell.classList.add('ne-hub');
     countCell.innerHTML = '<span class="ne-net-new-badge">NEW</span>';
-    countCell.title = 'Net New: children have assigned pages but this node has none — client needs to develop content for this page';
+    countCell.title = 'Net New: children have assigned pages but this node has none — client needs to develop content for this page. Double-click to mark status or create its page.';
     row.classList.add('ne-row-hub');
   } else if (isOrphanLeaf) {
     countCell.classList.add('ne-orphan');
@@ -14166,6 +14984,85 @@ function _navPageCountsCache() {
   return _navPageCountsCacheMap;
 }
 function invalidateNavPageCountsCache() { _navPageCountsCacheMap = null; }
+
+// ─── Treemap ────────────────────────────────────────────────────────────────
+
+/** Bottom-up count of ALL audit rows assigned to each node's full subtree
+ *  (every KKE outcome, unlike _navPageCountsCache() which excludes
+ *  Kill/Consolidate for the Sitemap editor's "how many live pages" badge).
+ *  This is deliberately the full inventory, not just what survives — a
+ *  section that's entirely being killed should still show up sized by how
+ *  much content is there, not shrink to nothing. It's also what keeps the
+ *  KKE-breakdown subtitle's percentage from exceeding 100%: both this value
+ *  and computeSubtreeKkeBreakdown() total the same rows, so one is always a
+ *  share of the other. Always walks the complete tree; buildTreemapNode()
+ *  decides where to stop recursing and read these. */
+function computeSubtreePageCounts() {
+  const direct = {};
+  (state.editedRows || []).forEach(r => {
+    const id = String(r['Sitemap_ID'] || '').trim();
+    if (!id) return;
+    direct[id] = (direct[id] || 0) + 1;
+  });
+  const totals = {};
+  function walk(node) {
+    let total = direct[node.id] || 0;
+    (node.children || []).forEach(c => { total += walk(c); });
+    totals[node.id] = total;
+    return total;
+  }
+  (state.navTree || []).forEach(walk);
+  return totals;
+}
+
+/** Bottom-up KKE tally per node's full subtree: node id -> { [kkeLabel]: count }.
+ *  Same effective-KKE resolution as elsewhere (Final_KKE wins over
+ *  KKE_Recommendation), but unlike _navPageCountsCache() this does NOT
+ *  exclude Kill/Consolidate rows — what's happening to the content is
+ *  exactly what this view is for. */
+function computeSubtreeKkeBreakdown() {
+  const direct = {};
+  (state.editedRows || []).forEach(r => {
+    const id = String(r['Sitemap_ID'] || '').trim();
+    if (!id) return;
+    const kke = String(r[finalKkeCol()] || r[kkeCol()] || '').trim() || '(none)';
+    if (!direct[id]) direct[id] = {};
+    direct[id][kke] = (direct[id][kke] || 0) + 1;
+  });
+  const totals = {};
+  function walk(node) {
+    const merged = Object.assign({}, direct[node.id] || {});
+    (node.children || []).forEach(c => {
+      const childTotals = walk(c);
+      Object.keys(childTotals).forEach(k => { merged[k] = (merged[k] || 0) + childTotals[k]; });
+    });
+    totals[node.id] = merged;
+    return merged;
+  }
+  (state.navTree || []).forEach(walk);
+  return totals;
+}
+
+/** Most frequent KKE value in a breakdown map, or null if empty. */
+function dominantKke(breakdown) {
+  let best = null, bestCount = 0;
+  Object.keys(breakdown || {}).forEach(k => {
+    if (breakdown[k] > bestCount) { best = k; bestCount = breakdown[k]; }
+  });
+  return best;
+}
+
+/** Resolve a KKE label to an actual color (not a CSS var) — the treemap
+ *  renders inside an isolated webview with no access to the host's :root
+ *  custom properties, so colors must be pre-resolved before crossing over.
+ *  Includes Consolidate, which the older kkeColor()/resolvedKkeColor()
+ *  helpers omit. */
+function treemapKkeColor(label) {
+  const map = { Keep: '--kke-keep', Kill: '--kke-kill', Evolve: '--kke-evolve', Consolidate: '--kke-consolidate', Exclude: '--kke-exclude' };
+  if (map[label]) return getComputedStyle(document.documentElement).getPropertyValue(map[label]).trim();
+  const custom = (state.customKkeStates || []).find(s => s.label === label);
+  return custom ? custom.color : '#9aa0ab';
+}
 function countNodePages(node) {
   return _navPageCountsCache()[node.id] || 0;
 }
@@ -14240,6 +15137,8 @@ function openNavNodeEditor(node) {
   const bcParentNode = (node.breadcrumbParentId && node.breadcrumbParentId !== BREADCRUMB_ROOT)
     ? state.navNodes.find(n => n.id === node.breadcrumbParentId) : null;
   const pageCount = state.editedRows.filter(r => String(r['Sitemap_ID'] || '') === node.id).length;
+  const isHubNode = pageCount === 0 && node.nodeType !== 'Header' && node.nodeType !== 'Fragment' && !String(node.phase || '').trim()
+    && node.children && node.children.length > 0 && hasDescendantPages(node, _navPageCountsCache());
 
   if (!reusing) {
     overlay = document.createElement('div');
@@ -14286,6 +15185,14 @@ function openNavNodeEditor(node) {
           <div id="_nne-pbc" style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);"></div>
         </div>
       </div>
+
+      ${isHubNode ? `
+      <div class="nne-hub-banner" style="margin-top:10px;padding:10px 12px;border-radius:6px;background:var(--kke-evolve-bg, #fef3c7);border:1px solid var(--kke-evolve, #d97706);display:flex;align-items:center;gap:10px;justify-content:space-between;">
+        <div style="font-size:12px;line-height:1.5;color:var(--text-primary);">
+          <b>Net New</b> — children have assigned pages but this node has none. The client needs to develop content for this page. Set a <b>Page Status</b> in the Build section below to track progress (e.g. Not Started → In Progress), or create its spreadsheet row now.
+        </div>
+        <button id="_nne-promote" class="btn btn-sm btn-primary" style="flex-shrink:0;">Create Page</button>
+      </div>` : ''}
 
       <!-- Identity -->
       <div class="nne-section">
@@ -14537,6 +15444,14 @@ function openNavNodeEditor(node) {
   dialog.querySelector('#_nne-cancel').addEventListener('click', close);
   // Overlay-level handlers persist across reuse; only attach once
   if (!reusing) overlay.addEventListener('click', close);
+
+  const promoteBtn = dialog.querySelector('#_nne-promote');
+  if (promoteBtn) {
+    promoteBtn.addEventListener('click', async () => {
+      const origIndex = await promoteHubNodeToRow(node);
+      if (origIndex !== null) close();
+    });
+  }
 
   const refClearBtn = dialog.querySelector('#_nne-ref-clear');
   if (refClearBtn) {
@@ -15357,6 +16272,27 @@ function extractSlug(url) {
   }
 }
 
+/** All path segments of a URL, in order — e.g. "https://x.com/about/team/" →
+ *  ['about', 'team']. Unlike extractSlug() (last segment only), this walks the
+ *  whole path so createSitemapFromAudit can mirror the URL's structure. */
+function urlPathSegments(url) {
+  let pathname;
+  try { pathname = new URL(url).pathname; } catch (e) { pathname = String(url || ''); }
+  return pathname.replace(/\/+$/, '').split('/').filter(Boolean)
+    .map(seg => seg.replace(/\.(html?|php|aspx?|jsp)$/i, ''));
+}
+
+/** Prettifies a URL segment/slug into a human bucket label — "about-us" or
+ *  "about_us" → "About Us". Used for auto-derived sitemap sections, which have
+ *  no title of their own to borrow (unlike leaf pages, which use extractPageTitle). */
+function titleCaseFromSlug(slug) {
+  return String(slug || '')
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ') || 'Untitled';
+}
+
 function slugify(text) {
   return text
     .toLowerCase()
@@ -15772,11 +16708,11 @@ function gatherProgressStats() {
     const g = String(row[groupCol()] || '').trim();
     if (g) groupCounts[g] = (groupCounts[g] || 0) + 1;
 
-    const sme = String(row[smeDecisionCol()] || '').trim();
-    if (sme) {
+    const decision = parseSmeDecision(row[smeDecisionCol()], kke);
+    if (decision.reviewed) {
       smeReviewed++;
-      if (sme === 'Approve') smeApproved++;
-      else if (sme.startsWith('Change:')) smeChanged++;
+      if (decision.agree) smeApproved++;
+      else if (decision.changed) smeChanged++;
     }
     if (String(row[finalKkeCol()] || '').trim()) finalResolved++;
   });
@@ -17375,7 +18311,13 @@ function reportDefaultName(suffix) {
 }
 
 function showReport(title, bodyHtml, exporterFn) {
-  $('progress-body').innerHTML = `<div style="padding:16px;font-size:13px;line-height:1.6;">${bodyHtml}</div>`;
+  // Report bodies are built with colors hardcoded for a white background
+  // (they're designed to double as the exported HTML/PDF, which always
+  // renders on white regardless of the app's theme) — so the live in-app
+  // preview forces its own white "paper" surface rather than inheriting the
+  // app's dark-mode panel background, or that same near-black text becomes
+  // illegible. See .report-preview-surface in styles.css.
+  $('progress-body').innerHTML = `<div class="report-preview-surface" style="padding:16px;font-size:13px;line-height:1.6;">${bodyHtml}</div>`;
   $('btn-progress-export-pdf').classList.remove('hidden');
   $('btn-progress-export-html').classList.remove('hidden');
   $('btn-progress-export-pdf').textContent = 'PDF';
@@ -17570,11 +18512,11 @@ function reportSmeStatus() {
     if (!byOwner[owner]) byOwner[owner] = { assigned: 0, reviewed: 0, approved: 0, changed: 0, conflicts: 0 };
     const kke = String(row[kkeCol()] || '').trim();
     if (kke) byOwner[owner].assigned++;
-    const sme = String(row[smeDecisionCol()] || '').trim();
-    if (sme) {
+    const decision = parseSmeDecision(row[smeDecisionCol()], kke);
+    if (decision.reviewed) {
       byOwner[owner].reviewed++;
-      if (sme === 'Approve') byOwner[owner].approved++;
-      else if (sme.startsWith('Change:')) {
+      if (decision.agree) byOwner[owner].approved++;
+      else if (decision.changed) {
         byOwner[owner].changed++;
         const final_ = String(row[finalKkeCol()] || '').trim();
         if (!final_) byOwner[owner].conflicts++;
@@ -17604,9 +18546,8 @@ function reportSmeStatus() {
 
   // Unresolved conflicts
   const conflicts = state.editedRows.filter(r => {
-    const sme = String(r[smeDecisionCol()] || '').trim();
     const final_ = String(r[finalKkeCol()] || '').trim();
-    return sme && sme.startsWith('Change:') && !final_;
+    return !final_ && parseSmeDecision(r[smeDecisionCol()], r[kkeCol()]).changed;
   });
   if (conflicts.length > 0) {
     const urlCol = state.urlColumn || 'Address';
@@ -18895,10 +19836,8 @@ function openKkeVsSmeView() {
   const classify = (row) => {
     const sme = String(row[smeCol] || '').trim();
     const final_ = String(row[fCol] || '').trim();
-    const agree = /^approve$/i.test(sme);
-    const changed = /^change:/i.test(sme);
-    const changedTo = changed ? sme.replace(/^change:\s*/i, '').trim() : '';
-    return { sme, final_, agree, changed, changedTo, pending: changed && !final_ };
+    const decision = parseSmeDecision(sme, row[kCol]);
+    return { sme, final_, agree: decision.agree, changed: decision.changed, changedTo: decision.value, pending: decision.changed && !final_ };
   };
 
   const agreeN = reviewed.filter(t => classify(t.row).agree).length;
@@ -19655,19 +20594,17 @@ async function smeImport() {
   // Auto-populate Final_KKE from SME decisions
   let autoPopulated = 0;
   state.editedRows.forEach(row => {
-    const sme = String(row[smeDecisionCol()] || '').trim();
     const final_ = String(row[finalKkeCol()] || '').trim();
-    if (!sme || final_) return;
+    if (final_) return;
+    const decision = parseSmeDecision(row[smeDecisionCol()], row[kkeCol()]);
+    if (!decision.reviewed) return;
 
-    if (sme === 'Approve') {
+    if (decision.agree) {
       row[finalKkeCol()] = row[kkeCol()] || '';
       autoPopulated++;
-    } else if (sme.startsWith('Change:')) {
-      const suggested = sme.replace(/^Change:\s*/, '').trim();
-      if (suggested) {
-        row[finalKkeCol()] = suggested;
-        autoPopulated++;
-      }
+    } else if (decision.changed && decision.value) {
+      row[finalKkeCol()] = decision.value;
+      autoPopulated++;
     }
   });
 
@@ -19685,9 +20622,8 @@ async function smeImport() {
 
   // Count unresolved conflicts and offer to resolve
   const conflicts = state.editedRows.filter(r => {
-    const sme = String(r[smeDecisionCol()] || '').trim();
     const final_ = String(r[finalKkeCol()] || '').trim();
-    return sme && sme.startsWith('Change:') && !final_;
+    return !final_ && parseSmeDecision(r[smeDecisionCol()], r[kkeCol()]).changed;
   }).length;
   if (conflicts > 0) {
     setTimeout(async () => {
@@ -19713,12 +20649,10 @@ function openSmeResolveDialog() {
   // Collect conflict rows
   let conflicts = [];
   state.editedRows.forEach((row, origIndex) => {
-    const sme = String(row[smeDecisionCol()] || '').trim();
     const final_ = String(row[finalKkeCol()] || '').trim();
-    if (sme && sme.startsWith('Change:') && !final_) {
-      const suggested = sme.replace(/^Change:\s*/, '').trim();
-      conflicts.push({ origIndex, row, suggested });
-    }
+    if (final_) return;
+    const decision = parseSmeDecision(row[smeDecisionCol()], row[kkeCol()]);
+    if (decision.changed) conflicts.push({ origIndex, row, suggested: decision.value });
   });
 
   function renderList() {
@@ -19758,7 +20692,12 @@ function openSmeResolveDialog() {
       const finalWrap = document.createElement('span');
       finalWrap.className = 'sme-cr-final';
       const select = document.createElement('select');
-      ['', ...allKkeStates()].forEach(v => {
+      const finalOptions = ['', ...allKkeStates()];
+      // The SME's own wording may not be a state this project currently defines
+      // (typo, custom term, or just a bare value) — offer it anyway rather than
+      // silently dropping it from the pre-selection.
+      if (c.suggested && !finalOptions.includes(c.suggested)) finalOptions.push(c.suggested);
+      finalOptions.forEach(v => {
         const opt = document.createElement('option');
         opt.value = v; opt.textContent = v || '—';
         if (v === c.suggested) opt.selected = true;
@@ -20265,6 +21204,10 @@ function tvStartInlineEdit(cell, colName, origIndex) {
     } else {
       options = ['', ...allKkeStates()];
     }
+    // Keep whatever's already in the cell selectable even if it's not one of the
+    // options above (a bare SME value, or a state no longer configured).
+    const curVal = row[colName] || '';
+    if (curVal && !options.includes(curVal)) options.push(curVal);
     options.forEach(v => {
       const opt = document.createElement('option');
       opt.value = v; opt.textContent = v || '—';
@@ -21607,6 +22550,10 @@ function setupMultiBar() {
       addOpts((state.tagLibrary || []).slice().sort(), { blank: true });
     } else if (a === 'add-tag') {
       addOpts((state.tagLibrary || []).slice().sort());
+    } else if (a === 'assign-nav') {
+      // No value select — Apply opens the bucket picker/creator dialog directly.
+      applyBtn.classList.remove('hidden');
+      return;
     }
     valueSel.classList.remove('hidden');
     applyBtn.classList.remove('hidden');
@@ -21620,6 +22567,18 @@ function setupMultiBar() {
     const targets = getMultiBarTargets();
     if (!targets || targets.length === 0) {
       showToast('Nothing to apply to', 'error');
+      return;
+    }
+    if (a === 'assign-nav') {
+      openBulkNavAssignDialog(targets, () => {
+        if (state.multiSelected.size > 0) { state.multiSelected.clear(); updateMultiBar(); }
+        applyFilter();
+        if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+        action.value = '';
+        valueSel.innerHTML = '';
+        valueSel.classList.add('hidden');
+        applyBtn.classList.add('hidden');
+      });
       return;
     }
     const using = state.multiSelected.size > 0 ? 'selected' : 'filtered';

@@ -114,6 +114,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   smeExportMulti:      (payload) => ipcRenderer.invoke('sme-export-multi', payload),
   onMenuMergeAuditor:  (cb) => ipcRenderer.on('menu-merge-auditor',       ()   => cb()),
   onMenuNon200Triage:  (cb) => ipcRenderer.on('menu-non200-triage',       ()   => cb()),
+  onMenuCreateSitemapFromAudit: (cb) => ipcRenderer.on('menu-create-sitemap-from-audit', () => cb()),
   onMenuReportExecSummary:    (cb) => ipcRenderer.on('menu-report-executive-summary', () => cb()),
   onMenuReportContentInv:     (cb) => ipcRenderer.on('menu-report-content-inventory', () => cb()),
   onMenuReportSmeStatus:      (cb) => ipcRenderer.on('menu-report-sme-status',        () => cb()),

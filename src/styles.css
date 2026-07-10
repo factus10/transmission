@@ -2720,6 +2720,20 @@ body.dragging-popover iframe { pointer-events: none !important; }
   overflow-y: auto;
 }
 
+/* Client reports (showReport()) are built with colors hardcoded for a white
+   background — they're the same markup used for the exported HTML/PDF, which
+   always renders on white regardless of the app's theme. Force that same
+   white "paper" surface here so the live in-app preview stays legible in
+   dark mode instead of inheriting #progress-body's dark panel background.
+   Non-report uses of #progress-body (the Audit Progress dashboard, Sitemap
+   Coverage) use CSS variables and are unaffected — they don't get this class. */
+.report-preview-surface {
+  background: #ffffff;
+  color: #1a1a2e;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+}
+
 .progress-stat {
   display: flex;
   justify-content: space-between;
@@ -3712,8 +3726,22 @@ body.dragging-popover iframe { pointer-events: none !important; }
 
 .menu-items-head {
   display: flex; align-items: center; gap: 6px;
-  margin: 6px 0 8px; padding-top: 10px;
+  /* Negative side margin cancels #menus-detail's own horizontal padding so
+     this bleeds edge-to-edge; padding below re-adds the same inset just for
+     this row's content. sticky's `top` offset is always measured from the
+     scrollport's *padding* edge regardless of this element's own margin —
+     margin-top:-14px alone does NOT close the gap — so top is offset by
+     -14px (matching #menus-detail's padding-top) to make it stick flush
+     against the container's true top edge instead of leaving a 14px band
+     where scrolled rows show through above it. */
+  margin: 0 -18px 8px; padding: 10px 18px 8px;
   border-top: 1px solid var(--border-light);
+  border-bottom: 1px solid var(--border-light);
+  position: sticky; top: -14px; z-index: 5;
+  background: var(--bg-panel);
+  /* Promotes this to its own compositor layer so it repaints cleanly during
+     scroll instead of a stale frame of the row underneath briefly showing through. */
+  will-change: transform;
 }
 .menu-items-head .mih-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); flex: 1; }
 
@@ -3722,6 +3750,7 @@ body.dragging-popover iframe { pointer-events: none !important; }
   display: flex; align-items: center; gap: 8px;
   padding: 5px 8px; border: 1px solid transparent; border-radius: 5px;
   background: var(--bg-surface); margin-bottom: 3px;
+  position: relative;
 }
 .mi-row:hover { border-color: var(--border); }
 .mi-grip { cursor: grab; color: var(--text-muted); font-size: 13px; flex-shrink: 0; user-select: none; }
@@ -3743,6 +3772,26 @@ select.mi-kind { cursor: pointer; font-family: var(--font-sans); border: 1px sol
 .mi-label-header { font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: 0.03em; }
 .mi-sub { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); flex-shrink: 0; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mi-sub.mi-broken { color: var(--kke-kill, #c0392b); }
+.mi-add-child { position: relative; flex-shrink: 0; }
+.mi-add-child-btn {
+  cursor: pointer; color: var(--text-muted); font-size: 13px; font-weight: 600;
+  padding: 0 5px; border-radius: 3px; line-height: 1.4;
+}
+.mi-add-child-btn:hover { color: var(--text); background: var(--bg-field-bar); }
+.mi-add-child-menu {
+  display: none; position: absolute; top: 100%; right: 0; margin-top: 4px;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 5px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.18); z-index: 10; overflow: hidden;
+  flex-direction: column; min-width: 90px;
+}
+.mi-add-child.open .mi-add-child-menu { display: flex; }
+.mi-add-child-menu button {
+  all: unset; cursor: pointer; padding: 6px 10px; font-size: 12px;
+  font-family: var(--font-sans); color: var(--text); white-space: nowrap;
+}
+.mi-add-child-menu button:hover { background: var(--bg-field-bar); }
+.mi-clone { cursor: pointer; color: var(--text-muted); font-size: 12px; padding: 0 4px; flex-shrink: 0; }
+.mi-clone:hover { color: var(--accent); }
 .mi-del { cursor: pointer; color: var(--text-muted); font-size: 12px; padding: 0 4px; flex-shrink: 0; }
 .mi-del:hover { color: var(--kke-kill, #c0392b); }
 
