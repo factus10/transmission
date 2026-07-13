@@ -473,6 +473,7 @@ If you've both selected rows and applied a filter, your **selection wins**.
 
 **Assign to Sitemap…** works differently from the other bulk actions — there's no value to pick, just **Apply**, which opens a small dialog. Filter to the pages you want placed (the **Needs sitemap placement** KKE filter is the obvious starting point), then choose a destination:
 
+- **Suggested** — if some of your selected pages already have a *sibling* page placed on the sitemap (e.g. `/about` is already assigned and you're placing `/about/leadership`), the dialog offers that node up front with a one-click **Use this** — the same auto-suggestion the single-page Sitemap picker uses, extended to the whole batch. It shows how many of your pages agree (e.g. "12 of 15 pages").
 - **Use an existing node** — pick any node already in the sitemap; every target page becomes a new child underneath it.
 - **Create a new bucket** — name a fresh node (top-level, or nested under a node you pick) and every target page lands under that instead.
 

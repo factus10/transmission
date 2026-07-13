@@ -10505,10 +10505,11 @@ async function promoteHubNodeToRow(node) {
 /** Multi-bar "Assign to Sitemap" action: pick an existing node, or create a new
  *  bucket node, then bulk-assign `targets` (origIndex array) under it. */
 function openBulkNavAssignDialog(targets, onDone) {
-  const eligible = targets.filter(i => {
+  const eligibleTargets = targets.filter(i => {
     const row = state.editedRows[i];
     return row && !String(row['Sitemap_ID'] || '').trim();
-  }).length;
+  });
+  const eligible = eligibleTargets.length;
   const alreadyPlaced = targets.length - eligible;
 
   if (eligible === 0) {
@@ -10518,6 +10519,10 @@ function openBulkNavAssignDialog(targets, onDone) {
 
   let chosenNode = null;
   let newBucketParent = null;
+  // Suggest a destination the same way the per-row Sitemap picker does:
+  // walk each page's URL up to the nearest already-assigned ancestor page,
+  // and offer whichever node most of the batch agrees on.
+  const suggestion = suggestBulkNavTarget(eligibleTargets);
 
   const body = document.createElement('div');
   body.style.cssText = 'display:flex;flex-direction:column;gap:14px;font-size:13px;';
@@ -10527,6 +10532,14 @@ function openBulkNavAssignDialog(targets, onDone) {
       ${alreadyPlaced > 0 ? `${alreadyPlaced} already on the sitemap will be skipped. ` : ''}
       Each page becomes a new child node here — slug and label are auto-derived from its URL and title. Reorganize freely afterward with the Sitemap editor's drag-and-drop.
     </div>
+    ${suggestion ? `
+    <div style="border:1px solid var(--accent);border-radius:6px;padding:10px 12px;display:flex;align-items:center;gap:10px;justify-content:space-between;background:var(--bg-field-bar);">
+      <div style="font-size:12px;line-height:1.4;">
+        <b>Suggested:</b> ${escapeHtml(suggestion.node.breadcrumb || suggestion.node.label)}
+        <span style="color:var(--text-muted);">(${suggestion.count} of ${suggestion.total} page${suggestion.total !== 1 ? 's' : ''} with a matching parent already on the sitemap)</span>
+      </div>
+      <button id="_bna-use-suggestion" type="button" class="btn btn-sm btn-primary" style="flex-shrink:0;">Use this</button>
+    </div>` : ''}
     <div style="border:1px solid var(--border);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;">
       <div style="font-weight:600;">Use an existing node</div>
       <div style="display:flex;align-items:center;gap:8px;">
@@ -10567,15 +10580,22 @@ function openBulkNavAssignDialog(targets, onDone) {
     assignBtn.disabled = !(chosenNode || newLabelInput.value.trim());
   }
 
+  function pickExistingNode(node) {
+    chosenNode = node;
+    newLabelInput.value = '';
+    existingLabelEl.textContent = node.breadcrumb || node.label;
+    existingLabelEl.style.color = 'var(--text-primary)';
+    refreshAssignBtn();
+  }
+
   body.querySelector('#_bna-pick-existing').addEventListener('click', () => {
-    showMenuNodePicker((node) => {
-      chosenNode = node;
-      newLabelInput.value = '';
-      existingLabelEl.textContent = node.breadcrumb || node.label;
-      existingLabelEl.style.color = 'var(--text-primary)';
-      refreshAssignBtn();
-    }, { title: 'Choose a sitemap location' });
+    showMenuNodePicker(pickExistingNode, { title: 'Choose a sitemap location' });
   });
+
+  const useSuggestionBtn = body.querySelector('#_bna-use-suggestion');
+  if (useSuggestionBtn) {
+    useSuggestionBtn.addEventListener('click', () => pickExistingNode(suggestion.node));
+  }
 
   newLabelInput.addEventListener('input', () => {
     if (newLabelInput.value.trim() && chosenNode) {
@@ -16174,6 +16194,32 @@ function suggestNavFromUrl(url) {
     }
   }
   return null;
+}
+
+/** For a batch of rows (by origIndex), finds the most common node suggested
+ *  by suggestNavFromUrl() across them — i.e. the node an already-assigned
+ *  ancestor page in the URL hierarchy points to. Powers the "Suggested"
+ *  one-click accept in openBulkNavAssignDialog(), the bulk equivalent of the
+ *  per-row Sitemap picker's auto-suggestion. Returns { node, count, total }
+ *  (count = how many of the rows with *any* suggestion agreed on this node;
+ *  total = how many rows had a suggestion at all) or null if none did. */
+function suggestBulkNavTarget(targets) {
+  const tally = new Map(); // node -> count
+  let total = 0;
+  targets.forEach(origIndex => {
+    const row = state.editedRows[origIndex];
+    const url = row && String(row[state.urlColumn] || '').trim();
+    if (!url) return;
+    const suggestion = suggestNavFromUrl(url);
+    if (suggestion && suggestion.node) {
+      total++;
+      tally.set(suggestion.node, (tally.get(suggestion.node) || 0) + 1);
+    }
+  });
+  if (tally.size === 0) return null;
+  let bestNode = null, bestCount = 0;
+  tally.forEach((count, node) => { if (count > bestCount) { bestNode = node; bestCount = count; } });
+  return { node: bestNode, count: bestCount, total };
 }
 
 function getNavSelectionPath(targetNode) {
