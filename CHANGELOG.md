@@ -6,6 +6,17 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.6.2] — "How Soon Is Now?"
+
+### Added
+- **Suggested destination in bulk sitemap assignment.** The Multi-bar's
+  Assign to Sitemap… dialog now offers a one-click **Suggested** node when
+  some of the selected pages already have a sibling page placed on the
+  sitemap (e.g. `/about` is already assigned while you're placing
+  `/about/leadership`) — the same auto-suggestion the single-page Sitemap
+  picker uses, extended to the whole batch, with a count of how many pages
+  agree.
+
 ## [2.6.1] — "How Soon Is Now?"
 
 ### Fixed
