@@ -13,7 +13,16 @@ Some spreadsheets arrive with KKE recommendations already generated outside the 
 - [ ] **Assessment comparison filter** — filter to rows where an external assessment column (e.g. `AI KKE`) disagrees with the app's own recommendation. GA-vs-Rubric disagreement within the app's own `Suggested_KKE` engine already has a dedicated filter (`_suggested-disagree` / `_suggested-mismatch`) — this item is about arbitrary externally-supplied columns, not GA
 - [ ] **Bulk accept external assessment** — action to copy an external assessment column's values into `KKE_Recommendation` for all (or filtered) rows, as a starting point that the auditor then refines. Multi-bar's current action set (`kke`, `published`, `page-type`, `content-theme`, `group`, `primary-tag`, `add-tag`, `assign-nav`) has no equivalent
 
+### Visual Sitemap / Menu Visualization
+The shared box-tree engine (`src/sitemap-template.js`) backs both the nav sitemap and the per-menu sitemap, so all of these land in one place and benefit both surfaces.
+
+- [ ] **More color-rule condition types** — the rule engine currently supports `depth`, `depthRange`, `parentId`, `value`, `external`, `field`, and `always` (`resolveColor()` / `matchesRule()`). Add further condition types so more of the audit's own signal can drive the diagram
+- [ ] **Ad-hoc per-node coloring with legend notes** — per-node color overrides already exist (right-click context menu → `S.nodeOverrides`, which win over all rules), but a manually-colored node contributes nothing to the legend, so the reader has no idea what the color means. Let the user attach a note/label to an ad-hoc color and have it appear as its own legend entry
+- [ ] **"Left-aligned" layout mode** — a third layout option alongside the current threshold-driven horizontal/vertical stacking (`shouldBeVert()` / `subtreeBox()` / `layoutNode()`). Exact semantics TBD — explore before building
+
 ### Medium Priority
+- [ ] **Numeric comparison operators in field filters** — the sidebar field filter (`openFieldFilterPopup()` / `fieldFilterMatches()`) supports `is-blank`, `is-not-blank`, `contains`, `not-contains`, `equals`, `not-equals`, `starts-with`, `ends-with` — all string ops. Add `greater-than` / `less-than` so numeric columns (word count, sessions, GA_Score, status code, crawl depth) can be filtered by magnitude.
+  - **Decide when building:** how non-numeric cells behave under a numeric comparison. Crawl columns are not reliably numeric — blanks, `"N/A"`, and stray text all show up. Options: coerce with `parseFloat` and exclude non-numeric rows from the result (they match neither `>` nor `<`), or treat them as `0` (so they'd match `< 100`). Excluding is the safer default, but it means a `> 0` filter and a `< 1` filter won't partition the inventory between them — worth a deliberate call rather than falling out of the implementation
 - [ ] **Undo/redo for all edits** — currently only covers KKE changes; extend to tags, notes, nav assignments, group changes
 - [ ] **CSV import for large files** — direct CSV support that bypasses SheetJS memory limits for very large crawls (10k+ rows)
 - [ ] **Bulk notes + bulk tag remove/replace** — Multi-bar now supports bulk-appending one tag (`add-tag`), but there's still no bulk Notes editing, and tag editing is add-only (no bulk remove or replace)
