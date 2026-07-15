@@ -904,8 +904,10 @@ function clampCell(v) {
   return v.slice(0, MAX_CELL_LEN - 80) + '\n…[truncated — exceeded Excel’s 32,767-character cell limit]';
 }
 
+// Returns the list of setting keys dropped for being oversized (empty if none) —
+// callers surface this to the user instead of leaving it in a console nobody reads.
 function writeSettingsSheet(workbook, settings) {
-  if (!settings || Object.keys(settings).length === 0) return;
+  if (!settings || Object.keys(settings).length === 0) return [];
   // These each live in their own structural sheet — never duplicate them into the
   // KKE_Settings key/value cells. Their JSON copy can exceed Excel's 32767-char
   // per-cell limit, which makes the whole workbook write throw and aborts the save.
@@ -916,15 +918,21 @@ function writeSettingsSheet(workbook, settings) {
     designPatternLibrary: _designPatternLibrary,
     ...settingsToWrite
   } = settings;
-  if (Object.keys(settingsToWrite).length === 0) return;
+  if (Object.keys(settingsToWrite).length === 0) return [];
   const MAX_CELL = 32767; // Excel hard limit on cell text length
   const aoa = [['Key', 'Value']];
+  const dropped = [];
   for (const [key, val] of Object.entries(settingsToWrite)) {
     // Serialize arrays and objects as JSON strings
     let serialized = (Array.isArray(val) || (val && typeof val === 'object')) ? JSON.stringify(val) : val;
     // Defense-in-depth: never let a single oversized value crash the entire save.
+    // A value this large is virtually always JSON (menus, sitemapSettings), so
+    // truncating the string would leave invalid JSON that fails to parse back
+    // into the shape callers expect — dropping it is the least-bad option, but
+    // the caller must tell the user, not just log it.
     if (typeof serialized === 'string' && serialized.length > MAX_CELL) {
       console.warn(`[KKE] Settings "${key}" is ${serialized.length} chars — exceeds the ${MAX_CELL}-char cell limit; skipping it so the save can complete.`);
+      dropped.push(key);
       continue;
     }
     aoa.push([key, serialized]);
@@ -936,6 +944,7 @@ function writeSettingsSheet(workbook, settings) {
   } else {
     XLSX.utils.book_append_sheet(workbook, ws, sheetName);
   }
+  return dropped;
 }
 
 // ─── ContentTypeRegistry (Phase 1, Chunk B) ─────────────────────────────────
@@ -1679,8 +1688,9 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
     }
 
     // Write project settings sheet
+    let droppedSettings = [];
     if (projectSettings) {
-      writeSettingsSheet(workbook, projectSettings);
+      droppedSettings = writeSettingsSheet(workbook, projectSettings);
       sheetsWeEdit.add('KKE_Settings');
       if (projectSettings.glossary) {
         writeGlossarySheet(workbook, projectSettings.glossary);
@@ -1732,7 +1742,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
     }
 
     XLSX.writeFile(workbook, filePath, { compression: true });
-    return { success: true };
+    return droppedSettings.length > 0 ? { success: true, droppedSettings } : { success: true };
   } catch (err) {
     return { success: false, error: err.message };
   }
