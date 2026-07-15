@@ -13338,12 +13338,27 @@ function treemapSubtitle(node, value, ctx, breakdownOverride) {
  *  fill the whole box, silently giving the node's own pages zero visible
  *  area. When there are directly-assigned pages, push a synthetic "self" leaf
  *  alongside the real children so the node's own share of the subtree gets
- *  its own box, colored/labeled from its own pages rather than the subtree's. */
+ *  its own box, colored/labeled from its own pages rather than the subtree's.
+ *
+ *  Every node — container or not — gets a rolled-up color/subtitle computed
+ *  from its own full subtree. The engine (treemap-template.js) decides at
+ *  layout time whether a container's allotted box is roomy enough to
+ *  subdivide into children (MIN_CONTAINER_W/H); when it isn't, it renders
+ *  the box as a plain leaf using node.color/node.subtitle. Without these set
+ *  on every node, a too-small container fell back to a neutral grey box with
+ *  no subtitle — reading as "no data" to a client when it might mean "Kill"
+ *  or "Published". */
 function buildTreemapNode(node, topLabel, depthLimit, currentDepth, ctx) {
   const value = ctx.subtreeCounts[node.id] || 0;
   const isRolledUp = depthLimit != null && currentDepth >= depthLimit;
   const kids = (!isRolledUp && node.children && node.children.length) ? node.children : [];
-  const out = { id: node.id, label: node.label || '(unnamed)', value };
+  const out = {
+    id: node.id,
+    label: node.label || '(unnamed)',
+    value,
+    color: resolveTreemapNodeColor(node, topLabel, ctx),
+    subtitle: treemapSubtitle(node, value, ctx),
+  };
   if (kids.length) {
     out.children = kids.map(c => buildTreemapNode(c, topLabel, depthLimit, currentDepth + 1, ctx));
     const direct = ctx.directCounts[node.id] || 0;
@@ -13357,9 +13372,6 @@ function buildTreemapNode(node, topLabel, depthLimit, currentDepth, ctx) {
         subtitle: treemapSubtitle(node, direct, ctx, directBreakdown),
       });
     }
-  } else {
-    out.color = resolveTreemapNodeColor(node, topLabel, ctx);
-    out.subtitle = treemapSubtitle(node, value, ctx);
   }
   return out;
 }
