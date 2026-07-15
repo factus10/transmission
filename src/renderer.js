@@ -18229,18 +18229,26 @@ function isFragmentRow(row) {
   return String(row['Content_Nature'] || '').trim() === 'Content Object';
 }
 
-function resolveRedirectDestinations() {
+// Shared resolver — the single place that knows how to chase a redirect destination
+// through Consolidate chains, nav Computed Path, and the "404" sentinel. Used by
+// resolveRedirectDestinations() (writes Redirect_Destination on save), the Redirect
+// Editor's live preview, and (via resolveRedirectDestinations()) the CSV export and the
+// Migration Tracker's Redirects sheet — so all four surfaces agree by construction
+// instead of re-deriving the same logic independently.
+function buildRedirectResolverContext() {
   const urlCol = state.urlColumn || 'Address';
-  const destCol = 'Redirect_Destination';
   const baseUrl = getRedirectBaseUrl();
   const defaultRedirectUrl = (state.projectSettings.defaultRedirectUrl || '').trim();
 
-  // Build a URL → row lookup for consolidate chain resolution
+  // Build a URL → row lookup for consolidate chain resolution, and an id → node lookup
+  // for sitemap-node redirect targets — both O(1) instead of a per-row linear scan.
   const rowByUrl = new Map();
   state.editedRows.forEach(r => {
     const u = String(r[urlCol] || '').trim();
     if (u) rowByUrl.set(u, r);
   });
+  const nodeById = new Map();
+  (state.navNodes || []).forEach(n => { if (n.id) nodeById.set(n.id, n); });
 
   // Given a page's target URL, chase it through consolidate/computed-path to find its final URL.
   // The literal sentinel "404" is propagated unchanged — if a consolidate/redirect target is 404,
@@ -18252,9 +18260,9 @@ function resolveRedirectDestinations() {
     visited.add(startUrl);
     const target = rowByUrl.get(startUrl);
     if (!target) return startUrl; // external or not in inventory — use as-is
-    const targetKke = String(target[kkeCol()] || '').trim().toLowerCase();
+    const targetKke = String(target[finalKkeCol()] || target[kkeCol()] || '').trim().toLowerCase();
     // If the target itself is set to 404, propagate
-    const targetExplicit = String(target[destCol] || '').trim();
+    const targetExplicit = String(target[REDIRECT_DEST_COL] || '').trim();
     if (targetExplicit === '404') return '404';
     // If the target is itself being consolidated, follow the chain (via its identity)
     if (targetKke === 'consolidate') {
@@ -18271,56 +18279,79 @@ function resolveRedirectDestinations() {
     return startUrl;
   };
 
+  // Auto-derived destination for a row, given its effective KKE (finalKkeCol() ||
+  // kkeCol() — a Final_KKE from SME resolve takes precedence, same convention as
+  // buildRedirectsSheet). Pure read: does not look at or preserve any manual override
+  // already sitting in Redirect_Destination — callers decide whether to keep that.
+  function computeAutoDestination(row, kke) {
+    const selfUrl = String(row[urlCol] || '').trim();
+    if (kke === 'consolidate') {
+      const targetId = consolidateTargetAddr(row);
+      if (!targetId) return '';
+      return resolveFinalUrl(targetId, new Set([selfUrl]));
+    }
+    if (kke === 'kill') {
+      // Priority: consolidation master > sitemap node path > default destination > blank
+      let resolved = '';
+      const consolidateTarget = consolidateTargetAddr(row);
+      if (consolidateTarget) resolved = resolveFinalUrl(consolidateTarget, new Set([selfUrl]));
+      if (!resolved) {
+        const navID = row['Sitemap_ID'] || '';
+        const node = navID ? nodeById.get(navID) : null;
+        if (node && node.computedPath) {
+          resolved = baseUrl ? baseUrl + '/' + node.computedPath.replace(/^\//, '') : '/' + node.computedPath.replace(/^\//, '');
+        }
+      }
+      if (!resolved && defaultRedirectUrl) resolved = defaultRedirectUrl;
+      return resolved;
+    }
+    // Non-Kill/Consolidate: a redirect is only needed if the URL itself is moving via nav mapping
+    const computed = String(row['Computed Path'] || '').trim();
+    if (!computed) return '';
+    let srcPath = '';
+    try { srcPath = new URL(selfUrl).pathname.replace(/\/+$/, ''); } catch (_) { srcPath = selfUrl.replace(/\/+$/, ''); }
+    const destPath = '/' + computed.replace(/^\//, '').replace(/\/+$/, '');
+    if (srcPath === destPath) return '';
+    return baseUrl ? baseUrl + destPath : destPath;
+  }
+
+  return { urlCol, baseUrl, defaultRedirectUrl, rowByUrl, nodeById, resolveFinalUrl, computeAutoDestination };
+}
+
+function resolveRedirectDestinations() {
+  const ctx = buildRedirectResolverContext();
+
   state.editedRows.forEach(row => {
     // Fragments / embeddable content objects have no public URL — never write a redirect.
     if (isFragmentRow(row)) return;
-    const kke = String(row[kkeCol()] || '').trim().toLowerCase();
-    const existing = String(row[destCol] || '').trim();
-    const computed = String(row['Computed Path'] || '').trim();
-    const selfUrl = String(row[urlCol] || '').trim();
+    // Effective KKE: a Final_KKE from SME resolve overrides the raw KKE_Recommendation —
+    // otherwise a page whose Final_KKE is Kill but KKE_Recommendation is still Keep
+    // silently gets no auto-derived redirect at all.
+    const kke = String(row[finalKkeCol()] || row[kkeCol()] || '').trim().toLowerCase();
+    const existing = String(row[REDIRECT_DEST_COL] || '').trim();
 
     if (kke === 'consolidate') {
       const targetId = consolidateTargetAddr(row);
-      if (!targetId) { row[destCol] = ''; return; }
+      if (!targetId) { row[REDIRECT_DEST_COL] = ''; return; }
       // Auto-derive the absolute destination from the master's identity. Preserve a genuine manual
       // override (a value unrelated to the master); re-derive blanks, prior auto values, and the
       // bare identity (the latter covers "linked before the master had a nav home, now it does").
-      const auto = resolveFinalUrl(targetId, new Set([selfUrl]));
+      const auto = ctx.computeAutoDestination(row, 'consolidate');
       const looksAutoDerived = !existing || existing === auto || existing === targetId;
-      if (looksAutoDerived) row[destCol] = auto;
+      if (looksAutoDerived) row[REDIRECT_DEST_COL] = auto;
       return;
     }
 
     if (kke === 'kill') {
       if (existing) return; // explicit value already set
-      // Priority: consolidation master > sitemap node path > default destination > blank
-      let resolved = '';
-      const consolidateTarget = consolidateTargetAddr(row);
-      if (consolidateTarget) {
-        resolved = resolveFinalUrl(consolidateTarget, new Set([selfUrl]));
-      }
-      if (!resolved) {
-        const navID = row['Sitemap_ID'] || '';
-        if (navID && state.navNodes && state.navNodes.length > 0) {
-          const node = state.navNodes.find(n => n.id === navID);
-          if (node && node.computedPath) {
-            resolved = baseUrl ? baseUrl + '/' + node.computedPath.replace(/^\//, '') : '/' + node.computedPath.replace(/^\//, '');
-          }
-        }
-      }
-      if (!resolved && defaultRedirectUrl) resolved = defaultRedirectUrl;
-      row[destCol] = resolved; // blank if nothing resolved (retired/404)
-    } else if (computed) {
-      // Non-kill pages with URL changes via nav mapping
-      if (existing) return;
-      const srcUrl = String(row[urlCol] || '').trim();
-      let srcPath = '';
-      try { srcPath = new URL(srcUrl).pathname.replace(/\/+$/, ''); } catch (_) { srcPath = srcUrl.replace(/\/+$/, ''); }
-      const destPath = '/' + computed.replace(/^\//, '').replace(/\/+$/, '');
-      if (srcPath !== destPath) {
-        row[destCol] = baseUrl ? baseUrl + destPath : destPath;
-      }
+      row[REDIRECT_DEST_COL] = ctx.computeAutoDestination(row, 'kill'); // blank if nothing resolved (retired/404)
+      return;
     }
+
+    // Non-kill/consolidate pages with URL changes via nav mapping
+    if (existing) return;
+    const auto = ctx.computeAutoDestination(row, kke);
+    if (auto) row[REDIRECT_DEST_COL] = auto;
   });
 }
 
@@ -21822,17 +21853,20 @@ function closeRedirectEditor() {
 
 function renderRedirectEditor() {
   const urlCol = state.urlColumn || 'Address';
-  const kke = kkeCol();
 
-  // Default destination from project settings
-  const defaultRedirectUrl = (state.projectSettings.defaultRedirectUrl || '').trim();
-
-  // Base URL for constructing redirect destinations (site domain or auto-detected)
+  // Base URL for constructing redirect destinations (site domain or auto-detected) —
+  // still needed below for renderRedirectRow()/showRedirectNavPicker().
   const baseUrl = getRedirectBaseUrl();
+
+  // Shared resolver context (same chain-walking/404-propagation logic resolveRedirectDestinations()
+  // uses on save) — built once per render, not per row, so this loop is O(rows) instead of the
+  // O(rows²) a per-row state.editedRows.find() would cost on a large crawl.
+  const ctx = buildRedirectResolverContext();
 
   // Collect rows that need redirects:
   // 1. Kill pages (always need a redirect)
-  // 2. Pages with a computed nav path that differs from current URL
+  // 2. Consolidate pages (chase the master's final URL)
+  // 3. Pages with a computed nav path that differs from current URL
   const redirectEntries = [];
 
   for (let i = 0; i < state.editedRows.length; i++) {
@@ -21842,28 +21876,17 @@ function renderRedirectEditor() {
     // Fragments / embeddable content objects have no public URL — never need a redirect.
     if (isFragmentRow(row)) continue;
 
-    const status = String(row[kke] || '').trim();
+    // Effective KKE: Final_KKE (from SME resolve) takes precedence over the raw
+    // KKE_Recommendation — matches the resolver and every other "effective KKE" consumer.
+    const status = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
+    const statusLower = status.toLowerCase();
     const computedPath = String(row['Computed Path'] || '').trim();
     const existingDest = String(row[REDIRECT_DEST_COL] || '').trim();
 
     // Consolidate pages — destination chases the master's final URL (via stable identity)
-    if (status.toLowerCase() === 'consolidate') {
+    if (statusLower === 'consolidate') {
       const target = consolidateTargetAddr(row);
-      let resolvedDest = '';
-      if (target) {
-        // Inline chase: if master is in inventory and has Computed Path, use that;
-        // fall back to master's explicit Redirect_Destination; otherwise master's URL as-is.
-        const targetRow = state.editedRows.find(r => String(r[urlCol] || '').trim() === target);
-        if (targetRow) {
-          const tComp = String(targetRow['Computed Path'] || '').trim();
-          const tExplicit = String(targetRow[REDIRECT_DEST_COL] || '').trim();
-          if (tComp) resolvedDest = baseUrl ? baseUrl + '/' + tComp.replace(/^\//, '') : '/' + tComp.replace(/^\//, '');
-          else if (tExplicit && tExplicit !== '404') resolvedDest = tExplicit;
-          else resolvedDest = String(targetRow[urlCol] || '').trim();
-        } else {
-          resolvedDest = target;
-        }
-      }
+      const resolvedDest = ctx.computeAutoDestination(row, 'consolidate');
       // Use freshly derived URL for display unless the existing value is a genuine manual
       // override (differs from both the derived destination and the bare identity).
       const isManualOverride = existingDest && existingDest !== resolvedDest && existingDest !== target;
@@ -21881,32 +21904,8 @@ function renderRedirectEditor() {
     }
 
     // Kill pages
-    if (status.toLowerCase() === 'kill') {
-      // Priority: explicit > Consolidate target > sitemap node path > default destination > blank (retired/404)
-      let resolvedDest = '';
-      const consTarget = consolidateTargetAddr(row);
-      if (consTarget) {
-        const targetRow = state.editedRows.find(r => String(r[urlCol] || '').trim() === consTarget);
-        if (targetRow) {
-          const tComp = String(targetRow['Computed Path'] || '').trim();
-          const tExplicit = String(targetRow[REDIRECT_DEST_COL] || '').trim();
-          if (tComp) resolvedDest = baseUrl ? baseUrl + '/' + tComp.replace(/^\//, '') : '/' + tComp.replace(/^\//, '');
-          else if (tExplicit && tExplicit !== '404') resolvedDest = tExplicit;
-          else resolvedDest = String(targetRow[urlCol] || '').trim();
-        } else {
-          resolvedDest = consTarget;
-        }
-      }
-      if (!resolvedDest) {
-        const navID = row['Sitemap_ID'] || '';
-        if (navID && state.navNodes.length > 0) {
-          const node = state.navNodes.find(n => n.id === navID);
-          if (node && node.computedPath) {
-            resolvedDest = baseUrl ? baseUrl + '/' + node.computedPath.replace(/^\//, '') : '/' + node.computedPath.replace(/^\//, '');
-          }
-        }
-      }
-      if (!resolvedDest && defaultRedirectUrl) resolvedDest = defaultRedirectUrl;
+    if (statusLower === 'kill') {
+      const resolvedDest = ctx.computeAutoDestination(row, 'kill');
       // explicit per-row overrides everything
       const finalDest = existingDest || resolvedDest;
       redirectEntries.push({
@@ -21923,11 +21922,8 @@ function renderRedirectEditor() {
 
     // Pages whose URL changed via nav mapping
     if (computedPath) {
-      const destUrl = baseUrl ? baseUrl + '/' + computedPath.replace(/^\//, '') : '/' + computedPath.replace(/^\//, '');
-      let sourcePath = '';
-      try { sourcePath = new URL(sourceUrl).pathname.replace(/\/+$/, ''); } catch (_) { sourcePath = sourceUrl.replace(/\/+$/, ''); }
-      const destPath = '/' + computedPath.replace(/^\//, '').replace(/\/+$/, '');
-      if (sourcePath !== destPath) {
+      const destUrl = ctx.computeAutoDestination(row, statusLower);
+      if (destUrl) {
         redirectEntries.push({
           origIndex: i,
           row,
@@ -22259,69 +22255,66 @@ function showRedirectNavPicker(entry, destInput, baseUrl) {
 async function exportRedirectMap() {
   if (state.editedRows.length === 0) { showToast('No data to export', 'error'); return; }
 
+  // Reuse the canonical resolver (same one saveFile() runs, and the same one
+  // buildRedirectsSheet() already calls) so this CSV can never disagree with the saved
+  // Redirect_Destination column, the Redirect Editor, or the Migration Tracker's Redirects
+  // sheet. Previously this export re-derived redirects from scratch with no Consolidate
+  // handling, no '404' sentinel handling, and no Fragment guard — see SWEEP_FINDINGS.md.
+  resolveRedirectDestinations();
+
   const urlCol = state.urlColumn || 'Address';
-  const kke = kkeCol();
   const redirectRows = [];
-
-  // Base URL for constructing redirect destinations (site domain or auto-detected)
-  const baseUrl = getRedirectBaseUrl();
-
-  // Use default redirect URL from editor input if available
-  const defaultRedirectUrl = (state.projectSettings.defaultRedirectUrl || '').trim();
 
   for (const row of state.editedRows) {
     const sourceUrl = String(row[urlCol] || '').trim();
     if (!sourceUrl) continue;
+    // Fragments / embeddable content objects have no public URL — never need a redirect.
+    if (isFragmentRow(row)) continue;
 
-    const status = String(row[kke] || '').trim().toLowerCase();
-    const computedPath = String(row['Computed Path'] || '').trim();
+    const kke = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
+    const dest = String(row[REDIRECT_DEST_COL] || '').trim();
 
-    // 1. Kill pages → priority: explicit > sitemap node path > default > blank (retired)
-    if (status === 'kill') {
-      const customDest = String(row[REDIRECT_DEST_COL] || '').trim();
-      let dest = '';
-      if (customDest) {
-        dest = customDest;
+    if (kke === 'Kill') {
+      if (dest === '404') {
+        redirectRows.push({
+          'Source URL': sourceUrl,
+          'Destination URL': '(404)',
+          'Status Code': '404',
+          'Reason': 'Page marked Kill — intentional deindex'
+        });
+      } else if (dest) {
+        redirectRows.push({
+          'Source URL': sourceUrl,
+          'Destination URL': dest,
+          'Status Code': '301',
+          'Reason': 'Page marked Kill'
+        });
       } else {
-        // Check for sitemap node assignment
-        const navID = row['Sitemap_ID'] || '';
-        if (navID && state.navNodes.length > 0) {
-          const node = state.navNodes.find(n => n.id === navID);
-          if (node && node.computedPath) {
-            dest = baseUrl ? baseUrl + '/' + node.computedPath.replace(/^\//, '') : '/' + node.computedPath.replace(/^\//, '');
-          }
-        }
-        if (!dest && defaultRedirectUrl) dest = defaultRedirectUrl;
+        redirectRows.push({
+          'Source URL': sourceUrl,
+          'Destination URL': '',
+          'Status Code': '(TBD)',
+          'Reason': 'Kill, no destination set'
+        });
       }
+      continue;
+    }
+
+    // Consolidate, or a non-Kill page whose URL moved via nav mapping
+    if (dest === '404') {
+      redirectRows.push({
+        'Source URL': sourceUrl,
+        'Destination URL': '(404)',
+        'Status Code': '404',
+        'Reason': 'Intentional deindex'
+      });
+    } else if (dest) {
       redirectRows.push({
         'Source URL': sourceUrl,
         'Destination URL': dest,
         'Status Code': '301',
-        'Reason': 'Page marked Kill'
+        'Reason': kke === 'Consolidate' ? 'Consolidated into another page' : 'URL changed by sitemap mapping'
       });
-      continue;
-    }
-
-    // 2. Pages with a computed nav path that differs from the current URL
-    if (computedPath) {
-      const destinationUrl = baseUrl ? baseUrl + '/' + computedPath.replace(/^\//, '') : '/' + computedPath.replace(/^\//, '');
-      // Compare path portions, normalizing trailing slashes
-      let sourcePath = '';
-      try {
-        sourcePath = new URL(sourceUrl).pathname.replace(/\/+$/, '');
-      } catch (_) {
-        sourcePath = sourceUrl.replace(/\/+$/, '');
-      }
-      const destPath = '/' + computedPath.replace(/^\//, '').replace(/\/+$/, '');
-      if (sourcePath !== destPath) {
-        const customDest = String(row[REDIRECT_DEST_COL] || '').trim();
-        redirectRows.push({
-          'Source URL': sourceUrl,
-          'Destination URL': customDest || destinationUrl,
-          'Status Code': '301',
-          'Reason': 'URL changed by sitemap mapping'
-        });
-      }
     }
   }
 
