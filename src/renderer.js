@@ -7679,7 +7679,7 @@ function pickWinner(sources, weights) {
   // Weighted tally per rec
   const tally = {}; // rec → total weight
   for (const s of sources) {
-    const w = weights[s.source.toLowerCase()] || 1.0;
+    const w = weights[s.source.toLowerCase()] ?? 1.0;
     tally[s.rec] = (tally[s.rec] || 0) + w;
   }
   // Find the rec with max tally
