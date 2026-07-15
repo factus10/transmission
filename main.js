@@ -1616,8 +1616,8 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
             node.label, node.path || '', node.sortID || '',
             node.computedPath || '', node.breadcrumb || '',
             node.refNodeId || '', node.inMenu || '', node.url || '', node.urlOverride || '', node.breadcrumbParentId || '', node.collapse || '',
-            node.notes || '', node.phase || '', node.nodeType || '', node.navLayer || '',
-            node.buildPattern || '', node.buildGuidance || '', node.writerBrief || '', node.pageStatus || '',
+            clampCell(node.notes || ''), node.phase || '', node.nodeType || '', node.navLayer || '',
+            node.buildPattern || '', clampCell(node.buildGuidance || ''), clampCell(node.writerBrief || ''), node.pageStatus || '',
             node.buildAssignee || '', node.writeAssignee || '', node.migrateAssignee || ''
           ]);
         }
