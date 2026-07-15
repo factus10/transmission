@@ -1107,23 +1107,28 @@ function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, she
   $('btn-add-field-filter').classList.remove('hidden');
   const uncBtn = document.getElementById('btn-unclassified-filter');
   if (uncBtn) uncBtn.classList.remove('hidden');
-  refreshUnclassifiedButton();
-  // Field filters are session-scoped; reset on each file open
+  // Field filters are session-scoped; reset on each file open — before
+  // renderFieldFilterChips() below (which also refreshes the Unclassified
+  // button's active state from state.fieldFilters). Refreshing the button
+  // before this reset painted it "active" from the prior file's filters,
+  // then cleared the filter itself — leaving the button showing "active"
+  // with nothing actually filtered, so clicking it added a second filter
+  // instead of removing the one it appeared to already show.
   state.fieldFilters = [];
   renderFieldFilterChips();
 
-  // Restore KKE filter: file-level (projectSettings) takes priority, then app-level (prefs)
+  // Restore KKE/group filters: file-level (projectSettings) takes priority,
+  // then app-level (prefs); reset to empty when this file has neither, so a
+  // filter from a previously-opened project can't leak into one that has none.
   const fileKkeFilter = state.projectSettings.kkeFilter;
   const prefsKkeFilter = state.prefsKkeFilter;
   const savedKkeFilter = fileKkeFilter || prefsKkeFilter;
-  if (savedKkeFilter) {
-    state.kkeFilter = Array.isArray(savedKkeFilter) ? savedKkeFilter : (savedKkeFilter ? [savedKkeFilter] : []);
-    renderKkeFilterOptions();
-  }
-  if (state.projectSettings.groupFilter) {
-    state.groupFilter = state.projectSettings.groupFilter;
-    els.groupFilter.value = state.groupFilter;
-  }
+  state.kkeFilter = savedKkeFilter
+    ? (Array.isArray(savedKkeFilter) ? savedKkeFilter : [savedKkeFilter])
+    : [];
+  renderKkeFilterOptions();
+  state.groupFilter = state.projectSettings.groupFilter || '';
+  els.groupFilter.value = state.groupFilter;
 
   // Load computed column definitions from project settings
   try {
