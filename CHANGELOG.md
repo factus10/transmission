@@ -6,6 +6,23 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.6.3] — "How Soon Is Now?"
+
+### Fixed
+- **Redirect destinations could disagree between the Redirect Editor and the exported CSV.** Redirect resolution was implemented three separate times and had drifted: the editor's live preview did a one-hop lookup instead of following full Consolidate chains and didn't carry through the `404` sentinel, and the CSV export had no Consolidate handling at all (silently dropping consolidation redirects) while shipping literal `404,301` rows for intentional deindexes. All three now share one resolver, and SME-resolved Kill/Consolidate decisions (`Final_KKE`) are correctly picked up everywhere a redirect is derived.
+- **Batch AI/rubric assessment silently overwrote human KKE decisions with no audit trail or undo.** Running a batch Assess now only writes to the AI's own suggestion field, matching how the equivalent "AI Suggest for Unreviewed" already behaved — your own KKE calls are never silently replaced. The per-row "Accept suggestion" button also now logs the change and supports Undo like every other KKE edit.
+- **Sitemap rename/move changelog entries were attributed to the wrong page.** Renaming or moving a sitemap node cascades a redirect-destination update to every assigned page; the resulting changelog entries could log the wrong row number against the wrong URL. They now attribute correctly.
+- **Exporting a project to xlsx and reopening it lost who-made-which-change.** The auditor name on each change-log entry wasn't carried through an Export Full Workbook → reopen round trip. It now survives.
+- **A few dialogs could misbehave with the keyboard.** Pressing Enter while focused on a dialog's Cancel button (or an auto-focused checkbox) could fire the primary action instead — including destructive Kill-cleanup confirmations. Escape on the sitemap node picker could close the wrong (parent) dialog. Canceling the "Clear sitemap assignment?" prompt could leave a stale keyboard shortcut active that later silently re-fired against the wrong row. All three are fixed.
+- **Pasted text with curly quotes, dashes, ellipses, or bullets could come out worse than before.** The mojibake-repair step in the text sanitizer had its most common patterns in the wrong order, so it actively corrupted exactly the sequences it exists to fix. Repairs correctly now.
+- **A new sitemap node created from the audit bar's "+ Child" form could vanish after a save.** In `.transmission` projects, the new node wasn't always included in what got written to disk, leaving the page assigned to it pointing at a node that no longer existed on reopen.
+- **Consolidate now gets its own color in the Progress dashboard and exported Audit Progress PDF.** It previously rendered as plain dark text, indistinguishable from body copy, while every other decision had a color.
+- **Zeroing out a Suggested_KKE source's weight (to disable it) didn't actually disable it.** A weight of exactly 0 was silently treated as the default weight instead — so a disabled source could still win a tied disagreement.
+- **A sitemap section that's also itself a page could disappear from the Treemap.** A node that's both a container (has sub-pages) and directly assigned its own page — the normal shape for a section landing page — now gets its own visible box for its own page(s), instead of that page's share of the section being silently absorbed into its children's boxes.
+
+### Changed
+- **Faster autosave on large `.transmission` projects.** Autosave now only rewrites rows that actually changed instead of the entire table on every save — most noticeable on multi-thousand-row projects, where a single-cell edit no longer re-writes the whole inventory.
+
 ## [2.6.2] — "How Soon Is Now?"
 
 ### Added
