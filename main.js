@@ -1717,13 +1717,13 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
     if (changeLog && changeLog.length > 0) {
       const clName = 'KKE_ChangeLog';
       sheetsWeEdit.add(clName);
-      const clHeaders = ['Timestamp', 'Row', 'URL', 'Field', 'Old Value', 'New Value'];
+      const clHeaders = ['Timestamp', 'Row', 'URL', 'Field', 'Old Value', 'New Value', 'Auditor'];
       let existingRows = [];
       if (!opts.replaceChangeLog && workbook.Sheets[clName]) {
         const existing = XLSX.utils.sheet_to_json(workbook.Sheets[clName], { header: 1, defval: '' });
         if (existing.length > 1) existingRows = existing.slice(1); // skip header
       }
-      const newRows = changeLog.map(e => [e.timestamp, e.row, e.url || '', e.field, e.from, e.to]);
+      const newRows = changeLog.map(e => [e.timestamp, e.row, e.url || '', e.field, e.from, e.to, e.auditor || '']);
       const allRows = [clHeaders, ...existingRows, ...newRows];
       workbook.Sheets[clName] = XLSX.utils.aoa_to_sheet(allRows);
       if (!workbook.SheetNames.includes(clName)) workbook.SheetNames.push(clName);
@@ -1831,7 +1831,7 @@ function readWorkbookChangeLog(filePath) {
         field: String(r[3] ?? ''),
         from: String(r[4] ?? ''),
         to: String(r[5] ?? ''),
-        auditor: ''  // unknown — xlsx history predates per-auditor logging
+        auditor: String(r[6] ?? '')  // '' for rows written before the Auditor column existed
       }));
   } catch (e) {
     return [];
