@@ -148,7 +148,10 @@ class ProjectStore {
   saveAll({ headers, rows, allNavNodes, projectSettings, changeLog, sheetName }) {
     const db = this.db;
     const insHeader = db.prepare('INSERT INTO headers (pos, name) VALUES (?, ?)');
-    const insRow = db.prepare('INSERT INTO rows (idx, data) VALUES (?, ?)');
+    const upsertRow = db.prepare(
+      'INSERT INTO rows (idx, data) VALUES (?, ?) ON CONFLICT(idx) DO UPDATE SET data = excluded.data'
+    );
+    const delRow = db.prepare('DELETE FROM rows WHERE idx = ?');
     const insNav = db.prepare('INSERT INTO nav_nodes (idx, data) VALUES (?, ?)');
     const insSetting = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)');
     const insLog = db.prepare(
@@ -157,9 +160,20 @@ class ProjectStore {
     const auditor = os.userInfo().username || '';
 
     const txn = db.transaction(() => {
-      db.exec('DELETE FROM headers; DELETE FROM rows;');
+      db.exec('DELETE FROM headers;');
       headers.forEach((h, i) => insHeader.run(i, String(h)));
-      rows.forEach((r, i) => insRow.run(i, JSON.stringify(r)));
+
+      // Diff against what's already stored instead of a blanket delete+reinsert —
+      // at 4k rows a full rewrite re-stringifies/re-writes every row on every
+      // autosave even for a single-cell edit. Only rows whose serialized content
+      // actually changed hit a write; the rest are untouched.
+      const stale = new Map(db.prepare('SELECT idx, data FROM rows').all().map(r => [r.idx, r.data]));
+      rows.forEach((r, i) => {
+        const json = JSON.stringify(r);
+        if (stale.get(i) !== json) upsertRow.run(i, json);
+        stale.delete(i);
+      });
+      for (const idx of stale.keys()) delRow.run(idx); // rows.length shrank
 
       if (allNavNodes) {
         db.exec('DELETE FROM nav_nodes;');
