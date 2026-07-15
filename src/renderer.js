@@ -1699,6 +1699,13 @@ function _ensureModalKeyHandler() {
       // Don't hijack Enter inside multi-line inputs.
       const tag = (e.target && e.target.tagName || '').toLowerCase();
       if (tag === 'textarea') return;
+      // Don't hijack Enter meant for the focused control itself (a button, link, or
+      // checkbox each have their own native Enter/click behavior), or fired while
+      // focus isn't even inside this modal — both previously fell through to fire
+      // the primary/destructive action regardless (e.g. Enter on a focused Cancel
+      // button in a danger confirmDialog ran the destructive action instead).
+      if (tag === 'button' || tag === 'a' || (tag === 'input' && e.target.type === 'checkbox')) return;
+      if (!top.overlay || !top.overlay.contains(e.target)) return;
       if (top.primaryBtn && !e.shiftKey) {
         e.preventDefault();
         top.primaryBtn.click();
