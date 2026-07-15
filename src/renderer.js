@@ -5626,6 +5626,8 @@ function acceptSuggestion() {
   if (!val) return;
 
   const row = state.editedRows[state.selectedIndex];
+  const oldVal = row[kkeCol()] || '';
+  recordKkeChange(state.selectedIndex, oldVal, val); // log + undo, same as every other KKE write
   row[kkeCol()] = val;
   // Assessment history
   row['_AssessedAt'] = new Date().toISOString();
@@ -5645,13 +5647,14 @@ async function runBatchAssessment() {
   if (!state.claudeApiKey) { showToast('API key required for batch assessment', 'error'); return; }
   const rows = state.filteredRows;
   if (rows.length === 0) return;
-  if (!(await confirmDialog({ title: 'Batch AI Assessment', message: `Assess ${rows.length} rows via AI? This may take a while and use API credits.`, confirmLabel: 'Assess' }))) return;
+  if (!(await confirmDialog({ title: 'Batch AI Assessment', message: `Assess ${rows.length} rows via AI? This may take a while and use API credits.\n\nYour human KKE column is not changed — results feed Suggested_KKE for you to confirm or override.`, confirmLabel: 'Assess' }))) return;
 
   _batchAssessAbort = false;
   closeAssessPopover();
 
   // Show progress in toast
   const { rubrics } = await window.electronAPI.loadRubrics();
+  const statusMap = { keep: 'Keep', kill: 'Kill', evolve: 'Evolve', exclude: 'Exclude' };
   let done = 0;
   let errors = 0;
 
@@ -5670,14 +5673,9 @@ async function runBatchAssessment() {
         row, rubrics, apiKey: state.claudeApiKey
       });
 
-      if (llmResult.recommendation) {
-        row[kkeCol()] = llmResult.recommendation;
-        row['_AssessmentResult'] = llmResult.recommendation;
-      } else if (fieldResult.suggestion) {
-        const statusMap = { keep: 'Keep', kill: 'Kill', evolve: 'Evolve', exclude: 'Exclude' };
-        row[kkeCol()] = statusMap[fieldResult.suggestion] || '';
-        row['_AssessmentResult'] = row[kkeCol()];
-      }
+      const rec = llmResult.recommendation
+        || (fieldResult.suggestion ? statusMap[fieldResult.suggestion] : '');
+      if (rec) row['_AssessmentResult'] = rec; // feeds Suggested_KKE — never touches the human KKE column
     } catch (e) {
       errors++;
     }
@@ -5691,7 +5689,7 @@ async function runBatchAssessment() {
   computeSuggestedKke();
   renderVisibleRows();
   if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
-  showToast(`Batch assessment complete: ${done} rows${errors ? `, ${errors} errors` : ''}`, 'success');
+  showToast(`Batch assessment complete: ${done} row${done !== 1 ? 's' : ''}${errors ? `, ${errors} errors` : ''} — review Suggested_KKE`, 'success');
 }
 
 /**
