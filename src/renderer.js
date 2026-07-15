@@ -18679,11 +18679,9 @@ function reportRedirectMap() {
 function reportNetNewBrief() {
   if (!state.navNodes || state.navNodes.length === 0) { showToast('No sitemap loaded', 'error'); return; }
 
-  const pageCounts = {};
-  state.editedRows.forEach(row => {
-    const navID = row['Sitemap_ID'] || '';
-    if (navID) pageCounts[navID] = (pageCounts[navID] || 0) + 1;
-  });
+  // Canonical, Kill/Consolidate-excluding cache — a page being killed/consolidated
+  // away doesn't count as content actually living at that node.
+  const pageCounts = _navPageCountsCache();
 
   const urlCol = state.urlColumn || 'Address';
   const titleCol = state.headers.includes('Title 1') ? 'Title 1' : 'Title';
@@ -19293,8 +19291,7 @@ function reportMigrationChecklist() {
   // Net new count
   let netNewCount = 0;
   if (state.navNodes) {
-    const pageCounts = {};
-    state.editedRows.forEach(r => { const id = r['Sitemap_ID'] || ''; if (id) pageCounts[id] = (pageCounts[id] || 0) + 1; });
+    const pageCounts = _navPageCountsCache();
     state.navNodes.forEach(n => {
       const c = pageCounts[n.id] || 0;
       const hc = n.children && n.children.length > 0;
@@ -19778,8 +19775,7 @@ function runPreHandoffCheck() {
       fix: `Open the Sitemap and click the duplicate-ID warning in the stats bar to auto-renumber.`,
     });
 
-    const pageCounts = {};
-    state.editedRows.forEach(r => { const id = String(r['Sitemap_ID'] || '').trim(); if (id) pageCounts[id] = (pageCounts[id] || 0) + 1; });
+    const pageCounts = _navPageCountsCache();
     const emptyLeaves = state.navNodes.filter(n =>
       (pageCounts[n.id] || 0) === 0 &&
       !(n.children && n.children.length) &&
@@ -20270,12 +20266,8 @@ function showNavCoverageReport() {
 
   const urlCol = state.urlColumn || 'Address';
 
-  // Count pages per node
-  const pageCounts = {};
-  state.editedRows.forEach(row => {
-    const navID = row['Sitemap_ID'] || '';
-    if (navID) pageCounts[navID] = (pageCounts[navID] || 0) + 1;
-  });
+  // Canonical, Kill/Consolidate-excluding cache — see _navPageCountsCache().
+  const pageCounts = _navPageCountsCache();
 
   // Analyze
   const emptyLeaves = [];  // nodes with no pages and no children
