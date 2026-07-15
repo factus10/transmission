@@ -17533,7 +17533,7 @@ async function recalculateComputedColumns() {
     applyFilter();
     renderColHeaders();
     if (state.selectedIndex !== null) {
-      renderMetaFields(state.selectedIndex);
+      renderMetaFields(state.editedRows[state.selectedIndex], state.selectedIndex);
     }
     showToast(`Recalculated ${defs.length} column(s) across ${results.length} rows`, 'success');
   }
