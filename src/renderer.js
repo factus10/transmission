@@ -14468,7 +14468,7 @@ function cascadeNavChangesToRows(oldPaths) {
     return baseUrl ? baseUrl + '/' + p.replace(/^\//, '') : '/' + p.replace(/^\//, '');
   };
 
-  state.editedRows.forEach(row => {
+  state.editedRows.forEach((row, i) => {
     const navID = row['Sitemap_ID'] || '';
     if (!navID) return;
     const node = state.navNodes.find(n => n.id === navID);
@@ -14505,7 +14505,7 @@ function cascadeNavChangesToRows(oldPaths) {
         if (existing === oldAutoUrl || existing === '/' + oldBase || existing === oldBase) {
           const newRedirect = pathToRedirectUrl(newBase);
           if (newRedirect !== existing) {
-            logChange(row._rowIndex ?? state.editedRows.indexOf(row), 'Redirect_Destination', existing, newRedirect);
+            logChange(i, 'Redirect_Destination', existing, newRedirect);
             row['Redirect_Destination'] = newRedirect;
           }
         }
