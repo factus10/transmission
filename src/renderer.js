@@ -11057,7 +11057,7 @@ async function promptClearNavAssignment(origIndex, navID, navDest) {
   document.body.appendChild(overlay);
   document.body.appendChild(dialog);
 
-  function close() { dialog.remove(); overlay.remove(); }
+  function close() { dialog.remove(); overlay.remove(); document.removeEventListener('keydown', onKey); }
   dialog.querySelector('#_nbc-cancel').addEventListener('click', close);
   overlay.addEventListener('click', close);
 
@@ -11093,10 +11093,12 @@ async function promptClearNavAssignment(origIndex, navID, navDest) {
     refreshRowInList(origIndex);
     close();
   });
-  // Esc closes
+  // Esc closes; Enter accepts. Both routes ultimately call close() (Enter via the
+  // Clear button's own click handler), which removes this listener -- so it can't
+  // outlive the dialog and fire against a stale row later.
   function onKey(e) {
-    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
-    if (e.key === 'Enter')  { e.preventDefault(); dialog.querySelector('#_nbc-clear').click(); document.removeEventListener('keydown', onKey); }
+    if (e.key === 'Escape') { close(); }
+    if (e.key === 'Enter')  { e.preventDefault(); dialog.querySelector('#_nbc-clear').click(); }
   }
   document.addEventListener('keydown', onKey);
 }
