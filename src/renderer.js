@@ -16291,6 +16291,8 @@ function createNavChild() {
   parent.children.push(newNode);
   state.navNodes.push(newNode);
   state.newNavNodes.push(newNode);
+  state.navTreeDirty = true; // without this the new node is never written to nav_nodes on save
+  setDirty(true);
 
   // Hide form, rebuild selects with new child selected
   els.navNewChild.classList.add('hidden');
