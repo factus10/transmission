@@ -49,22 +49,10 @@ const UPDATE_MANIFEST_URL = 'https://factus10.github.io/transmission-updates/upd
 const UPDATE_TRUSTED_HOSTS = new Set(['factus10.github.io', 'github.com']);
 
 // ─── Audit columns injected if not present in the xlsx ───────────────────────
-// These are the three write-fields the app manages for every crawl file.
+// The actual injection list lives in injectAndOrderAuditColumns()'s inline
+// auditCols array below — this is the one source of truth for which columns
+// get added to every file.
 
-const AUDIT_COLUMNS = ['KKE_Recommendation', 'Tags', 'Notes', '_Flagged', '_AssessedAt', '_AssessmentResult',
-                       'SME_Decision', 'SME_Notes', 'Content_Owner', 'Final_KKE', 'Consolidate_Into',
-                       'Published_Status', 'Page_Type', 'Content_Theme',
-                       // Phase 1: classification + delivery + suggestion + CMS links
-                       'Content_Nature', 'Migration_Track', 'Suggested_KKE', 'Suggested_KKE_Sources',
-                       'Source_CMS_URL', 'New_CMS_URL',
-                       // Content-type crosswalk: target (new-CMS) content type, auto-mapped from Page_Type
-                       'Target_Content_Type',
-                       // Design pattern inventory
-                       'Design_Patterns',
-                       // Derived: the page's on-page breadcrumb (from its sitemap node's breadcrumb axis)
-                       'Page_Breadcrumb',
-                       // Internal: stable identity (master page's current Address) backing Consolidate_Into
-                       '_ConsolidateTargetId'];
 const NAV_COLUMNS   = ['Sitemap_ID', 'Sitemap_Destination', 'Computed Path', 'Sitemap_SortID'];
 
 // Candidate names for auto-detecting audit columns (first match wins, case-insensitive)
@@ -1959,8 +1947,6 @@ ipcMain.handle('export-workbook', async (event, { headers, rows, allNavNodes, pr
   return res;
 });
 
-ipcMain.handle('get-current-path', () => currentFilePath);
-
 ipcMain.handle('open-external', async (event, url) => { await shell.openExternal(url); });
 
 // ─── Report templates (Markdown + Mustache, rendered with marked) ─────────────
@@ -3044,15 +3030,6 @@ ipcMain.handle('import-audit-merge-read-sheet', async (event, { filePath, sheetN
     return { headers, rows, filePath, sheetName };
   } catch (e) {
     return { error: e.message };
-  }
-});
-
-ipcMain.handle('evaluate-formula', (event, { formula, row }) => {
-  try {
-    const rule = parseFieldRule(formula);
-    return { result: evaluateFieldRule(rule, row) };
-  } catch (e) {
-    return { result: false, error: e.message };
   }
 });
 

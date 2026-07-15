@@ -109,7 +109,6 @@ const state = {
 };
 
 // Hoisted variables used across functions
-let _navTreeFilter = null;  // node ID to filter sidebar by nav tree
 let _duplicateSet = new Set(); // origIndex values that are duplicates
 
 // All KKE states (built-in + custom)
@@ -473,8 +472,6 @@ function bindIPCListeners() {
     showToast('Saved ✓', 'success');
     setDirty(false);
   });
-  window.electronAPI.onMenuExportFiltered(() => exportFilteredRows());
-  window.electronAPI.onMenuExportAudit(() => exportAuditDecisions());
   window.electronAPI.onMenuImportMerge(() => importMergeAudit());
   window.electronAPI.onMenuExportRedirects(() => exportRedirectMap());
   if (window.electronAPI.onMenuExportMigrationTracker) {
@@ -502,7 +499,6 @@ function bindIPCListeners() {
   if (window.electronAPI.onMenuDesignPatternLibrary) {
     window.electronAPI.onMenuDesignPatternLibrary(() => openDesignPatternLibraryEditor());
   }
-  window.electronAPI.onMenuGaKkeSettings(() => openGaKkeConfigDialog());
   if (window.electronAPI.onMenuSuggestedKkeRecompute) {
     window.electronAPI.onMenuSuggestedKkeRecompute(() => {
       const result = computeSuggestedKke();
@@ -511,9 +507,6 @@ function bindIPCListeners() {
         showToast(`Suggested_KKE: ${result.computed} computed, ${result.blank} blank${dis}`, 'success');
       }
     });
-  }
-  if (window.electronAPI.onMenuSuggestedKkeSettings) {
-    window.electronAPI.onMenuSuggestedKkeSettings(() => openSuggestedKkeSettings());
   }
   if (window.electronAPI.onMenuRubricBatch) {
     window.electronAPI.onMenuRubricBatch(() => runBatchAssessment());
@@ -2787,11 +2780,6 @@ function applyFilter() {
       const val = String(row[groupCol()] || '').trim();
       return val === gf;
     });
-  }
-
-  // Nav tree filter
-  if (_navTreeFilter) {
-    rows = rows.filter(({ row }) => String(row['Sitemap_ID'] || '').trim() === _navTreeFilter);
   }
 
   state.filteredRows = rows;
@@ -7808,93 +7796,6 @@ function updateSuggestedKkeBadge(row) {
   badge.onclick = () => showSuggestedKkePopover(badge, payload);
 }
 
-/** Settings dialog for tuning per-source weights used by computeSuggestedKke. */
-function openSuggestedKkeSettings() {
-  document.getElementById('_skp-settings-overlay')?.remove();
-  const cfg = suggestedKkeConfig();
-  const weights = { ...defaultSourceWeights(), ...(cfg.weights || {}) };
-
-  const overlay = document.createElement('div');
-  overlay.id = '_skp-settings-overlay';
-  overlay.className = 'modal-overlay';
-  overlay.style.zIndex = '900';
-
-  const modal = document.createElement('div');
-  modal.className = 'modal-dialog skp-settings-modal';
-  modal.addEventListener('click', e => e.stopPropagation());
-  modal.style.width = 'min(680px, 62vw)';
-  modal.style.maxHeight = '80vh';
-
-  const lastRun = cfg.lastRun
-    ? `<div class="skp-foot">Last run: ${cfg.lastRun.computed} computed · ${cfg.lastRun.blank} blank · ${cfg.lastRun.disagreements} disagreement${cfg.lastRun.disagreements !== 1 ? 's' : ''} of ${cfg.lastRun.total} total</div>`
-    : '';
-
-  modal.innerHTML = `
-    <div class="modal-header">
-      <h2 style="margin:0;">Suggested KKE Settings</h2>
-      <button class="modal-close" id="_skp-close" title="Close">×</button>
-    </div>
-    <div class="modal-body" style="padding:16px;">
-      <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px;">
-        Source weights tune which signal wins when sources disagree. Higher weight = preferred. Equal weights = first-source-wins tiebreak.
-      </p>
-      <div class="skp-row" style="padding:8px 0;">
-        <span class="skp-src" style="min-width:64px;">GA</span>
-        <input type="number" id="_skp-weight-ga" min="0" max="5" step="0.1" value="${weights.ga}" style="width:80px;height:26px;padding:0 6px;border:1px solid var(--border);border-radius:4px;" />
-        <span class="skp-detail">Analytics-driven (sessions, engagement, dwell, depth)</span>
-      </div>
-      <div class="skp-row" style="padding:8px 0;">
-        <span class="skp-src" style="min-width:64px;">Rubric</span>
-        <input type="number" id="_skp-weight-rubric" min="0" max="5" step="0.1" value="${weights.rubric}" style="width:80px;height:26px;padding:0 6px;border:1px solid var(--border);border-radius:4px;" />
-        <span class="skp-detail">Field-rule + LLM assessment</span>
-      </div>
-      ${lastRun}
-    </div>
-    <div class="modal-footer" style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);">
-      <button id="_skp-recompute" class="btn btn-sm btn-ghost">Save &amp; Recompute</button>
-      <span style="flex:1;"></span>
-      <button id="_skp-cancel" class="btn btn-sm btn-ghost">Cancel</button>
-      <button id="_skp-save" class="btn btn-sm btn-primary">Save</button>
-    </div>
-  `;
-
-  overlay.appendChild(modal);
-  document.body.appendChild(overlay);
-  makeModalDraggable(modal);
-
-  const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
-  const onKey = (e) => { if (e.key === 'Escape') close(); };
-  document.addEventListener('keydown', onKey);
-  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-  modal.querySelector('#_skp-close').addEventListener('click', close);
-  modal.querySelector('#_skp-cancel').addEventListener('click', close);
-
-  function commit() {
-    const ga = parseFloat(modal.querySelector('#_skp-weight-ga').value);
-    const rubric = parseFloat(modal.querySelector('#_skp-weight-rubric').value);
-    cfg.weights = {
-      ga: isFinite(ga) && ga >= 0 ? ga : 1.0,
-      rubric: isFinite(rubric) && rubric >= 0 ? rubric : 1.0
-    };
-    state.projectSettings.suggestedKkeConfig = cfg;
-    setDirty(true);
-  }
-  modal.querySelector('#_skp-save').addEventListener('click', () => {
-    commit();
-    showToast('Suggested KKE weights saved', 'success');
-    close();
-  });
-  modal.querySelector('#_skp-recompute').addEventListener('click', () => {
-    commit();
-    close();
-    const result = computeSuggestedKke();
-    if (result) {
-      const dis = result.disagreements > 0 ? ` · ${result.disagreements} disagreement${result.disagreements !== 1 ? 's' : ''}` : '';
-      showToast(`Suggested_KKE recomputed: ${result.computed} · ${result.blank} blank${dis}`, 'success');
-    }
-  });
-}
-
 function showSuggestedKkePopover(anchor, payload) {
   document.getElementById('_suggested-kke-pop')?.remove();
   if (!payload) return;
@@ -11156,18 +11057,6 @@ function updateRedirectBadge(row) {
 let _navEditorOpen = false;
 
 function setupNavTree() {
-  // Tree button moved to the view switcher (Chunk iii). Toggle is wired via menu listener.
-  // The legacy in-audit-bar #btn-navtree no longer exists.
-  // Old modal close buttons still work as fallback
-  $('btn-navtree-close').addEventListener('click', closeNavTree);
-  $('navtree-overlay').addEventListener('click', closeNavTree);
-  $('btn-navtree-clear-filter').addEventListener('click', () => {
-    _navTreeFilter = null;
-    $('btn-navtree-clear-filter').classList.add('hidden');
-    applyFilter();
-    closeNavTree();
-  });
-
   // Nav editor buttons
   $('btn-nav-editor-close').addEventListener('click', () => closeNavEditor());
   $('btn-nav-editor-add-root').addEventListener('click', addNavRootNode);
@@ -16135,13 +16024,6 @@ function executeDeleteNavNode(node, mode, assignAction, reassignTarget) {
   renderNavEditor();
 }
 
-// ─── Nav tree: legacy modal open/close for old overlay references ──────
-
-function closeNavTree() {
-  $('navtree-overlay').classList.add('hidden');
-  $('navtree-modal').classList.add('hidden');
-}
-
 // ─── Nav: URL-based suggestion ────────────────────────────────────────────────
 
 function suggestNavFromUrl(url) {
@@ -17007,19 +16889,6 @@ function renderKkeButtons() {
     btn.textContent = label;
     els.kkeButtons.appendChild(btn);
   });
-
-  // Bulk KKE buttons
-  const bulkGroup = document.querySelector('#bulk-bar .kke-btn-group');
-  if (bulkGroup) {
-    bulkGroup.innerHTML = '';
-    allKkeStates().forEach(label => {
-      const btn = document.createElement('button');
-      btn.className = 'kke-btn bulk-kke-btn';
-      btn.dataset.kke = label;
-      btn.textContent = label;
-      bulkGroup.appendChild(btn);
-    });
-  }
 
   // Inject CSS for custom states
   let styleEl = document.getElementById('custom-kke-styles');

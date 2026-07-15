@@ -9,7 +9,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveAsProject:  (payload) => ipcRenderer.invoke('save-as-project', payload),
   exportWorkbook: (payload) => ipcRenderer.invoke('export-workbook', payload),
   packageHandoff: ()        => ipcRenderer.invoke('package-handoff'),
-  getCurrentPath: ()        => ipcRenderer.invoke('get-current-path'),
   openExternal:   (url)     => ipcRenderer.invoke('open-external', url),
 
   // ── Update check ──────────────────────────────────────────────────────────
@@ -30,7 +29,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   assessRowLLM:   (payload)  => ipcRenderer.invoke('assess-row-llm', payload),
   readRubricFile:   (payload) => ipcRenderer.invoke('read-rubric-file', payload),
   writeRubricFile:  (payload) => ipcRenderer.invoke('write-rubric-file', payload),
-  setFileRubricDir: (payload) => ipcRenderer.invoke('set-file-rubric-dir', payload),
 
   // ── Export, Screenshot, Links ──────────────────────────────────────────────
   exportFiltered:    (payload) => ipcRenderer.invoke('export-filtered', payload),
@@ -45,7 +43,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   importAuditMergeReadSheet: (opts) => ipcRenderer.invoke('import-audit-merge-read-sheet', opts),
 
   // ── Formula evaluation ─────────────────────────────────────────────────────
-  evaluateFormula: (payload) => ipcRenderer.invoke('evaluate-formula', payload),
   evaluateComputedColumns: (payload) => ipcRenderer.invoke('evaluate-computed-columns', payload),
 
   // ── Audit export ───────────────────────────────────────────────────────────
@@ -65,8 +62,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMenuExportWorkbook: (cb) => ipcRenderer.on('menu-export-workbook', ()     => cb()),
   onMenuPackageHandoff: (cb) => ipcRenderer.on('menu-package-handoff', ()     => cb()),
   onSaveSuccess:       (cb) => ipcRenderer.on('save-success',          (e, d) => cb(d)),
-  onMenuExportFiltered:(cb) => ipcRenderer.on('menu-export-filtered',  ()     => cb()),
-  onMenuExportAudit:   (cb) => ipcRenderer.on('menu-export-audit',     ()     => cb()),
   onMenuImportMerge:   (cb) => ipcRenderer.on('menu-import-merge',    ()     => cb()),
   onMenuExportRedirects:(cb) => ipcRenderer.on('menu-export-redirects', ()   => cb()),
   onMenuSettings:      (cb) => ipcRenderer.on('menu-settings',          ()   => cb()),
@@ -78,10 +73,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getDefaultPatternLibrary: () => ipcRenderer.invoke('get-default-pattern-library'),
   onMenuDesignPatternLibrary: (cb) => ipcRenderer.on('menu-design-pattern-library', () => cb()),
   getDefaultDesignPatternLibrary: () => ipcRenderer.invoke('get-default-design-pattern-library'),
-  onMenuGaKkeSettings: (cb) => ipcRenderer.on('menu-ga-kke-settings',   ()   => cb()),
   onMenuGaKkeRefresh:  (cb) => ipcRenderer.on('menu-ga-kke-refresh',    ()   => cb()),
   onMenuSuggestedKkeRecompute: (cb) => ipcRenderer.on('menu-suggested-kke-recompute', () => cb()),
-  onMenuSuggestedKkeSettings:  (cb) => ipcRenderer.on('menu-suggested-kke-settings',  () => cb()),
   onMenuRubricBatch:           (cb) => ipcRenderer.on('menu-rubric-batch',            () => cb()),
   onMenuExportMigrationTracker:(cb) => ipcRenderer.on('menu-export-migration-tracker',() => cb()),
   onMenuExportDialog:          (cb) => ipcRenderer.on('menu-export-dialog',            () => cb()),
@@ -127,7 +120,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   exportReportHtml:           (payload) => ipcRenderer.invoke('export-report-html', payload),
   exportSitemapPdf:           (payload) => ipcRenderer.invoke('export-sitemap-pdf', payload),
   saveAuditTemplate:   (payload) => ipcRenderer.invoke('save-audit-template', payload),
-  loadAuditTemplate:   ()        => ipcRenderer.invoke('load-audit-template'),
-
-  removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel)
+  loadAuditTemplate:   ()        => ipcRenderer.invoke('load-audit-template')
 });
