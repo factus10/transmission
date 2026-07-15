@@ -18259,8 +18259,15 @@ function resolveRedirectDestinations() {
     }
 
     if (kke === 'kill') {
-      if (existing) return; // explicit value already set
-      row[REDIRECT_DEST_COL] = ctx.computeAutoDestination(row, 'kill'); // blank if nothing resolved (retired/404)
+      // Same looksAutoDerived philosophy as the Consolidate branch above: preserve
+      // a genuine manual override, but re-derive blanks and anything that still
+      // looks auto-derived — including the bare project default, which is what
+      // gets written before a page has a nav home or consolidate target. Without
+      // this, a Kill page assigned a nav home after autosave already wrote the
+      // default keeps redirecting to the default forever.
+      const auto = ctx.computeAutoDestination(row, 'kill'); // blank if nothing resolved (retired/404)
+      const looksAutoDerived = !existing || existing === auto || existing === ctx.defaultRedirectUrl;
+      if (looksAutoDerived) row[REDIRECT_DEST_COL] = auto;
       return;
     }
 
