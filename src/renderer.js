@@ -2440,6 +2440,24 @@ function returnToAuditView() {
 
 // ─── Saved Filters ────────────────────────────────────────────────────────────
 
+/** Apply a saved filter object ({name, filterText, kkeFilter, groupFilter,
+ *  fieldFilters}) to the current sidebar filter state. Shared by the sidebar's
+ *  own saved-filter dropdown and Project Settings' Saved Filters tab, so both
+ *  apply a saved filter identically instead of drifting apart. */
+function applySavedFilter(saved) {
+  state.filterText = saved.filterText || '';
+  els.searchInput.value = state.filterText;
+  $('btn-clear-search').classList.toggle('hidden', !state.filterText);
+  const savedKke = saved.kkeFilter;
+  state.kkeFilter = Array.isArray(savedKke) ? savedKke : (savedKke ? [savedKke] : []);
+  renderKkeFilterOptions();
+  state.groupFilter = saved.groupFilter || '';
+  if (els.groupFilter) els.groupFilter.value = state.groupFilter;
+  state.fieldFilters = Array.isArray(saved.fieldFilters) ? saved.fieldFilters.map(f => ({...f})) : [];
+  renderFieldFilterChips();
+  applyFilter();
+}
+
 function setupSavedFilters() {
   const sel = $('saved-filter-select');
   const btn = $('btn-save-filter');
@@ -2470,18 +2488,7 @@ function setupSavedFilters() {
 
     const saved = (state.projectSettings.savedFilters || []).find(f => f.name === name);
     if (!saved) return;
-    // Restore filter state
-    state.filterText = saved.filterText || '';
-    els.searchInput.value = state.filterText;
-    $('btn-clear-search').classList.toggle('hidden', !state.filterText);
-    const savedKke = saved.kkeFilter;
-    state.kkeFilter = Array.isArray(savedKke) ? savedKke : (savedKke ? [savedKke] : []);
-    renderKkeFilterOptions();
-    state.groupFilter = saved.groupFilter || '';
-    if (els.groupFilter) els.groupFilter.value = state.groupFilter;
-    state.fieldFilters = Array.isArray(saved.fieldFilters) ? saved.fieldFilters.map(f => ({...f})) : [];
-    renderFieldFilterChips();
-    applyFilter();
+    applySavedFilter(saved);
   });
 
   btn.addEventListener('click', async () => {
@@ -7093,17 +7100,7 @@ function renderSavedFiltersList() {
       const f = (state.projectSettings.savedFilters || [])[idx];
       if (!f) return;
       if (action === 'apply') {
-        // Restore the filter into the sidebar
-        state.filterText = f.filterText || '';
-        state.kkeFilter = Array.isArray(f.kkeFilter) ? [...f.kkeFilter] : [];
-        state.projectSettings.kkeFilter = state.kkeFilter;
-        state.fieldFilters = Array.isArray(f.fieldFilters) ? f.fieldFilters.map(x => ({ ...x })) : [];
-        els.searchInput.value = state.filterText;
-        // Group filter
-        const gSel = $('group-filter-select');
-        if (gSel) gSel.value = f.groupFilter || '';
-        applyFilter();
-        if (typeof renderKkeFilterOptions === 'function') renderKkeFilterOptions();
+        applySavedFilter(f);
         showToast(`Applied filter: ${f.name}`, 'success');
         closeProjectSettingsPopover();
       } else if (action === 'delete') {
