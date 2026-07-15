@@ -3482,6 +3482,13 @@ body.dragging-popover iframe { pointer-events: none !important; }
   overflow: hidden;
 }
 
+#nav-multi-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .nav-tb-sep {
   width: 1px;
   height: 18px;
@@ -3792,6 +3799,18 @@ select.mi-kind { cursor: pointer; font-family: var(--font-sans); border: 1px sol
   background: var(--accent-dim);
   box-shadow: inset 0 0 0 2px var(--accent);
 }
+.ne-row.ne-row-selected {
+  background: var(--accent-dim);
+}
+
+.ne-col-select {
+  flex-shrink: 0;
+  width: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ne-col-select input[type="checkbox"] { margin: 0; cursor: pointer; }
 
 .ne-row .ne-cell {
   overflow: hidden;
