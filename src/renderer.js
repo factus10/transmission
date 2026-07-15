@@ -65,6 +65,9 @@ const state = {
   multiSelected: new Set(),  // set of origIndex values
   lastClickedPos: null,      // position in filteredRows for shift-click range
 
+  // Nav tree bulk multi-select (Sitemap editor)
+  navMultiSelected: new Set(),  // set of nav node ids
+
   // Nav structure
   navTree:         null,     // array of root nodes (from the Sitemap sheet)
   navNodes:        [],       // flat list of all sitemap nodes
@@ -865,6 +868,8 @@ function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, she
   state.urlColumn     = urlColumn;
   state.selectedIndex = null;
   state.isDirty       = false;
+  state.navMultiSelected.clear();
+  _navLastCheckedNodeId = null;
   _undoStack.length = 0;
   _redoStack.length = 0;
   updateNoSelectionState();
@@ -10458,36 +10463,55 @@ async function promoteHubNodeToRow(node) {
   return origIndex;
 }
 
-/** Multi-bar "Assign to Sitemap" action: pick an existing node, or create a new
- *  bucket node, then bulk-assign `targets` (origIndex array) under it. */
-function openBulkNavAssignDialog(targets, onDone) {
-  const eligibleTargets = targets.filter(i => {
-    const row = state.editedRows[i];
-    return row && !String(row['Sitemap_ID'] || '').trim();
-  });
-  const eligible = eligibleTargets.length;
-  const alreadyPlaced = targets.length - eligible;
+/** Effective KKE for gating purposes — Final_KKE (a later SME override) wins
+ *  over the original recommendation when set. Matches the pattern already used
+ *  by _navPageCountsCache(), renderNavEditor()'s pageCounts, and the Kill-cleanup
+ *  flow, so "will this page actually stay" reads consistently across the app. */
+function effectiveKke(row) {
+  return String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
+}
 
-  if (eligible === 0) {
+/** Multi-bar "Assign to Sitemap" action: pick an existing node, or create a new
+ *  bucket node, then bulk-assign eligible rows from `targets` (origIndex array)
+ *  under it. Default-eligible = Keep/Evolve only (mirrors Create Sitemap from
+ *  Audit's own gate) — an opt-in checkbox includes Kill/Exclude/Consolidate/
+ *  unreviewed pages too, since a routine workflow here is building a "current
+ *  state" sitemap snapshot that intentionally includes everything. Consolidate
+ *  rows get one extra batched confirmation regardless of that checkbox, since
+ *  they're being merged into another page's URL, not their own. */
+function openBulkNavAssignDialog(targets, onDone) {
+  const notPlaced = (row) => row && !String(row['Sitemap_ID'] || '').trim();
+  const isKeepEvolve = (row) => { const k = effectiveKke(row); return k === 'Keep' || k === 'Evolve'; };
+
+  const countEligible = (includeAll) => targets.filter(i => {
+    const row = state.editedRows[i];
+    return notPlaced(row) && (includeAll || isKeepEvolve(row));
+  }).length;
+
+  const alreadyPlaced = targets.filter(i => !notPlaced(state.editedRows[i])).length;
+
+  if (countEligible(true) === 0) {
     showToast('All selected pages are already on the sitemap', 'error');
     return;
   }
 
   let chosenNode = null;
   let newBucketParent = null;
+  let placementMode = 'children'; // 'children' | 'url-structure'
   // Suggest a destination the same way the per-row Sitemap picker does:
   // walk each page's URL up to the nearest already-assigned ancestor page,
   // and offer whichever node most of the batch agrees on.
-  const suggestion = suggestBulkNavTarget(eligibleTargets);
+  const eligibleTargetsForSuggestion = targets.filter(i => notPlaced(state.editedRows[i]) && isKeepEvolve(state.editedRows[i]));
+  const suggestion = suggestBulkNavTarget(eligibleTargetsForSuggestion);
 
   const body = document.createElement('div');
   body.style.cssText = 'display:flex;flex-direction:column;gap:14px;font-size:13px;';
   body.innerHTML = `
-    <div style="color:var(--text-muted);line-height:1.5;">
-      Assign <b>${eligible}</b> of ${targets.length} page${targets.length !== 1 ? 's' : ''} to a sitemap location.
-      ${alreadyPlaced > 0 ? `${alreadyPlaced} already on the sitemap will be skipped. ` : ''}
-      Each page becomes a new child node here — slug and label are auto-derived from its URL and title. Reorganize freely afterward with the Sitemap editor's drag-and-drop.
-    </div>
+    <div id="_bna-summary" style="color:var(--text-muted);line-height:1.5;"></div>
+    <label style="display:flex;align-items:center;gap:8px;">
+      <input type="checkbox" id="_bna-include-all" />
+      Include Kill / Exclude / unreviewed pages too
+    </label>
     ${suggestion ? `
     <div style="border:1px solid var(--accent);border-radius:6px;padding:10px 12px;display:flex;align-items:center;gap:10px;justify-content:space-between;background:var(--bg-field-bar);">
       <div style="font-size:12px;line-height:1.4;">
@@ -10513,12 +10537,37 @@ function openBulkNavAssignDialog(targets, onDone) {
         <button id="_bna-clear-parent" type="button" class="btn btn-sm btn-ghost hidden" title="Reset to top level">×</button>
       </div>
     </div>
+    <div style="border:1px solid var(--border);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;">
+      <div style="font-weight:600;">How should pages be placed?</div>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+        <input type="radio" name="_bna-mode" value="children" checked /> Direct children of the destination
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+        <input type="radio" name="_bna-mode" value="url-structure" /> Preserve URL structure
+      </label>
+      <div id="_bna-depth-wrap" class="hidden" style="display:flex;align-items:center;gap:8px;padding-left:22px;">
+        <label style="color:var(--text-secondary);" for="_bna-depth">Bucket depth</label>
+        <select id="_bna-depth" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;">
+          <option value="1">1 level</option>
+          <option value="2" selected>2 levels</option>
+          <option value="3">3 levels</option>
+          <option value="4">4 levels</option>
+        </select>
+      </div>
+      <div id="_bna-url-caveat" class="hidden" style="color:var(--text-muted);font-size:11px;line-height:1.4;padding-left:22px;">
+        Builds nested sections from each page's full URL path, rooted under your chosen destination — if the destination already matches part of that path, pick a shallower destination or lower depth to avoid duplicate nesting.
+      </div>
+    </div>
   `;
 
+  const summaryEl       = body.querySelector('#_bna-summary');
+  const includeAllCb    = body.querySelector('#_bna-include-all');
   const existingLabelEl = body.querySelector('#_bna-existing-label');
   const newLabelInput   = body.querySelector('#_bna-new-label');
   const parentBtn       = body.querySelector('#_bna-pick-parent');
   const clearParentBtn  = body.querySelector('#_bna-clear-parent');
+  const depthWrap        = body.querySelector('#_bna-depth-wrap');
+  const urlCaveat         = body.querySelector('#_bna-url-caveat');
 
   const footer = document.createElement('div');
   footer.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:4px;';
@@ -10526,15 +10575,27 @@ function openBulkNavAssignDialog(targets, onDone) {
   cancelBtn.type = 'button'; cancelBtn.className = 'btn btn-sm btn-ghost'; cancelBtn.textContent = 'Cancel';
   const assignBtn = document.createElement('button');
   assignBtn.type = 'button'; assignBtn.className = 'btn btn-sm btn-primary';
-  assignBtn.textContent = `Assign ${eligible} page${eligible !== 1 ? 's' : ''}`;
   assignBtn.disabled = true;
   footer.appendChild(cancelBtn);
   footer.appendChild(assignBtn);
   body.appendChild(footer);
 
-  function refreshAssignBtn() {
-    assignBtn.disabled = !(chosenNode || newLabelInput.value.trim());
+  function currentEligible() { return countEligible(includeAllCb.checked); }
+
+  function refreshSummary() {
+    const eligible = currentEligible();
+    summaryEl.innerHTML = `Assign <b>${eligible}</b> of ${targets.length} page${targets.length !== 1 ? 's' : ''} to a sitemap location.
+      ${alreadyPlaced > 0 ? `${alreadyPlaced} already on the sitemap will be skipped. ` : ''}
+      Direct children mode: slug and label are auto-derived from each page's URL and title. Reorganize freely afterward with the Sitemap editor's drag-and-drop.`;
+    assignBtn.textContent = `Assign ${eligible} page${eligible !== 1 ? 's' : ''}`;
   }
+
+  function refreshAssignBtn() {
+    assignBtn.disabled = !(chosenNode || newLabelInput.value.trim()) || currentEligible() === 0;
+  }
+
+  includeAllCb.addEventListener('change', () => { refreshSummary(); refreshAssignBtn(); });
+  refreshSummary();
 
   function pickExistingNode(node) {
     chosenNode = node;
@@ -10575,16 +10636,118 @@ function openBulkNavAssignDialog(targets, onDone) {
     clearParentBtn.classList.add('hidden');
   });
 
+  body.querySelectorAll('input[name="_bna-mode"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      placementMode = radio.value;
+      const isUrlMode = placementMode === 'url-structure';
+      depthWrap.classList.toggle('hidden', !isUrlMode);
+      urlCaveat.classList.toggle('hidden', !isUrlMode);
+    });
+  });
+
   const modal = openModal({ title: 'Assign to Sitemap', body, width: 480, buttons: [] });
   cancelBtn.addEventListener('click', () => modal.close());
 
-  assignBtn.addEventListener('click', () => {
+  assignBtn.addEventListener('click', async () => {
+    const includeAll = includeAllCb.checked;
+    let finalTargets = targets.filter(i => {
+      const row = state.editedRows[i];
+      return notPlaced(row) && (includeAll || isKeepEvolve(row));
+    });
+
+    const consolidateIdxs = finalTargets.filter(i => effectiveKke(state.editedRows[i]) === 'Consolidate');
+    if (consolidateIdxs.length > 0) {
+      const ok = await confirmDialog({
+        title: 'Include Consolidate pages?',
+        message: `${consolidateIdxs.length} of these pages are marked Consolidate — they're being merged into another page's URL, not their own. Include them in this sitemap placement anyway?`,
+        confirmLabel: 'Include anyway',
+        cancelLabel: 'Skip them',
+      });
+      if (!ok) {
+        const skip = new Set(consolidateIdxs);
+        finalTargets = finalTargets.filter(i => !skip.has(i));
+      }
+    }
+
+    if (finalTargets.length === 0) {
+      showToast('No pages left to assign', 'error');
+      return;
+    }
+
     const bucket = chosenNode || createBucketNode(newLabelInput.value, newBucketParent);
-    const { assigned, skipped } = bulkAssignRowsToBucket(targets, bucket);
+    const { assigned, skipped } = placementMode === 'url-structure'
+      ? bulkAssignRowsPreservingUrlStructure(finalTargets, bucket, parseInt(body.querySelector('#_bna-depth').value, 10) || 2)
+      : bulkAssignRowsToBucket(finalTargets, bucket);
     modal.close();
     showToast(`Assigned ${assigned} page${assigned !== 1 ? 's' : ''} to "${bucket.label}"` + (skipped ? ` — ${skipped} skipped` : ''), 'success');
     if (onDone) onDone();
   });
+}
+
+/** Bulk-assign rows preserving URL structure: for each target row, walks up to
+ *  maxDepth of its URL's path segments as nested find-or-create buckets seeded
+ *  from rootParent (the chosen destination — null = top level, matching
+ *  createBucketNode()'s own convention). Mirrors createSitemapFromAudit()'s
+ *  per-row logic, scoped to an explicit target set + a caller-chosen starting
+ *  parent instead of the whole audit + the true top-level root. Returns
+ *  { assigned, skipped }, matching bulkAssignRowsToBucket()'s shape. Caller owns
+ *  the UI refresh (resyncConsolidateInto, invalidateNavPageCountsCache, etc.) —
+ *  same convention as bulkAssignRowsToBucket(). */
+function bulkAssignRowsPreservingUrlStructure(targets, rootParent, maxDepth) {
+  ['Sitemap_ID', 'Sitemap_Destination', 'Computed Path', 'Sitemap_SortID', 'Page_Breadcrumb'].forEach(col => {
+    if (!state.headers.includes(col)) state.headers.push(col);
+  });
+
+  let assigned = 0, skipped = 0;
+  const overflowByNode = new Map();
+
+  for (const origIndex of targets) {
+    const row = state.editedRows[origIndex];
+    if (!row || String(row['Sitemap_ID'] || '').trim()) { skipped++; continue; }
+
+    const url = String(row[state.urlColumn] || '').trim();
+    if (!url) { skipped++; continue; }
+
+    const segments = urlPathSegments(url);
+    if (!segments.length) {
+      if (rootParent) { assignRowToNodeDirect(row, rootParent); assigned++; }
+      else skipped++;
+      continue;
+    }
+
+    const walkSegs = segments.slice(0, maxDepth);
+    let node = rootParent, parent = rootParent;
+    for (const seg of walkSegs) {
+      node = findOrCreateBucketNode(titleCaseFromSlug(seg), parent);
+      parent = node;
+    }
+    if (segments.length <= maxDepth) {
+      assignRowToNodeDirect(row, node);
+      assigned++;
+    } else {
+      if (!overflowByNode.has(node)) overflowByNode.set(node, []);
+      overflowByNode.get(node).push(origIndex);
+    }
+  }
+
+  overflowByNode.forEach((origIndexes, node) => {
+    assigned += bulkAssignRowsToBucketCore(origIndexes, node).assigned;
+  });
+
+  if (assigned > 0) {
+    resyncConsolidateInto();
+    state.navTreeDirty = true;
+    setDirty(true);
+    invalidateNavPageCountsCache();
+    if (_navEditorOpen) renderNavEditor();
+    renderVisibleRows();
+    if (state.selectedIndex !== null) {
+      const selRow = state.editedRows[state.selectedIndex];
+      if (selRow) { updateNavBadge(selRow); renderMetaFields(selRow, state.selectedIndex); }
+    }
+  }
+
+  return { assigned, skipped };
 }
 
 /** Project → Create Sitemap from Audit… config dialog. Picks a bucket depth and
@@ -11034,7 +11197,7 @@ async function promptClearNavAssignment(origIndex, navID, navDest) {
     setDirty(true);
 
     if (nodeToDelete) {
-      deleteNavNodeFromEditor(nodeToDelete);
+      executeDeleteNavNode(nodeToDelete, 'promote', 'clear', null);
       showToast('Sitemap assignment cleared and empty node deleted.', 'success');
     } else {
       showToast('Sitemap assignment cleared. Node still in sitemap.', 'success');
@@ -11112,6 +11275,14 @@ function setupNavTree() {
   $('btn-nav-editor-add-root').addEventListener('click', addNavRootNode);
   $('btn-nav-remediate').addEventListener('click', remediateNavAssignments);
   $('btn-nav-consolidate-candidates').addEventListener('click', openConsolidationCandidates);
+  $('btn-nav-select-empty').addEventListener('click', selectEmptyNavBranches);
+
+  // Bulk multi-select (checkboxes)
+  $('nav-select-all-visible').addEventListener('change', (e) => toggleNavSelectAllVisible(e.target.checked));
+  $('btn-nav-multi-clear').addEventListener('click', clearNavMultiSelection);
+  $('btn-nav-multi-delete').addEventListener('click', () => {
+    bulkDeleteNavNodes(Array.from(state.navMultiSelected));
+  });
 
   // Depth filter
   $('nav-depth-filter').addEventListener('change', () => renderNavEditor());
@@ -13222,6 +13393,14 @@ function renderNavEditor() {
   state.navTree.forEach(node => {
     body.appendChild(renderNavEditorNode(node, pageCounts, 0, dupSlugs, depthFilter));
   });
+
+  // Drop any bulk-selected ids for nodes that no longer exist (e.g. deleted via
+  // a path other than the bulk-delete flow, which already clears its own selection).
+  if (state.navMultiSelected.size > 0) {
+    const liveIds = new Set(state.navNodes.map(n => n.id));
+    Array.from(state.navMultiSelected).forEach(id => { if (!liveIds.has(id)) state.navMultiSelected.delete(id); });
+  }
+  updateNavMultiBar();
 }
 
 async function generateNavSitemap() {
@@ -13531,6 +13710,37 @@ function renderNavEditorNode(node, pageCounts, depth, dupSlugs, depthFilter) {
   const isCollapsed = hasChildren && _navCollapsed.has(node.id) && !buildFilter;
   toggle.textContent = hasChildren ? (showChildren ? (isCollapsed ? '▸' : '▾') : '▸') : ' ';
   leftSection.appendChild(toggle);
+
+  // Bulk-select checkbox
+  const selectCell = document.createElement('span');
+  selectCell.className = 'ne-cell ne-col-select';
+  const selectCb = document.createElement('input');
+  selectCb.type = 'checkbox';
+  selectCb.checked = state.navMultiSelected.has(node.id);
+  if (selectCb.checked) row.classList.add('ne-row-selected');
+  selectCb.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wantSelected = selectCb.checked; // the browser already toggled this checkbox's own state
+    if (e.shiftKey && _navLastCheckedNodeId) {
+      const ids = Array.from(document.querySelectorAll('#nav-editor-body [data-node-id]'))
+        .filter(el => el.offsetParent !== null)
+        .map(el => el.dataset.nodeId);
+      const fromIdx = ids.indexOf(_navLastCheckedNodeId);
+      const toIdx = ids.indexOf(node.id);
+      if (fromIdx !== -1 && toIdx !== -1) {
+        const [start, end] = fromIdx < toIdx ? [fromIdx, toIdx] : [toIdx, fromIdx];
+        for (let i = start; i <= end; i++) setNavNodeSelected(ids[i], wantSelected);
+      } else {
+        setNavNodeSelected(node.id, wantSelected);
+      }
+    } else {
+      setNavNodeSelected(node.id, wantSelected);
+    }
+    _navLastCheckedNodeId = node.id;
+    updateNavMultiBar();
+  });
+  selectCell.appendChild(selectCb);
+  leftSection.appendChild(selectCell);
 
   // Number (read-only text)
   const numCell = document.createElement('span');
@@ -13915,6 +14125,82 @@ function renderNavEditorNode(node, pageCounts, depth, dupSlugs, depthFilter) {
   // No click-to-filter in the editor — that's for the old modal only
 
   return wrapper;
+}
+
+/** Sets a nav node's bulk-select membership and syncs the corresponding row's
+ *  checkbox + highlight class directly in the DOM (no full re-render, so
+ *  scroll position and collapse state survive repeated clicks). */
+function setNavNodeSelected(nodeId, selected) {
+  if (selected) state.navMultiSelected.add(nodeId);
+  else state.navMultiSelected.delete(nodeId);
+  const wrapper = document.querySelector(`#nav-editor-body [data-node-id="${nodeId}"]`);
+  if (!wrapper) return;
+  const row = wrapper.querySelector(':scope > .ne-row');
+  if (!row) return;
+  row.classList.toggle('ne-row-selected', selected);
+  const cb = row.querySelector('.ne-col-select input[type="checkbox"]');
+  if (cb) cb.checked = selected;
+}
+
+/** Shows/hides the nav tree's bulk-action bar and updates its selected-count label. */
+function updateNavMultiBar() {
+  const bar = document.getElementById('nav-multi-bar');
+  if (!bar) return;
+  const count = state.navMultiSelected.size;
+  const label = document.getElementById('nav-multi-bar-label');
+  if (count > 0) {
+    bar.classList.remove('hidden');
+    if (label) label.textContent = `${count} node${count !== 1 ? 's' : ''} selected`;
+  } else {
+    bar.classList.add('hidden');
+  }
+}
+
+/** Clears the nav tree's bulk selection (state + DOM). */
+function clearNavMultiSelection() {
+  state.navMultiSelected.forEach(id => setNavNodeSelected(id, false));
+  state.navMultiSelected.clear();
+  _navLastCheckedNodeId = null;
+  updateNavMultiBar();
+}
+
+/** Toggles every currently-rendered (visible) nav node id in/out of the bulk
+ *  selection — the tree-editor analog of the sidebar's "select all visible". */
+function toggleNavSelectAllVisible(selectAll) {
+  const ids = Array.from(document.querySelectorAll('#nav-editor-body [data-node-id]'))
+    .filter(el => el.offsetParent !== null)
+    .map(el => el.dataset.nodeId);
+  ids.forEach(id => setNavNodeSelected(id, selectAll));
+  updateNavMultiBar();
+}
+
+/** Selects the topmost node in every branch whose entire subtree has zero
+ *  assigned pages (Kill/Consolidate-excluding semantics, matching the rest of
+ *  the nav editor) — a fast way to find sections left empty after later
+ *  killing/consolidating pages in a "forward" planning copy. Does not recurse
+ *  into an already-selected empty branch's children (deleting the parent
+ *  takes the whole subtree with it). */
+function selectEmptyNavBranches() {
+  const pageCounts = _navPageCountsCache();
+  let found = 0;
+  function walk(nodes) {
+    nodes.forEach(node => {
+      const count = pageCounts[node.id] || 0;
+      if (count === 0 && !hasDescendantPages(node, pageCounts)) {
+        state.navMultiSelected.add(node.id);
+        found++;
+        return; // don't recurse — this whole branch is already covered
+      }
+      if (node.children && node.children.length) walk(node.children);
+    });
+  }
+  walk(state.navTree || []);
+  if (found === 0) {
+    showToast('No empty branches found', 'info');
+    return;
+  }
+  renderNavEditor(); // also refreshes the bulk bar
+  showToast(`Selected ${found} empty branch${found !== 1 ? 'es' : ''}`, 'success');
 }
 
 function toggleNavPageList(wrapper, node, depth) {
@@ -15481,7 +15767,7 @@ function openNavNodeEditor(node) {
       (childrenCount > 0 ? `\n\n${childrenCount} child node${childrenCount !== 1 ? 's' : ''} will be promoted to this node's parent.` : '') +
       (pageCount > 0 ? `\n\n${pageCount} assigned page${pageCount !== 1 ? 's' : ''} will lose their sitemap assignment.` : '');
     if (!(await confirmDialog({ title: 'Delete sitemap node', message: msg, confirmLabel: 'Delete', danger: true }))) return;
-    deleteNavNodeFromEditor(node);
+    executeDeleteNavNode(node, 'promote', 'clear', null);
     close();
   });
 
@@ -15748,49 +16034,6 @@ function _findNavNodeLocation(target, nodes) {
   return null;
 }
 
-function deleteNavNodeFromEditor(node) {
-  // Find the node's actual location in the live tree by reference (not by parentNumber,
-  // which can be stale after reorganisations and cause silent deletion failures).
-  const loc = _findNavNodeLocation(node, state.navTree);
-  if (!loc) { showToast('Node not found in tree', 'error'); return; }
-  const { siblings, idx } = loc;
-
-  // Promote children
-  if (node.children && node.children.length > 0) {
-    node.children.forEach(child => {
-      child.parentNumber = node.parentNumber || '';
-    });
-    siblings.splice(idx, 1, ...node.children);
-  } else {
-    siblings.splice(idx, 1);
-  }
-
-  // Remove from flat list
-  const flatIdx = state.navNodes.indexOf(node);
-  if (flatIdx >= 0) state.navNodes.splice(flatIdx, 1);
-
-  // Clear Sitemap_ID on rows that pointed to this node
-  state.editedRows.forEach((row, i) => {
-    if (String(row['Sitemap_ID'] || '') === node.id) {
-      logChange(i, 'Sitemap_ID', node.id, '');
-      row['Sitemap_ID'] = '';
-      row['Sitemap_Destination'] = '';
-      row['Computed Path'] = '';
-      row['Sitemap_SortID'] = '';
-      row['Page_Breadcrumb'] = '';
-    }
-  });
-
-  // Recompute numbers / paths
-  recalcAllNumbers();
-  state.navTree.forEach(root => recalcDerivedFields(root));
-  resolveNavReferences();
-  state.navTreeDirty = true;
-  setDirty(true);
-  renderNavEditor();
-  showToast(`Deleted "${node.label}"`, 'success');
-}
-
 function cloneNavBranch(node) {
   // Find the next available ID
   let maxId = 0;
@@ -16048,7 +16291,54 @@ function collectAllDescendants(node) {
   return result;
 }
 
-function executeDeleteNavNode(node, mode, assignAction, reassignTarget) {
+/** Captures everything needed to reverse a pending executeDeleteNavNodeCore()
+ *  call, BEFORE any mutation happens. Keeps a REAL reference to `node` (not a
+ *  deep clone — cloneNavBranch() is a confirmed hardcoded-field-list clone that
+ *  drops extension fields like phase/nodeType/notes/pageStatus/url/
+ *  urlOverride/breadcrumbParentId/collapse; a fresh clone here would be equally
+ *  fragile, so the real object is used instead — safe as long as the guards in
+ *  applyUndoAction's 'nav-delete' branch are followed, since a node sitting
+ *  only in an undo snapshot is otherwise untouched by any recalculation, which
+ *  only ever walks state.navTree/state.navNodes once the node is spliced out). */
+function captureNavDeleteUndoSnapshot(node, mode) {
+  const parent = node.parentNumber ? state.navNodes.find(n => n.number === node.parentNumber) : null;
+  const siblings = parent ? parent.children : state.navTree;
+  const idx = siblings.indexOf(node);
+
+  const idsToDelete = new Set([node.id]);
+  if (mode !== 'promote') collectAllDescendants(node).forEach(d => idsToDelete.add(d.id));
+
+  const rowChanges = [];
+  state.editedRows.forEach((row, origIndex) => {
+    if (!idsToDelete.has(row['Sitemap_ID'])) return;
+    rowChanges.push({
+      origIndex,
+      oldValues: {
+        'Sitemap_ID': row['Sitemap_ID'],
+        'Sitemap_Destination': row['Sitemap_Destination'],
+        'Computed Path': row['Computed Path'],
+        'Sitemap_SortID': row['Sitemap_SortID'],
+        'Page_Breadcrumb': row['Page_Breadcrumb'],
+      },
+    });
+  });
+
+  return {
+    parentId: parent ? parent.id : null,
+    wasRoot: parent === null,
+    index: idx,
+    mode,
+    promotedCount: mode === 'promote' ? (node.children || []).length : 0,
+    node, // real object reference — see doc comment above
+    rowChanges, // nested per-item (not flattened) so a per-item abort during
+                // undo can skip restoring rows tied to that specific node
+  };
+}
+
+/** Core delete logic — mutates state.navTree/state.navNodes/state.editedRows
+ *  but does NOT push undo or re-render (callers do both; bulk callers batch
+ *  many nodes into one undo entry + one render instead of one each). */
+function executeDeleteNavNodeCore(node, mode, assignAction, reassignTarget) {
   const oldPaths = snapshotNavPaths();
   const parent = node.parentNumber ? state.navNodes.find(n => n.number === node.parentNumber) : null;
   const siblings = parent ? parent.children : state.navTree;
@@ -16111,11 +16401,67 @@ function executeDeleteNavNode(node, mode, assignAction, reassignTarget) {
 
   recalcAllNumbers();
   state.navTree.forEach(root => recalcDerivedFields(root));
-    resolveNavReferences();
+  resolveNavReferences();
   cascadeNavChangesToRows(oldPaths);
   state.navTreeDirty = true;
   setDirty(true);
+}
+
+/** Single-node delete entry point (tree-row ✕, node-editor's own Delete button,
+ *  and the "clear assignment + delete now-empty node" checkbox flow all funnel
+ *  here) — captures an undo snapshot, runs the core mutation, pushes ONE undo
+ *  entry, then re-renders. This is what makes single-node delete undoable. */
+function executeDeleteNavNode(node, mode, assignAction, reassignTarget) {
+  const item = captureNavDeleteUndoSnapshot(node, mode);
+  executeDeleteNavNodeCore(node, mode, assignAction, reassignTarget);
+  pushUndo({ type: 'nav-delete', items: [item] });
   renderNavEditor();
+}
+
+/** Bulk-deletes the nodes in the tree's multi-select. Always deletes the whole
+ *  subtree ('delete-all') with assignments cleared ('clear') — matching the
+ *  single-delete dialog's own default, and simpler than trying to generalize
+ *  a per-node reassign choice across a heterogeneous selection with different
+ *  parents. Every node's snapshot collapses into ONE undo entry, so a single
+ *  Cmd+Z reverses the entire batch. */
+async function bulkDeleteNavNodes(nodeIds) {
+  const selected = nodeIds
+    .map(id => state.navNodes.find(n => n.id === id))
+    .filter(Boolean);
+  if (selected.length === 0) return;
+
+  // Prune to top-level-only: dropping any selected node that's already a
+  // descendant of another selected node (deleting the ancestor already takes
+  // it with it). The `other !== n` guard is required — isNavDescendantOf(X,X)
+  // returns true (its first check is `cur.id === ancestor.id`), so omitting it
+  // would make every node match itself and prune the whole selection away.
+  const pruned = selected.filter(n => !selected.some(other => other !== n && isNavDescendantOf(n, other)));
+
+  let totalPages = 0;
+  pruned.forEach(node => {
+    const allIds = new Set([node.id]);
+    collectAllDescendants(node).forEach(d => allIds.add(d.id));
+    totalPages += state.editedRows.filter(r => allIds.has(r['Sitemap_ID'])).length;
+  });
+
+  const ok = await confirmDialog({
+    title: `Delete ${pruned.length} sitemap node${pruned.length !== 1 ? 's' : ''}?`,
+    message: `Delete ${pruned.length} sitemap node${pruned.length !== 1 ? 's' : ''} covering ${totalPages} page${totalPages !== 1 ? 's' : ''} currently assigned to them? Assigned pages will be unassigned (Sitemap fields cleared), not deleted from the audit.`,
+    confirmLabel: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
+
+  const items = pruned.map(node => {
+    const item = captureNavDeleteUndoSnapshot(node, 'delete-all');
+    executeDeleteNavNodeCore(node, 'delete-all', 'clear', null);
+    return item;
+  });
+
+  pushUndo({ type: 'nav-delete', items });
+  clearNavMultiSelection();
+  renderNavEditor();
+  showToast(`Deleted ${pruned.length} sitemap node${pruned.length !== 1 ? 's' : ''}`, 'success');
 }
 
 // ─── Nav: URL-based suggestion ────────────────────────────────────────────────
@@ -17346,6 +17692,11 @@ function redo() {
 }
 
 function applyUndoAction(action, isUndo) {
+  if (action.type === 'nav-delete') {
+    if (isUndo) undoNavDelete(action);
+    else redoNavDelete(action);
+    return;
+  }
   const val = isUndo ? action.oldValue : action.newValue;
   state.editedRows[action.origIndex][action.field] = val;
   setDirty(true);
@@ -17354,6 +17705,117 @@ function applyUndoAction(action, isUndo) {
     populateAuditFields(state.editedRows[action.origIndex]);
     applyKkeStyle(state.editedRows[action.origIndex][kkeCol()] || '');
   }
+}
+
+/** Reverses a 'nav-delete' undo action — one or more nodes deleted together in
+ *  a single Cmd+Z-able step. Each item is restored independently (in reverse
+ *  delete order) behind three preconditions, since a structural (splice-based)
+ *  reversal is only safe if nothing else has touched the tree in the meantime:
+ *  an ordinary drag, edit, or delete elsewhere doesn't know or care about a
+ *  pending undo snapshot, so restoring blindly risks silently corrupting or
+ *  displacing an unrelated node. A failed precondition aborts just that item
+ *  (with a toast) rather than proceeding with stale-index splice math. */
+function undoNavDelete(action) {
+  let restoredAny = false;
+
+  action.items.slice().reverse().forEach(item => {
+    // Guard 1 — ID collision: every node-id allocator in this file scans
+    // *current* state.navNodes for its max id with no persistent high-water
+    // mark, so deleting an id can make it available for immediate reuse.
+    const idsInvolved = [item.node.id, ...(item.mode !== 'promote' ? collectAllDescendants(item.node).map(d => d.id) : [])];
+    if (idsInvolved.some(id => state.navNodes.some(n => n.id === id))) {
+      item.restored = false;
+      showToast(`Can't undo "${item.node.label}" — a new node reused its ID since the delete.`, 'error');
+      return;
+    }
+
+    // Guard 2 — parent resolution: distinguish "was legitimately root" from
+    // "parent no longer exists" (never silently fall back to top-level).
+    let targetSiblings;
+    if (item.wasRoot) {
+      targetSiblings = state.navTree;
+    } else {
+      const parent = state.navNodes.find(n => n.id === item.parentId);
+      if (!parent) {
+        item.restored = false;
+        showToast(`Can't undo "${item.node.label}" — its parent no longer exists.`, 'error');
+        return;
+      }
+      targetSiblings = parent.children;
+    }
+
+    // Guard 3 — promote-mode structural precondition: the promoted children
+    // must still be exactly where the delete left them (untouched by any
+    // later drag/edit/delete) before we can safely splice them back out.
+    if (item.mode === 'promote' && item.promotedCount > 0) {
+      const children = item.node.children || [];
+      const stillIntact = children.every((child, i) => {
+        const loc = _findNavNodeLocation(child, state.navTree);
+        return loc && loc.siblings === targetSiblings && loc.idx === item.index + i;
+      });
+      if (!stillIntact) {
+        item.restored = false;
+        showToast(`Can't undo "${item.node.label}" — a promoted child was moved or changed since the delete. Recreate it manually.`, 'error');
+        return;
+      }
+      const insertAt = Math.max(0, Math.min(item.index, targetSiblings.length));
+      targetSiblings.splice(insertAt, item.promotedCount);
+      targetSiblings.splice(insertAt, 0, item.node);
+      children.forEach(child => { child.parentNumber = item.node.number; });
+    } else {
+      const insertAt = Math.max(0, Math.min(item.index, targetSiblings.length));
+      targetSiblings.splice(insertAt, 0, item.node);
+    }
+
+    // Re-add to the flat list (order doesn't affect numbering/rendering, which
+    // walk state.navTree — the ID-collision guard above is what protects the
+    // one existing feature, fixDuplicateNavIds, that does care about order).
+    state.navNodes.push(item.node);
+    if (item.mode !== 'promote') collectAllDescendants(item.node).forEach(d => state.navNodes.push(d));
+
+    item.rowChanges.forEach(({ origIndex, oldValues }) => {
+      Object.assign(state.editedRows[origIndex], oldValues);
+    });
+
+    item.restored = true;
+    restoredAny = true;
+  });
+
+  if (restoredAny) {
+    recalcAllNumbers();
+    state.navTree.forEach(root => recalcDerivedFields(root));
+    resolveNavReferences();
+    invalidateNavPageCountsCache();
+    state.navTreeDirty = true;
+    setDirty(true);
+  }
+  if (_navEditorOpen) renderNavEditor();
+  renderVisibleRows();
+  if (state.selectedIndex !== null) {
+    const selRow = state.editedRows[state.selectedIndex];
+    if (selRow) { updateNavBadge(selRow); renderMetaFields(selRow, state.selectedIndex); }
+  }
+}
+
+/** Re-applies a 'nav-delete' action's deletions (Cmd+Shift+Z). Re-invokes the
+ *  Core delete per successfully-restored item only (an item undoNavDelete had
+ *  to abort was never brought back, so there's nothing live to re-delete), and
+ *  replaces each item's snapshot with a freshly captured one — the node's
+ *  position (and its rows' field values) are re-derived from the live tree
+ *  each time rather than reusing the original recorded indices, so a further
+ *  undo/redo cycle always reflects the current state, not a stale one. `action`
+ *  is the same object the generic redo() already pushed back onto _undoStack —
+ *  mutating action.items in place (rather than pushing a new stack entry) is
+ *  what keeps that single stack slot accurate across repeated cycles. */
+function redoNavDelete(action) {
+  action.items = action.items.map(item => {
+    if (item.restored === false) return item; // nothing to re-delete — was never restored
+    const freshItem = captureNavDeleteUndoSnapshot(item.node, item.mode);
+    executeDeleteNavNodeCore(item.node, item.mode, 'clear', null);
+    return freshItem;
+  });
+  if (_navEditorOpen) renderNavEditor();
+  renderVisibleRows();
 }
 
 // Track KKE changes for undo
@@ -21496,6 +21958,7 @@ function renderTvColConfigList() {
 // ─── Redirect editor ──────────────────────────────────────────────────────────
 
 const _navCollapsed = new Set(); // node IDs that are collapsed in the nav editor
+let _navLastCheckedNodeId = null; // last node id toggled via the bulk-select checkbox, for shift-click range
 
 let _redirectEditorOpen = false;
 const REDIRECT_DEST_COL = 'Redirect_Destination';

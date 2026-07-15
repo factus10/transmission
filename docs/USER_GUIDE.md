@@ -349,7 +349,7 @@ The field bar has two regions.
 
 - **Page thumbnails.** Once you've viewed a page, hovering its sidebar row shows a thumbnail preview — a quick way to recognize a page without clicking back into it. Thumbnails live in memory only and never bloat your file.
 - **Note snippets.** The Notes popover has a **Snippets…** menu for reusable rationale — insert a saved snippet, save the current note as one, or manage the list. Snippets follow you across projects.
-- **Undo and redo.** **Cmd+Z** and **Cmd+Shift+Z** cover KKE changes (up to 100 per session). Tag, note, and sitemap edits aren't undoable, but they're always saved.
+- **Undo and redo.** **Cmd+Z** and **Cmd+Shift+Z** cover KKE changes and sitemap node deletions — single or bulk (up to 100 actions per session). Tag and note edits aren't undoable, but they're always saved.
 - **Build the sitemap without leaving the audit.** The **Sitemap** button places the current page on the sitemap (and if the sitemap is still empty, it offers an inline form — Label prefilled from the title, Slug from the URL — to create its very first node in one click). The **Menu** button adds the page to one of your menus: since menus reference pages that are on the sitemap, it makes sure the page is on the sitemap first, then lets you pick an existing menu, spin up a **+ New menu…**, or (with no menus yet) create your first menu right there. No trip to the Sitemap or Menus view required.
 - **Clean paste.** When you paste into sitemap labels, slugs, or notes, Transmission strips mojibake, stray HTML entities, and invisible characters — while leaving real accented letters (é, ü, ñ) untouched.
 
@@ -471,13 +471,24 @@ If you've both selected rows and applied a filter, your **selection wins**.
 
 ### Placing many pages on the sitemap at once
 
-**Assign to Sitemap…** works differently from the other bulk actions — there's no value to pick, just **Apply**, which opens a small dialog. Filter to the pages you want placed (the **Needs sitemap placement** KKE filter is the obvious starting point), then choose a destination:
+**Assign to Sitemap…** works differently from the other bulk actions — there's no value to pick, just **Apply**, which opens a small dialog.
+
+By default only **Keep** and **Evolve** pages are eligible (checking `Final_KKE` first if it's set, otherwise `KKE_Recommendation` — so an SME override wins). Everything else — Kill, Exclude, unreviewed, and Consolidate — is left off the sitemap unless you check **Include Kill / Exclude / unreviewed pages too**. This matters most when building a **current-state sitemap** for a client conversation (see below) — that's the one routine case where you *do* want everything represented, killed pages included. Even with that box checked, Consolidate pages get one more speed bump: if any are in the batch, a follow-up prompt asks you to confirm including them, since a Consolidate page is being merged into another page's URL rather than getting a destination of its own — easy to sweep in by accident.
+
+Once you know which pages are going, pick a destination:
 
 - **Suggested** — if some of your selected pages already have a *sibling* page placed on the sitemap (e.g. `/about` is already assigned and you're placing `/about/leadership`), the dialog offers that node up front with a one-click **Use this** — the same auto-suggestion the single-page Sitemap picker uses, extended to the whole batch. It shows how many of your pages agree (e.g. "12 of 15 pages").
 - **Use an existing node** — pick any node already in the sitemap; every target page becomes a new child underneath it.
 - **Create a new bucket** — name a fresh node (top-level, or nested under a node you pick) and every target page lands under that instead.
 
-Either way, each page gets its own child node — slug and label are auto-derived from its URL and title, and duplicates are automatically de-duplicated (`-2`, `-3`, …). Pages already placed on the sitemap are skipped and called out in the confirmation. This is a *speed* tool, not a precision one: the goal is getting dozens or hundreds of pages onto the sitemap in one action, then reorganizing them into their final structure with the Sitemap editor's drag-and-drop.
+Then choose how pages get placed under that destination:
+
+- **Direct children of the destination** (the default) — each page becomes its own child node, one level deep. Slug and label are auto-derived from its URL and title, and duplicates are automatically de-duplicated (`-2`, `-3`, …).
+- **Preserve URL structure** — builds nested sections from each page's full URL path (just like Create Sitemap from Audit below), rooted under whatever destination you picked, to a **Bucket depth** you choose. Useful when the batch spans several URL folders and you want that structure to show up as sitemap sections rather than a flat pile of pages. If your destination already corresponds to part of the URL path (e.g. you picked "Products" and the URLs start with `/products/...`), you'll get a redundant nested section — pick a shallower destination or lower the depth to avoid it.
+
+Pages already placed on the sitemap are skipped and called out in the confirmation. This is a *speed* tool, not a precision one: the goal is getting dozens or hundreds of pages onto the sitemap in one action, then reorganizing them into their final structure with the Sitemap editor's drag-and-drop.
+
+> **Building a "current state" sitemap for a client conversation?** Run Assign to Sitemap with **Include Kill / Exclude / unreviewed pages too** checked so the whole site — including what's being killed or merged — is represented. Save that as a dated snapshot (e.g. `project-current-2026-07-15.xlsx`), then duplicate the file and keep refining the copy as your actual forward plan. The two files together make the now-vs-future story easy to show a client.
 
 > **Starting from a blank sitemap?** **Project → Create Sitemap from Audit…** goes one step further than Assign to Sitemap — it reads every eligible page's URL and builds the whole starter tree for you in one pass, no destination to pick. `/about/leadership` becomes **About → Leadership** automatically. Pick a **Bucket depth** (how many URL segments become nested sections — 2 is a good default; anything deeper folds into one page under the deepest bucket) and whether to include Kill/Exclude/unreviewed pages, then Generate. Safe to run again later, too — it only merges (matching section names it already created), never replaces, so it won't duplicate work you've since reorganized by hand.
 
@@ -1026,7 +1037,17 @@ Double-click a label (or click **✎**) for the full editor. It shows read-only 
 
 #### Deleting nodes
 
-The **✕** always confirms first, showing the breadcrumb so you know exactly what you're removing. If the node has children, you choose **Promote children** (delete just this node, children rise to its parent) or **Delete all** (the whole branch). If pages are assigned, you choose **Reassign to parent**, **Reassign to another node…** (a search picker), or **Clear assignments**. Every reassignment is logged.
+The **✕** (hover a row to reveal it) always confirms first, showing the breadcrumb so you know exactly what you're removing. If the node has children, you choose **Promote children** (delete just this node, children rise to its parent) or **Delete all** (the whole branch). If pages are assigned, you choose **Reassign to parent**, **Reassign to another node…** (a search picker), or **Clear assignments**. Every reassignment is logged, and every delete — single or bulk — is undoable with **Cmd+Z**.
+
+#### Selecting and deleting nodes in bulk
+
+Each row has its own checkbox at the left, next to the node number. Click one to select it; **Shift+click** another to select the whole visible range between them (rows hidden inside a collapsed branch are never swept in); click the checkbox in the column header to select every node currently visible. A bar appears above the tree once anything is selected, showing the count and **Delete Selected…** / **Clear Selection**.
+
+**Select Empty Branches** (in the toolbar) finds every branch with zero assigned pages anywhere in its subtree and checks them for you — the fastest way to spot-clean a tree after reorganizing, without hunting for empty leaves by eye. It won't also select an empty branch's children individually; deleting the parent already takes the whole thing.
+
+**Delete Selected…** always deletes the full subtree of each selected node and clears any assignments on pages underneath (pages return to the audit, not deleted — just unassigned). If you'd selected both a node and one of its own descendants, only the ancestor is deleted; the descendant would have gone with it anyway. One confirmation covers the whole batch, and one **Cmd+Z** undoes it — however many nodes it covered.
+
+> **Building a "current state" sitemap** (see [Placing many pages on the sitemap at once](#placing-many-pages-on-the-sitemap-at-once)) routinely leaves branches empty once you start killing or consolidating pages in your forward-planning copy. **Select Empty Branches → Delete Selected…** is the fast way to clear that debris as you go.
 
 #### The editor's columns and drag behavior
 
@@ -1473,7 +1494,7 @@ Internal (hidden from the field bar, saved in the file): `_Flagged`, `_AssessedA
 | **Cmd+Shift+E** | Unified Export dialog |
 | **Cmd+P** | Audit Progress dashboard |
 | **Cmd+,** | Preferences |
-| **Cmd+Z** / **Cmd+Shift+Z** | Undo / Redo (KKE changes only) |
+| **Cmd+Z** / **Cmd+Shift+Z** | Undo / Redo (KKE changes, sitemap node deletions) |
 | **1 / 2 / 3 / 4 / 5 / 0** | Keep / Kill / Evolve / Consolidate / Exclude / Clear (no input focused) |
 | **?** | Keyboard cheat-sheet |
 | **F** | Toggle flag on the selected row |

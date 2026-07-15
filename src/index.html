@@ -432,6 +432,7 @@
             <button id="btn-nav-editor-add-root" class="btn btn-sm btn-ghost">+ Root Node</button>
             <button id="btn-nav-remediate" class="btn btn-sm btn-ghost" title="Ensure all assigned pages have child nodes in the sitemap">Remediate</button>
             <button id="btn-nav-consolidate-candidates" class="btn btn-sm btn-ghost" title="Find sitemap nodes with 2+ pages and consolidate them in bulk">Consolidation Candidates…</button>
+            <button id="btn-nav-select-empty" class="btn btn-sm btn-ghost" title="Select every branch with zero assigned pages anywhere in its subtree">Select Empty Branches</button>
             <div class="ne-export-wrap" style="position:relative;">
               <button id="btn-nav-export" class="btn btn-sm btn-ghost">Export ▾</button>
               <div id="nav-export-menu" class="ne-export-menu hidden">
@@ -490,10 +491,15 @@
           </div>
           <div class="nav-tb-row2">
             <span id="nav-editor-stats"></span>
+            <div id="nav-multi-bar" class="hidden">
+              <span id="nav-multi-bar-label" class="bulk-count"></span>
+              <button id="btn-nav-multi-delete" class="btn btn-sm btn-primary btn-danger">Delete Selected…</button>
+              <button id="btn-nav-multi-clear" class="btn btn-sm btn-ghost">Clear Selection</button>
+            </div>
           </div>
         </div>
         <div id="nav-editor-col-headers">
-          <span class="ne-col-hdr ne-left">Node</span>
+          <span class="ne-col-hdr ne-left"><input type="checkbox" id="nav-select-all-visible" title="Select all visible nodes" /> Node</span>
           <span class="ne-col-resize" data-col="ne-left"></span>
           <span class="ne-col-hdr ne-col-slug">Slug</span>
           <span class="ne-col-resize" data-col="ne-col-slug"></span>
