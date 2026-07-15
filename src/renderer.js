@@ -3223,7 +3223,7 @@ function renderVisibleRows() {
         const span = document.createElement('span');
         // For KKE-type values, use kke-badge styling; for text values, plain
         const normalized = val.toLowerCase().replace(/[^a-z0-9]/g, '-');
-        const isKkeValue = ['keep','kill','evolve','exclude'].includes(val.toLowerCase()) ||
+        const isKkeValue = allKkeStates().some(s => s.toLowerCase() === val.toLowerCase()) ||
                            val.startsWith('Change:') || val === 'Approve';
         if (isKkeValue) {
           span.className = 'kke-badge ' + normalized;
