@@ -1260,6 +1260,12 @@ function addNewRow() {
 
 let _globalSearchMatches = []; // [{origIndex, row}]
 let _globalSearchCurrent = -1;
+// Snapshot of filterText/kkeFilter/groupFilter/fieldFilters taken the first time
+// globalSearchNavigate() has to clear them to reveal an out-of-filter match.
+// null = no filters have been touched yet this search session. Restored by
+// closeGlobalSearch() so the "temporarily" in the clearing code below is real —
+// stepping through matches doesn't permanently blow away the sidebar's filters.
+let _globalSearchFilterSnapshot = null;
 
 function setupGlobalSearch() {
   const bar = $('global-search-bar');
@@ -1270,7 +1276,9 @@ function setupGlobalSearch() {
   document.addEventListener('keydown', e => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
       e.preventDefault();
+      const wasHidden = bar.classList.contains('hidden');
       bar.classList.remove('hidden');
+      if (wasHidden) _globalSearchFilterSnapshot = null; // fresh search session
       input.placeholder = _navEditorOpen ? 'Search sitemap nodes…' : 'Search all columns…';
       input.focus();
       input.select();
@@ -1399,13 +1407,25 @@ function globalSearchNavigate(delta) {
     // Check if the row is in the current filtered set
     const inFiltered = state.filteredRows.some(fr => fr.origIndex === match.origIndex);
     if (!inFiltered) {
-      // Temporarily clear filters to show the row
+      // Temporarily clear filters to show the row — captured once per search
+      // session (see _globalSearchFilterSnapshot) so closeGlobalSearch() can
+      // restore them once the user is done stepping through matches.
+      if (!_globalSearchFilterSnapshot) {
+        _globalSearchFilterSnapshot = {
+          filterText: state.filterText,
+          kkeFilter: [...state.kkeFilter],
+          groupFilter: state.groupFilter,
+          fieldFilters: [...state.fieldFilters],
+        };
+      }
       state.filterText = '';
       els.searchInput.value = '';
       $('btn-clear-search').classList.add('hidden');
       state.kkeFilter = [];
       state.groupFilter = '';
       if (els.groupFilter) els.groupFilter.value = '';
+      state.fieldFilters = [];
+      renderFieldFilterChips();
       renderKkeFilterOptions();
       applyFilter();
     }
@@ -1426,27 +1446,47 @@ function globalSearchGoToRow() {
   if (_navEditorOpen) closeNavEditor();
   if (_redirectEditorOpen) closeRedirectEditor();
 
-  // Clear sidebar filters so the row is visible
+  // Clear sidebar filters so the row is visible — permanent for this explicit
+  // "go to row" action (unlike globalSearchNavigate()'s stepping preview, which
+  // restores on close via _globalSearchFilterSnapshot): the user has deliberately
+  // chosen to jump here, so the filters shouldn't snap back and re-hide it.
   state.filterText = '';
   els.searchInput.value = '';
   $('btn-clear-search').classList.add('hidden');
   state.kkeFilter = [];
   state.groupFilter = '';
   if (els.groupFilter) els.groupFilter.value = '';
+  state.fieldFilters = [];
+  renderFieldFilterChips();
   renderKkeFilterOptions();
   applyFilter();
 
   // Select the row
   selectRow(match.origIndex);
-  closeGlobalSearch();
+  closeGlobalSearch({ restoreFilters: false });
 }
 
-function closeGlobalSearch() {
+function closeGlobalSearch(opts = {}) {
   $('global-search-bar').classList.add('hidden');
   _globalSearchMatches = [];
   _globalSearchCurrent = -1;
   $('global-search-count').textContent = '';
   clearNavSearchHighlight();
+
+  if (opts.restoreFilters !== false && _globalSearchFilterSnapshot) {
+    const snap = _globalSearchFilterSnapshot;
+    state.filterText = snap.filterText;
+    els.searchInput.value = snap.filterText;
+    $('btn-clear-search').classList.toggle('hidden', !snap.filterText);
+    state.kkeFilter = snap.kkeFilter;
+    state.groupFilter = snap.groupFilter;
+    if (els.groupFilter) els.groupFilter.value = snap.groupFilter;
+    state.fieldFilters = snap.fieldFilters;
+    renderFieldFilterChips();
+    renderKkeFilterOptions();
+    applyFilter();
+  }
+  _globalSearchFilterSnapshot = null;
 }
 
 function applySmeFieldsVisibility() {
