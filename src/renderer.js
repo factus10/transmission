@@ -12201,49 +12201,30 @@ function moveMenuItem(menu, draggedId, targetId, zone) {
   renderMenusView();
 }
 
+// Built on the shared openModal() factory so it correctly stacks above (and
+// doesn't clash with) a parent dialog it's launched from -- the previous
+// hand-built version had its own separate Escape listener that raced the
+// shared modal-stack's, so Escape closed the *parent* dialog instead of the
+// picker, and that listener leaked on every close path except Escape itself.
 function showMenuNodePicker(onPick, opts = {}) {
   if (!state.navNodes || state.navNodes.length === 0) {
     showToast('No sitemap yet — build the sitemap first', 'error');
     return;
   }
   const excludeIds = opts.excludeIds instanceof Set ? opts.excludeIds : new Set();
-  const prior = document.querySelector('.menu-node-picker');
-  if (prior) prior.remove();
-  const overlay = document.createElement('div');
-  overlay.className = 'menu-node-picker';
-  // z above openModal dialogs (1000+) so it works when launched from one (e.g. seed dialog)
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:1300;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);';
-  const dialog = document.createElement('div');
-  dialog.style.cssText = 'background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:16px;width:760px;max-width:90vw;max-height:72vh;display:flex;flex-direction:column;box-shadow:0 16px 48px rgba(0,0,0,0.3);';
-  const title = document.createElement('div');
-  title.style.cssText = 'font-size:14px;font-weight:600;margin-bottom:8px;';
-  title.textContent = opts.title || 'Add page reference';
-  dialog.appendChild(title);
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;max-height:60vh;';
   const search = document.createElement('input');
   search.type = 'text';
   search.placeholder = 'Search by label, breadcrumb, number, path…';
-  search.style.cssText = 'width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;margin-bottom:8px;';
-  dialog.appendChild(search);
+  search.style.cssText = 'width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;flex-shrink:0;';
+  wrap.appendChild(search);
   const listWrap = document.createElement('div');
-  listWrap.style.cssText = 'flex:1;overflow-y:auto;border:1px solid var(--border);border-radius:4px;';
-  dialog.appendChild(listWrap);
-  const footer = document.createElement('div');
-  footer.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:10px;';
-  const cancel = document.createElement('button');
-  cancel.className = 'btn btn-sm';
-  cancel.textContent = 'Cancel';
-  footer.appendChild(cancel);
-  dialog.appendChild(footer);
-  overlay.appendChild(dialog);
-  document.body.appendChild(overlay);
+  listWrap.style.cssText = 'flex:1;min-height:120px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;';
+  wrap.appendChild(listWrap);
 
   const ordered = sortNodesForNavigation(state.navNodes);
-  const close = () => overlay.remove();
-  cancel.addEventListener('click', close);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-  document.addEventListener('keydown', function esc(e) {
-    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); }
-  });
 
   const renderList = (filter) => {
     listWrap.innerHTML = '';
@@ -12263,13 +12244,20 @@ function showMenuNodePicker(onPick, opts = {}) {
       opt.innerHTML = `<span style="font-family:var(--font-mono);color:var(--text-muted);">${escapeHtml(n.number)}</span> ${escapeHtml(n.label || '')} <span style="color:var(--text-muted);font-family:var(--font-mono);">/${escapeHtml(n.computedPath || '')}</span>`;
       opt.addEventListener('mouseenter', () => opt.style.background = 'var(--bg-field-bar)');
       opt.addEventListener('mouseleave', () => opt.style.background = '');
-      opt.addEventListener('click', () => { close(); onPick(n); });
+      opt.addEventListener('click', () => { m.close(); onPick(n); });
       listWrap.appendChild(opt);
     });
   };
   search.addEventListener('input', () => renderList(search.value));
+
+  const m = openModal({
+    title: opts.title || 'Add page reference',
+    width: 760,
+    body: wrap,
+    buttons: [{ label: 'Cancel' }],
+  });
+
   renderList('');
-  setTimeout(() => search.focus(), 0);
 }
 
 // Bootstrap a menu by mirroring a branch of the content tree as page references.
