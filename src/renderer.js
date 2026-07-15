@@ -7229,7 +7229,7 @@ function openGlossaryEditor() {
   `;
   document.body.appendChild(overlay);
   document.body.appendChild(dialog);
-  registerModalDismiss(overlay, dialog, () => close());
+  registerModalDismiss(overlay, dialog, () => requestClose());
   // Make Glossary editor draggable (first child div is its header row)
   makeModalDraggable(dialog, { handleSelector: ':scope > div:first-child' });
 
@@ -7240,6 +7240,7 @@ function openGlossaryEditor() {
     groups: Object.assign({}, g.groups),
   };
   let activeTab = 'tags'; // 'tags' | 'groups'
+  let dirty = false;
 
   function bucket() { return activeTab === 'tags' ? working.tags : working.groups; }
   function kind()   { return activeTab === 'tags' ? 'tag' : 'group'; }
@@ -7285,6 +7286,7 @@ function openGlossaryEditor() {
     body.querySelectorAll('._gloss-textarea').forEach(ta => {
       ta.addEventListener('input', () => {
         bucket()[ta.dataset.name] = ta.value;
+        dirty = true;
       });
     });
 
@@ -7345,7 +7347,7 @@ function openGlossaryEditor() {
     if (!name) return;
     const trimmed = name.trim();
     if (!trimmed) return;
-    if (!(trimmed in bucket())) bucket()[trimmed] = '';
+    if (!(trimmed in bucket())) { bucket()[trimmed] = ''; dirty = true; }
     renderList();
   });
 
@@ -7353,9 +7355,24 @@ function openGlossaryEditor() {
     dialog.remove();
     overlay.remove();
   }
-  dialog.querySelector('#_gloss-cancel').addEventListener('click', close);
-  dialog.querySelector('#_gloss-close').addEventListener('click', close);
-  overlay.addEventListener('click', close);
+  /** Gates every dismiss path (Cancel, ×, backdrop click, Esc) behind a
+   *  confirm when there are unsaved edits — a stray click or Esc used to
+   *  silently discard a whole session's worth of typed definitions. */
+  async function requestClose() {
+    if (dirty) {
+      const discard = await confirmDialog({
+        title: 'Unsaved changes',
+        message: 'You have unsaved glossary changes. Discard them?',
+        confirmLabel: 'Discard',
+        danger: true,
+      });
+      if (!discard) return;
+    }
+    close();
+  }
+  dialog.querySelector('#_gloss-cancel').addEventListener('click', requestClose);
+  dialog.querySelector('#_gloss-close').addEventListener('click', requestClose);
+  overlay.addEventListener('click', requestClose);
   dialog.querySelector('#_gloss-export').addEventListener('click', () => exportGlossary(working));
   dialog.querySelector('#_gloss-save').addEventListener('click', () => {
     // Prune empty entries before committing
