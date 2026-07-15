@@ -5268,6 +5268,9 @@ async function saveFile() {
     if (state.newNavNodes.length > 0) state.newNavNodes = [];
     state.navTreeDirty = false;
     if (payload.projectSettings) state.projectSettings = payload.projectSettings;
+    if (result.droppedSettings && result.droppedSettings.length > 0) {
+      showToast(`Saved, but ${result.droppedSettings.join(', ')} — too large for xlsx — was not written. Consider Save As Project… to avoid this limit.`, 'error');
+    }
   }
   if (!result.success) {
     // Put drained changelog entries back so they aren't lost on a failed save
@@ -5336,6 +5339,9 @@ async function exportFullWorkbook() {
   const result = await window.electronAPI.exportWorkbook(payload);
   if (result.success) {
     showToast(`Workbook exported: ${result.filePath.split('/').pop()}`, 'success');
+    if (result.droppedSettings && result.droppedSettings.length > 0) {
+      showToast(`${result.droppedSettings.join(', ')} — too large for xlsx — was not included in this export.`, 'error');
+    }
   } else if (result.error !== 'Cancelled') {
     showToast(`Export failed: ${result.error}`, 'error');
   }
