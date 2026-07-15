@@ -452,18 +452,6 @@ html, body {
   border-left-color: var(--accent);
 }
 
-/* Bulk action bar */
-#bulk-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-field-bar);
-  flex-shrink: 0;
-}
-#bulk-bar.hidden { display: none; }
-
 #stats-bar {
   display: flex;
   align-items: center;
@@ -530,25 +518,11 @@ html, body {
 }
 .btn-icon-tiny:hover { background: var(--bg-hover); color: var(--text); }
 
-#batch-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-audit-bar);
-  flex-shrink: 0;
-  font-size: 12px;
-}
-#batch-bar.hidden { display: none; }
 .bulk-count {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-secondary);
   white-space: nowrap;
-}
-.bulk-clear-btn {
-  margin-left: auto;
 }
 
 .row-num {
@@ -2501,83 +2475,6 @@ body.dragging-popover iframe { pointer-events: none !important; }
 
 /* #rubric-footer styling now provided by the global .modal-footer class. */
 
-/* ── Nav tree modal ──────────────────────────────────────────────────────── */
-
-#navtree-modal {
-  position: fixed;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  background: var(--bg-surface);
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  width: 600px;
-  max-height: 80vh;
-  z-index: 500;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.3);
-}
-
-#navtree-overlay {
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,0.3);
-  z-index: 400;
-}
-
-#navtree-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-#navtree-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px 0;
-}
-
-/* #navtree-footer styling now provided by the global .modal-footer class. */
-
-.navtree-node {
-  padding: 4px 12px 4px 0;
-  font-size: 13px;
-  color: var(--text-primary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  transition: background 100ms;
-}
-.navtree-node:hover { background: var(--bg-hover); }
-.navtree-node.has-gap { color: var(--warning); }
-
-.navtree-toggle {
-  width: 16px;
-  height: 16px;
-  font-size: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.navtree-label { flex: 1; }
-.navtree-count {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
-.navtree-count.zero { color: var(--warning); }
-
-.navtree-children { display: none; }
-.navtree-children.open { display: block; }
-
 /* ── Import/Merge modal ─────────────────────────────────────────────────── */
 
 #import-merge-overlay {
@@ -3543,11 +3440,6 @@ body.dragging-popover iframe { pointer-events: none !important; }
 
 .re-nav-btn:hover { color: var(--accent); background: var(--bg-hover); }
 
-#btn-redirects.redirect-editor-active {
-  background: var(--accent);
-  color: white;
-}
-
 /* ── Nav editor (full panel) ──────────────────────────────────────────── */
 
 #nav-editor {
@@ -4098,12 +3990,6 @@ select.mi-kind { cursor: pointer; font-family: var(--font-sans); border: 1px sol
   border-radius: 3px;
 }
 .tree-row-dragging { opacity: 0.35; }
-
-/* Tree button active state */
-#btn-navtree.nav-editor-active {
-  background: var(--accent);
-  color: white;
-}
 
 /* ── Nav reference nodes ──────────────────────────────────────────────────── */
 

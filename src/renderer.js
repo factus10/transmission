@@ -109,7 +109,6 @@ const state = {
 };
 
 // Hoisted variables used across functions
-let _navTreeFilter = null;  // node ID to filter sidebar by nav tree
 let _duplicateSet = new Set(); // origIndex values that are duplicates
 
 // All KKE states (built-in + custom)
@@ -473,8 +472,6 @@ function bindIPCListeners() {
     showToast('Saved ✓', 'success');
     setDirty(false);
   });
-  window.electronAPI.onMenuExportFiltered(() => exportFilteredRows());
-  window.electronAPI.onMenuExportAudit(() => exportAuditDecisions());
   window.electronAPI.onMenuImportMerge(() => importMergeAudit());
   window.electronAPI.onMenuExportRedirects(() => exportRedirectMap());
   if (window.electronAPI.onMenuExportMigrationTracker) {
@@ -502,7 +499,6 @@ function bindIPCListeners() {
   if (window.electronAPI.onMenuDesignPatternLibrary) {
     window.electronAPI.onMenuDesignPatternLibrary(() => openDesignPatternLibraryEditor());
   }
-  window.electronAPI.onMenuGaKkeSettings(() => openGaKkeConfigDialog());
   if (window.electronAPI.onMenuSuggestedKkeRecompute) {
     window.electronAPI.onMenuSuggestedKkeRecompute(() => {
       const result = computeSuggestedKke();
@@ -511,9 +507,6 @@ function bindIPCListeners() {
         showToast(`Suggested_KKE: ${result.computed} computed, ${result.blank} blank${dis}`, 'success');
       }
     });
-  }
-  if (window.electronAPI.onMenuSuggestedKkeSettings) {
-    window.electronAPI.onMenuSuggestedKkeSettings(() => openSuggestedKkeSettings());
   }
   if (window.electronAPI.onMenuRubricBatch) {
     window.electronAPI.onMenuRubricBatch(() => runBatchAssessment());
@@ -1699,6 +1692,13 @@ function _ensureModalKeyHandler() {
       // Don't hijack Enter inside multi-line inputs.
       const tag = (e.target && e.target.tagName || '').toLowerCase();
       if (tag === 'textarea') return;
+      // Don't hijack Enter meant for the focused control itself (a button, link, or
+      // checkbox each have their own native Enter/click behavior), or fired while
+      // focus isn't even inside this modal — both previously fell through to fire
+      // the primary/destructive action regardless (e.g. Enter on a focused Cancel
+      // button in a danger confirmDialog ran the destructive action instead).
+      if (tag === 'button' || tag === 'a' || (tag === 'input' && e.target.type === 'checkbox')) return;
+      if (!top.overlay || !top.overlay.contains(e.target)) return;
       if (top.primaryBtn && !e.shiftKey) {
         e.preventDefault();
         top.primaryBtn.click();
@@ -2780,11 +2780,6 @@ function applyFilter() {
       const val = String(row[groupCol()] || '').trim();
       return val === gf;
     });
-  }
-
-  // Nav tree filter
-  if (_navTreeFilter) {
-    rows = rows.filter(({ row }) => String(row['Sitemap_ID'] || '').trim() === _navTreeFilter);
   }
 
   state.filteredRows = rows;
@@ -5626,6 +5621,8 @@ function acceptSuggestion() {
   if (!val) return;
 
   const row = state.editedRows[state.selectedIndex];
+  const oldVal = row[kkeCol()] || '';
+  recordKkeChange(state.selectedIndex, oldVal, val); // log + undo, same as every other KKE write
   row[kkeCol()] = val;
   // Assessment history
   row['_AssessedAt'] = new Date().toISOString();
@@ -5645,13 +5642,14 @@ async function runBatchAssessment() {
   if (!state.claudeApiKey) { showToast('API key required for batch assessment', 'error'); return; }
   const rows = state.filteredRows;
   if (rows.length === 0) return;
-  if (!(await confirmDialog({ title: 'Batch AI Assessment', message: `Assess ${rows.length} rows via AI? This may take a while and use API credits.`, confirmLabel: 'Assess' }))) return;
+  if (!(await confirmDialog({ title: 'Batch AI Assessment', message: `Assess ${rows.length} rows via AI? This may take a while and use API credits.\n\nYour human KKE column is not changed — results feed Suggested_KKE for you to confirm or override.`, confirmLabel: 'Assess' }))) return;
 
   _batchAssessAbort = false;
   closeAssessPopover();
 
   // Show progress in toast
   const { rubrics } = await window.electronAPI.loadRubrics();
+  const statusMap = { keep: 'Keep', kill: 'Kill', evolve: 'Evolve', exclude: 'Exclude' };
   let done = 0;
   let errors = 0;
 
@@ -5670,14 +5668,9 @@ async function runBatchAssessment() {
         row, rubrics, apiKey: state.claudeApiKey
       });
 
-      if (llmResult.recommendation) {
-        row[kkeCol()] = llmResult.recommendation;
-        row['_AssessmentResult'] = llmResult.recommendation;
-      } else if (fieldResult.suggestion) {
-        const statusMap = { keep: 'Keep', kill: 'Kill', evolve: 'Evolve', exclude: 'Exclude' };
-        row[kkeCol()] = statusMap[fieldResult.suggestion] || '';
-        row['_AssessmentResult'] = row[kkeCol()];
-      }
+      const rec = llmResult.recommendation
+        || (fieldResult.suggestion ? statusMap[fieldResult.suggestion] : '');
+      if (rec) row['_AssessmentResult'] = rec; // feeds Suggested_KKE — never touches the human KKE column
     } catch (e) {
       errors++;
     }
@@ -5691,7 +5684,7 @@ async function runBatchAssessment() {
   computeSuggestedKke();
   renderVisibleRows();
   if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
-  showToast(`Batch assessment complete: ${done} rows${errors ? `, ${errors} errors` : ''}`, 'success');
+  showToast(`Batch assessment complete: ${done} row${done !== 1 ? 's' : ''}${errors ? `, ${errors} errors` : ''} — review Suggested_KKE`, 'success');
 }
 
 /**
@@ -7686,7 +7679,7 @@ function pickWinner(sources, weights) {
   // Weighted tally per rec
   const tally = {}; // rec → total weight
   for (const s of sources) {
-    const w = weights[s.source.toLowerCase()] || 1.0;
+    const w = weights[s.source.toLowerCase()] ?? 1.0;
     tally[s.rec] = (tally[s.rec] || 0) + w;
   }
   // Find the rec with max tally
@@ -7801,93 +7794,6 @@ function updateSuggestedKkeBadge(row) {
 
   // Click to show popover (simple: alert-style modal)
   badge.onclick = () => showSuggestedKkePopover(badge, payload);
-}
-
-/** Settings dialog for tuning per-source weights used by computeSuggestedKke. */
-function openSuggestedKkeSettings() {
-  document.getElementById('_skp-settings-overlay')?.remove();
-  const cfg = suggestedKkeConfig();
-  const weights = { ...defaultSourceWeights(), ...(cfg.weights || {}) };
-
-  const overlay = document.createElement('div');
-  overlay.id = '_skp-settings-overlay';
-  overlay.className = 'modal-overlay';
-  overlay.style.zIndex = '900';
-
-  const modal = document.createElement('div');
-  modal.className = 'modal-dialog skp-settings-modal';
-  modal.addEventListener('click', e => e.stopPropagation());
-  modal.style.width = 'min(680px, 62vw)';
-  modal.style.maxHeight = '80vh';
-
-  const lastRun = cfg.lastRun
-    ? `<div class="skp-foot">Last run: ${cfg.lastRun.computed} computed · ${cfg.lastRun.blank} blank · ${cfg.lastRun.disagreements} disagreement${cfg.lastRun.disagreements !== 1 ? 's' : ''} of ${cfg.lastRun.total} total</div>`
-    : '';
-
-  modal.innerHTML = `
-    <div class="modal-header">
-      <h2 style="margin:0;">Suggested KKE Settings</h2>
-      <button class="modal-close" id="_skp-close" title="Close">×</button>
-    </div>
-    <div class="modal-body" style="padding:16px;">
-      <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px;">
-        Source weights tune which signal wins when sources disagree. Higher weight = preferred. Equal weights = first-source-wins tiebreak.
-      </p>
-      <div class="skp-row" style="padding:8px 0;">
-        <span class="skp-src" style="min-width:64px;">GA</span>
-        <input type="number" id="_skp-weight-ga" min="0" max="5" step="0.1" value="${weights.ga}" style="width:80px;height:26px;padding:0 6px;border:1px solid var(--border);border-radius:4px;" />
-        <span class="skp-detail">Analytics-driven (sessions, engagement, dwell, depth)</span>
-      </div>
-      <div class="skp-row" style="padding:8px 0;">
-        <span class="skp-src" style="min-width:64px;">Rubric</span>
-        <input type="number" id="_skp-weight-rubric" min="0" max="5" step="0.1" value="${weights.rubric}" style="width:80px;height:26px;padding:0 6px;border:1px solid var(--border);border-radius:4px;" />
-        <span class="skp-detail">Field-rule + LLM assessment</span>
-      </div>
-      ${lastRun}
-    </div>
-    <div class="modal-footer" style="display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);">
-      <button id="_skp-recompute" class="btn btn-sm btn-ghost">Save &amp; Recompute</button>
-      <span style="flex:1;"></span>
-      <button id="_skp-cancel" class="btn btn-sm btn-ghost">Cancel</button>
-      <button id="_skp-save" class="btn btn-sm btn-primary">Save</button>
-    </div>
-  `;
-
-  overlay.appendChild(modal);
-  document.body.appendChild(overlay);
-  makeModalDraggable(modal);
-
-  const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
-  const onKey = (e) => { if (e.key === 'Escape') close(); };
-  document.addEventListener('keydown', onKey);
-  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-  modal.querySelector('#_skp-close').addEventListener('click', close);
-  modal.querySelector('#_skp-cancel').addEventListener('click', close);
-
-  function commit() {
-    const ga = parseFloat(modal.querySelector('#_skp-weight-ga').value);
-    const rubric = parseFloat(modal.querySelector('#_skp-weight-rubric').value);
-    cfg.weights = {
-      ga: isFinite(ga) && ga >= 0 ? ga : 1.0,
-      rubric: isFinite(rubric) && rubric >= 0 ? rubric : 1.0
-    };
-    state.projectSettings.suggestedKkeConfig = cfg;
-    setDirty(true);
-  }
-  modal.querySelector('#_skp-save').addEventListener('click', () => {
-    commit();
-    showToast('Suggested KKE weights saved', 'success');
-    close();
-  });
-  modal.querySelector('#_skp-recompute').addEventListener('click', () => {
-    commit();
-    close();
-    const result = computeSuggestedKke();
-    if (result) {
-      const dis = result.disagreements > 0 ? ` · ${result.disagreements} disagreement${result.disagreements !== 1 ? 's' : ''}` : '';
-      showToast(`Suggested_KKE recomputed: ${result.computed} · ${result.blank} blank${dis}`, 'success');
-    }
-  });
 }
 
 function showSuggestedKkePopover(anchor, payload) {
@@ -10893,11 +10799,11 @@ const _MOJIBAKE_MAP = {
   '√â':'É','√Å':'Á','√ç':'Í','√ñ':'Ö','√ú':'Ü','√ë':'Ñ','√á':'Ç','√ì':'Ó','√ö':'Ú',
   // UTF-8-as-Latin-1 family — common Latin-1 supplement chars get an extra Â prefix
   'Â·':'·','Â°':'°','Â¢':'¢','Â£':'£','Â¤':'¤','Â¥':'¥','Â¦':'¦','Â§':'§','Â¨':'¨',
-  'Â©':'©','Âª':'»','Â«':'«','Â¬':'¬','Â®':'®','Â¯':'¯',
+  'Â©':'©','Âª':'ª','Â«':'«','Â¬':'¬','Â®':'®','Â¯':'¯',
   'Â±':'±','Â²':'²','Â³':'³','Â´':'´','Âµ':'µ','Â¶':'¶','Â¸':'¸','Â¹':'¹',
   'Âº':'º','Â»':'»','Â¼':'¼','Â½':'½','Â¾':'¾','Â¿':'¿',
   // Latin-1 family — smart-quote / dash mojibake (Windows-1252 → UTF-8 → Latin-1)
-  'â€™':"'",'â€˜':"'",'â€œ':'"','â€':'"','â€':'"',
+  'â€™':"'",'â€˜':"'",'â€œ':'"','â€':'"',
   'â€“':'–','â€”':'—','â€¦':'…','â€¢':'•',
   'Ã©':'é','Ã¨':'è','Ãª':'ê','Ã«':'ë',
   'Ã ':'à','Ã¡':'á','Ã¢':'â','Ã¤':'ä',
@@ -11052,7 +10958,7 @@ async function promptClearNavAssignment(origIndex, navID, navDest) {
   document.body.appendChild(overlay);
   document.body.appendChild(dialog);
 
-  function close() { dialog.remove(); overlay.remove(); }
+  function close() { dialog.remove(); overlay.remove(); document.removeEventListener('keydown', onKey); }
   dialog.querySelector('#_nbc-cancel').addEventListener('click', close);
   overlay.addEventListener('click', close);
 
@@ -11088,10 +10994,12 @@ async function promptClearNavAssignment(origIndex, navID, navDest) {
     refreshRowInList(origIndex);
     close();
   });
-  // Esc closes
+  // Esc closes; Enter accepts. Both routes ultimately call close() (Enter via the
+  // Clear button's own click handler), which removes this listener -- so it can't
+  // outlive the dialog and fire against a stale row later.
   function onKey(e) {
-    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
-    if (e.key === 'Enter')  { e.preventDefault(); dialog.querySelector('#_nbc-clear').click(); document.removeEventListener('keydown', onKey); }
+    if (e.key === 'Escape') { close(); }
+    if (e.key === 'Enter')  { e.preventDefault(); dialog.querySelector('#_nbc-clear').click(); }
   }
   document.addEventListener('keydown', onKey);
 }
@@ -11149,18 +11057,6 @@ function updateRedirectBadge(row) {
 let _navEditorOpen = false;
 
 function setupNavTree() {
-  // Tree button moved to the view switcher (Chunk iii). Toggle is wired via menu listener.
-  // The legacy in-audit-bar #btn-navtree no longer exists.
-  // Old modal close buttons still work as fallback
-  $('btn-navtree-close').addEventListener('click', closeNavTree);
-  $('navtree-overlay').addEventListener('click', closeNavTree);
-  $('btn-navtree-clear-filter').addEventListener('click', () => {
-    _navTreeFilter = null;
-    $('btn-navtree-clear-filter').classList.add('hidden');
-    applyFilter();
-    closeNavTree();
-  });
-
   // Nav editor buttons
   $('btn-nav-editor-close').addEventListener('click', () => closeNavEditor());
   $('btn-nav-editor-add-root').addEventListener('click', addNavRootNode);
@@ -12194,49 +12090,30 @@ function moveMenuItem(menu, draggedId, targetId, zone) {
   renderMenusView();
 }
 
+// Built on the shared openModal() factory so it correctly stacks above (and
+// doesn't clash with) a parent dialog it's launched from -- the previous
+// hand-built version had its own separate Escape listener that raced the
+// shared modal-stack's, so Escape closed the *parent* dialog instead of the
+// picker, and that listener leaked on every close path except Escape itself.
 function showMenuNodePicker(onPick, opts = {}) {
   if (!state.navNodes || state.navNodes.length === 0) {
     showToast('No sitemap yet — build the sitemap first', 'error');
     return;
   }
   const excludeIds = opts.excludeIds instanceof Set ? opts.excludeIds : new Set();
-  const prior = document.querySelector('.menu-node-picker');
-  if (prior) prior.remove();
-  const overlay = document.createElement('div');
-  overlay.className = 'menu-node-picker';
-  // z above openModal dialogs (1000+) so it works when launched from one (e.g. seed dialog)
-  overlay.style.cssText = 'position:fixed;inset:0;z-index:1300;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);';
-  const dialog = document.createElement('div');
-  dialog.style.cssText = 'background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:16px;width:760px;max-width:90vw;max-height:72vh;display:flex;flex-direction:column;box-shadow:0 16px 48px rgba(0,0,0,0.3);';
-  const title = document.createElement('div');
-  title.style.cssText = 'font-size:14px;font-weight:600;margin-bottom:8px;';
-  title.textContent = opts.title || 'Add page reference';
-  dialog.appendChild(title);
+
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;max-height:60vh;';
   const search = document.createElement('input');
   search.type = 'text';
   search.placeholder = 'Search by label, breadcrumb, number, path…';
-  search.style.cssText = 'width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;margin-bottom:8px;';
-  dialog.appendChild(search);
+  search.style.cssText = 'width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;flex-shrink:0;';
+  wrap.appendChild(search);
   const listWrap = document.createElement('div');
-  listWrap.style.cssText = 'flex:1;overflow-y:auto;border:1px solid var(--border);border-radius:4px;';
-  dialog.appendChild(listWrap);
-  const footer = document.createElement('div');
-  footer.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:10px;';
-  const cancel = document.createElement('button');
-  cancel.className = 'btn btn-sm';
-  cancel.textContent = 'Cancel';
-  footer.appendChild(cancel);
-  dialog.appendChild(footer);
-  overlay.appendChild(dialog);
-  document.body.appendChild(overlay);
+  listWrap.style.cssText = 'flex:1;min-height:120px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;';
+  wrap.appendChild(listWrap);
 
   const ordered = sortNodesForNavigation(state.navNodes);
-  const close = () => overlay.remove();
-  cancel.addEventListener('click', close);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-  document.addEventListener('keydown', function esc(e) {
-    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); }
-  });
 
   const renderList = (filter) => {
     listWrap.innerHTML = '';
@@ -12256,13 +12133,20 @@ function showMenuNodePicker(onPick, opts = {}) {
       opt.innerHTML = `<span style="font-family:var(--font-mono);color:var(--text-muted);">${escapeHtml(n.number)}</span> ${escapeHtml(n.label || '')} <span style="color:var(--text-muted);font-family:var(--font-mono);">/${escapeHtml(n.computedPath || '')}</span>`;
       opt.addEventListener('mouseenter', () => opt.style.background = 'var(--bg-field-bar)');
       opt.addEventListener('mouseleave', () => opt.style.background = '');
-      opt.addEventListener('click', () => { close(); onPick(n); });
+      opt.addEventListener('click', () => { m.close(); onPick(n); });
       listWrap.appendChild(opt);
     });
   };
   search.addEventListener('input', () => renderList(search.value));
+
+  const m = openModal({
+    title: opts.title || 'Add page reference',
+    width: 760,
+    body: wrap,
+    buttons: [{ label: 'Cancel' }],
+  });
+
   renderList('');
-  setTimeout(() => search.focus(), 0);
 }
 
 // Bootstrap a menu by mirroring a branch of the content tree as page references.
@@ -12793,10 +12677,14 @@ function generateNavTreemap(opts) {
   const depthLimit = opts.depth || null;
   const colorBy = opts.colorBy || 'kke';
 
+  const pageCounts = computeSubtreePageCounts();
+  const kkeBreakdowns = computeSubtreeKkeBreakdown();
   const ctx = {
     colorBy,
-    subtreeCounts: computeSubtreePageCounts(),
-    kkeBreakdown: computeSubtreeKkeBreakdown(),
+    subtreeCounts: pageCounts.totals,
+    directCounts: pageCounts.direct,
+    kkeBreakdown: kkeBreakdowns.totals,
+    directKkeBreakdown: kkeBreakdowns.direct,
     sectionColors: computeSectionColorMap(),
     fieldDefs: navSitemapFieldDefs(),
     fieldColorMaps: {},
@@ -13408,20 +13296,24 @@ function computeFieldColorMap(fieldKey, fieldDef) {
   return map;
 }
 
-function resolveTreemapNodeColor(node, topLabel, ctx) {
+/** breakdownOverride: use this KKE breakdown instead of ctx.kkeBreakdown[node.id]
+ *  — needed for a container node's own self-representation leaf, whose color
+ *  should reflect just its directly-assigned pages, not its whole subtree. */
+function resolveTreemapNodeColor(node, topLabel, ctx, breakdownOverride) {
   if (ctx.colorBy === 'section') return ctx.sectionColors[topLabel] || '#9aa0ab';
   if (ctx.colorBy === 'kke') {
-    const dom = dominantKke(ctx.kkeBreakdown[node.id] || {});
+    const dom = dominantKke(breakdownOverride || ctx.kkeBreakdown[node.id] || {});
     return dom ? treemapKkeColor(dom) : '#9aa0ab';
   }
   const fieldMap = ctx.fieldColorMaps[ctx.colorBy];
   return (fieldMap && fieldMap[node[ctx.colorBy] || '']) || '#9aa0ab';
 }
 
-function treemapSubtitle(node, value, ctx) {
+/** breakdownOverride: see resolveTreemapNodeColor() — same reason. */
+function treemapSubtitle(node, value, ctx, breakdownOverride) {
   const pages = value + (value === 1 ? ' page' : ' pages');
   if (ctx.colorBy === 'kke') {
-    const breakdown = ctx.kkeBreakdown[node.id] || {};
+    const breakdown = breakdownOverride || ctx.kkeBreakdown[node.id] || {};
     const dom = dominantKke(breakdown);
     if (dom && value > 0) return pages + ' · ' + Math.round((breakdown[dom] / value) * 100) + '% ' + dom;
     return pages;
@@ -13437,7 +13329,16 @@ function treemapSubtitle(node, value, ctx) {
  *  ctx.depthLimit it recurses normally; at the limit it stops and reports the
  *  node's *subtree* totals instead of children — the "rollup" behavior that
  *  keeps a depth-limited treemap's box sizes/colors meaningful. `depthLimit`
- *  of null/undefined means unlimited (never rolls up). */
+ *  of null/undefined means unlimited (never rolls up).
+ *
+ *  A node can be both a container AND a directly-assigned page (the normal
+ *  case — see createSitemapFromAudit()). Its `value` is the full subtree
+ *  count (direct + descendants), but if only `children` were emitted, their
+ *  values would sum to less than that — squarify would then scale them up to
+ *  fill the whole box, silently giving the node's own pages zero visible
+ *  area. When there are directly-assigned pages, push a synthetic "self" leaf
+ *  alongside the real children so the node's own share of the subtree gets
+ *  its own box, colored/labeled from its own pages rather than the subtree's. */
 function buildTreemapNode(node, topLabel, depthLimit, currentDepth, ctx) {
   const value = ctx.subtreeCounts[node.id] || 0;
   const isRolledUp = depthLimit != null && currentDepth >= depthLimit;
@@ -13445,6 +13346,17 @@ function buildTreemapNode(node, topLabel, depthLimit, currentDepth, ctx) {
   const out = { id: node.id, label: node.label || '(unnamed)', value };
   if (kids.length) {
     out.children = kids.map(c => buildTreemapNode(c, topLabel, depthLimit, currentDepth + 1, ctx));
+    const direct = ctx.directCounts[node.id] || 0;
+    if (direct > 0) {
+      const directBreakdown = ctx.directKkeBreakdown[node.id] || {};
+      out.children.push({
+        id: node.id + ':self',
+        label: node.label || '(unnamed)',
+        value: direct,
+        color: resolveTreemapNodeColor(node, topLabel, ctx, directBreakdown),
+        subtitle: treemapSubtitle(node, direct, ctx, directBreakdown),
+      });
+    }
   } else {
     out.color = resolveTreemapNodeColor(node, topLabel, ctx);
     out.subtitle = treemapSubtitle(node, value, ctx);
@@ -14470,7 +14382,7 @@ function cascadeNavChangesToRows(oldPaths) {
     return baseUrl ? baseUrl + '/' + p.replace(/^\//, '') : '/' + p.replace(/^\//, '');
   };
 
-  state.editedRows.forEach(row => {
+  state.editedRows.forEach((row, i) => {
     const navID = row['Sitemap_ID'] || '';
     if (!navID) return;
     const node = state.navNodes.find(n => n.id === navID);
@@ -14507,7 +14419,7 @@ function cascadeNavChangesToRows(oldPaths) {
         if (existing === oldAutoUrl || existing === '/' + oldBase || existing === oldBase) {
           const newRedirect = pathToRedirectUrl(newBase);
           if (newRedirect !== existing) {
-            logChange(row._rowIndex ?? state.editedRows.indexOf(row), 'Redirect_Destination', existing, newRedirect);
+            logChange(i, 'Redirect_Destination', existing, newRedirect);
             row['Redirect_Destination'] = newRedirect;
           }
         }
@@ -15031,7 +14943,11 @@ function invalidateNavPageCountsCache() { _navPageCountsCacheMap = null; }
  *  KKE-breakdown subtitle's percentage from exceeding 100%: both this value
  *  and computeSubtreeKkeBreakdown() total the same rows, so one is always a
  *  share of the other. Always walks the complete tree; buildTreemapNode()
- *  decides where to stop recursing and read these. */
+ *  decides where to stop recursing and read these.
+ *  Returns { direct, totals } — `direct[id]` is just the pages assigned
+ *  straight to that node (not its descendants); buildTreemapNode() needs
+ *  this to give a node that's both a container and a page its own visible
+ *  box instead of letting its children silently absorb that share of area. */
 function computeSubtreePageCounts() {
   const direct = {};
   (state.editedRows || []).forEach(r => {
@@ -15047,14 +14963,16 @@ function computeSubtreePageCounts() {
     return total;
   }
   (state.navTree || []).forEach(walk);
-  return totals;
+  return { direct, totals };
 }
 
 /** Bottom-up KKE tally per node's full subtree: node id -> { [kkeLabel]: count }.
  *  Same effective-KKE resolution as elsewhere (Final_KKE wins over
  *  KKE_Recommendation), but unlike _navPageCountsCache() this does NOT
  *  exclude Kill/Consolidate rows — what's happening to the content is
- *  exactly what this view is for. */
+ *  exactly what this view is for.
+ *  Returns { direct, totals } — see computeSubtreePageCounts() for why
+ *  buildTreemapNode() needs the direct-only breakdown too. */
 function computeSubtreeKkeBreakdown() {
   const direct = {};
   (state.editedRows || []).forEach(r => {
@@ -15075,7 +14993,7 @@ function computeSubtreeKkeBreakdown() {
     return merged;
   }
   (state.navTree || []).forEach(walk);
-  return totals;
+  return { direct, totals };
 }
 
 /** Most frequent KKE value in a breakdown map, or null if empty. */
@@ -15089,9 +15007,7 @@ function dominantKke(breakdown) {
 
 /** Resolve a KKE label to an actual color (not a CSS var) — the treemap
  *  renders inside an isolated webview with no access to the host's :root
- *  custom properties, so colors must be pre-resolved before crossing over.
- *  Includes Consolidate, which the older kkeColor()/resolvedKkeColor()
- *  helpers omit. */
+ *  custom properties, so colors must be pre-resolved before crossing over. */
 function treemapKkeColor(label) {
   const map = { Keep: '--kke-keep', Kill: '--kke-kill', Evolve: '--kke-evolve', Consolidate: '--kke-consolidate', Exclude: '--kke-exclude' };
   if (map[label]) return getComputedStyle(document.documentElement).getPropertyValue(map[label]).trim();
@@ -16140,13 +16056,6 @@ function executeDeleteNavNode(node, mode, assignAction, reassignTarget) {
   renderNavEditor();
 }
 
-// ─── Nav tree: legacy modal open/close for old overlay references ──────
-
-function closeNavTree() {
-  $('navtree-overlay').classList.add('hidden');
-  $('navtree-modal').classList.add('hidden');
-}
-
 // ─── Nav: URL-based suggestion ────────────────────────────────────────────────
 
 function suggestNavFromUrl(url) {
@@ -16296,6 +16205,8 @@ function createNavChild() {
   parent.children.push(newNode);
   state.navNodes.push(newNode);
   state.newNavNodes.push(newNode);
+  state.navTreeDirty = true; // without this the new node is never written to nav_nodes on save
+  setDirty(true);
 
   // Hide form, rebuild selects with new child selected
   els.navNewChild.classList.add('hidden');
@@ -16791,7 +16702,7 @@ function gatherProgressStats() {
 
 /** KKE color map (CSS variable values resolved at call time) */
 function kkeColor(label) {
-  const map = { Keep: '--kke-keep', Kill: '--kke-kill', Evolve: '--kke-evolve', Exclude: '--kke-exclude' };
+  const map = { Keep: '--kke-keep', Kill: '--kke-kill', Evolve: '--kke-evolve', Consolidate: '--kke-consolidate', Exclude: '--kke-exclude' };
   if (map[label]) return `var(${map[label]})`;
   const custom = state.customKkeStates.find(s => s.label === label);
   return custom ? custom.color : 'var(--text-primary)';
@@ -16799,7 +16710,7 @@ function kkeColor(label) {
 
 /** Resolve a CSS variable to its computed value (for PDF) */
 function resolvedKkeColor(label) {
-  const map = { Keep: '--kke-keep', Kill: '--kke-kill', Evolve: '--kke-evolve', Exclude: '--kke-exclude' };
+  const map = { Keep: '--kke-keep', Kill: '--kke-kill', Evolve: '--kke-evolve', Consolidate: '--kke-consolidate', Exclude: '--kke-exclude' };
   if (map[label]) return getComputedStyle(document.documentElement).getPropertyValue(map[label]).trim();
   const custom = state.customKkeStates.find(s => s.label === label);
   return custom ? custom.color : '#333';
@@ -16807,7 +16718,7 @@ function resolvedKkeColor(label) {
 
 /** Resolve a CSS variable to its computed value */
 function resolvedKkeBgColor(label) {
-  const map = { Keep: '--kke-keep-bg', Kill: '--kke-kill-bg', Evolve: '--kke-evolve-bg', Exclude: '--kke-exclude-bg' };
+  const map = { Keep: '--kke-keep-bg', Kill: '--kke-kill-bg', Evolve: '--kke-evolve-bg', Consolidate: '--kke-consolidate-bg', Exclude: '--kke-exclude-bg' };
   if (map[label]) return getComputedStyle(document.documentElement).getPropertyValue(map[label]).trim();
   const custom = state.customKkeStates.find(s => s.label === label);
   return custom ? custom.color + '33' : '#33333333';
@@ -17010,19 +16921,6 @@ function renderKkeButtons() {
     btn.textContent = label;
     els.kkeButtons.appendChild(btn);
   });
-
-  // Bulk KKE buttons
-  const bulkGroup = document.querySelector('#bulk-bar .kke-btn-group');
-  if (bulkGroup) {
-    bulkGroup.innerHTML = '';
-    allKkeStates().forEach(label => {
-      const btn = document.createElement('button');
-      btn.className = 'kke-btn bulk-kke-btn';
-      btn.dataset.kke = label;
-      btn.textContent = label;
-      bulkGroup.appendChild(btn);
-    });
-  }
 
   // Inject CSS for custom states
   let styleEl = document.getElementById('custom-kke-styles');
@@ -18229,18 +18127,26 @@ function isFragmentRow(row) {
   return String(row['Content_Nature'] || '').trim() === 'Content Object';
 }
 
-function resolveRedirectDestinations() {
+// Shared resolver — the single place that knows how to chase a redirect destination
+// through Consolidate chains, nav Computed Path, and the "404" sentinel. Used by
+// resolveRedirectDestinations() (writes Redirect_Destination on save), the Redirect
+// Editor's live preview, and (via resolveRedirectDestinations()) the CSV export and the
+// Migration Tracker's Redirects sheet — so all four surfaces agree by construction
+// instead of re-deriving the same logic independently.
+function buildRedirectResolverContext() {
   const urlCol = state.urlColumn || 'Address';
-  const destCol = 'Redirect_Destination';
   const baseUrl = getRedirectBaseUrl();
   const defaultRedirectUrl = (state.projectSettings.defaultRedirectUrl || '').trim();
 
-  // Build a URL → row lookup for consolidate chain resolution
+  // Build a URL → row lookup for consolidate chain resolution, and an id → node lookup
+  // for sitemap-node redirect targets — both O(1) instead of a per-row linear scan.
   const rowByUrl = new Map();
   state.editedRows.forEach(r => {
     const u = String(r[urlCol] || '').trim();
     if (u) rowByUrl.set(u, r);
   });
+  const nodeById = new Map();
+  (state.navNodes || []).forEach(n => { if (n.id) nodeById.set(n.id, n); });
 
   // Given a page's target URL, chase it through consolidate/computed-path to find its final URL.
   // The literal sentinel "404" is propagated unchanged — if a consolidate/redirect target is 404,
@@ -18252,9 +18158,9 @@ function resolveRedirectDestinations() {
     visited.add(startUrl);
     const target = rowByUrl.get(startUrl);
     if (!target) return startUrl; // external or not in inventory — use as-is
-    const targetKke = String(target[kkeCol()] || '').trim().toLowerCase();
+    const targetKke = String(target[finalKkeCol()] || target[kkeCol()] || '').trim().toLowerCase();
     // If the target itself is set to 404, propagate
-    const targetExplicit = String(target[destCol] || '').trim();
+    const targetExplicit = String(target[REDIRECT_DEST_COL] || '').trim();
     if (targetExplicit === '404') return '404';
     // If the target is itself being consolidated, follow the chain (via its identity)
     if (targetKke === 'consolidate') {
@@ -18271,56 +18177,79 @@ function resolveRedirectDestinations() {
     return startUrl;
   };
 
+  // Auto-derived destination for a row, given its effective KKE (finalKkeCol() ||
+  // kkeCol() — a Final_KKE from SME resolve takes precedence, same convention as
+  // buildRedirectsSheet). Pure read: does not look at or preserve any manual override
+  // already sitting in Redirect_Destination — callers decide whether to keep that.
+  function computeAutoDestination(row, kke) {
+    const selfUrl = String(row[urlCol] || '').trim();
+    if (kke === 'consolidate') {
+      const targetId = consolidateTargetAddr(row);
+      if (!targetId) return '';
+      return resolveFinalUrl(targetId, new Set([selfUrl]));
+    }
+    if (kke === 'kill') {
+      // Priority: consolidation master > sitemap node path > default destination > blank
+      let resolved = '';
+      const consolidateTarget = consolidateTargetAddr(row);
+      if (consolidateTarget) resolved = resolveFinalUrl(consolidateTarget, new Set([selfUrl]));
+      if (!resolved) {
+        const navID = row['Sitemap_ID'] || '';
+        const node = navID ? nodeById.get(navID) : null;
+        if (node && node.computedPath) {
+          resolved = baseUrl ? baseUrl + '/' + node.computedPath.replace(/^\//, '') : '/' + node.computedPath.replace(/^\//, '');
+        }
+      }
+      if (!resolved && defaultRedirectUrl) resolved = defaultRedirectUrl;
+      return resolved;
+    }
+    // Non-Kill/Consolidate: a redirect is only needed if the URL itself is moving via nav mapping
+    const computed = String(row['Computed Path'] || '').trim();
+    if (!computed) return '';
+    let srcPath = '';
+    try { srcPath = new URL(selfUrl).pathname.replace(/\/+$/, ''); } catch (_) { srcPath = selfUrl.replace(/\/+$/, ''); }
+    const destPath = '/' + computed.replace(/^\//, '').replace(/\/+$/, '');
+    if (srcPath === destPath) return '';
+    return baseUrl ? baseUrl + destPath : destPath;
+  }
+
+  return { urlCol, baseUrl, defaultRedirectUrl, rowByUrl, nodeById, resolveFinalUrl, computeAutoDestination };
+}
+
+function resolveRedirectDestinations() {
+  const ctx = buildRedirectResolverContext();
+
   state.editedRows.forEach(row => {
     // Fragments / embeddable content objects have no public URL — never write a redirect.
     if (isFragmentRow(row)) return;
-    const kke = String(row[kkeCol()] || '').trim().toLowerCase();
-    const existing = String(row[destCol] || '').trim();
-    const computed = String(row['Computed Path'] || '').trim();
-    const selfUrl = String(row[urlCol] || '').trim();
+    // Effective KKE: a Final_KKE from SME resolve overrides the raw KKE_Recommendation —
+    // otherwise a page whose Final_KKE is Kill but KKE_Recommendation is still Keep
+    // silently gets no auto-derived redirect at all.
+    const kke = String(row[finalKkeCol()] || row[kkeCol()] || '').trim().toLowerCase();
+    const existing = String(row[REDIRECT_DEST_COL] || '').trim();
 
     if (kke === 'consolidate') {
       const targetId = consolidateTargetAddr(row);
-      if (!targetId) { row[destCol] = ''; return; }
+      if (!targetId) { row[REDIRECT_DEST_COL] = ''; return; }
       // Auto-derive the absolute destination from the master's identity. Preserve a genuine manual
       // override (a value unrelated to the master); re-derive blanks, prior auto values, and the
       // bare identity (the latter covers "linked before the master had a nav home, now it does").
-      const auto = resolveFinalUrl(targetId, new Set([selfUrl]));
+      const auto = ctx.computeAutoDestination(row, 'consolidate');
       const looksAutoDerived = !existing || existing === auto || existing === targetId;
-      if (looksAutoDerived) row[destCol] = auto;
+      if (looksAutoDerived) row[REDIRECT_DEST_COL] = auto;
       return;
     }
 
     if (kke === 'kill') {
       if (existing) return; // explicit value already set
-      // Priority: consolidation master > sitemap node path > default destination > blank
-      let resolved = '';
-      const consolidateTarget = consolidateTargetAddr(row);
-      if (consolidateTarget) {
-        resolved = resolveFinalUrl(consolidateTarget, new Set([selfUrl]));
-      }
-      if (!resolved) {
-        const navID = row['Sitemap_ID'] || '';
-        if (navID && state.navNodes && state.navNodes.length > 0) {
-          const node = state.navNodes.find(n => n.id === navID);
-          if (node && node.computedPath) {
-            resolved = baseUrl ? baseUrl + '/' + node.computedPath.replace(/^\//, '') : '/' + node.computedPath.replace(/^\//, '');
-          }
-        }
-      }
-      if (!resolved && defaultRedirectUrl) resolved = defaultRedirectUrl;
-      row[destCol] = resolved; // blank if nothing resolved (retired/404)
-    } else if (computed) {
-      // Non-kill pages with URL changes via nav mapping
-      if (existing) return;
-      const srcUrl = String(row[urlCol] || '').trim();
-      let srcPath = '';
-      try { srcPath = new URL(srcUrl).pathname.replace(/\/+$/, ''); } catch (_) { srcPath = srcUrl.replace(/\/+$/, ''); }
-      const destPath = '/' + computed.replace(/^\//, '').replace(/\/+$/, '');
-      if (srcPath !== destPath) {
-        row[destCol] = baseUrl ? baseUrl + destPath : destPath;
-      }
+      row[REDIRECT_DEST_COL] = ctx.computeAutoDestination(row, 'kill'); // blank if nothing resolved (retired/404)
+      return;
     }
+
+    // Non-kill/consolidate pages with URL changes via nav mapping
+    if (existing) return;
+    const auto = ctx.computeAutoDestination(row, kke);
+    if (auto) row[REDIRECT_DEST_COL] = auto;
   });
 }
 
@@ -21822,17 +21751,20 @@ function closeRedirectEditor() {
 
 function renderRedirectEditor() {
   const urlCol = state.urlColumn || 'Address';
-  const kke = kkeCol();
 
-  // Default destination from project settings
-  const defaultRedirectUrl = (state.projectSettings.defaultRedirectUrl || '').trim();
-
-  // Base URL for constructing redirect destinations (site domain or auto-detected)
+  // Base URL for constructing redirect destinations (site domain or auto-detected) —
+  // still needed below for renderRedirectRow()/showRedirectNavPicker().
   const baseUrl = getRedirectBaseUrl();
+
+  // Shared resolver context (same chain-walking/404-propagation logic resolveRedirectDestinations()
+  // uses on save) — built once per render, not per row, so this loop is O(rows) instead of the
+  // O(rows²) a per-row state.editedRows.find() would cost on a large crawl.
+  const ctx = buildRedirectResolverContext();
 
   // Collect rows that need redirects:
   // 1. Kill pages (always need a redirect)
-  // 2. Pages with a computed nav path that differs from current URL
+  // 2. Consolidate pages (chase the master's final URL)
+  // 3. Pages with a computed nav path that differs from current URL
   const redirectEntries = [];
 
   for (let i = 0; i < state.editedRows.length; i++) {
@@ -21842,28 +21774,17 @@ function renderRedirectEditor() {
     // Fragments / embeddable content objects have no public URL — never need a redirect.
     if (isFragmentRow(row)) continue;
 
-    const status = String(row[kke] || '').trim();
+    // Effective KKE: Final_KKE (from SME resolve) takes precedence over the raw
+    // KKE_Recommendation — matches the resolver and every other "effective KKE" consumer.
+    const status = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
+    const statusLower = status.toLowerCase();
     const computedPath = String(row['Computed Path'] || '').trim();
     const existingDest = String(row[REDIRECT_DEST_COL] || '').trim();
 
     // Consolidate pages — destination chases the master's final URL (via stable identity)
-    if (status.toLowerCase() === 'consolidate') {
+    if (statusLower === 'consolidate') {
       const target = consolidateTargetAddr(row);
-      let resolvedDest = '';
-      if (target) {
-        // Inline chase: if master is in inventory and has Computed Path, use that;
-        // fall back to master's explicit Redirect_Destination; otherwise master's URL as-is.
-        const targetRow = state.editedRows.find(r => String(r[urlCol] || '').trim() === target);
-        if (targetRow) {
-          const tComp = String(targetRow['Computed Path'] || '').trim();
-          const tExplicit = String(targetRow[REDIRECT_DEST_COL] || '').trim();
-          if (tComp) resolvedDest = baseUrl ? baseUrl + '/' + tComp.replace(/^\//, '') : '/' + tComp.replace(/^\//, '');
-          else if (tExplicit && tExplicit !== '404') resolvedDest = tExplicit;
-          else resolvedDest = String(targetRow[urlCol] || '').trim();
-        } else {
-          resolvedDest = target;
-        }
-      }
+      const resolvedDest = ctx.computeAutoDestination(row, 'consolidate');
       // Use freshly derived URL for display unless the existing value is a genuine manual
       // override (differs from both the derived destination and the bare identity).
       const isManualOverride = existingDest && existingDest !== resolvedDest && existingDest !== target;
@@ -21881,32 +21802,8 @@ function renderRedirectEditor() {
     }
 
     // Kill pages
-    if (status.toLowerCase() === 'kill') {
-      // Priority: explicit > Consolidate target > sitemap node path > default destination > blank (retired/404)
-      let resolvedDest = '';
-      const consTarget = consolidateTargetAddr(row);
-      if (consTarget) {
-        const targetRow = state.editedRows.find(r => String(r[urlCol] || '').trim() === consTarget);
-        if (targetRow) {
-          const tComp = String(targetRow['Computed Path'] || '').trim();
-          const tExplicit = String(targetRow[REDIRECT_DEST_COL] || '').trim();
-          if (tComp) resolvedDest = baseUrl ? baseUrl + '/' + tComp.replace(/^\//, '') : '/' + tComp.replace(/^\//, '');
-          else if (tExplicit && tExplicit !== '404') resolvedDest = tExplicit;
-          else resolvedDest = String(targetRow[urlCol] || '').trim();
-        } else {
-          resolvedDest = consTarget;
-        }
-      }
-      if (!resolvedDest) {
-        const navID = row['Sitemap_ID'] || '';
-        if (navID && state.navNodes.length > 0) {
-          const node = state.navNodes.find(n => n.id === navID);
-          if (node && node.computedPath) {
-            resolvedDest = baseUrl ? baseUrl + '/' + node.computedPath.replace(/^\//, '') : '/' + node.computedPath.replace(/^\//, '');
-          }
-        }
-      }
-      if (!resolvedDest && defaultRedirectUrl) resolvedDest = defaultRedirectUrl;
+    if (statusLower === 'kill') {
+      const resolvedDest = ctx.computeAutoDestination(row, 'kill');
       // explicit per-row overrides everything
       const finalDest = existingDest || resolvedDest;
       redirectEntries.push({
@@ -21923,11 +21820,8 @@ function renderRedirectEditor() {
 
     // Pages whose URL changed via nav mapping
     if (computedPath) {
-      const destUrl = baseUrl ? baseUrl + '/' + computedPath.replace(/^\//, '') : '/' + computedPath.replace(/^\//, '');
-      let sourcePath = '';
-      try { sourcePath = new URL(sourceUrl).pathname.replace(/\/+$/, ''); } catch (_) { sourcePath = sourceUrl.replace(/\/+$/, ''); }
-      const destPath = '/' + computedPath.replace(/^\//, '').replace(/\/+$/, '');
-      if (sourcePath !== destPath) {
+      const destUrl = ctx.computeAutoDestination(row, statusLower);
+      if (destUrl) {
         redirectEntries.push({
           origIndex: i,
           row,
@@ -22259,69 +22153,66 @@ function showRedirectNavPicker(entry, destInput, baseUrl) {
 async function exportRedirectMap() {
   if (state.editedRows.length === 0) { showToast('No data to export', 'error'); return; }
 
+  // Reuse the canonical resolver (same one saveFile() runs, and the same one
+  // buildRedirectsSheet() already calls) so this CSV can never disagree with the saved
+  // Redirect_Destination column, the Redirect Editor, or the Migration Tracker's Redirects
+  // sheet. Previously this export re-derived redirects from scratch with no Consolidate
+  // handling, no '404' sentinel handling, and no Fragment guard — see SWEEP_FINDINGS.md.
+  resolveRedirectDestinations();
+
   const urlCol = state.urlColumn || 'Address';
-  const kke = kkeCol();
   const redirectRows = [];
-
-  // Base URL for constructing redirect destinations (site domain or auto-detected)
-  const baseUrl = getRedirectBaseUrl();
-
-  // Use default redirect URL from editor input if available
-  const defaultRedirectUrl = (state.projectSettings.defaultRedirectUrl || '').trim();
 
   for (const row of state.editedRows) {
     const sourceUrl = String(row[urlCol] || '').trim();
     if (!sourceUrl) continue;
+    // Fragments / embeddable content objects have no public URL — never need a redirect.
+    if (isFragmentRow(row)) continue;
 
-    const status = String(row[kke] || '').trim().toLowerCase();
-    const computedPath = String(row['Computed Path'] || '').trim();
+    const kke = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
+    const dest = String(row[REDIRECT_DEST_COL] || '').trim();
 
-    // 1. Kill pages → priority: explicit > sitemap node path > default > blank (retired)
-    if (status === 'kill') {
-      const customDest = String(row[REDIRECT_DEST_COL] || '').trim();
-      let dest = '';
-      if (customDest) {
-        dest = customDest;
+    if (kke === 'Kill') {
+      if (dest === '404') {
+        redirectRows.push({
+          'Source URL': sourceUrl,
+          'Destination URL': '(404)',
+          'Status Code': '404',
+          'Reason': 'Page marked Kill — intentional deindex'
+        });
+      } else if (dest) {
+        redirectRows.push({
+          'Source URL': sourceUrl,
+          'Destination URL': dest,
+          'Status Code': '301',
+          'Reason': 'Page marked Kill'
+        });
       } else {
-        // Check for sitemap node assignment
-        const navID = row['Sitemap_ID'] || '';
-        if (navID && state.navNodes.length > 0) {
-          const node = state.navNodes.find(n => n.id === navID);
-          if (node && node.computedPath) {
-            dest = baseUrl ? baseUrl + '/' + node.computedPath.replace(/^\//, '') : '/' + node.computedPath.replace(/^\//, '');
-          }
-        }
-        if (!dest && defaultRedirectUrl) dest = defaultRedirectUrl;
+        redirectRows.push({
+          'Source URL': sourceUrl,
+          'Destination URL': '',
+          'Status Code': '(TBD)',
+          'Reason': 'Kill, no destination set'
+        });
       }
+      continue;
+    }
+
+    // Consolidate, or a non-Kill page whose URL moved via nav mapping
+    if (dest === '404') {
+      redirectRows.push({
+        'Source URL': sourceUrl,
+        'Destination URL': '(404)',
+        'Status Code': '404',
+        'Reason': 'Intentional deindex'
+      });
+    } else if (dest) {
       redirectRows.push({
         'Source URL': sourceUrl,
         'Destination URL': dest,
         'Status Code': '301',
-        'Reason': 'Page marked Kill'
+        'Reason': kke === 'Consolidate' ? 'Consolidated into another page' : 'URL changed by sitemap mapping'
       });
-      continue;
-    }
-
-    // 2. Pages with a computed nav path that differs from the current URL
-    if (computedPath) {
-      const destinationUrl = baseUrl ? baseUrl + '/' + computedPath.replace(/^\//, '') : '/' + computedPath.replace(/^\//, '');
-      // Compare path portions, normalizing trailing slashes
-      let sourcePath = '';
-      try {
-        sourcePath = new URL(sourceUrl).pathname.replace(/\/+$/, '');
-      } catch (_) {
-        sourcePath = sourceUrl.replace(/\/+$/, '');
-      }
-      const destPath = '/' + computedPath.replace(/^\//, '').replace(/\/+$/, '');
-      if (sourcePath !== destPath) {
-        const customDest = String(row[REDIRECT_DEST_COL] || '').trim();
-        redirectRows.push({
-          'Source URL': sourceUrl,
-          'Destination URL': customDest || destinationUrl,
-          'Status Code': '301',
-          'Reason': 'URL changed by sitemap mapping'
-        });
-      }
     }
   }
 
