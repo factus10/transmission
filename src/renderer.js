@@ -12677,10 +12677,14 @@ function generateNavTreemap(opts) {
   const depthLimit = opts.depth || null;
   const colorBy = opts.colorBy || 'kke';
 
+  const pageCounts = computeSubtreePageCounts();
+  const kkeBreakdowns = computeSubtreeKkeBreakdown();
   const ctx = {
     colorBy,
-    subtreeCounts: computeSubtreePageCounts(),
-    kkeBreakdown: computeSubtreeKkeBreakdown(),
+    subtreeCounts: pageCounts.totals,
+    directCounts: pageCounts.direct,
+    kkeBreakdown: kkeBreakdowns.totals,
+    directKkeBreakdown: kkeBreakdowns.direct,
     sectionColors: computeSectionColorMap(),
     fieldDefs: navSitemapFieldDefs(),
     fieldColorMaps: {},
@@ -13292,20 +13296,24 @@ function computeFieldColorMap(fieldKey, fieldDef) {
   return map;
 }
 
-function resolveTreemapNodeColor(node, topLabel, ctx) {
+/** breakdownOverride: use this KKE breakdown instead of ctx.kkeBreakdown[node.id]
+ *  — needed for a container node's own self-representation leaf, whose color
+ *  should reflect just its directly-assigned pages, not its whole subtree. */
+function resolveTreemapNodeColor(node, topLabel, ctx, breakdownOverride) {
   if (ctx.colorBy === 'section') return ctx.sectionColors[topLabel] || '#9aa0ab';
   if (ctx.colorBy === 'kke') {
-    const dom = dominantKke(ctx.kkeBreakdown[node.id] || {});
+    const dom = dominantKke(breakdownOverride || ctx.kkeBreakdown[node.id] || {});
     return dom ? treemapKkeColor(dom) : '#9aa0ab';
   }
   const fieldMap = ctx.fieldColorMaps[ctx.colorBy];
   return (fieldMap && fieldMap[node[ctx.colorBy] || '']) || '#9aa0ab';
 }
 
-function treemapSubtitle(node, value, ctx) {
+/** breakdownOverride: see resolveTreemapNodeColor() — same reason. */
+function treemapSubtitle(node, value, ctx, breakdownOverride) {
   const pages = value + (value === 1 ? ' page' : ' pages');
   if (ctx.colorBy === 'kke') {
-    const breakdown = ctx.kkeBreakdown[node.id] || {};
+    const breakdown = breakdownOverride || ctx.kkeBreakdown[node.id] || {};
     const dom = dominantKke(breakdown);
     if (dom && value > 0) return pages + ' · ' + Math.round((breakdown[dom] / value) * 100) + '% ' + dom;
     return pages;
@@ -13321,7 +13329,16 @@ function treemapSubtitle(node, value, ctx) {
  *  ctx.depthLimit it recurses normally; at the limit it stops and reports the
  *  node's *subtree* totals instead of children — the "rollup" behavior that
  *  keeps a depth-limited treemap's box sizes/colors meaningful. `depthLimit`
- *  of null/undefined means unlimited (never rolls up). */
+ *  of null/undefined means unlimited (never rolls up).
+ *
+ *  A node can be both a container AND a directly-assigned page (the normal
+ *  case — see createSitemapFromAudit()). Its `value` is the full subtree
+ *  count (direct + descendants), but if only `children` were emitted, their
+ *  values would sum to less than that — squarify would then scale them up to
+ *  fill the whole box, silently giving the node's own pages zero visible
+ *  area. When there are directly-assigned pages, push a synthetic "self" leaf
+ *  alongside the real children so the node's own share of the subtree gets
+ *  its own box, colored/labeled from its own pages rather than the subtree's. */
 function buildTreemapNode(node, topLabel, depthLimit, currentDepth, ctx) {
   const value = ctx.subtreeCounts[node.id] || 0;
   const isRolledUp = depthLimit != null && currentDepth >= depthLimit;
@@ -13329,6 +13346,17 @@ function buildTreemapNode(node, topLabel, depthLimit, currentDepth, ctx) {
   const out = { id: node.id, label: node.label || '(unnamed)', value };
   if (kids.length) {
     out.children = kids.map(c => buildTreemapNode(c, topLabel, depthLimit, currentDepth + 1, ctx));
+    const direct = ctx.directCounts[node.id] || 0;
+    if (direct > 0) {
+      const directBreakdown = ctx.directKkeBreakdown[node.id] || {};
+      out.children.push({
+        id: node.id + ':self',
+        label: node.label || '(unnamed)',
+        value: direct,
+        color: resolveTreemapNodeColor(node, topLabel, ctx, directBreakdown),
+        subtitle: treemapSubtitle(node, direct, ctx, directBreakdown),
+      });
+    }
   } else {
     out.color = resolveTreemapNodeColor(node, topLabel, ctx);
     out.subtitle = treemapSubtitle(node, value, ctx);
@@ -14915,7 +14943,11 @@ function invalidateNavPageCountsCache() { _navPageCountsCacheMap = null; }
  *  KKE-breakdown subtitle's percentage from exceeding 100%: both this value
  *  and computeSubtreeKkeBreakdown() total the same rows, so one is always a
  *  share of the other. Always walks the complete tree; buildTreemapNode()
- *  decides where to stop recursing and read these. */
+ *  decides where to stop recursing and read these.
+ *  Returns { direct, totals } — `direct[id]` is just the pages assigned
+ *  straight to that node (not its descendants); buildTreemapNode() needs
+ *  this to give a node that's both a container and a page its own visible
+ *  box instead of letting its children silently absorb that share of area. */
 function computeSubtreePageCounts() {
   const direct = {};
   (state.editedRows || []).forEach(r => {
@@ -14931,14 +14963,16 @@ function computeSubtreePageCounts() {
     return total;
   }
   (state.navTree || []).forEach(walk);
-  return totals;
+  return { direct, totals };
 }
 
 /** Bottom-up KKE tally per node's full subtree: node id -> { [kkeLabel]: count }.
  *  Same effective-KKE resolution as elsewhere (Final_KKE wins over
  *  KKE_Recommendation), but unlike _navPageCountsCache() this does NOT
  *  exclude Kill/Consolidate rows — what's happening to the content is
- *  exactly what this view is for. */
+ *  exactly what this view is for.
+ *  Returns { direct, totals } — see computeSubtreePageCounts() for why
+ *  buildTreemapNode() needs the direct-only breakdown too. */
 function computeSubtreeKkeBreakdown() {
   const direct = {};
   (state.editedRows || []).forEach(r => {
@@ -14959,7 +14993,7 @@ function computeSubtreeKkeBreakdown() {
     return merged;
   }
   (state.navTree || []).forEach(walk);
-  return totals;
+  return { direct, totals };
 }
 
 /** Most frequent KKE value in a breakdown map, or null if empty. */
