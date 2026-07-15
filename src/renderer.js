@@ -14973,9 +14973,7 @@ function dominantKke(breakdown) {
 
 /** Resolve a KKE label to an actual color (not a CSS var) — the treemap
  *  renders inside an isolated webview with no access to the host's :root
- *  custom properties, so colors must be pre-resolved before crossing over.
- *  Includes Consolidate, which the older kkeColor()/resolvedKkeColor()
- *  helpers omit. */
+ *  custom properties, so colors must be pre-resolved before crossing over. */
 function treemapKkeColor(label) {
   const map = { Keep: '--kke-keep', Kill: '--kke-kill', Evolve: '--kke-evolve', Consolidate: '--kke-consolidate', Exclude: '--kke-exclude' };
   if (map[label]) return getComputedStyle(document.documentElement).getPropertyValue(map[label]).trim();
@@ -16670,7 +16668,7 @@ function gatherProgressStats() {
 
 /** KKE color map (CSS variable values resolved at call time) */
 function kkeColor(label) {
-  const map = { Keep: '--kke-keep', Kill: '--kke-kill', Evolve: '--kke-evolve', Exclude: '--kke-exclude' };
+  const map = { Keep: '--kke-keep', Kill: '--kke-kill', Evolve: '--kke-evolve', Consolidate: '--kke-consolidate', Exclude: '--kke-exclude' };
   if (map[label]) return `var(${map[label]})`;
   const custom = state.customKkeStates.find(s => s.label === label);
   return custom ? custom.color : 'var(--text-primary)';
@@ -16678,7 +16676,7 @@ function kkeColor(label) {
 
 /** Resolve a CSS variable to its computed value (for PDF) */
 function resolvedKkeColor(label) {
-  const map = { Keep: '--kke-keep', Kill: '--kke-kill', Evolve: '--kke-evolve', Exclude: '--kke-exclude' };
+  const map = { Keep: '--kke-keep', Kill: '--kke-kill', Evolve: '--kke-evolve', Consolidate: '--kke-consolidate', Exclude: '--kke-exclude' };
   if (map[label]) return getComputedStyle(document.documentElement).getPropertyValue(map[label]).trim();
   const custom = state.customKkeStates.find(s => s.label === label);
   return custom ? custom.color : '#333';
@@ -16686,7 +16684,7 @@ function resolvedKkeColor(label) {
 
 /** Resolve a CSS variable to its computed value */
 function resolvedKkeBgColor(label) {
-  const map = { Keep: '--kke-keep-bg', Kill: '--kke-kill-bg', Evolve: '--kke-evolve-bg', Exclude: '--kke-exclude-bg' };
+  const map = { Keep: '--kke-keep-bg', Kill: '--kke-kill-bg', Evolve: '--kke-evolve-bg', Consolidate: '--kke-consolidate-bg', Exclude: '--kke-exclude-bg' };
   if (map[label]) return getComputedStyle(document.documentElement).getPropertyValue(map[label]).trim();
   const custom = state.customKkeStates.find(s => s.label === label);
   return custom ? custom.color + '33' : '#33333333';
