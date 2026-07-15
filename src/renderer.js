@@ -5144,20 +5144,31 @@ let _thumbTimer = null;
 
 function scheduleThumbCapture() {
   clearTimeout(_thumbTimer);
-  _thumbTimer = setTimeout(captureThumb, 700); // let the page paint first
+  // Capture the row's *declared* crawl Address now, while it's still the
+  // selected row — captureThumb() runs 700ms later purely from the webview's
+  // resolved URL, which can differ (3xx redirect, trailing-slash normalization,
+  // protocol upgrade) from what the sidebar hover looks the cache up by.
+  const row = state.selectedIndex !== null ? state.editedRows[state.selectedIndex] : null;
+  const declaredUrl = row ? String(row[state.urlColumn || 'Address'] || '') : '';
+  _thumbTimer = setTimeout(() => captureThumb(declaredUrl), 700); // let the page paint first
 }
 
-async function captureThumb() {
+async function captureThumb(declaredUrl) {
   const wv = els.webview;
   let url;
   try { url = wv.getURL(); } catch (e) { return; }
-  if (!url || url === 'about:blank' || _thumbCache.has(url)) return;
+  if (!url || url === 'about:blank') return;
+  // Cache under the declared Address — that's the only key the hover lookup
+  // ever queries by. Fall back to the resolved URL if there was no selected
+  // row (shouldn't normally happen, since the webview only loads from one).
+  const cacheKey = declaredUrl || url;
+  if (_thumbCache.has(cacheKey)) return;
   try {
     const img = await wv.capturePage();
     if (!img || (img.isEmpty && img.isEmpty())) return;
     const dataUrl = img.resize({ width: 320 }).toDataURL();
     if (!dataUrl || !dataUrl.startsWith('data:image/') || dataUrl.length < 256) return;
-    _thumbCache.set(url, dataUrl);
+    _thumbCache.set(cacheKey, dataUrl);
     if (_thumbCache.size > THUMB_MAX) _thumbCache.delete(_thumbCache.keys().next().value);
   } catch (e) { /* capturePage unavailable or frame disposed — degrade silently */ }
 }
