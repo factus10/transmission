@@ -4428,8 +4428,15 @@ function openDesignPatternLibraryEditor() {
     });
     modal.querySelector('#_dpl-d-delete')?.addEventListener('click', () => {
       if (_selectedIdx < 0) return;
+      // Do NOT route through selectItem() here — it calls syncFromDom() first,
+      // which after the splice below would write the just-deleted entry's stale
+      // form values into whatever entry shifted into its old index, clobbering
+      // it. Reindex and re-render directly instead (same fix already applied to
+      // the twin Target Spec Library editor's delete handler).
       working.splice(_selectedIdx, 1);
-      selectItem(Math.min(_selectedIdx, working.length - 1));
+      _selectedIdx = Math.min(_selectedIdx, working.length - 1);
+      modal.innerHTML = buildBody();
+      wireEvents();
     });
     modal.querySelectorAll('.pl-list-item').forEach(li => {
       li.addEventListener('click', () => selectItem(parseInt(li.dataset.idx)));
