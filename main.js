@@ -2646,11 +2646,37 @@ function evaluateAST(ast, row) {
   }
 }
 
-function evaluateComputedColumns(definitions, rows) {
+// ColumnRef silently resolves an unknown row property to 0 (see evaluateAST above) —
+// that's the right behavior for a column that legitimately exists but is blank on
+// this row, but it also means a typo'd or renamed {Column} reference mislabels an
+// entire inventory with no error. Walk the AST once per formula, up front, and
+// compare every referenced name against the real headers (plus other computed
+// column names, since columns can reference each other) before any row is evaluated.
+function collectColumnRefs(ast, refs) {
+  if (!ast) return refs;
+  switch (ast.type) {
+    case 'ColumnRef': refs.add(ast.name); break;
+    case 'BinaryOp': collectColumnRefs(ast.left, refs); collectColumnRefs(ast.right, refs); break;
+    case 'FunctionCall': ast.args.forEach(a => collectColumnRefs(a, refs)); break;
+    case 'Classify': collectColumnRefs(ast.valueExpr, refs); break;
+  }
+  return refs;
+}
+
+function evaluateComputedColumns(definitions, rows, headers) {
+  const knownNames = headers ? new Set([...headers, ...definitions.map(d => d.name)]) : null;
+
   // Parse all formulas up front
   const parsed = definitions.map(def => {
     try {
-      return { name: def.name, ast: parseFormulaExpr(def.formula), error: null };
+      const ast = parseFormulaExpr(def.formula);
+      if (knownNames) {
+        const unknown = [...collectColumnRefs(ast, new Set())].filter(name => !knownNames.has(name));
+        if (unknown.length > 0) {
+          return { name: def.name, ast: null, error: `Unknown column reference: {${unknown.join('}, {')}}` };
+        }
+      }
+      return { name: def.name, ast, error: null };
     } catch (e) {
       return { name: def.name, ast: null, error: e.message };
     }
@@ -3043,9 +3069,9 @@ ipcMain.handle('import-audit-merge-read-sheet', async (event, { filePath, sheetN
   }
 });
 
-ipcMain.handle('evaluate-computed-columns', (event, { definitions, rows }) => {
+ipcMain.handle('evaluate-computed-columns', (event, { definitions, rows, headers }) => {
   try {
-    return evaluateComputedColumns(definitions, rows);
+    return evaluateComputedColumns(definitions, rows, headers);
   } catch (e) {
     return { results: [], errors: [e.message] };
   }

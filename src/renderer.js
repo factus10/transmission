@@ -17431,7 +17431,8 @@ function renderComputedColumnCards() {
       // We need to evaluate just this one column for preview
       window.electronAPI.evaluateComputedColumns({
         definitions: state.computedColumns.filter(c => c.name && c.formula),
-        rows: sampleRows
+        rows: sampleRows,
+        headers: state.headers
       }).then(({ results, errors }) => {
         if (errors && errors.length > 0) {
           preview.innerHTML = '';
@@ -17470,7 +17471,8 @@ async function recalculateComputedColumns() {
 
   const { results, errors } = await window.electronAPI.evaluateComputedColumns({
     definitions: defs,
-    rows: state.editedRows
+    rows: state.editedRows,
+    headers: state.headers
   });
 
   if (errors && errors.length > 0) {
