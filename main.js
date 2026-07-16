@@ -997,16 +997,34 @@ function parseContentTypeRegistrySheet(worksheet) {
   return entries;
 }
 
+/**
+ * Persist a structural library the user has emptied, by reducing its sheet to a
+ * header row. Callers reach here only with an explicitly-empty model (their own
+ * `!Array.isArray(...)` guard already covers "not loaded / not sent"), so an
+ * empty list means the user deleted the entries — and leaving the old sheet
+ * intact silently reverts that on the next open. `.transmission` already
+ * persists it (saveAll replaces the settings table wholesale), so skipping it
+ * here made the two backends disagree about the same action.
+ *
+ * Only ever REPLACES an existing sheet, never creates one: a plain crawl export
+ * shouldn't grow empty structural sheets just by being saved.
+ */
+function writeEmptyStructuralSheet(workbook, sheetName, header) {
+  if (!workbook.SheetNames.includes(sheetName)) return;
+  workbook.Sheets[sheetName] = XLSX.utils.aoa_to_sheet([header]);
+}
+
 function writeContentTypeRegistrySheet(workbook, registry) {
   if (!Array.isArray(registry)) return;
   const sheetName = 'ContentTypeRegistry';
+  const HEADER = ['Content_Type', 'Default_Content_Nature', 'Default_Migration_Track', 'Notes', 'Target_Content_Type', 'Target_Spec'];
   // Filter out fully-blank rows
   const entries = registry.filter(e => String(e?.contentType || '').trim());
   if (entries.length === 0) {
-    // Nothing to persist — leave any existing sheet alone (don't auto-delete)
+    writeEmptyStructuralSheet(workbook, sheetName, HEADER);
     return;
   }
-  const aoa = [['Content_Type', 'Default_Content_Nature', 'Default_Migration_Track', 'Notes', 'Target_Content_Type', 'Target_Spec']];
+  const aoa = [HEADER];
   // Sort alphabetically by contentType for stable diffs
   entries.sort((a, b) => a.contentType.localeCompare(b.contentType));
   entries.forEach(e => aoa.push([
@@ -1247,9 +1265,13 @@ function parsePatternLibrarySheet(worksheet) {
 function writePatternLibrarySheet(workbook, library) {
   if (!Array.isArray(library)) return;
   const sheetName = 'PatternLibrary';
+  const HEADER = ['Pattern_Name', 'Description', 'Build_Guidance_Default', 'Writer_Brief_Default', 'Default_Migration_Track', 'Notes', 'Kind', 'Migration_Mapping_Default', 'Fields'];
   const entries = library.filter(e => String(e?.patternName || '').trim());
-  if (entries.length === 0) return;
-  const aoa = [['Pattern_Name', 'Description', 'Build_Guidance_Default', 'Writer_Brief_Default', 'Default_Migration_Track', 'Notes', 'Kind', 'Migration_Mapping_Default', 'Fields']];
+  if (entries.length === 0) {
+    writeEmptyStructuralSheet(workbook, sheetName, HEADER);
+    return;
+  }
+  const aoa = [HEADER];
   entries.sort((a, b) => a.patternName.localeCompare(b.patternName));
   entries.forEach(e => aoa.push([
     e.patternName,
@@ -1373,9 +1395,13 @@ function parseDesignPatternLibrarySheet(worksheet) {
 function writeDesignPatternLibrarySheet(workbook, library) {
   if (!Array.isArray(library)) return;
   const sheetName = 'DesignPatternLibrary';
+  const HEADER = ['Name', 'Category', 'Complexity', 'Description', 'DS_URL', 'Aliases', 'Notes'];
   const entries = library.filter(e => String(e?.name || '').trim());
-  if (entries.length === 0) return;
-  const aoa = [['Name', 'Category', 'Complexity', 'Description', 'DS_URL', 'Aliases', 'Notes']];
+  if (entries.length === 0) {
+    writeEmptyStructuralSheet(workbook, sheetName, HEADER);
+    return;
+  }
+  const aoa = [HEADER];
   entries.sort((a, b) => {
     const ca = a.category || '', cb = b.category || '';
     if (ca !== cb) return ca.localeCompare(cb);
@@ -1415,11 +1441,12 @@ function writeGlossarySheet(workbook, glossary) {
   const tagKeys = Object.keys(tags).filter(k => String(tags[k] || '').trim());
   const groupKeys = Object.keys(groups).filter(k => String(groups[k] || '').trim());
   const sheetName = 'KKE_Glossary';
+  const HEADER = ['Type', 'Name', 'Notes'];
   if (tagKeys.length === 0 && groupKeys.length === 0) {
-    // Nothing to write; leave any existing sheet alone
+    writeEmptyStructuralSheet(workbook, sheetName, HEADER);
     return;
   }
-  const aoa = [['Type', 'Name', 'Notes']];
+  const aoa = [HEADER];
   tagKeys.sort().forEach(k => aoa.push(['Tag', k, tags[k]]));
   groupKeys.sort().forEach(k => aoa.push(['Group', k, groups[k]]));
   const ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -1696,15 +1723,19 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
         writeGlossarySheet(workbook, projectSettings.glossary);
         sheetsWeEdit.add('KKE_Glossary');
       }
-      if (Array.isArray(projectSettings.contentTypeRegistry) && projectSettings.contentTypeRegistry.length > 0) {
+      // No `.length > 0` here: an empty array is a real state (the user deleted
+      // every entry) and has to reach the writer, which persists it by reducing
+      // an existing sheet to its header. Array.isArray still gates out
+      // "not loaded / not sent", which is the case worth protecting against.
+      if (Array.isArray(projectSettings.contentTypeRegistry)) {
         writeContentTypeRegistrySheet(workbook, projectSettings.contentTypeRegistry);
         sheetsWeEdit.add('ContentTypeRegistry');
       }
-      if (Array.isArray(projectSettings.patternLibrary) && projectSettings.patternLibrary.length > 0) {
+      if (Array.isArray(projectSettings.patternLibrary)) {
         writePatternLibrarySheet(workbook, projectSettings.patternLibrary);
         sheetsWeEdit.add('PatternLibrary');
       }
-      if (Array.isArray(projectSettings.designPatternLibrary) && projectSettings.designPatternLibrary.length > 0) {
+      if (Array.isArray(projectSettings.designPatternLibrary)) {
         writeDesignPatternLibrarySheet(workbook, projectSettings.designPatternLibrary);
         sheetsWeEdit.add('DesignPatternLibrary');
       }
