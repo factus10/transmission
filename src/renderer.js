@@ -134,6 +134,16 @@ function allKkeStates() {
   return [...BUILTIN_KKE, ...state.customKkeStates.map(s => s.label)];
 }
 
+/** Label order for rendering a KKE tally: every defined state (so a state with a
+ *  zero count still reports zero), then any rogue (undefined/typo) value present
+ *  in the tally, sorted — same ordering rule as collectKkeValuesPresent(). */
+function kkeLabelsFor(counts) {
+  const defined = allKkeStates();
+  const known = new Set(defined);
+  const rogue = Object.keys(counts || {}).filter(k => !known.has(k)).sort();
+  return [...defined, ...rogue];
+}
+
 // Column name helpers — use these instead of hardcoding audit column names
 function kkeCol()   { return state.columnMap.kke; }
 function tagsCol()  { return state.columnMap.tags; }
@@ -17154,8 +17164,11 @@ function gatherProgressStats() {
 
   state.editedRows.forEach(row => {
     const kke = String(row[kkeCol()] || '').trim();
-    if (kke && kkeCounts.hasOwnProperty(kke)) kkeCounts[kke]++;
-    else unreviewed++;
+    // Only a blank KKE is unreviewed — matching the sidebar's _unreviewed filter.
+    // A rogue (typo/undefined) value is a decision someone made; tally it under its
+    // own literal key so it stays visible instead of deflating the reviewed %.
+    if (!kke) unreviewed++;
+    else kkeCounts[kke] = (kkeCounts[kke] || 0) + 1;
     if (String(row['_Flagged'] || '').trim() === '1') flagged++;
     if (String(row[tagsCol()] || '').trim()) tagged++;
     if (String(row[notesCol()] || '').trim()) noted++;
@@ -17225,7 +17238,7 @@ function openProgressDashboard() {
     <div class="progress-stat"><span class="progress-stat-label">Reviewed</span><span class="progress-stat-value">${stats.reviewed} (${stats.pct}%)</span></div>
     <div class="progress-bar-wrap">`;
 
-  allKkeStates().forEach(label => {
+  kkeLabelsFor(stats.kkeCounts).forEach(label => {
     const count = stats.kkeCounts[label] || 0;
     const widthPct = (count / stats.total * 100).toFixed(1);
     html += `<div class="progress-bar-seg" style="width:${widthPct}%;background:${kkeColor(label)}20;border-right:1px solid ${kkeColor(label)};"></div>`;
@@ -17234,7 +17247,7 @@ function openProgressDashboard() {
   html += `</div>
     <div class="progress-section-title">By status</div>`;
 
-  allKkeStates().forEach(label => {
+  kkeLabelsFor(stats.kkeCounts).forEach(label => {
     html += `<div class="progress-stat"><span class="progress-stat-label">${escapeHtml(label)}</span><span class="progress-stat-value" style="color:${kkeColor(label)}">${stats.kkeCounts[label] || 0}</span></div>`;
   });
 
@@ -17300,7 +17313,7 @@ async function exportProgressPdf(format) {
 
   // Build bar segments
   let barHtml = '';
-  allKkeStates().forEach(label => {
+  kkeLabelsFor(stats.kkeCounts).forEach(label => {
     const count = stats.kkeCounts[label] || 0;
     const widthPct = (count / stats.total * 100).toFixed(1);
     const bgColor = resolvedKkeBgColor(label);
@@ -17310,7 +17323,7 @@ async function exportProgressPdf(format) {
 
   // Build status rows
   let statusHtml = '';
-  allKkeStates().forEach(label => {
+  kkeLabelsFor(stats.kkeCounts).forEach(label => {
     const color = resolvedKkeColor(label);
     statusHtml += `<tr><td>${escapeHtml(label)}</td><td style="color:${color};font-weight:600;text-align:right">${stats.kkeCounts[label] || 0}</td></tr>`;
   });
@@ -18956,7 +18969,7 @@ async function exportReport(title, bodyHtml, defaultName, format, opts = {}) {
 function kkeBarHtml(counts, total) {
   if (total === 0) return '';
   let html = '<div class="bar-wrap">';
-  allKkeStates().forEach(label => {
+  kkeLabelsFor(counts).forEach(label => {
     const count = counts[label] || 0;
     if (count === 0) return;
     const pct = (count / total * 100).toFixed(1);
@@ -18970,7 +18983,7 @@ function kkeBarHtml(counts, total) {
 
 function kkeStatsRows(counts) {
   let html = '';
-  allKkeStates().forEach(label => {
+  kkeLabelsFor(counts).forEach(label => {
     const count = counts[label] || 0;
     if (count === 0) return;
     const color = resolvedKkeColor(label);
