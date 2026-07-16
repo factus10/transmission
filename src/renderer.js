@@ -18141,7 +18141,9 @@ function builtinExportProfiles() {
   ];
   return [
     { name: 'Client Summary', builtin: true, columns: [...new Set(clientCols)].filter(h => state.headers.includes(h)) },
-    { name: 'Full (all columns)', builtin: true, columns: state.headers.filter(h => h !== '_rowIndex') }
+    // "Full" means every real column, not the internal (_-prefixed) plumbing —
+    // same convention as Table View and the field-filter picker.
+    { name: 'Full (all columns)', builtin: true, columns: state.headers.filter(h => !h.startsWith('_')) }
   ];
 }
 
@@ -18152,7 +18154,7 @@ function userExportProfiles() {
 
 function openProfileExportDialog() {
   if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
-  const allHeaders = state.headers.filter(h => h !== '_rowIndex');
+  const allHeaders = state.headers.filter(h => !h.startsWith('_'));
   const filteredCount = state.filteredRows.length;
   const totalCount = state.editedRows.length;
   const filterActive = filteredCount !== totalCount;
@@ -18409,7 +18411,7 @@ function openUnifiedExportDialog() {
 
 async function exportFilteredRows() {
   if (state.filteredRows.length === 0) { showToast('No rows to export', 'error'); return; }
-  const headers = state.headers.filter(h => h !== '_rowIndex');
+  const headers = state.headers.filter(h => !h.startsWith('_'));
   const rows = state.filteredRows.map(({ row }) => {
     const obj = {};
     headers.forEach(h => { obj[h] = row[h] ?? ''; });
