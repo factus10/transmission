@@ -581,11 +581,27 @@ function bindStaticEvents() {
     });
   }
 
+  // Debounced: applyFilter() scans every row × every column, which is ~11ms on a
+  // 4k-row Screaming Frog export at full width — over a frame budget, on every
+  // keystroke — and each one also round-trips savePrefs to a synchronous
+  // read+write of prefs.json in the main process. 150ms matches setupGlobalSearch.
+  let _searchDebounce = null;
   els.searchInput.addEventListener('input', e => {
-    state.filterText = e.target.value.toLowerCase();
-    applyFilter();
-    window.electronAPI.savePrefs({ filterText: state.filterText });
+    // Instant: cheap, and the clear button must track what's actually typed.
     $('btn-clear-search').classList.toggle('hidden', !e.target.value);
+    clearTimeout(_searchDebounce);
+    _searchDebounce = setTimeout(() => {
+      // Re-read the input rather than closing over the keystroke's value. Several
+      // paths (the clear button, Cmd+F's restore, applying a saved filter) set the
+      // input and state.filterText together and filter immediately; if one lands
+      // inside this window, re-reading makes this a no-op instead of clobbering it
+      // with a stale keystroke.
+      const v = els.searchInput.value.toLowerCase();
+      if (v === state.filterText) return;
+      state.filterText = v;
+      applyFilter();
+      window.electronAPI.savePrefs({ filterText: v });
+    }, 150);
   });
 
   $('btn-clear-search').addEventListener('click', () => {
