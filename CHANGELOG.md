@@ -6,6 +6,33 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.6.4] — "How Soon Is Now?"
+
+### Added
+- **KKE gate + placement modes for bulk sitemap assignment.** The sidebar's "Assign to Sitemap" bulk action now defaults to Keep/Evolve pages only (mirroring Create Sitemap from Audit), with an "include Kill/Exclude/unreviewed pages too" opt-in for building a full current-state snapshot — plus one batched confirmation before sweeping in Consolidate pages, since those merge into another page's URL rather than getting their own. A new placement choice lets you preserve each page's URL structure as nested sections instead of always flattening into direct children.
+- **Bulk multi-select and delete in the Sitemap editor, with undo.** Every tree row now has a checkbox (plain click, shift-click range-select, select-all, and a new "Select Empty Branches" shortcut for finding dead sections after later killing/consolidating pages). Bulk delete covers the whole selection in one confirmation, and — like every other sitemap edit — a single Cmd+Z reverses the entire batch. Single-node delete (the tree row's ✕, the node editor's own Delete button, and the "clear assignment + delete now-empty node" flow) is now undoable too, having been folded into the same shared delete path.
+
+### Fixed
+- **Filter state could leak between files on open.** The "Unclassified" toolbar button, the KKE filter, and the group filter could all inherit stale state from whichever file was previously open, occasionally leaving a filter showing "active" with nothing actually filtered.
+- **Sidebar page thumbnails could silently never appear.** The hover-preview cache was keyed by the webview's resolved URL after a page finished loading, but looked up by the row's declared crawl Address — any redirect, trailing-slash normalization, or protocol upgrade (common in Screaming Frog exports) meant the thumbnail was cached under a key the lookup never checked.
+- **The Glossary editor could silently discard unsaved changes.** Cancel, the × button, a backdrop click, and Esc all dismissed the editor immediately with no warning. All four now prompt to discard if there are unsaved edits.
+- **Extra KKE-type sidebar columns (Final KKE, SME Decision, etc.) lost their color coding for Consolidate or any custom KKE state**, falling back to plain text instead of a colored badge.
+- **Recomputing computed columns while a row was selected could crash the app** the next time you typed into any field bar input, due to a wrong-arguments bug in the field-bar refresh.
+- **Deleting an entry in the Component Library or Target Spec Library could silently clobber the entry that shifted into its place**, overwriting it with the deleted entry's stale, unsaved form values.
+- **Project Settings' Saved Filters "Apply" button applied the wrong row set (or silently did nothing)** due to a stale duplicate of the sidebar's own restore logic pointing at a DOM element that no longer exists. Both now share one implementation.
+- **Cmd+F search only "temporarily" cleared filters in name** — it never restored them afterward, and never accounted for field filters at all, so a match hidden only by a field filter still wasn't reachable via arrow-key/j-k navigation. Both gaps are fixed.
+- **A selected row could lose its purple selection fill once it also had a KKE color**, and **toasts could render invisibly behind an open modal dialog** — two CSS specificity/z-index bugs, both fixed.
+- **A typo'd or renamed `{Column}` reference in a computed-column formula silently computed as 0** instead of raising an error, which could mislabel an entire inventory with no warning. It's now a formula error.
+- **A Kill page's redirect destination could get stuck on the project default** even after the page was later given a proper sitemap home — it now upgrades to the more specific nav path, the same way Consolidate targets already did.
+- **Four reports (Pre-Handoff Check, Net New Content Brief, Migration Checklist, Sitemap Coverage) could disagree with the Sitemap editor's own page counts**, since each built its own inline count that didn't exclude Kill/Consolidate pages the way the canonical count does.
+- **Project settings too large to fit in an xlsx cell (a heavy Menus model, for example) were silently dropped on save**, logged only to the developer console. Now surfaced as a toast naming what was dropped.
+- **Exporting a project whose sitemap had a single very long note, build-guidance, or writer-brief field could abort the entire workbook export** with a raw spreadsheet-library error, taking every other node's data down with it. That field is now clamped like its counterparts already were.
+- **A Treemap section squeezed into a small sliver of canvas (crowded next to a much larger sibling) could render as blank grey** instead of its actual KKE-composition color, even though the underlying data was there.
+- **Dragging a sitemap node to reorganize it could occasionally duplicate it** (the same node appearing in two places in the tree, sharing one ID) when its internal parent pointer had drifted out of sync — a stale-lookup bug also fixed in node delete and clone, which could silently no-op a delete (while still showing a success toast) or misplace a clone.
+- **Editing a nav node's slug could wipe visual indicators (URL-override, breadcrumb-override, depth-warning markers) from descendant rows** in the sitemap tree, even though the underlying data was untouched.
+- **Cloning a sitemap branch dropped every field beyond a small hardcoded set** — phase, notes, external URL, and all Build/Write/Migrate metadata vanished from the copy with no warning.
+- **Undoing a KKE decision didn't record the reversal in the audit trail**, so the exported change log could permanently disagree with the actual data after a Cmd+Z.
+
 ## [2.6.3] — "How Soon Is Now?"
 
 ### Fixed
