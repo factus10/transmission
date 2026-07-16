@@ -16598,17 +16598,47 @@ async function bulkDeleteNavNodes(nodeIds) {
 
 // ─── Nav: URL-based suggestion ────────────────────────────────────────────────
 
-function suggestNavFromUrl(url) {
+/** origin + pathname with trailing slashes stripped; falls back to the raw string
+ *  when it isn't a parseable URL. Extracted so the index below and the lookups
+ *  against it normalize identically and can't drift apart. */
+function normalizeUrlForNavMatch(url) {
+  const s = String(url || '');
+  try {
+    const u = new URL(s);
+    return u.origin + u.pathname.replace(/\/+$/, '');
+  } catch (e) {
+    return s.replace(/\/+$/, '');
+  }
+}
+
+/** Lowercased normalized URL → the nav node the page at that URL is assigned to.
+ *  First match wins, mirroring the row-order scan this replaces. Build it once and
+ *  pass it to suggestNavFromUrl() when suggesting for a batch: otherwise every
+ *  target re-parses every row's URL with new URL() at every path level, which is
+ *  O(targets × rows) URL constructions. */
+function buildAssignedNavUrlIndex() {
+  const nodeById = new Map(state.navNodes.map(n => [n.id, n]));
+  const idx = new Map();
+  for (const row of state.editedRows) {
+    const navID = String(row['Sitemap_ID'] || '').trim();
+    if (!navID) continue;
+    const node = nodeById.get(navID);
+    if (!node) continue; // a dangling Sitemap_ID is skipped, as in the original scan
+    const key = normalizeUrlForNavMatch(row[state.urlColumn]).toLowerCase();
+    if (key && !idx.has(key)) idx.set(key, node);
+  }
+  return idx;
+}
+
+/** Walk up a page's URL to the nearest ancestor page already placed on the sitemap.
+ *  Pass `urlIndex` (from buildAssignedNavUrlIndex) to reuse one index across a batch;
+ *  omitted, it builds a throwaway one, which is still cheaper than the old per-level
+ *  rescan. */
+function suggestNavFromUrl(url, urlIndex) {
   if (!url || !state.urlColumn) return null;
 
-  // Normalize: strip trailing slash, lowercase for comparison
-  let currentPath;
-  try {
-    const u = new URL(url);
-    currentPath = u.origin + u.pathname.replace(/\/+$/, '');
-  } catch (e) {
-    currentPath = url.replace(/\/+$/, '');
-  }
+  const currentPath = normalizeUrlForNavMatch(url);
+  const idx = urlIndex || buildAssignedNavUrlIndex();
 
   // Walk up the URL path, looking for assigned pages
   let testPath = currentPath;
@@ -16617,29 +16647,13 @@ function suggestNavFromUrl(url) {
     if (lastSlash <= testPath.indexOf('//') + 1) break; // don't go past the origin
     testPath = testPath.substring(0, lastSlash);
 
-    // Find a row with this URL that has a sitemap assignment
-    for (const row of state.editedRows) {
-      let rowUrl = String(row[state.urlColumn] || '');
-      try {
-        const ru = new URL(rowUrl);
-        rowUrl = ru.origin + ru.pathname.replace(/\/+$/, '');
-      } catch (e) {
-        rowUrl = rowUrl.replace(/\/+$/, '');
-      }
-
-      if (rowUrl.toLowerCase() === testPath.toLowerCase()) {
-        const navID = row['Sitemap_ID'] || '';
-        if (navID) {
-          const node = state.navNodes.find(n => n.id === navID);
-          if (node) {
-            // Derive slug: the part of the current URL after the parent URL
-            const remainder = currentPath.substring(testPath.length + 1);
-            // Could be multi-segment (e.g., "about/team") — just use the last segment
-            const slug = remainder.split('/').pop() || extractSlug(url);
-            return { node, slug };
-          }
-        }
-      }
+    const node = idx.get(testPath.toLowerCase());
+    if (node) {
+      // Derive slug: the part of the current URL after the parent URL
+      const remainder = currentPath.substring(testPath.length + 1);
+      // Could be multi-segment (e.g., "about/team") — just use the last segment
+      const slug = remainder.split('/').pop() || extractSlug(url);
+      return { node, slug };
     }
   }
   return null;
@@ -16655,11 +16669,14 @@ function suggestNavFromUrl(url) {
 function suggestBulkNavTarget(targets) {
   const tally = new Map(); // node -> count
   let total = 0;
+  // One index for the whole batch — this runs synchronously before the bulk-assign
+  // dialog paints, so per-target rescans froze the app for seconds on a big batch.
+  const urlIndex = buildAssignedNavUrlIndex();
   targets.forEach(origIndex => {
     const row = state.editedRows[origIndex];
     const url = row && String(row[state.urlColumn] || '').trim();
     if (!url) return;
-    const suggestion = suggestNavFromUrl(url);
+    const suggestion = suggestNavFromUrl(url, urlIndex);
     if (suggestion && suggestion.node) {
       total++;
       tally.set(suggestion.node, (tally.get(suggestion.node) || 0) + 1);
