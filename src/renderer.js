@@ -13677,6 +13677,77 @@ function buildDuplicateSlugSet(roots) {
   return dupes;
 }
 
+/** Populates a nav row's "computed path" cell — either an editable external-URL
+ *  input (+ clear button) or a read-only computed-path span (with a ↪ marker
+ *  when the node has a URL override). Shared by the full row render and the
+ *  lightweight per-node DOM update (updateNavEditorNodeDOM) so the two can
+ *  never drift apart — clears any existing content/title first, so it's safe
+ *  to call on an already-populated cell. */
+function renderNavPathCell(pathCell, node) {
+  pathCell.innerHTML = '';
+  pathCell.removeAttribute('title');
+  if (node.url) {
+    // External URL — show as editable with different style
+    const urlInput = document.createElement('input');
+    urlInput.type = 'text';
+    urlInput.value = node.url;
+    urlInput.style.cssText = 'color:var(--accent);font-style:italic;';
+    urlInput.title = 'External URL (overrides computed path)';
+    urlInput.addEventListener('input', () => {
+      node.url = urlInput.value.trim();
+      setDirty(true);
+      state.navTreeDirty = true;
+    });
+    pathCell.appendChild(urlInput);
+    // Clear URL button
+    const clearUrl = document.createElement('span');
+    clearUrl.textContent = '✕';
+    clearUrl.title = 'Remove external URL';
+    clearUrl.style.cssText = 'cursor:pointer;font-size:10px;color:var(--text-muted);padding:0 4px;';
+    clearUrl.addEventListener('click', () => {
+      node.url = '';
+      setDirty(true);
+      state.navTreeDirty = true;
+      renderNavEditor();
+    });
+    pathCell.appendChild(clearUrl);
+  } else {
+    // Normal computed path (read-only text). When this node carries a URL
+    // override, mark it so the off-hierarchy URL is visible at a glance.
+    const pathText = document.createElement('span');
+    pathText.className = 'ne-cell-text';
+    if (normalizeUrlOverride(node.urlOverride)) {
+      pathText.textContent = '↪ ' + (node.computedPath || '');
+      pathText.style.color = 'var(--accent)';
+      pathCell.title = 'URL override — this page’s address is set independently of its place in the menu';
+    } else {
+      pathText.textContent = node.computedPath || '';
+    }
+    pathCell.appendChild(pathText);
+  }
+}
+
+/** Populates a nav row's breadcrumb cell — marks nodes whose on-page breadcrumb
+ *  is re-rooted off the physical hierarchy (↰), and flags any that exceed the
+ *  project depth cap (⚠). Shared by the full row render and the lightweight
+ *  per-node DOM update for the same reason as renderNavPathCell() above. */
+function renderNavBreadcrumbCell(bcCell, node) {
+  bcCell.style.color = '';
+  bcCell.removeAttribute('title');
+  if (hasBreadcrumbOverride(node)) {
+    bcCell.textContent = '↰ ' + node.breadcrumb;
+    bcCell.style.color = 'var(--accent)';
+    bcCell.title = 'Breadcrumb re-rooted → ' + pageBreadcrumbOf(node);
+  } else {
+    bcCell.textContent = node.breadcrumb || '';
+  }
+  if (breadcrumbExceedsCap(node)) {
+    bcCell.textContent = '⚠ ' + bcCell.textContent;
+    bcCell.style.color = 'var(--kke-kill, #c0392b)';
+    bcCell.title = `Breadcrumb is ${breadcrumbDepthOf(node)} levels — exceeds the project cap of ${getBreadcrumbMaxDepth()}. ${pageBreadcrumbOf(node)}`;
+  }
+}
+
 function renderNavEditorNode(node, pageCounts, depth, dupSlugs, depthFilter) {
   // Phase filter: '__current__' keeps only nodes with empty phase; '__nonblank__' keeps only phased nodes.
   const phaseFilterEl = document.getElementById('nav-phase-filter');
@@ -13855,64 +13926,15 @@ function renderNavEditorNode(node, pageCounts, depth, dupSlugs, depthFilter) {
   const pathCell = document.createElement('span');
   pathCell.className = 'ne-cell ne-col-path';
   pathCell.dataset.field = 'computedPath';
-  if (node.url) {
-    // External URL — show as editable with different style
-    const urlInput = document.createElement('input');
-    urlInput.type = 'text';
-    urlInput.value = node.url;
-    urlInput.style.cssText = 'color:var(--accent);font-style:italic;';
-    urlInput.title = 'External URL (overrides computed path)';
-    urlInput.addEventListener('input', () => {
-      node.url = urlInput.value.trim();
-      setDirty(true);
-      state.navTreeDirty = true;
-    });
-    pathCell.appendChild(urlInput);
-    // Clear URL button
-    const clearUrl = document.createElement('span');
-    clearUrl.textContent = '✕';
-    clearUrl.title = 'Remove external URL';
-    clearUrl.style.cssText = 'cursor:pointer;font-size:10px;color:var(--text-muted);padding:0 4px;';
-    clearUrl.addEventListener('click', () => {
-      node.url = '';
-      setDirty(true);
-      state.navTreeDirty = true;
-      renderNavEditor();
-    });
-    pathCell.appendChild(clearUrl);
-  } else {
-    // Normal computed path (read-only text). When this node carries a URL
-    // override, mark it so the off-hierarchy URL is visible at a glance.
-    const pathText = document.createElement('span');
-    pathText.className = 'ne-cell-text';
-    if (normalizeUrlOverride(node.urlOverride)) {
-      pathText.textContent = '↪ ' + (node.computedPath || '');
-      pathText.style.color = 'var(--accent)';
-      pathCell.title = 'URL override — this page’s address is set independently of its place in the menu';
-    } else {
-      pathText.textContent = node.computedPath || '';
-    }
-    pathCell.appendChild(pathText);
-  }
+  renderNavPathCell(pathCell, node);
   row.appendChild(pathCell);
 
   // Breadcrumb (read-only). Mark nodes whose on-page breadcrumb is re-rooted off
   // the physical hierarchy, and flag any that exceed the project depth cap.
   const bcCell = document.createElement('span');
   bcCell.className = 'ne-cell ne-col-breadcrumb ne-cell-text';
-  if (hasBreadcrumbOverride(node)) {
-    bcCell.textContent = '↰ ' + node.breadcrumb;
-    bcCell.style.color = 'var(--accent)';
-    bcCell.title = 'Breadcrumb re-rooted → ' + pageBreadcrumbOf(node);
-  } else {
-    bcCell.textContent = node.breadcrumb || '';
-  }
-  if (breadcrumbExceedsCap(node)) {
-    bcCell.textContent = '⚠ ' + bcCell.textContent;
-    bcCell.style.color = 'var(--kke-kill, #c0392b)';
-    bcCell.title = `Breadcrumb is ${breadcrumbDepthOf(node)} levels — exceeds the project cap of ${getBreadcrumbMaxDepth()}. ${pageBreadcrumbOf(node)}`;
-  }
   bcCell.dataset.field = 'breadcrumb';
+  renderNavBreadcrumbCell(bcCell, node);
   row.appendChild(bcCell);
 
   // Count + status indicator
@@ -14695,13 +14717,17 @@ function updateNavEditorNodeDOM(node) {
   const row = wrapper.querySelector('.ne-row');
   if (!row) return;
 
-  // Update computed path cell
+  // Rebuild the computed-path and breadcrumb cells via the same shared
+  // helpers the full render uses (renderNavPathCell/renderNavBreadcrumbCell) —
+  // a plain `.textContent =` assignment here used to destroy the external-URL
+  // <input> and silently drop the ↪/↰/⚠ markers and their styling for
+  // descendant rows until the next full re-render, even though the underlying
+  // override/depth-cap state was still exactly as it was.
   const pathCell = row.querySelector('[data-field="computedPath"]');
-  if (pathCell) pathCell.textContent = node.computedPath || '';
+  if (pathCell) renderNavPathCell(pathCell, node);
 
-  // Update breadcrumb cell
   const bcCell = row.querySelector('[data-field="breadcrumb"]');
-  if (bcCell) bcCell.textContent = node.breadcrumb || '';
+  if (bcCell) renderNavBreadcrumbCell(bcCell, node);
 
   // Update number cell
   const numCell = row.querySelector('.ne-cell-number');
