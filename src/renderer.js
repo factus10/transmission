@@ -12562,6 +12562,14 @@ function buildMenuExportSheet(menusToExport) {
       });
     };
     walk('', 0, []);
+    // An item-less menu still exists. Without this it contributes no rows at all,
+    // so its name/placement/description never reach the file — while the JSON
+    // export lists it (with an empty items array) and the success toast counts it.
+    // Item columns stay blank rather than carrying a placeholder label: a CMS
+    // import keying on Kind skips the row, and a human reads it as "declared,
+    // nothing in it yet".
+    if (firstRow) aoa.push([menu.name || '', menu.placement || '', menu.description || '',
+                            ...Array(headers.length - 3).fill('')]);
   });
   const cols = [{ wch: 18 }, { wch: 16 }, { wch: 30 }, { wch: 6 }, { wch: 30 }, { wch: 24 }, { wch: 7 }, { wch: 42 }, { wch: 28 }, { wch: 40 }, { wch: 10 }, { wch: 10 }, { wch: 12 }];
   return { name: 'Menus', aoa, cols };
