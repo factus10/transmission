@@ -16077,11 +16077,11 @@ function openNavNodeEditor(node) {
 /** Walk the live tree to find which children array actually contains `target`.
  *  Returns { siblings, idx } or null. Uses reference equality — immune to
  *  stale/mismatched parentNumber values after reorganisations. */
-function _findNavNodeLocation(target, nodes) {
+function _findNavNodeLocation(target, nodes, parent = null) {
   for (let i = 0; i < nodes.length; i++) {
-    if (nodes[i] === target) return { siblings: nodes, idx: i };
+    if (nodes[i] === target) return { siblings: nodes, idx: i, parent };
     if (nodes[i].children && nodes[i].children.length > 0) {
-      const found = _findNavNodeLocation(target, nodes[i].children);
+      const found = _findNavNodeLocation(target, nodes[i].children, nodes[i]);
       if (found) return found;
     }
   }
@@ -16089,6 +16089,14 @@ function _findNavNodeLocation(target, nodes) {
 }
 
 function cloneNavBranch(node) {
+  // Find the node's actual location by object reference, not by parentNumber
+  // (which can be stale after prior reorganizations) — a miss here could
+  // misplace the clone at position 0 of the wrong parent (state.navTree,
+  // via the old code's ternary default) instead of as a sibling of the
+  // original. Checked before any mutation, so a miss aborts cleanly.
+  const loc = _findNavNodeLocation(node, state.navTree);
+  if (!loc) { showToast('Node not found in tree', 'error'); return; }
+
   // Find the next available ID
   let maxId = 0;
   for (const n of state.navNodes) {
@@ -16125,9 +16133,7 @@ function cloneNavBranch(node) {
   const cloned = cloneNode(node);
 
   // Insert after the original node as a sibling
-  const parent = node.parentNumber ? state.navNodes.find(n => n.number === node.parentNumber) : null;
-  const siblings = parent ? parent.children : state.navTree;
-  const idx = siblings.indexOf(node);
+  const { siblings, idx } = loc;
   siblings.splice(idx + 1, 0, cloned);
   cloned.parentNumber = node.parentNumber || '';
 
@@ -16355,9 +16361,13 @@ function collectAllDescendants(node) {
  *  only in an undo snapshot is otherwise untouched by any recalculation, which
  *  only ever walks state.navTree/state.navNodes once the node is spliced out). */
 function captureNavDeleteUndoSnapshot(node, mode) {
-  const parent = node.parentNumber ? state.navNodes.find(n => n.number === node.parentNumber) : null;
-  const siblings = parent ? parent.children : state.navTree;
-  const idx = siblings.indexOf(node);
+  // Find by object reference, not stale-prone parentNumber (see
+  // executeDeleteNavNodeCore below) — this snapshot's index/parentId feed
+  // directly into undoNavDelete()'s restore, so a wrong lookup here would
+  // record the wrong position to restore to.
+  const loc = _findNavNodeLocation(node, state.navTree);
+  const parent = loc ? loc.parent : null;
+  const idx = loc ? loc.idx : -1;
 
   const idsToDelete = new Set([node.id]);
   if (mode !== 'promote') collectAllDescendants(node).forEach(d => idsToDelete.add(d.id));
@@ -16394,10 +16404,14 @@ function captureNavDeleteUndoSnapshot(node, mode) {
  *  many nodes into one undo entry + one render instead of one each). */
 function executeDeleteNavNodeCore(node, mode, assignAction, reassignTarget) {
   const oldPaths = snapshotNavPaths();
-  const parent = node.parentNumber ? state.navNodes.find(n => n.number === node.parentNumber) : null;
-  const siblings = parent ? parent.children : state.navTree;
-  const idx = siblings.indexOf(node);
-  if (idx < 0) return;
+  // Find the node's actual location by object reference, not by parentNumber
+  // (which can be stale after prior reorganizations) — a miss here used to
+  // fall back to state.navTree, indexOf() the node there (never finding it),
+  // and silently bail out — while the caller still pushed undo, re-rendered,
+  // and showed a green "Deleted" toast, as if the delete had actually happened.
+  const loc = _findNavNodeLocation(node, state.navTree);
+  if (!loc) return;
+  const { siblings, idx, parent } = loc;
 
   // Collect IDs being deleted
   const idsToDelete = new Set([node.id]);
