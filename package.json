@@ -10,7 +10,8 @@
     "postinstall": "electron-rebuild -f -w better-sqlite3",
     "build": "electron-builder --mac --universal",
     "build:arm": "electron-builder --mac --arm64",
-    "build:intel": "electron-builder --mac --x64"
+    "build:intel": "electron-builder --mac --x64",
+    "build:signed:sandboxed": "bash scripts/build-signed-mac.sh"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
@@ -27,6 +28,7 @@
   "build": {
     "appId": "com.jakala.transmission",
     "productName": "Transmission",
+    "afterPack": "scripts/afterPack.js",
     "fileAssociations": [
       {
         "ext": "transmission",
