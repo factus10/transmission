@@ -2305,7 +2305,11 @@ function updateNoSelectionState() {
   }
 }
 
-function clearNavAssignment(row, origIndex) {
+/** Clear a row's sitemap placement. Pass `{ deferRender: true }` when clearing a
+ *  batch and re-render the tree once afterward: renderNavEditor() rebuilds the
+ *  entire tree DOM, so doing it per row means every row but the last paints a
+ *  result nobody ever sees. */
+function clearNavAssignment(row, origIndex, opts = {}) {
   ['Sitemap_ID', 'Sitemap_Destination', 'Computed Path', 'Sitemap_SortID', 'Page_Breadcrumb'].forEach(c => {
     const old = row[c];
     if (old) logChange(origIndex, c, old, '');
@@ -2316,7 +2320,7 @@ function clearNavAssignment(row, origIndex) {
   // Invalidate the page-count cache so nav tree counts are up to date
   invalidateNavPageCountsCache();
   // Re-render the nav editor if it's open so the counts update immediately
-  if (_navEditorOpen) renderNavEditor();
+  if (_navEditorOpen && !opts.deferRender) renderNavEditor();
 }
 
 function clearRedirectDestination(row, origIndex) {
@@ -9803,8 +9807,11 @@ function applyConsolidationGroup(group, targetOrigIndex) {
       row[kkeCol()] = 'Consolidate';
       logChange(origIndex, kkeCol(), oldKke, 'Consolidate');
     }
-    // Clear sitemap assignment (page is going away, no point being in nav)
-    clearNavAssignment(row, origIndex);
+    // Clear sitemap assignment (page is going away, no point being in nav).
+    // Defer the tree re-render — this dialog is only reachable from the Sitemap
+    // toolbar, so the editor is always open and every row would otherwise rebuild
+    // the whole tree. One render after the loop.
+    clearNavAssignment(row, origIndex, { deferRender: true });
     // Clear any explicit redirect destination — let the resolver chase the consolidate target
     const oldRedirect = String(row['Redirect_Destination'] || '');
     if (oldRedirect) {
@@ -9814,6 +9821,8 @@ function applyConsolidationGroup(group, targetOrigIndex) {
   });
 
   setDirty(true);
+  // The per-row clears above deferred this; paint the updated page counts once.
+  if (_navEditorOpen) renderNavEditor();
   applyFilter();
   if (state.selectedIndex !== null) {
     populateAuditFields(state.editedRows[state.selectedIndex]);
