@@ -3056,6 +3056,12 @@ let _displayCols = [];
 function renderRows() {
   const { filteredRows, headers } = state;
   els.rowList.innerHTML = '';
+  // Drop any previous render's virtual height before the early returns below —
+  // it's re-derived from the current row count further down. Left stale, a
+  // filter that matches nothing keeps the last result's multi-thousand-pixel
+  // height under a one-line "no rows" message: a tiny scrollbar thumb over a
+  // huge empty void.
+  els.rowList.style.height = '';
 
   if (filteredRows.length === 0 && state.rows.length === 0) return; // not loaded
 
