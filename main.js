@@ -720,10 +720,25 @@ function navTreeFromFlatNodes(flatNodes) {
 function readProject(filePath) {
   try {
     projectStore.open(filePath);
-    const { headers, rows, navNodes, projectSettings, sheetName } = projectStore.readAll();
+    const { headers, rows, navNodes, projectSettings, sheetName, parseErrors } = projectStore.readAll();
 
     if (headers.length === 0) {
       throw new Error('Project file contains no data.');
+    }
+
+    // Unreadable blobs no longer abort the open (see readAll) — but they must not
+    // pass silently either: the affected rows load blank, and the user needs to
+    // know which ones before they act on the audit.
+    if (parseErrors && parseErrors.length > 0) {
+      const detail = parseErrors.slice(0, 10)
+        .map(e => `• ${e.kind} ${e.idx}: ${e.error}`).join('\n');
+      dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        title: 'Project opened with damaged entries',
+        message: `${parseErrors.length} entr${parseErrors.length === 1 ? 'y' : 'ies'} in this project could not be read and opened blank.`,
+        detail: `The rest of the project opened normally. The unreadable data is preserved in the file, so it is not lost — but do not save over the project until you have a backup (one is written automatically to the app's backups folder each time a project is opened).\n\n${detail}` +
+                (parseErrors.length > 10 ? `\n…and ${parseErrors.length - 10} more.` : '')
+      });
     }
 
     // Same post-processing as the xlsx path: column mapping (honoring the
