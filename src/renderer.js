@@ -18892,7 +18892,29 @@ function resolveRedirectDestinations() {
 
 // ─── Report Infrastructure ───────────────────────────────────────────────────
 
+// Report bodies are supposed to hardcode colors for a white page (see showReport),
+// but several reach for the app's design tokens instead — the app-wide habit. Left
+// undefined they break twice over: in the exported HTML/PDF nothing defines them at
+// all (an invalid var() makes the whole declaration unset, so borders vanish, tinted
+// callouts go transparent, and monospace falls back to body text), and in the live
+// preview they resolve to the *app's current theme* — in dark mode that paints
+// near-white text and near-black panels onto the forced-white preview surface.
+// So pin them to a fixed print palette (the light-theme values) and apply it in both
+// places from this one constant. Fonts deliberately map to system stacks rather than
+// the app's bundled IBM Plex, which an exported document has no access to.
+const REPORT_TOKENS = `
+  --text-primary: #1a1a1a; --text-secondary: #4b4b4b; --text-muted: #636363;
+  --border: #e0e0e0; --border-light: #eeeeee;
+  --bg-surface: #ffffff; --bg-field-bar: #fafafa; --bg-main: #fafafa;
+  --accent: #16a34a; --accent-dim: #dcfce7; --accent-text: #166534;
+  --kke-keep: #15703a; --kke-kill: #b91c1c; --kke-evolve: #854d0e;
+  --kke-consolidate: #4338ca; --kke-exclude: #636363;
+  --font-sans: -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'SF Mono', Menlo, monospace;
+`;
+
 const REPORT_CSS = `
+  :root { ${REPORT_TOKENS} }
   body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; color: #222; margin: 0; padding: 0; }
   .report-wrap { max-width: 900px; margin: 0 auto; padding: 32px; }
   h1 { font-size: 20px; margin: 0 0 4px; }
@@ -18943,8 +18965,10 @@ function showReport(title, bodyHtml, exporterFn) {
   // renders on white regardless of the app's theme) — so the live in-app
   // preview forces its own white "paper" surface rather than inheriting the
   // app's dark-mode panel background, or that same near-black text becomes
-  // illegible. See .report-preview-surface in styles.css.
-  $('progress-body').innerHTML = `<div class="report-preview-surface" style="padding:16px;font-size:13px;line-height:1.6;">${bodyHtml}</div>`;
+  // illegible. See .report-preview-surface in styles.css. REPORT_TOKENS pins
+  // the same print palette the export gets, so the bodies that do use design
+  // tokens don't resolve them against the app's live theme here.
+  $('progress-body').innerHTML = `<div class="report-preview-surface" style="${REPORT_TOKENS}padding:16px;font-size:13px;line-height:1.6;">${bodyHtml}</div>`;
   $('btn-progress-export-pdf').classList.remove('hidden');
   $('btn-progress-export-html').classList.remove('hidden');
   $('btn-progress-export-pdf').textContent = 'PDF';
