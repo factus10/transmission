@@ -14877,17 +14877,12 @@ function moveNavNode(dragged, target, zone) {
 }
 
 function removeNavNodeFromParent(node) {
-  if (node.parentNumber) {
-    const parent = state.navNodes.find(n => n.number === node.parentNumber);
-    if (parent) {
-      const idx = parent.children.indexOf(node);
-      if (idx >= 0) parent.children.splice(idx, 1);
-    }
-  } else {
-    // Root node
-    const idx = state.navTree.indexOf(node);
-    if (idx >= 0) state.navTree.splice(idx, 1);
-  }
+  // Find the node's actual location by object reference, not by parentNumber
+  // (which can be stale after prior reorganizations) — a miss here would leave
+  // the dragged node added to its new parent without ever being removed from
+  // the old one, producing a duplicate Sitemap_ID on save.
+  const loc = _findNavNodeLocation(node, state.navTree);
+  if (loc) loc.siblings.splice(loc.idx, 1);
 }
 
 /** Flatten the nav tree in DFS pre-order (parent before its children, siblings in
