@@ -214,11 +214,33 @@ class ProjectStore {
 
   // ─── Read ───────────────────────────────────────────────────────────────────
 
-  /** Load the full project. Returns raw stored data (no audit-column post-processing). */
+  /** Load the full project. Returns raw stored data (no audit-column post-processing).
+   *  `parseErrors` is non-empty if any blob was unreadable — the caller surfaces it. */
   readAll() {
+    const parseErrors = [];
+    // One unreadable blob must not cost the user the whole project: readAll()'s
+    // caller turns any throw into "Could not open the project", so a single bad
+    // cell would lock an entire audit away behind a raw JSON syntax error.
+    //
+    // Quarantine rather than skip. Dropping the row would renumber every row
+    // after it (callers index rows by array position), and the next save
+    // rewrites the table from what was loaded — so a skipped row would be
+    // silently and permanently deleted by the very act of opening and saving.
+    // Keeping the raw text under _-prefixed keys preserves it verbatim through
+    // that round trip, and _-prefixed columns are already hidden from Table View
+    // and client exports.
+    const parseBlob = (raw, kind, idx) => {
+      try { return JSON.parse(raw); }
+      catch (e) {
+        parseErrors.push({ kind, idx, error: e.message });
+        return { _corruptData: String(raw), _parseError: e.message };
+      }
+    };
     const headers = this.db.prepare('SELECT name FROM headers ORDER BY pos').all().map(r => r.name);
-    const rows = this.db.prepare('SELECT data FROM rows ORDER BY idx').all().map(r => JSON.parse(r.data));
-    const navNodes = this.db.prepare('SELECT data FROM nav_nodes ORDER BY idx').all().map(r => JSON.parse(r.data));
+    const rows = this.db.prepare('SELECT idx, data FROM rows ORDER BY idx').all()
+      .map(r => parseBlob(r.data, 'row', r.idx));
+    const navNodes = this.db.prepare('SELECT idx, data FROM nav_nodes ORDER BY idx').all()
+      .map(r => parseBlob(r.data, 'nav node', r.idx));
     const projectSettings = {};
     for (const { key, value } of this.db.prepare('SELECT key, value FROM settings').all()) {
       try { projectSettings[key] = JSON.parse(value); } catch (e) { projectSettings[key] = value; }
@@ -228,6 +250,7 @@ class ProjectStore {
       rows,
       navNodes,
       projectSettings,
+      parseErrors,
       sheetName: this._getMeta('sheetName') || 'Data'
     };
   }
