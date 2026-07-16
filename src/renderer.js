@@ -22224,7 +22224,16 @@ function setupRedirectEditor() {
   if (auditBtn) auditBtn.addEventListener('click', toggleRedirectEditor);
   $('btn-redirect-editor-close').addEventListener('click', closeRedirectEditor);
   $('redirect-status-filter').addEventListener('change', () => renderRedirectEditor());
-  $('redirect-search').addEventListener('input', () => renderRedirectEditor());
+  // Debounced: each render rebuilds a DOM row per redirect (~30ms on a crawl with
+  // a couple of thousand Kill/Consolidate pages), which is several frames per
+  // keystroke. Safe to defer wholesale — renderRedirectEditor() reads this input's
+  // value live at render time, so there's no captured value to go stale. 150ms
+  // matches the sidebar search and setupGlobalSearch.
+  let _redirectSearchDebounce = null;
+  $('redirect-search').addEventListener('input', () => {
+    clearTimeout(_redirectSearchDebounce);
+    _redirectSearchDebounce = setTimeout(() => renderRedirectEditor(), 150);
+  });
 
   // Find/Replace in destination URLs (searches resolved destinations)
   let _frMatches = [];   // [{origIndex, resolvedDest}]
