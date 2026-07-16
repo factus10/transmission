@@ -17772,6 +17772,13 @@ function applyUndoAction(action, isUndo) {
     return;
   }
   const val = isUndo ? action.oldValue : action.newValue;
+  const prevVal = isUndo ? action.newValue : action.oldValue;
+  // Log the reversal itself — Cmd+Z used to mutate state.editedRows directly
+  // with no logChange() call, so the persisted KKE_ChangeLog kept the original
+  // forward entry (e.g. "Keep → Kill") even after the undo put the data back
+  // to "Keep", making the exported audit trail show a decision that wasn't
+  // actually in the data. Logging both directions keeps the trail accurate.
+  logChange(action.origIndex, action.field, prevVal, val);
   state.editedRows[action.origIndex][action.field] = val;
   setDirty(true);
   renderVisibleRows();
