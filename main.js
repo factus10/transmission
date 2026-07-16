@@ -16,7 +16,7 @@ let navSheetInfo = null;  // { sheetName, columns: { id, breadcrumb, computedPat
 
 // SQLite persistence for .transmission project files. Open whenever the current
 // file is a project; xlsx files continue through the legacy SheetJS path.
-const projectStore = new ProjectStore();
+const projectStore = new ProjectStore({ appVersion: app.getVersion() });
 const isProjectFile = (fp) => typeof fp === 'string' && fp.toLowerCase().endsWith(PROJECT_EXT);
 
 const userDataPath = app.getPath('userData');

@@ -23,9 +23,16 @@ const SCHEMA_VERSION = 1;
 const PROJECT_EXT = '.transmission';
 
 class ProjectStore {
-  constructor() {
+  /**
+   * @param {{appVersion?: string}} [opts] — the version stamped into each saved
+   *   project's meta. Injected rather than read here so this module keeps its
+   *   independence from electron (see the design notes above); main.js passes
+   *   app.getVersion(), which is the only accessor correct in a packaged build.
+   */
+  constructor(opts = {}) {
     this.db = null;
     this.filePath = null;
+    this.appVersion = opts.appVersion || '';
   }
 
   // ─── Lifecycle ──────────────────────────────────────────────────────────────
@@ -199,7 +206,7 @@ class ProjectStore {
 
       if (sheetName) this._setMeta('sheetName', sheetName);
       this._setMeta('savedAt', new Date().toISOString());
-      this._setMeta('appVersion', process.env.npm_package_version || '');
+      this._setMeta('appVersion', this.appVersion);
     });
     txn();
     return { success: true };
