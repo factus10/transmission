@@ -2996,20 +2996,26 @@ ipcMain.handle('export-progress-pdf', async (event, { html, defaultName }) => {
     defaultPath: defaultName || 'audit-progress.pdf',
     filters: [{ name: 'PDF', extensions: ['pdf'] }]
   });
-  if (result.canceled) return { success: false };
+  // 'Cancelled' is the sentinel every caller checks to stay quiet on cancel —
+  // without it they report "Export failed: undefined".
+  if (result.canceled) return { success: false, error: 'Cancelled' };
+  let win = null;
   try {
-    const win = new BrowserWindow({ show: false, width: 800, height: 600 });
+    win = new BrowserWindow({ show: false, width: 800, height: 600 });
     await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
     const pdfData = await win.webContents.printToPDF({
       printBackground: true,
       pageSize: 'A4',
       margins: { top: 0.6, bottom: 0.6, left: 0.6, right: 0.6 }
     });
-    win.close();
     fs.writeFileSync(result.filePath, pdfData);
     return { success: true, filePath: result.filePath };
   } catch (e) {
     return { success: false, error: e.message };
+  } finally {
+    // Close on every path: a loadURL/printToPDF rejection used to skip the
+    // close and strand the window + its renderer process for the session.
+    if (win) { try { win.close(); } catch (_) {} }
   }
 });
 
