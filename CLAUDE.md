@@ -234,11 +234,20 @@ A `.transmission` file is a **SQLite database** (better-sqlite3, WAL mode) that 
   assigneeLibrary: [],       // Phase 2 — string[] per-project assignee names (unified pool for builder + writer)
   patternLibrary: [],        // Phase 2 — per-project page patterns; structural sheet PatternLibrary
   designPatternLibrary: [],  // per-project UI/design patterns { name, category, complexity, description, dsUrl, aliases, notes }[]; structural sheet DesignPatternLibrary
-  _sessionChangeLog: [],     // audit trail entries [{timestamp, row, url, field, oldVal, newVal}]
-  _globalSearchMatches: [],  // Cmd+F matches — [{origIndex, row}] in audit view; [{nodeId}] when the Sitemap is open
-  _globalSearchCurrent: -1   // index into _globalSearchMatches for current match
 }
 ```
+
+**Not on `state` — module-level variables in renderer.js.** These three are plain
+module-scope bindings, *not* keys on `state`. `state` is a plain object with no
+guard, so `state._sessionChangeLog.push(…)` would throw on undefined (or, if you
+initialized it first, silently write to a dead property that nothing reads or
+persists). Always use the bare name:
+
+| Variable | Where | What |
+|----------|-------|------|
+| `_sessionChangeLog` | `const`, renderer.js:119 | Audit-trail entries `[{timestamp, row, url, field, from, to}]`. Written by `logChange()`; drained into the save payload by `buildSavePayload()`. |
+| `_globalSearchMatches` | `let`, renderer.js:1281 | Cmd+F matches — `[{origIndex, row}]` in audit view; `[{nodeId}]` when the Sitemap is open. |
+| `_globalSearchCurrent` | `let`, renderer.js:1282 | Index into `_globalSearchMatches` for the current match. |
 
 Column mapping entries in `state.columnMap` include: `smeDecision`, `smeNotes`, `contentOwner`, `finalKke` (in addition to existing mappings).
 
@@ -511,7 +520,7 @@ Add headers to this set to make them editable. Everything else is read-only.
 4. `save-success` event → `setDirty(false)` + toast
 
 ### Change logging
-`logChange(origIndex, field, oldVal, newVal)` pushes an entry to `state._sessionChangeLog`. Called automatically when KKE_Recommendation, SME_Decision, or Final_KKE changes. On save, entries are appended to the `KKE_ChangeLog` sheet and `_sessionChangeLog` is cleared.
+`logChange(origIndex, field, oldVal, newVal)` pushes an entry to `_sessionChangeLog` (a module-level `const` in renderer.js — **not** `state._sessionChangeLog`; see the State object section). Called automatically when KKE_Recommendation, SME_Decision, or Final_KKE changes. On save, entries are appended to the `KKE_ChangeLog` sheet and `_sessionChangeLog` is cleared.
 
 ---
 
