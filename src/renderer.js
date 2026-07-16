@@ -14829,15 +14829,33 @@ function cascadeNavChangesToRows(oldPaths) {
     return baseUrl ? baseUrl + '/' + p.replace(/^\//, '') : '/' + p.replace(/^\//, '');
   };
 
+  // onNavNodeEdit() is wired to the slug input's 'input' event, so this whole
+  // pass runs per keystroke and its per-row cost *is* the typing latency. Two
+  // indexes, both built once per pass and valid for its duration — the tree is
+  // already fully recalculated before this runs, and this loop only writes to
+  // rows, never to nodes:
+  //   nodeById — replaces a linear state.navNodes.find() per row, which made the
+  //     join O(rows × nodes).
+  //   breadcrumbByNodeId — pageBreadcrumbOf() re-walks the ancestor chain on each
+  //     call, and many rows share one node (thousands of rows typically resolve to
+  //     a few hundred distinct nodes), so it was recomputing the same answer over
+  //     and over.
+  const nodeById = new Map(state.navNodes.map(n => [n.id, n]));
+  const breadcrumbByNodeId = new Map();
+  const pageBreadcrumbFor = (node) => {
+    if (!breadcrumbByNodeId.has(node.id)) breadcrumbByNodeId.set(node.id, pageBreadcrumbOf(node));
+    return breadcrumbByNodeId.get(node.id);
+  };
+
   state.editedRows.forEach((row, i) => {
     const navID = row['Sitemap_ID'] || '';
     if (!navID) return;
-    const node = state.navNodes.find(n => n.id === navID);
+    const node = nodeById.get(navID);
     if (!node) return;
 
     row['Sitemap_Destination'] = node.breadcrumb || node.label;
     row['Sitemap_SortID'] = node.sortID || '';
-    row['Page_Breadcrumb'] = pageBreadcrumbOf(node);
+    row['Page_Breadcrumb'] = pageBreadcrumbFor(node);
 
     // Preserve page-specific slug suffix
     const storedPath = row['Computed Path'] || '';
