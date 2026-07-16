@@ -16104,14 +16104,20 @@ function cloneNavBranch(node) {
     if (idNum > maxId) maxId = idNum;
   }
 
-  // Deep-clone a node and all children, assigning new IDs
+  // Deep-clone a node and all children, assigning new IDs. Spreads every field
+  // on src first (nodeType, phase, notes, url, urlOverride, breadcrumbParentId,
+  // collapse, refNodeId, and all Build/Write/Migrate metadata) rather than a
+  // hardcoded whitelist — a whitelist silently drops any field it doesn't name,
+  // and previously converted a cloned Fragment/Header/aliased branch into a
+  // plain current-build Page with every authored brief/assignee discarded.
+  // Only the fields that must genuinely differ per clone are overridden after.
   function cloneNode(src) {
     maxId++;
     const id = String(maxId).padStart(5, '0');
     const clone = {
+      ...src,
       number: '',  // will be recalculated
       label: src.label + ' (copy)',
-      path: src.path,
       sortID: '',
       parentNumber: '',
       breadcrumb: '',
