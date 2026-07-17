@@ -736,7 +736,7 @@ Change `.slice(0, 3)` in `renderRows()` and `renderColHeaders()` in `renderer.js
 2. Write a `parseYourSheet(worksheet)` function mirroring `parseGlossarySheet()`
 3. Write a `writeYourSheet(workbook, data)` function mirroring `writeGlossarySheet()`
 4. In `readWorkbook`: detect the sheet by lowercase name and attach its data to `projectSettings` (so it travels through the `file-opened` IPC payload)
-5. In `writeWorkbook`: call `writeYourSheet()` and add the name to `sheetsWeEdit` so it's preserved
+5. In `writeWorkbook`: call `writeYourSheet()`. Nothing else is needed to preserve other sheets — `writeWorkbook` mutates the workbook parsed from the existing file, so any sheet it doesn't overwrite survives as-is. If the library can be *emptied*, route the empty case through `writeEmptyStructuralSheet()` so the deletion persists (see `writeContentTypeRegistrySheet`)
 6. In renderer: read from `state.projectSettings.yourData` on load; mutate and `setDirty(true)` on edit; save flow picks it up automatically because `saveFile()` spreads `state.projectSettings` into the payload
 
 ### Add a new computed/derived column (like GA KKE)

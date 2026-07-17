@@ -201,11 +201,6 @@
       }
       return FALLBACK_COLOR;
     }
-    function hexRgba(hex, a) {
-      if (!hex || hex[0] !== '#' || hex.length < 7) return 'rgba(154,160,171,' + a + ')';
-      var r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
-      return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
-    }
 
     // ════════════════════════════════════════════════════════════════════════
     // Layout — ported from prototype, generalized to N stacked roots.
@@ -799,16 +794,12 @@
       rules.push({ id: 'r-fallback', label: 'Everything else', condition: { type: 'always' }, color: FALLBACK_COLOR });
       return rules;
     }
-    function dedupeParentRules(rules) {
-      var seen = {}; return rules.filter(function (r) { var key = (r.condition && r.condition.parentId) || r.id; if (seen[key]) return false; seen[key] = 1; return true; });
-    }
     function topLevelSections() {
       // depth-1 nodes across all roots
       var out = [];
       ROOTS.forEach(function (root) { (root.children || []).forEach(function (c) { out.push(c); }); });
       return out;
     }
-    function parentOf(id) { return INDEX[id] ? INDEX[id].parentId : null; }
 
     function openRuleEditor() {
       var ov = document.createElement('div');
