@@ -1797,7 +1797,7 @@ function _ensureModalKeyHandler() {
  *   escapeValue  {*}        value passed to onClose on Esc/backdrop/✕ (default null)
  *   className    {string}   extra class on the dialog
  *   onClose      {function} called once with the close result
- * @returns {{ close, overlay, dialog, body, footer, setPrimary }}
+ * @returns {{ close, overlay, dialog, body, footer }}
  */
 function openModal(opts = {}) {
   const {
@@ -1897,7 +1897,6 @@ function openModal(opts = {}) {
 
   const api = {
     close, overlay, dialog, body: bodyEl, footer: footerEl,
-    setPrimary(btnOrFn) { /* reserved */ },
   };
 
   // Focus the primary button, or the first focusable in the body.
@@ -2500,7 +2499,6 @@ function applySavedFilter(saved) {
 
 function setupSavedFilters() {
   const sel = $('saved-filter-select');
-  const btn = $('btn-save-filter');
 
   sel.addEventListener('change', async () => {
     const name = sel.value;
@@ -2531,34 +2529,15 @@ function setupSavedFilters() {
     applySavedFilter(saved);
   });
 
-  btn.addEventListener('click', async () => {
-    const name = await showPrompt('Save Filter', 'Filter name');
-    if (!name || !name.trim()) return;
-    if (!state.projectSettings.savedFilters) state.projectSettings.savedFilters = [];
-    // Remove existing with same name
-    state.projectSettings.savedFilters = state.projectSettings.savedFilters.filter(f => f.name !== name.trim());
-    state.projectSettings.savedFilters.push({
-      name: name.trim(),
-      filterText: state.filterText || '',
-      kkeFilter: state.kkeFilter || [],
-      groupFilter: state.groupFilter || ''
-    });
-    setDirty(true);
-    renderSavedFilterSelect();
-    showToast(`Filter "${name.trim()}" saved`);
-  });
 }
 
 function renderSavedFilterSelect() {
   const sel = $('saved-filter-select');
-  const btn = $('btn-save-filter');
   if (!state.headers.length) {
     sel.classList.add('hidden');
-    btn.classList.add('hidden');
     return;
   }
   sel.classList.remove('hidden');
-  btn.classList.add('hidden'); // hide the "+" button, use dropdown option instead
   sel.innerHTML = '<option value="">Saved filters…</option>';
   const filters = state.projectSettings.savedFilters || [];
   filters.forEach(f => {
@@ -6707,7 +6686,6 @@ function closeSettingsPopover() {
 }
 
 // Last-known floating position (session memory; resets on app restart)
-let _projectSettingsPos = null; // { top, left } in pixels
 
 function toggleProjectSettingsPopover() {
   if (!els.projectSettingsOverlay.classList.contains('hidden')) {
@@ -11183,7 +11161,6 @@ function updateNavBadge(row) {
     badge.appendChild(clear);
     els.btnNav.appendChild(badge);
   }
-  updateRedirectBadge(row);
 }
 
 async function promptClearNavAssignment(origIndex, navID, navDest) {
@@ -11289,54 +11266,6 @@ async function promptClearNavAssignment(origIndex, navID, navDest) {
     if (e.key === 'Enter')  { e.preventDefault(); dialog.querySelector('#_nbc-clear').click(); }
   }
   document.addEventListener('keydown', onKey);
-}
-
-function updateRedirectBadge(row) {
-  const btn = $('btn-redirects');
-  if (!btn) return;
-  const dest = String(row['Redirect_Destination'] || '').trim();
-  // Remove any existing badge
-  const existing = btn.querySelector('.redirect-badge');
-  if (existing) existing.remove();
-  if (!dest) return;
-
-  const badge = document.createElement('span');
-  badge.className = 'redirect-badge';
-  badge.title = 'Redirects to: ' + dest;
-  // Show last meaningful path segment, fall back to host
-  let label = dest;
-  try {
-    const u = new URL(dest, 'https://example.com'); // base for relative paths
-    const parts = u.pathname.split('/').filter(Boolean);
-    label = parts.length > 0 ? '/' + parts[parts.length - 1] : (u.host || dest);
-  } catch (_) {
-    label = dest.replace(/^https?:\/\//, '').split('/').pop() || dest;
-  }
-  const txt = document.createElement('span');
-  txt.className = 'rb-text';
-  txt.textContent = label;
-  badge.appendChild(txt);
-
-  const clear = document.createElement('button');
-  clear.type = 'button';
-  clear.className = 'rb-clear';
-  clear.textContent = '×';
-  clear.title = 'Clear redirect destination';
-  clear.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (state.selectedIndex == null) return;
-    const r = state.editedRows[state.selectedIndex];
-    const old = String(r['Redirect_Destination'] || '');
-    if (!old) return;
-    r['Redirect_Destination'] = '';
-    logChange(state.selectedIndex, 'Redirect_Destination', old, '');
-    setDirty(true);
-    updateRedirectBadge(r);
-    refreshRowInList(state.selectedIndex);
-    showToast('Redirect cleared', 'success');
-  });
-  badge.appendChild(clear);
-  btn.appendChild(badge);
 }
 
 // ─── Nav tree / Nav editor ─────────────────────────────────────────────────
@@ -11506,9 +11435,6 @@ function openNavEditor() {
   $('content-area').classList.add('hidden');
   $('no-selection').classList.add('hidden');
   $('nav-editor').classList.remove('hidden');
-  // Legacy in-audit-bar buttons removed in Chunk iii; null-safe check kept for any stragglers.
-  const btnNT = $('btn-navtree');
-  if (btnNT) { btnNT.classList.add('nav-editor-active'); btnNT.textContent = 'Tree ✓'; }
 
   renderNavEditor();
 
@@ -11550,10 +11476,6 @@ function closeNavEditor() {
   _navEditorOpen = false;
   document.getElementById('app').classList.remove('tv-active');
   $('nav-editor').classList.add('hidden');
-  if ($('btn-navtree')) {
-    $('btn-navtree').classList.remove('nav-editor-active');
-    $('btn-navtree').textContent = 'Tree';
-  }
 
   // Restore appropriate view
   if (state.selectedIndex !== null) {
@@ -15483,10 +15405,6 @@ function treemapKkeColor(label) {
   const custom = (state.customKkeStates || []).find(s => s.label === label);
   return custom ? custom.color : '#9aa0ab';
 }
-function countNodePages(node) {
-  return _navPageCountsCache()[node.id] || 0;
-}
-
 /** Sort nodes for the editor's prev/next navigation.
  *  Returns a flat array in **tree pre-order**: parent → first child → its children →
  *  next sibling → … This matches the visual order the user sees in the nav tree,
@@ -22218,10 +22136,6 @@ function resyncNavBasedRedirects() {
 }
 
 function setupRedirectEditor() {
-  // Audit-bar btn-redirects removed in Chunk iii; view switcher handles entry now.
-  // Keep the click handler conditional in case the element returns later or is restored.
-  const auditBtn = $('btn-redirects');
-  if (auditBtn) auditBtn.addEventListener('click', toggleRedirectEditor);
   $('btn-redirect-editor-close').addEventListener('click', closeRedirectEditor);
   $('redirect-status-filter').addEventListener('change', () => renderRedirectEditor());
   // Debounced: each render rebuilds a DOM row per redirect (~30ms on a crawl with
@@ -22433,10 +22347,6 @@ function openRedirectEditor(scrollToOrigIndex) {
   $('content-area').classList.add('hidden');
   $('no-selection').classList.add('hidden');
   $('redirect-editor').classList.remove('hidden');
-  if ($('btn-redirects')) {
-    $('btn-redirects').classList.add('redirect-editor-active');
-    $('btn-redirects').textContent = 'Redirects ✓';
-  }
 
   renderRedirectEditor();
   if (typeof refreshViewSwitcher === 'function') refreshViewSwitcher();
@@ -22458,17 +22368,6 @@ function closeRedirectEditor() {
   _redirectEditorOpen = false;
   document.getElementById('app').classList.remove('tv-active');
   $('redirect-editor').classList.add('hidden');
-  const btn = $('btn-redirects');
-  if (btn) {
-    btn.classList.remove('redirect-editor-active');
-    // Rebuild button: label text node + (optional) redirect badge for the currently selected row.
-    // Using textContent here would nuke the badge — set the label as a child text node instead.
-    btn.innerHTML = '';
-    btn.appendChild(document.createTextNode('Redirects'));
-    if (state.selectedIndex !== null) {
-      updateRedirectBadge(state.editedRows[state.selectedIndex]);
-    }
-  }
 
   if (state.selectedIndex !== null) {
     $('content-area').classList.remove('hidden');

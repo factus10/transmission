@@ -12,7 +12,7 @@ let helpWindow = null;
 let changelogWindow = null;
 let currentFilePath = null;
 let currentSheetName = null;
-let navSheetInfo = null;  // { sheetName, columns: { id, breadcrumb, computedPath, sortID } }
+let navSheetInfo = null;  // { sheetName }
 
 // SQLite persistence for .transmission project files. Open whenever the current
 // file is a project; xlsx files continue through the legacy SheetJS path.
@@ -635,10 +635,9 @@ function readWorkbook(filePath, targetSheet) {
         NAV_COLUMNS.forEach(col => {
           if (!headers.includes(col)) headers.push(col);
         });
-        // Store nav sheet info for formula generation on save. Canonicalize to
-        // 'Sitemap' regardless of the on-disk name — writeWorkbook() physically
-        // renames the sheet the next time this file is saved.
-        navSheetInfo = { sheetName: 'Sitemap', columns: navTree.columns };
+        // Canonicalize to 'Sitemap' regardless of the on-disk name — writeWorkbook()
+        // physically renames the sheet the next time this file is saved.
+        navSheetInfo = { sheetName: 'Sitemap' };
       }
     } else {
       navSheetInfo = null;
@@ -780,16 +779,6 @@ function readProject(filePath) {
   }
 }
 
-function colLetter(idx) {
-  let letter = '';
-  let n = idx;
-  while (n >= 0) {
-    letter = String.fromCharCode(65 + (n % 26)) + letter;
-    n = Math.floor(n / 26) - 1;
-  }
-  return letter;
-}
-
 function parseNavSheet(worksheet) {
   const rawData = XLSX.utils.sheet_to_json(worksheet, {
     header: 1,
@@ -883,15 +872,7 @@ function parseNavSheet(worksheet) {
     }
   }
 
-  // Column letters for formula generation
-  const columns = {
-    id:           colLetter(idx.id),
-    breadcrumb:   idx.breadcrumb >= 0   ? colLetter(idx.breadcrumb)   : null,
-    computedPath: idx.computedPath >= 0 ? colLetter(idx.computedPath) : null,
-    sortID:       idx.sortID >= 0       ? colLetter(idx.sortID)       : null
-  };
-
-  return { roots, nodes, columns };
+  return { roots, nodes };
 }
 
 function parseSettingsSheet(worksheet) {
@@ -1510,7 +1491,6 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
     } else {
       XLSX.utils.book_append_sheet(workbook, worksheet, targetSheet);
     }
-    const sheetsWeEdit = new Set([targetSheet]);
 
     // One-time migration: rename a legacy 'NavStructure' sheet to 'Sitemap' in
     // place (same client-facing rename as the data sheet's Sitemap_ID /
@@ -1530,7 +1510,6 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
       if (navSheetInfo && workbook.Sheets[navSheetInfo.sheetName]) {
         // Rewrite existing Sitemap sheet
         const nsName = navSheetInfo.sheetName;
-        sheetsWeEdit.add(nsName);
         const nsWs = workbook.Sheets[nsName];
         const nsData = XLSX.utils.sheet_to_json(nsWs, { header: 1, defval: '' });
         const nsHeaders = nsData[0].map(String);
@@ -1677,16 +1656,12 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
           workbook.SheetNames.push(nsName);
         }
         // Set navSheetInfo so subsequent saves can rewrite
-        navSheetInfo = {
-          sheetName: nsName,
-          columns: { id: 0, number: 1, parentNumber: 2, label: 3, path: 4, sortID: 5, computedPath: 6, breadcrumb: 7 }
-        };
+        navSheetInfo = { sheetName: nsName };
       }
     }
     // Append new nav nodes to Sitemap sheet (legacy: from nav popover child creation)
     else if (newNavNodes && newNavNodes.length > 0 && navSheetInfo) {
       const nsName = navSheetInfo.sheetName;
-      sheetsWeEdit.add(nsName);
       if (workbook.Sheets[nsName]) {
         const nsWs = workbook.Sheets[nsName];
         const nsData = XLSX.utils.sheet_to_json(nsWs, { header: 1, defval: '' });
@@ -1733,10 +1708,8 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
     let droppedSettings = [];
     if (projectSettings) {
       droppedSettings = writeSettingsSheet(workbook, projectSettings);
-      sheetsWeEdit.add('KKE_Settings');
       if (projectSettings.glossary) {
         writeGlossarySheet(workbook, projectSettings.glossary);
-        sheetsWeEdit.add('KKE_Glossary');
       }
       // No `.length > 0` here: an empty array is a real state (the user deleted
       // every entry) and has to reach the writer, which persists it by reducing
@@ -1744,15 +1717,12 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
       // "not loaded / not sent", which is the case worth protecting against.
       if (Array.isArray(projectSettings.contentTypeRegistry)) {
         writeContentTypeRegistrySheet(workbook, projectSettings.contentTypeRegistry);
-        sheetsWeEdit.add('ContentTypeRegistry');
       }
       if (Array.isArray(projectSettings.patternLibrary)) {
         writePatternLibrarySheet(workbook, projectSettings.patternLibrary);
-        sheetsWeEdit.add('PatternLibrary');
       }
       if (Array.isArray(projectSettings.designPatternLibrary)) {
         writeDesignPatternLibrarySheet(workbook, projectSettings.designPatternLibrary);
-        sheetsWeEdit.add('DesignPatternLibrary');
       }
     }
 
@@ -1760,7 +1730,6 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
     // exporting a project's full history — re-exporting would otherwise duplicate)
     if (changeLog && changeLog.length > 0) {
       const clName = 'KKE_ChangeLog';
-      sheetsWeEdit.add(clName);
       const clHeaders = ['Timestamp', 'Row', 'URL', 'Field', 'Old Value', 'New Value', 'Auditor'];
       let existingRows = [];
       if (!opts.replaceChangeLog && workbook.Sheets[clName]) {
