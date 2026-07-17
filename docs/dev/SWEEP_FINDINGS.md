@@ -149,16 +149,16 @@ All of these are scale-dependent — described at the app's own stated design ta
 
 ---
 
-## Unverified — flag for manual check
+## Unverified — flag for manual check — ALL SIX NOW CHECKED
 
-These were in the raw 148 but never reached an adversarial verifier before the session limit hit. They looked credible enough in the raw pass to be worth a human look, but treat them as unconfirmed:
+These were in the raw 148 but never reached an adversarial verifier before the session limit hit. All six have since been checked by hand against the source and, where they turned out to be real, reproduced in the running app. Verdicts below; nothing here is outstanding.
 
-- **`CLAUDE.md:117`** (docs-drift) — CLAUDE.md documents `_sessionChangeLog`/`_globalSearchMatches`/`_globalSearchCurrent` as keys on the `state` object, but the raw finder claims all three are actually module-level variables — if true, `state._sessionChangeLog.push(...)` silently creates a dead property instead of writing to the real changelog. **Worth checking first** among the unverified items, given the stakes if true.
-- **`CLAUDE.md:453`** (docs-drift) — the "Menu organization (post-reorg)" list is claimed stale for the Migration/Reports/SME menus.
-- **`renderer.js:4061`** (ui-standards) — `renderDesignPatternChips` allegedly writes hardcoded light-mode hex colors as an inline style, defeating an existing dark-mode CSS rule for the same chips.
-- **`renderer.js:22687`** — claims the Multi-bar's bulk-Kill path skips Kill-cleanup (stale sitemap/redirect data left on killed pages) because the only caller of `promptBulkKillCleanup` is itself dead code.
-- **`main.js:3392`** — claims an `export-nav-tree` path hardcodes three `show*` flags to `true` unconditionally.
-- **`renderer.js:19087`** — notes `computeNodeReadinessWarnings()` deliberately returns `[]` (this much is confirmed elsewhere in CLAUDE.md itself as intentional) but claims something is still "wired to" it that's worth checking.
+- ✅ **`CLAUDE.md:117`** (docs-drift) — **premise right, conclusion wrong.** All three *are* module-level variables, so the docs were stale — but the feared silent data loss never happened: `grep -E "state\._(sessionChangeLog|globalSearchMatches|globalSearchCurrent)"` returns zero hits, and every reference uses the bare variable correctly. Confirmed at runtime that `state._sessionChangeLog` is `undefined` and `.push` on it *throws* rather than failing silently. It was a documentation trap that had never been sprung. Docs fixed.
+- ✅ **`CLAUDE.md:453`** (docs-drift) — **confirmed**, stale in exactly the three menus named. Verified by parsing `buildMenu()`: Migration omitted Pre-Handoff Check and listed four reports that had moved to Reports; Reports has 11 items, not the 3 the doc called "narrative reports only"; SME had gained Compare KKE vs SME. Fixed.
+- ✅ **`renderer.js:4061`** (ui-standards) — **confirmed, real bug.** The inline style duplicated the light-mode values `#design-pattern-chips .tag-chip` already sets, and since inline beats any stylesheet rule it made the dark-mode rule dead — chips rendered light-purple on the dark audit bar. Fixed by deleting the redundant inline style; verified computed colors flip correctly per theme, light mode unchanged.
+- ✅ **`renderer.js:22687`** — **confirmed, real bug.** `bulkAssignKke()` had zero callers, so its call to `promptBulkKillCleanup()` was unreachable; the Multi-bar's live Kill path (`applyMultiAction`) never offered cleanup, leaving Sitemap_ID/Redirect_Destination on killed pages. Cleanup wired into the live Apply handler; both dead `bulkAssign*` functions removed.
+- ⚪ **`main.js:3392`** — **confirmed but benign, no action.** `export-nav-tree` does hardcode `showPages`/`showMenu`/`showNotes` to `true`, making those three conditionals always-taken. But no UI offers those toggles and the renderer only ever sends `includePhase`, so nothing is being ignored — it's vestigial flexibility from an earlier design, not a defect.
+- ⚪ **`renderer.js:19087`** — **not a defect, no action.** `computeNodeReadinessWarnings()` returning `[]` is intentional and documented both in its own comment and in CLAUDE.md. The thing "wired to" it is the Migration Tracker's always-blank *Readiness Warnings* export column — which is exactly the deliberately-kept plumbing CLAUDE.md describes ("re-enable by adding rules back to the function"). Worth revisiting only if that empty column in a client deliverable is judged misleading.
 
 ---
 
