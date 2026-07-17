@@ -5741,6 +5741,12 @@ async function runBatchAssessment() {
   if (!(await confirmDialog({ title: 'Batch AI Assessment', message: `Assess ${rows.length} rows via AI? This may take a while and use API credits.\n\nYour human KKE column is not changed — results feed Suggested_KKE for you to confirm or override.`, confirmLabel: 'Assess' }))) return;
 
   _batchAssessAbort = false;
+  // Without this listener the _batchAssessAbort checks below can never fire —
+  // the flag was reset and tested but nothing ever set it, so a run this long
+  // (~1s/row rate limit: over an hour on a few thousand rows) had no way out.
+  // Same pattern as runSuggestForUnreviewed().
+  const onAbort = (e) => { if (e.key === 'Escape') _batchAssessAbort = true; };
+  document.addEventListener('keydown', onAbort);
   closeAssessPopover();
 
   // Show progress in toast
@@ -5749,30 +5755,35 @@ async function runBatchAssessment() {
   let done = 0;
   let errors = 0;
 
-  for (const { origIndex, row } of rows) {
-    if (_batchAssessAbort) break;
-    done++;
-    showToast(`Assessing ${done}/${rows.length}…`);
+  try {
+    for (const { row } of rows) {
+      if (_batchAssessAbort) break;
+      done++;
+      showToast(`Assessing ${done}/${rows.length}…  (Esc to cancel)`);
 
-    try {
-      // Field-rule assessment first
-      const fieldResult = await window.electronAPI.assessRow({ row });
-      row['_AssessedAt'] = new Date().toISOString();
+      try {
+        // Field-rule assessment first
+        const fieldResult = await window.electronAPI.assessRow({ row });
+        row['_AssessedAt'] = new Date().toISOString();
 
-      // If API key, also do LLM assessment
-      const llmResult = await window.electronAPI.assessRowLLM({
-        row, rubrics, apiKey: state.claudeApiKey
-      });
+        // If API key, also do LLM assessment
+        const llmResult = await window.electronAPI.assessRowLLM({
+          row, rubrics, apiKey: state.claudeApiKey
+        });
 
-      const rec = llmResult.recommendation
-        || (fieldResult.suggestion ? statusMap[fieldResult.suggestion] : '');
-      if (rec) row['_AssessmentResult'] = rec; // feeds Suggested_KKE — never touches the human KKE column
-    } catch (e) {
-      errors++;
+        const rec = llmResult.recommendation
+          || (fieldResult.suggestion ? statusMap[fieldResult.suggestion] : '');
+        if (rec) row['_AssessmentResult'] = rec; // feeds Suggested_KKE — never touches the human KKE column
+      } catch (e) {
+        errors++;
+      }
+
+      // Rate limiting: ~1 request per second. Skip the wait once aborted, so Esc
+      // stops the run now rather than a second from now.
+      if (done < rows.length && !_batchAssessAbort) await new Promise(r => setTimeout(r, 1000));
     }
-
-    // Rate limiting: ~1 request per second
-    if (done < rows.length) await new Promise(r => setTimeout(r, 1000));
+  } finally {
+    document.removeEventListener('keydown', onAbort);
   }
 
   setDirty(true);
@@ -5780,7 +5791,11 @@ async function runBatchAssessment() {
   computeSuggestedKke();
   renderVisibleRows();
   if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
-  showToast(`Batch assessment complete: ${done} row${done !== 1 ? 's' : ''}${errors ? `, ${errors} errors` : ''} — review Suggested_KKE`, 'success');
+  const summary = _batchAssessAbort
+    ? `Batch assessment cancelled after ${done} row${done !== 1 ? 's' : ''}`
+    : `Batch assessment complete: ${done} row${done !== 1 ? 's' : ''}`;
+  showToast(`${summary}${errors ? `, ${errors} errors` : ''} — review Suggested_KKE`,
+            _batchAssessAbort ? 'info' : 'success');
 }
 
 /**
