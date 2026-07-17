@@ -16396,7 +16396,7 @@ function collectAllDescendants(node) {
  *  applyUndoAction's 'nav-delete' branch are followed, since a node sitting
  *  only in an undo snapshot is otherwise untouched by any recalculation, which
  *  only ever walks state.navTree/state.navNodes once the node is spliced out). */
-function captureNavDeleteUndoSnapshot(node, mode) {
+function captureNavDeleteUndoSnapshot(node, mode, assignAction, reassignTarget) {
   // Find by object reference, not stale-prone parentNumber (see
   // executeDeleteNavNodeCore below) — this snapshot's index/parentId feed
   // directly into undoNavDelete()'s restore, so a wrong lookup here would
@@ -16432,6 +16432,12 @@ function captureNavDeleteUndoSnapshot(node, mode) {
     node, // real object reference — see doc comment above
     rowChanges, // nested per-item (not flattened) so a per-item abort during
                 // undo can skip restoring rows tied to that specific node
+    // How this delete disposed of the node's pages, so redo can replay it
+    // faithfully instead of always clearing. reassignTarget (the 'other' node
+    // pages moved to) is a live reference — it isn't the deleted node, so it
+    // stays in the tree; redoNavDelete re-checks it's still present before use.
+    assignAction: assignAction || 'clear',
+    reassignTarget: reassignTarget || null,
   };
 }
 
@@ -16534,7 +16540,7 @@ function recomputeNavAfterBulkDelete(oldPaths) {
  *  here) — captures an undo snapshot, runs the core mutation, pushes ONE undo
  *  entry, then re-renders. This is what makes single-node delete undoable. */
 function executeDeleteNavNode(node, mode, assignAction, reassignTarget) {
-  const item = captureNavDeleteUndoSnapshot(node, mode);
+  const item = captureNavDeleteUndoSnapshot(node, mode, assignAction, reassignTarget);
   executeDeleteNavNodeCore(node, mode, assignAction, reassignTarget);
   pushUndo({ type: 'nav-delete', items: [item] });
   renderNavEditor();
@@ -16598,7 +16604,7 @@ async function bulkDeleteNavNodes(nodeIds) {
   // Capture paths once, before any mutation, for a single cascade at the end.
   const oldPaths = snapshotNavPaths();
   const items = pruned.map(node => {
-    const item = captureNavDeleteUndoSnapshot(node, 'delete-all');
+    const item = captureNavDeleteUndoSnapshot(node, 'delete-all', 'clear', null);
     executeDeleteNavNodeCore(node, 'delete-all', 'clear', null, { deferRecompute: true, oldPaths });
     return item;
   });
@@ -18000,8 +18006,22 @@ function undoNavDelete(action) {
 function redoNavDelete(action) {
   action.items = action.items.map(item => {
     if (item.restored === false) return item; // nothing to re-delete — was never restored
-    const freshItem = captureNavDeleteUndoSnapshot(item.node, item.mode);
-    executeDeleteNavNodeCore(item.node, item.mode, 'clear', null);
+    // Replay the ORIGINAL delete's page disposition, not a hardcoded clear: a
+    // single-node delete may have reassigned its pages to the parent ('parent')
+    // or to another node ('other'), and undo restored them to the deleted node,
+    // so redo must re-apply that same reassignment. (Bulk deletes always cleared,
+    // so this is a no-op for them.)
+    let assignAction = item.assignAction || 'clear';
+    let reassignTarget = item.reassignTarget || null;
+    // Guard the 'other' target: if it was removed since the delete (a separate
+    // edit between undo and redo), fall back to clearing rather than assigning
+    // pages to a node no longer in the tree.
+    if (assignAction === 'other' && (!reassignTarget || state.navNodes.indexOf(reassignTarget) === -1)) {
+      assignAction = 'clear';
+      reassignTarget = null;
+    }
+    const freshItem = captureNavDeleteUndoSnapshot(item.node, item.mode, assignAction, reassignTarget);
+    executeDeleteNavNodeCore(item.node, item.mode, assignAction, reassignTarget);
     return freshItem;
   });
   if (_navEditorOpen) renderNavEditor();
