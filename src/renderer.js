@@ -14220,6 +14220,10 @@ function updateNavMultiBar() {
     if (label) label.textContent = `${count} node${count !== 1 ? 's' : ''} selected`;
   } else {
     bar.classList.add('hidden');
+    // Keep the "select all visible" header checkbox in sync: once the selection
+    // is empty (e.g. after a bulk delete clears it), it must not stay checked.
+    const selectAll = document.getElementById('nav-select-all-visible');
+    if (selectAll) { selectAll.checked = false; selectAll.indeterminate = false; }
   }
 }
 
