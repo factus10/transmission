@@ -44,9 +44,9 @@ Note: **Table View** (Cmd+T), **Sitemap** (Cmd+Shift+T), and **Redirect Editor**
 - **Edit** — standard
 - **View** — Audit (Cmd+1) · Table (Cmd+T) · Sitemap (Cmd+Shift+T) · Redirects (Cmd+Shift+R) · Menus (Cmd+Shift+M) · Audit Progress (Cmd+P) · zoom · fullscreen · (dev items in source builds)
 - **Project** — Project Settings · Triage Non-200 Pages · Create Sitemap from Audit · Glossary · Content Type Registry · Target Spec Library · Component Library · AI Suggest for Unreviewed · Run Rubric · Refresh GA KKE · Recompute Suggested KKE
-- **Migration** — Migration Tracker · Migration Checklist · Net New Brief · Redirect Map Report · Redirect Chain Check · Sitemap Coverage · Export Redirect Map (CSV)
-- **Reports** — Executive Summary · Content Inventory · SME Review Status (narrative reports only)
-- **SME** — Export / Import / Resolve
+- **Migration** — Pre-Handoff Check · Migration Tracker · Export Redirect Map (CSV) · Redirect Chain Check
+- **Reports** — Executive Summary · Content Inventory by Section · SME Review Status · Menu Report · Sitemap Coverage Report · Component Inventory · Content Type Crosswalk · Migration Direction Brief · Migration Checklist · Net New Content Brief · Redirect Map Report
+- **SME** — Export / Import / Compare KKE vs SME / Resolve
 - **Help** — Getting Started · Product Tour · Keyboard Shortcuts · Transmission Help · Check for Updates…
 
 Platform-conditional Preferences placement: `process.platform === 'darwin'` → app menu; otherwise → File menu. `buildMenu()` uses a `send(channel)` factory to reduce boilerplate.
@@ -396,7 +396,7 @@ Columns are injected into every file if not already present:
 - Redirect Map Report — three sections: Kill redirects, URL-changed redirects, Intentional 404s
 - Migration Checklist — excludes 404 rows from the redirect manifest table
 
-**Kill cleanup flow:** switching to Kill on a row with existing nav assignment (`Sitemap_ID` populated) or redirect destination (`Redirect_Destination` populated) triggers `promptKillCleanup(origIndex)` — a modal asking whether to clear either/both. Helpers `clearNavAssignment(row, origIndex)` and `clearRedirectDestination(row, origIndex)` log each cleared field to the change log. `clearNavAssignment` also calls `updateNavBadge(row)` when the affected row is the currently-selected one, so the audit-bar Sitemap button refreshes immediately. Applies to: single-row KKE button, Final KKE select, `bulkAssignKke()` (aggregate modal via `promptBulkKillCleanup`), and Table View `tvStartInlineEdit` for KKE-type columns.
+**Kill cleanup flow:** switching to Kill on a row with existing nav assignment (`Sitemap_ID` populated) or redirect destination (`Redirect_Destination` populated) triggers `promptKillCleanup(origIndex)` — a modal asking whether to clear either/both. Helpers `clearNavAssignment(row, origIndex)` and `clearRedirectDestination(row, origIndex)` log each cleared field to the change log. `clearNavAssignment` also calls `updateNavBadge(row)` when the affected row is the currently-selected one, so the audit-bar Sitemap button refreshes immediately. Applies to: single-row KKE button, Final KKE select, the Multi-bar's `kke` → `Kill` action (aggregate modal via `promptBulkKillCleanup`, from `setupMultiBar()`'s Apply handler — rows already Kill are skipped, and cancelling the cleanup cancels the whole action), and Table View `tvStartInlineEdit` for KKE-type columns.
 
 **Consolidate flow:** `Consolidate` is a 5th built-in KKE state. Clicking the button or selecting it via keyboard opens `openConsolidatePicker(origIndex)` — a virtual-scrolled list of every page in the inventory with filter input and sortable headers. `applyConsolidateTarget(origIndex, targetUrl)` sets KKE=Consolidate (only if no Consolidate intent already exists — preserves SME-imposed Final_KKE) plus the **two-column target model** (see below). `clearConsolidateTarget(origIndex)` is the inverse. The redirect resolver in `resolveRedirectDestinations()` and the redirect editor's group-builder both chase the consolidate target (via its identity) through the master's `Computed Path`, chained Consolidates, and explicit redirects (cycle-safe via a visited Set seeded with the source URL).
 
