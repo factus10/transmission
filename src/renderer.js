@@ -10964,15 +10964,15 @@ function clearNav() {
   const row = state.editedRows[state.selectedIndex];
   const oldSitemapId = row['Sitemap_ID'] || '';
 
-  row['Sitemap_ID']           = '';
-  row['Sitemap_Destination'] = '';
-  row['Computed Path']   = '';
-  row['Sitemap_SortID']      = '';
-  row['Page_Breadcrumb'] = '';
+  // Route through the shared un-assign path rather than clearing the same five
+  // fields by hand. It logs each cleared field to KKE_ChangeLog, invalidates the
+  // nav page-count cache, refreshes the Sitemap badge, and re-renders an open
+  // Sitemap editor — none of which this did, making it the only un-assignment
+  // absent from the client-facing change log.
+  clearNavAssignment(row, state.selectedIndex);
 
   setDirty(true);
   closeNavPopover();
-  updateNavBadge(row);
   renderMetaFields(row, state.selectedIndex);
   renderVisibleRows();
   showToast('Sitemap assignment removed');
