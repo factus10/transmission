@@ -591,6 +591,7 @@
       <p class="help-mm"><strong>Mental model —</strong> a redirect is needed for any Kill page and any page whose URL is changing. The app resolves destinations by priority (<strong>custom &rarr; sitemap node path &rarr; project default &rarr; blank</strong>). The literal <code>404</code> means "let it die" (distinct from blank = TBD).</p>
       <ul>
         <li>Open with the <strong>Redirects</strong> tab / <code>Cmd+Shift+R</code> (lists Kill + URL-changed pages; fragments excluded).</li>
+        <li><strong>Audit-bar badge:</strong> when the selected page has a redirect, an amber <strong>&#8618; /path</strong> badge shows in the <strong>Decide</strong> cluster (full URL on hover) &mdash; click it to open that page in the editor, or the <strong>&times;</strong> to clear the destination. An intentional <code>404</code> shows as a <code>404</code> badge.</li>
         <li><strong>Set efficiently:</strong> <strong>Re-derive from sitemap</strong>, the per-row sitemap picker, the <strong>404</strong> toggle, and <strong>Find/Replace</strong> (filters to matches; Replace All). Destinations also resolve on Save.</li>
         <li><strong>Validate &amp; export:</strong> <strong>Migration &rarr; Redirect Chain Check…</strong>; <strong>Export Redirect Map (CSV)…</strong>; <strong>Reports &rarr; Redirect Map Report…</strong> (Kill / URL-changed / intentional 404s).</li>
       </ul>

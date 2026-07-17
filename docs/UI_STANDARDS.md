@@ -115,7 +115,7 @@ Notes/Assess popovers, the compare/redirect-find-replace/global-search toolbars,
 | `.btn-primary` | Green affirmative action. Exactly **one per footer**, rightmost. |
 | `.btn-ghost` | Secondary / Cancel / utility. Transparent. |
 | `.btn-primary.btn-danger` | Destructive **primary** action (filled red). Use via `confirmDialog({danger:true})` or `class="btn btn-sm btn-primary btn-danger"`. |
-| `.btn-icon-tiny` | 20px icon-only inline buttons (chips, row actions). |
+| `.nb-clear` / `.rb-clear` | Inline chip clear (the small **×** on the Sitemap and Redirect badges): transparent, `color: inherit`, `opacity: 0.65` → `1` and `var(--kke-kill)` on hover. The pattern for an icon-only clear inside a badge. |
 
 ### 2.2 Rules
 

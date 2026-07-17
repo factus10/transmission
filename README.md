@@ -32,6 +32,7 @@ The list below is a feature catalog, not a how-to.
 - **Two-panel layout** — filterable row list on the left, embedded browser on the right
 - **KKE decisions** — Keep, Kill, Evolve, Exclude (plus custom states you define)
 - **Kill cleanup prompt** — when changing KKE to Kill on a page that already has a sitemap assignment or redirect destination, the app asks whether to clear them. Applies to single-row KKE buttons, Final KKE, bulk KKE, and Table View inline edits.
+- **Redirect indicator** — when the selected page has a redirect destination, a small amber badge in the audit bar's **Decide** cluster shows where it goes (`↪ /new-path`, full URL on hover); click it to open that page in the Redirect Editor, or the **×** to clear the destination. The literal `404` shows as a `404` badge (intentional deindex).
 - **Tags** — freeform chip input, stored as comma-separated values
 - **Notes** — per-page rationale in a popover
 - **Groups & Primary Tag** — categorize pages into groups with a primary tag
