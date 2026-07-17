@@ -19221,7 +19221,6 @@ function reportRedirectMap() {
   if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
   const urlCol = state.urlColumn || 'Address';
   const destCol = 'Redirect_Destination';
-  const siteDomain = state.projectSettings.siteDomain || '';
   const defaultDest = state.projectSettings.defaultRedirectUrl || '';
 
   // Collect redirect entries
@@ -19249,7 +19248,10 @@ function reportRedirectMap() {
     }
 
     if (kke === 'Kill') {
-      const finalDest = dest || (computed ? (siteDomain ? siteDomain + '/' + computed : '/' + computed) : defaultDest || '/');
+      // Mirrors resolveRedirectDestinations()'s precedence: explicit value, else the
+      // nav path, else the project default — and blank when there is none. It used to
+      // fall back to '/', reporting a homepage redirect the engine never writes.
+      const finalDest = dest || computedPathToUrl(computed) || defaultDest;
       killRedirects.push({ url, dest: finalDest, title: row['Title 1'] || row['Title'] || '' });
       // Check chain
       if (finalDest && urlMap.has(finalDest.toLowerCase())) {
@@ -19263,7 +19265,7 @@ function reportRedirectMap() {
       try { srcPath = new URL(url).pathname.replace(/\/+$/, ''); } catch (_) { srcPath = url; }
       const destPath = '/' + computed.replace(/^\//, '').replace(/\/+$/, '');
       if (srcPath !== destPath) {
-        movedRedirects.push({ url, dest: siteDomain ? siteDomain + destPath : destPath, title: row['Title 1'] || row['Title'] || '' });
+        movedRedirects.push({ url, dest: computedPathToUrl(destPath), title: row['Title 1'] || row['Title'] || '' });
       }
     }
   });
@@ -19893,7 +19895,6 @@ function reportMigrationChecklist() {
   const urlCol = state.urlColumn || 'Address';
   const titleCol = state.headers.includes('Title 1') ? 'Title 1' : 'Title';
   const destCol = 'Redirect_Destination';
-  const siteDomain = state.projectSettings.siteDomain || '';
 
   const keep = [], kill = [], evolve = [], exclude = [], other = [];
   const redirects = [];
@@ -19910,7 +19911,7 @@ function reportMigrationChecklist() {
       kill.push(row);
       // Skip intentional 404s from the redirect manifest — they get a separate handling.
       if (dest !== '404') {
-        const finalDest = dest || (siteDomain && computed ? siteDomain + '/' + computed : '') || state.projectSettings.defaultRedirectUrl || '';
+        const finalDest = dest || computedPathToUrl(computed) || state.projectSettings.defaultRedirectUrl || '';
         redirects.push({ url, dest: finalDest, title: row[titleCol] || '' });
       }
     }
@@ -19924,8 +19925,9 @@ function reportMigrationChecklist() {
       try { srcPath = new URL(url).pathname.replace(/\/+$/, ''); } catch (_) { srcPath = url; }
       const destPath = '/' + computed.replace(/^\//, '').replace(/\/+$/, '');
       if (srcPath !== destPath) {
-        urlChanged.push({ url, newUrl: siteDomain ? siteDomain + destPath : destPath, title: row[titleCol] || '' });
-        redirects.push({ url, dest: siteDomain ? siteDomain + destPath : destPath, title: row[titleCol] || '' });
+        const newUrl = computedPathToUrl(destPath);
+        urlChanged.push({ url, newUrl, title: row[titleCol] || '' });
+        redirects.push({ url, dest: newUrl, title: row[titleCol] || '' });
       }
     }
   });
@@ -20716,8 +20718,11 @@ function gatherAssigneeBriefData(role, person) {
 
   const patternByName = {};
   (state.patternLibrary || []).forEach(p => { if (p.patternName) patternByName[p.patternName] = p; });
-  const base = String(state.projectSettings.siteDomain || '').replace(/\/$/, '');
-  const nodeUrl = (n) => n.computedPath ? base + n.computedPath : (n.url || '');
+  // computedPath is stored with no leading slash, so the old `base + n.computedPath`
+  // produced "https://example.comabout/team" — no separator — and a bare relative
+  // path whenever Site Domain was blank. Falls back to the node's external URL, as
+  // before.
+  const nodeUrl = (n) => computedPathToUrl(n.computedPath) || (n.url || '');
 
   const byPattern = new Map();
   nodes.forEach(n => {
@@ -22298,6 +22303,20 @@ function getRedirectBaseUrl() {
     }
   }
   return '';
+}
+
+/** A nav computed path → the absolute destination URL, using the same base every
+ *  other redirect surface uses (Site Domain, else the crawl's own origin — see
+ *  getRedirectBaseUrl). Root-relative only when neither exists. Blank in, blank
+ *  out: callers decide what "no destination" renders as, rather than inventing one.
+ *  Use this instead of reading projectSettings.siteDomain directly — a raw read
+ *  has no auto-detect fallback and silently prints relative paths on any project
+ *  where Site Domain was never filled in. */
+function computedPathToUrl(path) {
+  const p = String(path || '').replace(/^\/+/, '').replace(/\/+$/, '');
+  if (!p) return '';
+  const base = getRedirectBaseUrl();
+  return base ? base + '/' + p : '/' + p;
 }
 
 /** When the site domain changes, update any redirect destinations that used the old domain. */
