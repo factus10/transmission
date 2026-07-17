@@ -6,6 +6,17 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.7.1] — "How Soon Is Now?"
+
+A small follow-up to 2.7.0 with three Sitemap-editor fixes.
+
+### Fixed
+- **The bulk-delete confirmation now reports the real number of nodes it will remove.** It had counted only the top-level branches in your selection, so deleting a whole nested selection could say "Delete 20 nodes" while ~1,500 actually disappeared. The count now includes the selected branches and everything beneath them (with a note explaining the difference), matching the page count shown beside it.
+- **The "select all" checkbox in the Sitemap editor no longer stays checked after the selection is cleared** — for example, right after a bulk delete has emptied it.
+
+### Changed
+- **"Delete selected" is much faster on large sitemaps.** It used to recompute the entire tree and re-cascade to every row once *per deleted node*; it now does that once for the whole batch. On a ~580-node / 4,000-row sitemap, deleting 200 nodes dropped from about 1.9 s to ~70 ms, with byte-identical results.
+
 ## [2.7.0] — "How Soon Is Now?"
 
 A correctness, performance, and polish release from a codebase-wide review sweep — two dozen fixes across the reports, exports, audit bar, and sitemap tools, plus one restored feature. Every change was verified in the running app.
