@@ -3185,6 +3185,73 @@ ipcMain.handle('export-migration-tracker', async (event, { defaultName, sheets, 
   }
 });
 
+/** Build an SME-review .xlsx as a buffer: styled header, data rows, tuned column
+ *  widths, a frozen header row, and a data-validation dropdown on the SME Decision
+ *  column. Shared by both SME export handlers — they were near-verbatim copies of
+ *  this ~45-line ExcelJS+JSZip build and had already drifted apart (the split-by-
+ *  owner copy carried terser validation error strings), which is exactly the way a
+ *  fix to one silently misses the other. */
+async function buildSmeWorkbookBuffer({ headers, rows, smeOptions, smeDecisionCol }) {
+  const workbook = new ExcelJS.Workbook();
+  const ws = workbook.addWorksheet('SME Review');
+
+  // Header row
+  ws.addRow(headers);
+  const headerRow = ws.getRow(1);
+  headerRow.font = { bold: true, size: 11 };
+  headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
+
+  // Data rows
+  rows.forEach(row => ws.addRow(headers.map(h => row[h] ?? '')));
+
+  // Column widths
+  headers.forEach((h, i) => {
+    const col = ws.getColumn(i + 1);
+    const lower = h.toLowerCase();
+    if (lower.includes('address') || lower.includes('url')) col.width = 50;
+    else if (lower.includes('title')) col.width = 40;
+    else if (lower.includes('notes')) col.width = 30;
+    else col.width = 18;
+  });
+
+  // Freeze header row
+  ws.views = [{ state: 'frozen', ySplit: 1 }];
+
+  // Data validation dropdown on SME Decision column
+  if (smeOptions && smeDecisionCol && headers.includes(smeDecisionCol)) {
+    const colIdx = headers.indexOf(smeDecisionCol) + 1; // 1-indexed
+    for (let r = 2; r <= rows.length + 1; r++) {
+      const cell = ws.getCell(r, colIdx);
+      // Default placeholder for empty cells
+      if (!cell.value) cell.value = '—';
+      cell.dataValidation = {
+        type: 'list',
+        allowBlank: true,
+        formulae: ['"' + smeOptions.join(',') + '"'],
+        showErrorMessage: true,
+        errorTitle: 'Invalid decision',
+        error: 'Please select from the dropdown options.'
+      };
+    }
+  }
+
+  // ExcelJS encodes quotes as &quot; in dataValidation formulae, but
+  // Excel on Mac requires literal quotes. Write to buffer, patch XML, rewrite.
+  const JSZip = require('jszip');
+  const buf = await workbook.xlsx.writeBuffer();
+  const zip = await JSZip.loadAsync(buf);
+  for (const name of Object.keys(zip.files)) {
+    if (name.match(/xl\/worksheets\/sheet\d+\.xml$/)) {
+      let xml = await zip.file(name).async('string');
+      // Only fix &quot; inside <formula1> tags
+      xml = xml.replace(/<formula1>(.*?)<\/formula1>/g, (match, inner) =>
+        '<formula1>' + inner.replace(/&quot;/g, '"') + '</formula1>');
+      zip.file(name, xml);
+    }
+  }
+  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+}
+
 ipcMain.handle('sme-export', async (event, { headers, rows, defaultName, smeOptions, smeDecisionCol }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     title: 'Export for SME Review',
@@ -3193,67 +3260,7 @@ ipcMain.handle('sme-export', async (event, { headers, rows, defaultName, smeOpti
   });
   if (result.canceled) return { success: false, error: 'Cancelled' };
   try {
-    const workbook = new ExcelJS.Workbook();
-    const ws = workbook.addWorksheet('SME Review');
-
-    // Header row
-    ws.addRow(headers);
-    const headerRow = ws.getRow(1);
-    headerRow.font = { bold: true, size: 11 };
-    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
-
-    // Data rows
-    rows.forEach(row => {
-      ws.addRow(headers.map(h => row[h] ?? ''));
-    });
-
-    // Column widths
-    headers.forEach((h, i) => {
-      const col = ws.getColumn(i + 1);
-      const lower = h.toLowerCase();
-      if (lower.includes('address') || lower.includes('url')) col.width = 50;
-      else if (lower.includes('title')) col.width = 40;
-      else if (lower.includes('notes')) col.width = 30;
-      else col.width = 18;
-    });
-
-    // Freeze header row
-    ws.views = [{ state: 'frozen', ySplit: 1 }];
-
-    // Data validation dropdown on SME Decision column
-    if (smeOptions && smeDecisionCol && headers.includes(smeDecisionCol)) {
-      const colIdx = headers.indexOf(smeDecisionCol) + 1; // 1-indexed
-      for (let r = 2; r <= rows.length + 1; r++) {
-        const cell = ws.getCell(r, colIdx);
-        // Default placeholder for empty cells
-        if (!cell.value) cell.value = '—';
-        cell.dataValidation = {
-          type: 'list',
-          allowBlank: true,
-          formulae: ['"' + smeOptions.join(',') + '"'],
-          showErrorMessage: true,
-          errorTitle: 'Invalid decision',
-          error: 'Please select from the dropdown options.'
-        };
-      }
-    }
-
-    // ExcelJS encodes quotes as &quot; in dataValidation formulae, but
-    // Excel on Mac requires literal quotes. Write to buffer, patch XML, rewrite.
-    const JSZip = require('jszip');
-    const buf = await workbook.xlsx.writeBuffer();
-    const zip = await JSZip.loadAsync(buf);
-    for (const name of Object.keys(zip.files)) {
-      if (name.match(/xl\/worksheets\/sheet\d+\.xml$/)) {
-        let xml = await zip.file(name).async('string');
-        // Only fix &quot; inside <formula1> tags
-        xml = xml.replace(/<formula1>(.*?)<\/formula1>/g, (match, inner) => {
-          return '<formula1>' + inner.replace(/&quot;/g, '"') + '</formula1>';
-        });
-        zip.file(name, xml);
-      }
-    }
-    const fixedBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    const fixedBuf = await buildSmeWorkbookBuffer({ headers, rows, smeOptions, smeDecisionCol });
     fs.writeFileSync(result.filePath, fixedBuf);
     return { success: true, filePath: result.filePath, count: rows.length };
   } catch (e) {
@@ -3269,48 +3276,10 @@ ipcMain.handle('sme-export-multi', async (event, { files }) => {
   if (result.canceled || !result.filePaths.length) return { success: false, error: 'Cancelled' };
   const dir = result.filePaths[0];
   try {
-    const JSZip = require('jszip');
     const written = [];
     for (const file of files) {
-      const workbook = new ExcelJS.Workbook();
-      const ws = workbook.addWorksheet('SME Review');
-      ws.addRow(file.headers);
-      const headerRow = ws.getRow(1);
-      headerRow.font = { bold: true, size: 11 };
-      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
-      file.rows.forEach(row => ws.addRow(file.headers.map(h => row[h] ?? '')));
-      file.headers.forEach((h, i) => {
-        const col = ws.getColumn(i + 1);
-        const lower = h.toLowerCase();
-        if (lower.includes('address') || lower.includes('url')) col.width = 50;
-        else if (lower.includes('title')) col.width = 40;
-        else if (lower.includes('notes')) col.width = 30;
-        else col.width = 18;
-      });
-      ws.views = [{ state: 'frozen', ySplit: 1 }];
-      if (file.smeOptions && file.smeDecisionCol && file.headers.includes(file.smeDecisionCol)) {
-        const colIdx = file.headers.indexOf(file.smeDecisionCol) + 1;
-        for (let r = 2; r <= file.rows.length + 1; r++) {
-          const cell = ws.getCell(r, colIdx);
-          if (!cell.value) cell.value = '—';
-          cell.dataValidation = {
-            type: 'list', allowBlank: true,
-            formulae: ['"' + file.smeOptions.join(',') + '"'],
-            showErrorMessage: true, errorTitle: 'Invalid', error: 'Select from dropdown.'
-          };
-        }
-      }
-      const buf = await workbook.xlsx.writeBuffer();
-      const zip = await JSZip.loadAsync(buf);
-      for (const name of Object.keys(zip.files)) {
-        if (name.match(/xl\/worksheets\/sheet\d+\.xml$/)) {
-          let xml = await zip.file(name).async('string');
-          xml = xml.replace(/<formula1>(.*?)<\/formula1>/g, (m, inner) =>
-            '<formula1>' + inner.replace(/&quot;/g, '"') + '</formula1>');
-          zip.file(name, xml);
-        }
-      }
-      const fixedBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+      // Same builder as the single-file export — each split gets an identical workbook.
+      const fixedBuf = await buildSmeWorkbookBuffer(file);
       const filePath = path.join(dir, file.fileName);
       fs.writeFileSync(filePath, fixedBuf);
       written.push(filePath);
