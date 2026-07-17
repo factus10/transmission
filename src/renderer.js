@@ -17892,6 +17892,13 @@ function applyUndoAction(action, isUndo) {
 function undoNavDelete(action) {
   let restoredAny = false;
 
+  // Snapshot the survivors' computed paths BEFORE re-inserting anything. The
+  // cascade in the tail preserves each row's page-specific slug suffix by
+  // diffing its node's old vs new computedPath, exactly as the forward delete
+  // does — taken here (post-delete, pre-restore) it captures the state the
+  // restore is about to change back.
+  const oldPaths = snapshotNavPaths();
+
   action.items.slice().reverse().forEach(item => {
     // Guard 1 — ID collision: every node-id allocator in this file scans
     // *current* state.navNodes for its max id with no persistent high-water
@@ -17959,6 +17966,15 @@ function undoNavDelete(action) {
     recalcAllNumbers();
     state.navTree.forEach(root => recalcDerivedFields(root));
     resolveNavReferences();
+    // Re-cascade node→row derived fields. recalcAllNumbers() above renumbered the
+    // survivors the delete had shifted, but their assigned rows still carry the
+    // Sitemap_SortID / Computed Path / Sitemap_Destination the delete's own
+    // cascade wrote — undo never fixed those until now, so an undone delete left
+    // survivor rows out of sync with the restored tree. (The deleted nodes' own
+    // rows are already restored verbatim from item.rowChanges above, including
+    // Sitemap_ID — which cascade keys off but never writes — so re-deriving them
+    // here just reproduces the same values; the real work is the survivors.)
+    cascadeNavChangesToRows(oldPaths);
     invalidateNavPageCountsCache();
     state.navTreeDirty = true;
     setDirty(true);
