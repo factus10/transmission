@@ -16434,8 +16434,12 @@ function captureNavDeleteUndoSnapshot(node, mode) {
 /** Core delete logic — mutates state.navTree/state.navNodes/state.editedRows
  *  but does NOT push undo or re-render (callers do both; bulk callers batch
  *  many nodes into one undo entry + one render instead of one each). */
-function executeDeleteNavNodeCore(node, mode, assignAction, reassignTarget) {
-  const oldPaths = snapshotNavPaths();
+function executeDeleteNavNodeCore(node, mode, assignAction, reassignTarget, opts = {}) {
+  // The whole-tree recompute + row cascade at the end is O(nodes + rows) per call.
+  // A bulk delete passes deferRecompute + a single pre-loop oldPaths so that tail
+  // runs ONCE for the batch instead of once per node — the difference between
+  // ~2s and ~100ms when deleting a few hundred nodes from a large sitemap.
+  const oldPaths = opts.oldPaths || snapshotNavPaths();
   // Find the node's actual location by object reference, not by parentNumber
   // (which can be stale after prior reorganizations) — a miss here used to
   // fall back to state.navTree, indexOf() the node there (never finding it),
@@ -16499,6 +16503,20 @@ function executeDeleteNavNodeCore(node, mode, assignAction, reassignTarget) {
     }
   });
 
+  if (!opts.deferRecompute) {
+    recalcAllNumbers();
+    state.navTree.forEach(root => recalcDerivedFields(root));
+    resolveNavReferences();
+    cascadeNavChangesToRows(oldPaths);
+  }
+  state.navTreeDirty = true;
+  setDirty(true);
+}
+
+/** Recompute the tree's derived fields and cascade to rows — the tail that
+ *  executeDeleteNavNodeCore(..., {deferRecompute:true}) skips so a batch can run
+ *  it once. Pass the oldPaths captured BEFORE the batch's first mutation. */
+function recomputeNavAfterBulkDelete(oldPaths) {
   recalcAllNumbers();
   state.navTree.forEach(root => recalcDerivedFields(root));
   resolveNavReferences();
@@ -16530,19 +16548,31 @@ async function bulkDeleteNavNodes(nodeIds) {
     .filter(Boolean);
   if (selected.length === 0) return;
 
-  // Prune to top-level-only: dropping any selected node that's already a
-  // descendant of another selected node (deleting the ancestor already takes
-  // it with it). The `other !== n` guard is required — isNavDescendantOf(X,X)
-  // returns true (its first check is `cur.id === ancestor.id`), so omitting it
-  // would make every node match itself and prune the whole selection away.
-  const pruned = selected.filter(n => !selected.some(other => other !== n && isNavDescendantOf(n, other)));
+  // Prune to top-level-only: drop any selected node that's already a descendant
+  // of another selected node (deleting the ancestor takes it too). O(selected ×
+  // depth) with O(1) parent hops via a number→node index — the old
+  // selected.some(isNavDescendantOf) was O(selected²) with a linear parent scan
+  // inside each hop, which alone cost ~600ms at 500 selected.
+  const selectedIds = new Set(selected.map(n => n.id));
+  const byNumber = new Map(state.navNodes.map(n => [String(n.number), n]));
+  const hasSelectedAncestor = (node) => {
+    let cur = node.parentNumber ? byNumber.get(String(node.parentNumber)) : null;
+    while (cur) {
+      if (selectedIds.has(cur.id)) return true;
+      cur = cur.parentNumber ? byNumber.get(String(cur.parentNumber)) : null;
+    }
+    return false;
+  };
+  const pruned = selected.filter(n => !hasSelectedAncestor(n));
 
-  let totalPages = 0;
+  // Count covered pages in one pass: gather every id being deleted, then scan
+  // rows once — instead of filtering all rows once per pruned node.
+  const allDeletedIds = new Set();
   pruned.forEach(node => {
-    const allIds = new Set([node.id]);
-    collectAllDescendants(node).forEach(d => allIds.add(d.id));
-    totalPages += state.editedRows.filter(r => allIds.has(r['Sitemap_ID'])).length;
+    allDeletedIds.add(node.id);
+    collectAllDescendants(node).forEach(d => allDeletedIds.add(d.id));
   });
+  const totalPages = state.editedRows.filter(r => allDeletedIds.has(r['Sitemap_ID'])).length;
 
   const ok = await confirmDialog({
     title: `Delete ${pruned.length} sitemap node${pruned.length !== 1 ? 's' : ''}?`,
@@ -16552,11 +16582,15 @@ async function bulkDeleteNavNodes(nodeIds) {
   });
   if (!ok) return;
 
+  // Capture paths once, before any mutation, for a single cascade at the end.
+  const oldPaths = snapshotNavPaths();
   const items = pruned.map(node => {
     const item = captureNavDeleteUndoSnapshot(node, 'delete-all');
-    executeDeleteNavNodeCore(node, 'delete-all', 'clear', null);
+    executeDeleteNavNodeCore(node, 'delete-all', 'clear', null, { deferRecompute: true, oldPaths });
     return item;
   });
+  // One recompute + cascade for the whole batch (each core skipped its own).
+  recomputeNavAfterBulkDelete(oldPaths);
 
   pushUndo({ type: 'nav-delete', items });
   clearNavMultiSelection();
