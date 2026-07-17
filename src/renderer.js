@@ -3362,59 +3362,6 @@ function handleRowClick(e, origIndex, posInFiltered) {
   selectRow(origIndex);
 }
 
-function bulkAssignPublishedStatus(val) {
-  if (state.multiSelected.size === 0) {
-    showToast('Select rows first (Cmd-click or Shift-click in the sidebar)', 'error');
-    return;
-  }
-  const indexes = Array.from(state.multiSelected);
-  let touched = 0;
-  indexes.forEach(origIndex => {
-    const row = state.editedRows[origIndex];
-    const old = String(row['Published_Status'] || '');
-    if (old === val) return;
-    row['Published_Status'] = val;
-    logChange(origIndex, 'Published_Status', old, val);
-    touched++;
-  });
-  setDirty(true);
-  state.multiSelected.clear();
-  updateBulkBar();
-  renderVisibleRows();
-  if (state.selectedIndex !== null) {
-    populatePublishedStatusSelect(state.editedRows[state.selectedIndex]['Published_Status'] || '');
-  }
-  showToast(`Set Published Status on ${touched} row${touched !== 1 ? 's' : ''}${val === '' ? ' (cleared)' : ' → ' + val}`, 'success');
-}
-
-async function bulkAssignKke(val) {
-  if (state.multiSelected.size === 0) return;
-  const indexes = Array.from(state.multiSelected);
-
-  if (val === 'Kill') {
-    const toAsk = indexes.filter(i => state.editedRows[i][kkeCol()] !== 'Kill');
-    const ok = await promptBulkKillCleanup(toAsk);
-    if (!ok) return;
-  }
-
-  indexes.forEach(origIndex => {
-    const old = state.editedRows[origIndex][kkeCol()];
-    state.editedRows[origIndex][kkeCol()] = val;
-    if (old !== val) logChange(origIndex, kkeCol(), old, val);
-  });
-  setDirty(true);
-  state.multiSelected.clear();
-  updateBulkBar();
-  renderVisibleRows();
-  if (state.selectedIndex !== null) {
-    populateAuditFields(state.editedRows[state.selectedIndex]);
-    renderMetaFields(state.editedRows[state.selectedIndex], state.selectedIndex);
-  }
-}
-
-// updateBulkBar / updateBatchBar are shimmed to updateMultiBar below — see the
-// "Unified multi-row action bar" section.
-
 function updateStatsBar() {
   const bar = $('stats-bar');
   if (!bar) return;
@@ -4125,7 +4072,10 @@ function renderDesignPatternChips(patterns) {
   patterns.forEach(name => {
     const chip = document.createElement('div');
     chip.className = 'tag-chip';
-    chip.style.cssText = 'background:#ede9fe;color:#5b21b6;border-color:#c4b5fd;';
+    // Colors come from #design-pattern-chips .tag-chip in styles.css, which already
+    // sets exactly these values — and has a dark-mode counterpart. Setting them
+    // inline here duplicated the light values and, because an inline style outranks
+    // any stylesheet rule, silently made the dark rule unreachable.
     // Show description as tooltip if available
     const entry = state.designPatternLibrary.find(e => e.name === name);
     if (entry && entry.description) chip.title = entry.description;
@@ -23199,6 +23149,14 @@ function setupMultiBar() {
     const verb = a === 'add-tag' ? 'Add tag' : (v ? 'Set' : 'Clear');
     const valLabel = v || '(blank)';
     if (!(await confirmDialog({ title: 'Apply to rows', message: `${verb} "${valLabel}" — apply to ${targets.length} ${using} row${targets.length !== 1 ? 's' : ''}?`, confirmLabel: verb }))) return;
+    // Bulk-setting Kill offers the same sitemap/redirect cleanup every other Kill
+    // path does (the single-row KKE button, Final KKE, Table View inline edit).
+    // Rows already Kill are excluded — they were cleaned when they got there.
+    // Cancelling the cleanup cancels the whole action, as it does elsewhere.
+    if (a === 'kke' && v === 'Kill') {
+      const toAsk = targets.filter(i => String(state.editedRows[i][kkeCol()] || '').trim() !== 'Kill');
+      if (!(await promptBulkKillCleanup(toAsk))) return;
+    }
     let touched = 0;
     for (const origIndex of targets) {
       const row = state.editedRows[origIndex];
