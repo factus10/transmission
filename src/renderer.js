@@ -19141,7 +19141,11 @@ function reportContentInventory() {
     let noted = 0;
     rows.forEach(r => {
       const k = String(r[kkeCol()] || '').trim();
-      if (k && kkeCounts.hasOwnProperty(k)) kkeCounts[k]++;
+      // Tally any non-blank value, including a rogue (typo'd / removed) state —
+      // kkeBarHtml/kkeStatsRows iterate kkeLabelsFor() and surface it. The old
+      // hasOwnProperty gate dropped rogue rows, so a section's bar and stat rows
+      // under-totalled against its own "(N pages)" heading.
+      if (k) kkeCounts[k] = (kkeCounts[k] || 0) + 1;
       if (String(r[notesCol()] || '').trim()) noted++;
     });
 
