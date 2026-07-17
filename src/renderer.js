@@ -329,6 +329,7 @@ const els = {
   // Sitemap assignment
   btnNav:           $('btn-nav'),
   btnMenuAssign:    $('btn-menu-assign'),
+  redirectHost:     $('redirect-indicator-host'),
   navPopover:       $('nav-popover'),
   btnNavClose:      $('btn-nav-close'),
   navSelects:       $('nav-selects'),
@@ -3589,6 +3590,8 @@ function populateAuditFields(row) {
 
   // Nav badge
   updateNavBadge(row);
+  // Redirect destination indicator
+  populateRedirectIndicator(row);
 }
 
 // ─── CMS link cluster (Phase 1) ──────────────────────────────────────────────
@@ -11126,6 +11129,79 @@ function updateNavBadge(row) {
     badge.appendChild(clear);
     els.btnNav.appendChild(badge);
   }
+}
+
+/** Audit-bar redirect indicator: a small amber badge showing where the selected
+ *  page redirects, with an inline × to clear it and a click-through to the
+ *  Redirect Editor for this row. Restores the affordance lost in Chunk iii when
+ *  the audit-bar Redirects button (its old host) moved to the view switcher.
+ *  Reads Redirect_Destination only — that column is populated on save by
+ *  resolveRedirectDestinations() or set explicitly — so like the sidebar's "R"
+ *  dot, it reflects a resolved/known destination rather than predicting one for a
+ *  just-killed page before save. Colors are design tokens, so it themes cleanly. */
+function populateRedirectIndicator(row) {
+  const host = els.redirectHost;
+  if (!host) return;
+  host.innerHTML = '';
+  const dest = String(row['Redirect_Destination'] || '').trim();
+  if (!dest) return;
+
+  const badge = document.createElement('span');
+  badge.className = 'redirect-badge';
+
+  // '404' is the intentional-deindex sentinel — not a real destination.
+  let label;
+  if (dest === '404') {
+    label = '404';
+    badge.title = 'Intentional 404 — this URL is left to return 404 (no redirect rule written)';
+  } else {
+    // Shortened label: last meaningful path segment (host for a bare domain);
+    // full destination in the tooltip.
+    try {
+      const u = new URL(dest, 'https://example.com'); // base lets relative paths parse
+      const parts = u.pathname.split('/').filter(Boolean);
+      label = parts.length ? '/' + parts[parts.length - 1] : (u.host || dest);
+    } catch (_) {
+      label = dest.replace(/^https?:\/\//, '').split('/').pop() || dest;
+    }
+    badge.title = 'Redirects to: ' + dest + '  ·  click to open in the Redirect Editor';
+  }
+
+  const arrow = document.createElement('span');
+  arrow.className = 'rb-arrow';
+  arrow.textContent = '↪';
+  badge.appendChild(arrow);
+
+  const txt = document.createElement('span');
+  txt.className = 'rb-text';
+  txt.textContent = label;
+  badge.appendChild(txt);
+
+  // Click the arrow/text (not the ×) to jump to this page in the Redirect Editor.
+  const openEditor = () => { if (state.selectedIndex != null) openRedirectEditor(state.selectedIndex); };
+  arrow.addEventListener('click', openEditor);
+  txt.addEventListener('click', openEditor);
+
+  const clear = document.createElement('button');
+  clear.type = 'button';
+  clear.className = 'rb-clear';
+  clear.textContent = '×';
+  clear.title = 'Clear redirect destination';
+  clear.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (state.selectedIndex == null) return;
+    const r = state.editedRows[state.selectedIndex];
+    const old = String(r['Redirect_Destination'] || '');
+    if (!old) return;
+    r['Redirect_Destination'] = '';
+    logChange(state.selectedIndex, 'Redirect_Destination', old, '');
+    setDirty(true);
+    populateRedirectIndicator(r);
+    refreshRowInList(state.selectedIndex);
+    showToast('Redirect cleared', 'success');
+  });
+  badge.appendChild(clear);
+  host.appendChild(badge);
 }
 
 async function promptClearNavAssignment(origIndex, navID, navDest) {
