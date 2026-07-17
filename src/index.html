@@ -203,7 +203,9 @@
                 </button>
                 <button id="btn-nav" class="btn btn-sm btn-ghost" title="Sitemap placement for this page" disabled>Sitemap</button>
                 <button id="btn-menu-assign" class="btn btn-sm btn-ghost" title="Add this page to a navigation menu" disabled>Menu</button>
-                <!-- Tree + Redirects buttons removed in Chunk iii — use the view switcher at the top of the window -->
+                <!-- Redirect destination indicator (populated by populateRedirectIndicator when this page has one) -->
+                <span id="redirect-indicator-host"></span>
+                <!-- Tree + Redirects view buttons removed in Chunk iii — use the view switcher at the top of the window -->
               </div>
               <!-- SME readout + Final dropdown — toggled by "Show SME fields" -->
               <div id="sme-fields-wrap" class="hidden sme-fields-inline">

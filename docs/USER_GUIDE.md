@@ -137,6 +137,7 @@ Two features worth knowing exist now — you'll meet them properly in later sect
 
 - **Source / New CMS links.** The **CMS** cluster in the audit bar has two link fields. Paste the admin/edit URL for a page in your old CMS and your new one, and the **↗** button jumps straight there. A small dot on the sidebar row shows what's filled in (◐ source only · ◑ new only · ⊜ both) — handy for inspecting structure during the audit and confirming migrated pages afterward.
 - **"Let it 404."** Sometimes the right call for a dead page is *no* redirect at all. Setting a page's redirect destination to the literal value **`404`** tells your engineers to let that URL die honestly — which is different from leaving it blank (that means "still to be decided"). More on this in [Redirects](#15-redirects).
+- **The redirect badge.** Once a page has a redirect destination, a small amber badge appears in the audit bar's **Decide** cluster showing where it points (`↪ /team`, full URL on hover) — so you can see it without leaving the audit view. Click the badge to jump to that page in the Redirect Editor, or the **×** to clear the destination. An intentional `404` shows as a `404` badge. (It reflects a *resolved* destination — the same value the sidebar's **R** dot marks — so it appears once the destination is set or after a save resolves it, not the instant you mark a page Kill.)
 
 ### Quick self-check
 
