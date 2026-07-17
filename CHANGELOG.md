@@ -6,6 +6,36 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.7.0] — "How Soon Is Now?"
+
+A correctness, performance, and polish release from a codebase-wide review sweep — two dozen fixes across the reports, exports, audit bar, and sitemap tools, plus one restored feature. Every change was verified in the running app.
+
+### Added
+- **The redirect indicator is back in the audit bar.** When the selected page has a redirect destination, a small amber badge in the **Decide** cluster shows where it points (`↪ /new-path`, full URL on hover) — click it to open that page in the Redirect Editor, or the **×** to clear the destination. An intentional `404` shows as a `404` badge. This per-page affordance had been lost when the Redirects button moved to the view switcher; the sidebar's **R** dot only told you *that* a page redirected, not where.
+
+### Fixed
+- **Reports no longer drop "rogue" KKE values.** A page whose KKE is a typo, or a custom state that was later removed, was silently omitted from the Progress dashboard's reviewed count and from the Content Inventory report's per-section tallies — so a section's bar could visibly under-total against its own page count, and the dashboard could disagree with the sidebar's own reviewed percentage. Both now count every decision under its own label.
+- **Client-facing exports no longer leak internal columns.** The **Client Export** and **Filtered Rows** exports were including `_`-prefixed engine columns — the internal consolidation-target ID, raw AI-assessment output — in spreadsheets meant for clients. They now exclude them, matching every other surface.
+- **Three report PDFs render correctly again.** Pre-Handoff Check, Migration Direction Brief, and Sitemap Coverage referenced design tokens that were undefined in the exported document, so accent bars and borders vanished and tinted callouts went transparent. The exported HTML/PDF — and the dark-mode in-app preview, which was painting a near-black panel onto white "paper" — now style correctly.
+- **The menu export includes menus that have no items.** A menu you'd named and placed but not yet filled in was silently dropped from the xlsx export, while the JSON export of the same project still listed it.
+- **The Migration Direction Brief's page URLs are well-formed.** They were being built with no separator between domain and path (`https://example.comabout/team`) and with no domain at all when Site Domain was blank. The reports now share one correct computed-path → URL rule, so the brief agrees with the Migration Tracker.
+- **Bulk-setting Kill offers the same cleanup as every other Kill path.** Killing a batch of pages from the Multi-bar now prompts to clear their sitemap assignments and redirect destinations, matching the single-row KKE button, Final KKE, and Table View inline edits. It had been silently skipping that cleanup.
+- **Clearing a sitemap assignment from the audit bar is now recorded.** The Sitemap popover's Clear button was the one un-assignment path that didn't write to the client-facing change log.
+- **A damaged project file no longer locks you out entirely.** One unreadable row used to fail the whole `.transmission` project open with a raw parser error; the project now opens with the affected row flagged and its original data preserved.
+- **Deleting every entry from a structural library now sticks.** Emptying the Content Type Registry, Target Spec Library, Component Library, or Glossary and saving to xlsx used to silently restore the entries on reopen.
+- **`Esc` cancels a batch AI assessment.** The cancel check was present but nothing was wired to trigger it, so a long run (about a second per page) couldn't be stopped short of quitting.
+- **The saved app version is correct in packaged builds.** Projects were stamping a blank version into their metadata; they now record the real app version.
+- **Component chips are legible in dark mode.** They were rendering with hardcoded light colors regardless of theme.
+- **The SME split-by-owner export matches the single-file export.** Both now share one builder, so they can't drift — the multi-file copy had picked up terser validation messages.
+- **Smaller fixes:** a no-match filter no longer strands a giant empty scroll region under the "no rows" message; canceling a progress-report PDF export no longer shows a spurious "failed" error, and that export window no longer leaks on a failed render.
+
+### Changed
+- **Noticeably faster on large crawls.** Several operations that scaled poorly were re-worked and measured at the app's ~4,000-row / ~500-node design target:
+  - Bulk **Assign to Sitemap** no longer freezes for several seconds while computing suggested destinations — on 1,000 unplaced pages, roughly seven seconds down to a few milliseconds. This was worst exactly when the sitemap was still empty, which is when you'd use it.
+  - Typing in the **sidebar search** and the **Redirect Editor search** is debounced, so a keystroke no longer re-scans every row / rebuilds the whole list.
+  - Renaming a **sitemap node** cascades to its assigned pages far faster (about 32 ms down to 5 ms per keystroke).
+  - Resolving a **consolidation group** rebuilds the sitemap tree once instead of once per page in the group.
+
 ## [2.6.4] — "How Soon Is Now?"
 
 ### Added
