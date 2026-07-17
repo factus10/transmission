@@ -6,6 +6,14 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.7.2] — "How Soon Is Now?"
+
+Two Sitemap-editor undo/redo correctness fixes.
+
+### Fixed
+- **Undoing a Sitemap-node deletion now fully restores the rest of the tree.** Deleting a node renumbers the nodes that come after it; undoing brought the deleted node back but left the pages assigned to those renumbered nodes showing stale sort positions, paths, and breadcrumbs. Undo now re-syncs every affected page, so it's a true round-trip.
+- **Redoing a node deletion now repeats what the delete actually did with its pages.** If you deleted a node and sent its pages to the parent (or to another node), then undid, redoing had *cleared* those pages instead of re-sending them. Redo now reapplies the original choice — and safely falls back to clearing only if the chosen destination no longer exists.
+
 ## [2.7.1] — "How Soon Is Now?"
 
 A small follow-up to 2.7.0 with three Sitemap-editor fixes.
