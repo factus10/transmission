@@ -16574,9 +16574,18 @@ async function bulkDeleteNavNodes(nodeIds) {
   });
   const totalPages = state.editedRows.filter(r => allDeletedIds.has(r['Sitemap_ID'])).length;
 
+  // Report the TOTAL nodes being removed, not pruned.length. The prune collapses
+  // a selection to its top-level branches (deleting a branch already takes its
+  // subtree), so pruned.length under-reports — e.g. selecting a whole tree could
+  // say "Delete 20 nodes" while 1500 actually disappear. Count everything in
+  // allDeletedIds (branches + descendants), and when they differ, say why.
+  const totalNodes = allDeletedIds.size;
+  const branchNote = totalNodes > pruned.length
+    ? ` (${pruned.length} selected branch${pruned.length !== 1 ? 'es' : ''} plus every node beneath them)`
+    : '';
   const ok = await confirmDialog({
-    title: `Delete ${pruned.length} sitemap node${pruned.length !== 1 ? 's' : ''}?`,
-    message: `Delete ${pruned.length} sitemap node${pruned.length !== 1 ? 's' : ''} covering ${totalPages} page${totalPages !== 1 ? 's' : ''} currently assigned to them? Assigned pages will be unassigned (Sitemap fields cleared), not deleted from the audit.`,
+    title: `Delete ${totalNodes} sitemap node${totalNodes !== 1 ? 's' : ''}?`,
+    message: `Delete ${totalNodes} sitemap node${totalNodes !== 1 ? 's' : ''}${branchNote} covering ${totalPages} page${totalPages !== 1 ? 's' : ''} currently assigned to them? Assigned pages will be unassigned (Sitemap fields cleared), not deleted from the audit.`,
     confirmLabel: 'Delete',
     danger: true,
   });
