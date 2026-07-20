@@ -20,6 +20,33 @@ possible.
 
 ## Setup (one time)
 
+### 0. Create a Cloudflare account
+
+Sign up at <https://dash.cloudflare.com/sign-up> — email and password, free.
+**No credit card is required** for the Workers free plan.
+
+Two things to know as you go through it:
+
+- Cloudflare will offer to add a **website/domain**. **Skip it.** Workers don't
+  need a domain; this worker will live on a free `*.workers.dev` URL.
+- The first time you open **Workers & Pages** you'll be asked to choose a
+  **`workers.dev` subdomain**. This is account-wide and effectively permanent,
+  and it becomes part of every worker URL you ever deploy:
+  `<worker-name>.<your-subdomain>.workers.dev`. Pick something you're happy to
+  live with (e.g. `factus10`).
+
+Then authorise the CLI — this opens a browser to approve the connection:
+
+```bash
+npx wrangler login
+npx wrangler whoami     # should now show your account
+```
+
+**Free-tier headroom.** Workers KV allows 100,000 reads and 1,000 writes per
+day. One Miro connection costs about 2 writes, 2 deletes, and a handful of
+reads, so the write budget is the binding limit at roughly 250 connections per
+day — far beyond what this needs.
+
 ### 1. Create the Miro app
 
 Miro → **Profile settings → Your apps → Create new app**.
