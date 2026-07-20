@@ -6,6 +6,13 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.8.1] — "How Soon Is Now?"
+
+A packaging fix for 2.8.0.
+
+### Fixed
+- **2.8.0 crashed on launch** with "Cannot find module './miro'." The packaged build's file allowlist named each top-level source file individually, and the new `miro.js` module (added for the Miro export) wasn't on the list, so it was left out of the app bundle — the app ran correctly in development, where files load straight from disk, but not once packaged. The allowlist now includes every top-level module, so this class of omission can't recur. No behaviour changes; if 2.8.0 launched for you, nothing else is different.
+
 ## [2.8.0] — "How Soon Is Now?"
 
 The Visual Sitemap can now be pushed to a Miro board as real, editable shapes, and
