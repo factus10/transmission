@@ -281,10 +281,14 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 ### Visual Sitemap
 A fully interactive box-tree you build, refine, and hand off — the Sitemap Editor's **Visual Sitemap** button renders the **content IA** as one tree rooted at your homepage. Click cards to collapse/expand, scroll to zoom, drag to pan, **Fit** to frame.
 - **Smart layout** — each branch lays out **horizontally** (children fan sideways) or **vertically** (children stack indented below) automatically, controlled by two thresholds in the toolbar: **Vertical from depth** and **or if children ≥**. Right-click any node to **force horizontal / vertical** or override it later.
-- **Color rules** — a small rule engine (Settings → **Colors**): color by depth or by top-level section out of the box, add your own rules (by depth, depth range, section, value, or **links to another site**), drag to reorder, and right-click a single node to **set its color**. **Mark external links** is a one-click button that colors off-site destinations distinctly, layered on top of whatever scheme you're already using. **Color by field** colors by Phase, Node Type, Page Status, Build Pattern, or any assignee role — one color per value in use, plus a "not set" bucket so gaps are visible; Page Status reuses the colors you've already assigned it in Project Settings. Uses your **Client brand** palette (Project Settings → Identity) when set.
+- **Color rules** — a rule engine (Settings → **Colors**): color by depth or by top-level section out of the box, add your own rules, drag to reorder, and right-click a single node to **set its color**. Conditions match on depth, depth range, section, value, **links to another site**, or **any of 15 fields** — seven carried on the sitemap node (Phase, Node Type, Page Status, Build Pattern, Builder, Writer, Migrator) and eight read from the audit rows (Content Type, KKE, Final KKE, Renders as, Migration Track, Content Theme, Published Status, Target Content Type). Field coloring gives one color per value in use plus a "not set" bucket so gaps are visible; Page Status reuses the colors you've already assigned it in Project Settings. **Mark external links** is a one-click button that colors off-site destinations distinctly, layered on top of whatever scheme you're already using. Uses your **Client brand** palette (Project Settings → Identity) when set.
+- **Combined conditions, split properties** — a single rule can test more than one condition, and different visual properties can be driven by different rules, so you can encode one dimension as color and another as line style at the same time.
+- **Dominant vs. contains** — a node usually holds several pages, so a rule can test either the node's **dominant** value ("this section is mostly Articles") or whether **any page under it** matches ("this section contains something we're killing").
+- **Card styling** — cards render as a **color band** or in the **heavy-outline** convention most sitemap decks use (white box, thick colored border); that toggle and per-rule line style (solid / dashed / dotted) live in Settings → **Colors**, while corner radius and inner padding are in Settings → **Layout**.
 - **Settings panel** — **Layout** (card sizes & spacing), **Colors** (rules + per-node overrides), and **Legend** (editable labels) tabs, with **Save as my defaults** so new projects start the way you like.
 - **Stacked pages** — multi-page leaves and collapsed branches render with a "more underneath" stack; build phase shows as a solid (current) vs dashed (phased) border.
 - **Share it** — **Export HTML** writes a self-contained, **interactive** file a client opens in any browser (collapse/zoom/pan, no app needed); **Export PDF** prints the current view to a single right-sized page.
+- **Export to Miro** — pushes the sitemap to a Miro board as real, editable Miro shapes rather than a flat image: one shape per page, positioned as laid out in the app, connected parent to child, carrying the colors from your rules. Roughly 400 pages takes about a minute. Requires a one-time connection (**App Settings → Miro → Connect to Miro** — authorize in the browser, pick your team); tokens are stored encrypted using the OS keychain, and an advanced fallback lets you supply your own Miro app instead. The export is a one-way push: the board is fully editable in Miro, but changes there don't flow back into Transmission, and Miro shapes have no collapse/expand.
 - The menu sitemaps use this same engine, so everything above applies there too.
 
 ### Treemap
@@ -408,7 +412,7 @@ All settings are stored in the `KKE_Settings` sheet and travel with the file.
 
 ### Preferences
 - Open via **Transmission → Preferences…** on macOS (or **File → Preferences…** on Windows/Linux). Shortcut: `Cmd+,` / `Ctrl+,`.
-- Auto-advance, Show SME fields, Show Migration fields, hide blank metadata, rubric directory, Claude API key, sidebar columns, column mapping
+- Auto-advance, Show SME fields, Show Migration fields, hide blank metadata, rubric directory, Claude API key, sidebar columns, column mapping, Miro connection
 - Per-user preferences (stored in `prefs.json` in the app data directory). Cluster collapse state, blank-metadata visibility, and the SME / Migration field toggles persist across sessions.
 
 ### Redirect Editor
@@ -473,6 +477,7 @@ All reports use a shared infrastructure (`buildReportShell()`, `showReport()`, `
 
 - [Node.js](https://nodejs.org) 18 or later
 - npm (included with Node.js)
+- **Miro export (optional)** — a Miro account. Nothing to install; connect once from **App Settings → Miro → Connect to Miro** and the sitemap's **Export to Miro** action is available from then on.
 
 ---
 
@@ -680,6 +685,7 @@ Per-user preferences stored in `~/Library/Application Support/Transmission/prefs
 - **collapsedClusters** — per-cluster collapse state
 - **Rubrics folder** — path to rubric .md files (per-file override available)
 - **Claude API key** — for AI-powered content assessment
+- **Miro connection** — *not* stored here. The access token lives in its own file in the app data directory, encrypted using the OS keychain, and is never exposed to the app's interface layer. The Miro export's own options travel with the project rather than the user.
 - **Sidebar columns** — which columns appear in the row list
 - **Column mapping** — override auto-detected audit column names per file
 - **Window bounds, sidebar width, sort order, filter text, kkeFilter** — UI state persisted across sessions
