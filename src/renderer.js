@@ -6177,6 +6177,8 @@ function setupSettings() {
     window.electronAPI.savePrefs({ claudeApiKey: state.claudeApiKey });
   });
 
+  setupMiroSettings();
+
   // Sidebar columns
   $('sidebar-col-add').addEventListener('change', () => {
     const sel = $('sidebar-col-add');
@@ -6338,6 +6340,144 @@ function setupSettings() {
     renderKkeButtons();
     renderKkeFilterOptions();
   });
+}
+
+// ─── Miro settings ────────────────────────────────────────────────────────────
+//
+// The token itself lives encrypted in the main process and is never readable
+// from here (see miro.js) — so this UI is state-driven rather than value-bound:
+// it asks main whether a token exists and swaps between the paste form and the
+// saved state, but never displays the credential.
+
+const MIRO_APPS_URL = 'https://miro.com/app/settings/user-profile/apps';
+
+async function refreshMiroSettingsUi() {
+  const unsetEl = $('miro-token-unset');
+  const setEl   = $('miro-token-set');
+  if (!unsetEl || !setEl) return;
+
+  const status = await window.electronAPI.miroStatus();
+  unsetEl.classList.toggle('hidden', !!status.hasToken);
+  setEl.classList.toggle('hidden', !status.hasToken);
+
+  if (!status.hasToken) {
+    // Tell the user up front if this machine can't store a credential safely,
+    // rather than letting them paste a token and hit an opaque save failure.
+    const input = $('pref-miro-token');
+    const saveBtn = $('btn-miro-save-token');
+    if (!status.encryptionAvailable) {
+      if (input) { input.disabled = true; input.placeholder = 'Secure storage unavailable on this system'; }
+      if (saveBtn) saveBtn.disabled = true;
+    } else if (input) {
+      input.disabled = false;
+      if (saveBtn) saveBtn.disabled = false;
+    }
+    return;
+  }
+
+  const statusText = $('miro-status-text');
+  if (statusText) statusText.textContent = 'Token saved (encrypted).';
+  $('miro-board-row').classList.add('hidden');
+}
+
+function setupMiroSettings() {
+  const saveBtn  = $('btn-miro-save-token');
+  const tokenIn  = $('pref-miro-token');
+  const testBtn  = $('btn-miro-test');
+  const clearBtn = $('btn-miro-clear');
+  const probeBtn = $('btn-miro-probe');
+  const helpLink = $('miro-help-link');
+  const boardRow = $('miro-board-row');
+  const boardSel = $('miro-board-select');
+  const statusEl = $('miro-status-text');
+  if (!saveBtn || !tokenIn) return;
+
+  helpLink?.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.electronAPI.openExternal(MIRO_APPS_URL);
+  });
+
+  async function saveToken() {
+    const token = tokenIn.value.trim();
+    if (!token) { showToast('Paste a Miro token first', 'error'); return; }
+    const r = await window.electronAPI.miroSetToken(token);
+    if (!r.success) { showToast('Could not save token: ' + r.error, 'error'); return; }
+    tokenIn.value = '';
+    await refreshMiroSettingsUi();
+    showToast('Miro token saved', 'success');
+    testConnection();   // immediate feedback — a saved-but-invalid token is worse than none
+  }
+
+  saveBtn.addEventListener('click', saveToken);
+  tokenIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveToken(); } });
+
+  async function testConnection() {
+    if (statusEl) statusEl.textContent = 'Testing…';
+    const r = await window.electronAPI.miroTestConnection();
+    if (!r.success) {
+      if (statusEl) statusEl.textContent = r.error;
+      boardRow?.classList.add('hidden');
+      showToast('Miro: ' + r.error, 'error');
+      return;
+    }
+    if (statusEl) {
+      statusEl.textContent = r.boards.length
+        ? `Connected — ${r.total} board${r.total === 1 ? '' : 's'} available.`
+        : 'Connected, but this token can see no boards.';
+    }
+    if (boardSel && r.boards.length) {
+      boardSel.innerHTML = r.boards
+        .map(b => `<option value="${escapeHtml(b.id)}">${escapeHtml(b.name)}</option>`)
+        .join('');
+      boardRow.classList.remove('hidden');
+    }
+    showToast('Miro connection OK', 'success');
+  }
+
+  testBtn?.addEventListener('click', testConnection);
+
+  clearBtn?.addEventListener('click', async () => {
+    const ok = await confirmDialog({
+      title: 'Remove Miro token?',
+      message: 'Transmission will no longer be able to export to Miro until you paste a new token.',
+      confirmLabel: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
+    await window.electronAPI.miroClearToken();
+    await refreshMiroSettingsUi();
+    showToast('Miro token removed', 'success');
+  });
+
+  // Write-access probe. Separate from "Test connection" because boards:read and
+  // boards:write are distinct scopes — a token can pass the read test and still
+  // fail every create call.
+  probeBtn?.addEventListener('click', async () => {
+    const boardId = boardSel?.value;
+    if (!boardId) { showToast('Pick a board first', 'error'); return; }
+    probeBtn.disabled = true;
+    if (statusEl) statusEl.textContent = 'Creating a test shape…';
+    const r = await window.electronAPI.miroProbeWrite({ boardId });
+    probeBtn.disabled = false;
+
+    if (!r.success) {
+      if (statusEl) statusEl.textContent = r.error;
+      showToast('Write test failed: ' + r.error, 'error');
+      return;
+    }
+    // Miro documents 16 palette values for fillColor but types the field as a
+    // free string. If what came back matches what we sent, arbitrary hex is
+    // honoured and the sitemap's colour rules survive the export intact.
+    const honoured = String(r.fillColor || '').toLowerCase() === r.sentFillColor.toLowerCase();
+    const colourNote = honoured
+      ? 'custom colours supported'
+      : `colour changed to ${r.fillColor || '(none)'} — palette is enforced`;
+    const cleanupNote = r.cleanedUp ? '' : ' (test shape left on the board — delete it manually)';
+    if (statusEl) statusEl.textContent = `Write access OK — ${colourNote}.${cleanupNote}`;
+    showToast(`Miro write access confirmed — ${colourNote}`, honoured ? 'success' : 'info');
+  });
+
+  refreshMiroSettingsUi();
 }
 
 function populateColumnMapSelects() {
@@ -12708,7 +12848,7 @@ const SITEMAP_MSG_PREFIX = '@@SITEMAP@@';   // must match MSG_PREFIX in the engi
 // "Save as my defaults" (prefs.sitemapDefaults).
 function sitemapAppDefaults() {
   return Object.assign({
-    vertDepth: 2, childThresh: 3, cardWidth: 148, cardHeight: 54,
+    vertDepth: 2, childThresh: 3, cardWidth: 148, cardHeight: 70,
     hGap: 40, vRow: 60, vlGap: 12, vlDrop: 32, vlHgap: 20, pad: 72,
     showNumbers: true
   }, state.sitemapDefaults || {});
@@ -12745,6 +12885,26 @@ function sitemapValueRules(values, palette, fallback, rootColor) {
   return rules;
 }
 
+// One colour per tree depth. Mirrors the engine's own "by depth" generator so
+// the host can pick it as a DEFAULT, not only the user via the Colors tab.
+function sitemapDepthRules(maxDepth, palette, fallback, rootColor) {
+  const rules = [];
+  if (rootColor) rules.push({ id: 'r-root', label: 'Homepage / root', condition: { type: 'depth', value: 0 }, color: rootColor });
+  for (let d = 1; d <= Math.max(1, maxDepth); d++) {
+    rules.push({ id: 'r-depth-' + d, label: 'Depth ' + d, condition: { type: 'depth', value: d }, color: palette[(d - 1) % palette.length] });
+  }
+  rules.push({ id: 'r-fallback', label: 'Everything else', condition: { type: 'always' }, color: fallback || '#9aa0ab' });
+  return rules;
+}
+
+// Deepest node in a built sitemap root set (roots are depth 0).
+function sitemapMaxDepth(roots) {
+  let max = 0;
+  const walk = (n, d) => { if (d > max) max = d; (n.children || []).forEach(c => walk(c, d + 1)); };
+  (roots || []).forEach(r => walk(r, 0));
+  return max;
+}
+
 // Opens the interactive sitemap modal for a built tree.
 // opts: { context, title, rootHeadings, roots, slug, defaultColorRules,
 //         palette, rootColor, initialCollapsed }
@@ -12768,7 +12928,7 @@ function openSitemapView(opts) {
       cardWidth: eff.cardWidth, cardHeight: eff.cardHeight,
       hGap: eff.hGap, vRow: eff.vRow, vlGap: eff.vlGap, vlDrop: eff.vlDrop,
       vlHgap: eff.vlHgap, pad: eff.pad, showNumbers: eff.showNumbers !== false,
-      colorRules: eff.colorRules, legendLabels: eff.legendLabels, nodeOverrides: eff.nodeOverrides
+      colorRules: eff.colorRules, baseCardStyle: eff.baseCardStyle, legendLabels: eff.legendLabels, nodeOverrides: eff.nodeOverrides
     },
     // Nav uses node.collapse (the Nav Tree checkbox / Sitemap sheet's Collapse column) as the
     // single source of truth for "starts collapsed" — so always seed from it, and
@@ -12816,6 +12976,7 @@ function openSitemapView(opts) {
       if (msg.state) lastState = msg.state;
       if (msg.format === 'client') sitemapExportClient(baseData, lastState, opts.slug);
       else if (msg.format === 'pdf') sitemapExportPdf(baseData, lastState, opts.slug);
+      else if (msg.format === 'miro') sitemapExportMiro(baseData, lastState);
     }
   });
 
@@ -12847,6 +13008,280 @@ function applySitemapCollapseToNav(collapsedIds) {
     invalidateNavPageCountsCache();
     if (typeof _navEditorOpen !== 'undefined' && _navEditorOpen) renderNavEditor();
   }
+}
+
+// ─── Miro export ──────────────────────────────────────────────────────────────
+//
+// Turns the sitemap into Miro items. The whole reason this is possible without
+// screen-scraping the webview is that sitemap-layout.js is pure: the same
+// module the webview lays out with runs here, over the same data, producing
+// byte-identical positions. What you see is what gets exported.
+
+// Total nodes in a subtree, excluding the node itself.
+function countMiroDescendants(node) {
+  return (node.children || []).reduce((s, c) => s + 1 + countMiroDescendants(c), 0);
+}
+
+// What a collapsed view is hiding. Used to warn before export, because
+// exporting "as shown" silently drops whole sections otherwise — the board
+// looks complete and isn't.
+function countMiroHidden(roots, collapsed) {
+  let hiddenNodes = 0, collapsedNodes = 0;
+  const walk = (n) => {
+    const kids = n.children || [];
+    if (kids.length && collapsed.has(n.id)) {
+      collapsedNodes++;
+      hiddenNodes += countMiroDescendants(n);
+      return;                       // its subtree is what's hidden; don't descend
+    }
+    kids.forEach(walk);
+  };
+  (roots || []).forEach(walk);
+  return { hiddenNodes, collapsedNodes };
+}
+
+// opts.expandAll — ignore the collapse state and export the whole tree.
+function buildMiroSitemapPlan(baseData, st, opts = {}) {
+  const settings = (st && st.settings) || baseData.settings;
+  const collapsed = opts.expandAll
+    ? new Set()
+    : new Set((st && st.collapsed) || baseData.initialCollapsed || []);
+  const layout = window.SitemapLayout.create({
+    roots: baseData.roots,
+    settings: settings,
+    collapsed: collapsed,
+    rootHeadings: !!baseData.rootHeadings,
+  });
+  const { positions, canvasW, canvasH } = layout.compute();
+  const k = layout.consts();
+
+  const shapes = [];
+  const edges = [];
+
+  // Miro has no collapse for shapes (only mind maps collapse, and those are
+  // text-only with no colour — see the notes on why we don't use them). So a
+  // node whose children are hidden gets the app's own stacked-card treatment
+  // rendered literally: two offset blocks behind it. The offsets match the
+  // app's CSS box-shadow (4px then 8px) and fit inside the SHADOW allowance
+  // subtreeBox already reserves, so nothing overlaps its neighbours.
+  const STACK_OFFSETS = [8, 4];   // deepest first — later shapes draw on top
+
+  layout.visibleNodes().forEach(entry => {
+    const node = entry.node;
+    const pos = positions[node.id];
+    if (!pos) return;                       // collapsed away; nothing to draw
+    const style = layout.resolveStyle(node);
+    const cx = pos.x + k.CW / 2;            // Miro addresses an item by its CENTRE
+    const cy = pos.y + k.CH / 2;
+    // Outline mode already puts the identifying colour on the border; band mode
+    // puts it on a top strip Miro has no equivalent for, so use it as the
+    // border there too rather than losing the signal entirely.
+    const border = (style.band && style.band !== 'none') ? style.band : style.border;
+    const fill = style.fill || '#ffffff';
+    const borderWidth = parseFloat(style.borderWidth) || 2;
+    const borderStyle = style.borderStyle || 'solid';
+    // Miro has no corner-radius property — only a square vs rounded shape type.
+    // A continuous radius in the app therefore collapses to a binary here.
+    const shape = (Number(settings.cardRadius == null ? 5 : settings.cardRadius) > 0)
+      ? 'round_rectangle' : 'rectangle';
+
+    const kids = node.children || [];
+    const collapsedWithKids = kids.length && collapsed.has(node.id);
+    const hidden = collapsedWithKids ? countMiroDescendants(node) : 0;
+    // Mirrors the app: both a collapsed parent and a leaf standing in for many
+    // same-type pages render stacked.
+    const stacked = node.stacked || !!collapsedWithKids;
+
+    if (stacked) {
+      STACK_OFFSETS.forEach(off => shapes.push({
+        nodeId: null, backing: true, text: '',
+        x: cx + off, y: cy + off, w: k.CW, h: k.CH,
+        fill, border, borderWidth: Math.max(1, borderWidth - 1), borderStyle, shape, fontSize: 12,
+      }));
+    }
+
+    shapes.push({
+      nodeId: node.id,
+      text: node.label || '',
+      // Mirror Miro's own mind-map convention of marking how much is hidden.
+      // 'plus' keeps a client-facing board uncluttered; 'count' is better for
+      // review, where knowing the size of what's folded away matters.
+      sub: hidden
+        ? (opts.hiddenLabel === 'plus' ? '+' : hidden + (hidden === 1 ? ' page hidden' : ' pages hidden'))
+        : (node.sub || ''),
+      x: cx, y: cy, w: k.CW, h: k.CH,
+      fill, border, borderWidth, borderStyle, shape,
+      fontSize: 12,
+    });
+    if (entry.parent) edges.push([entry.parent.id, node.id]);
+  });
+
+  const ps = state.projectSettings || {};
+  const base = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
+  return {
+    frame: { title: base ? base + ' — Sitemap' : 'Sitemap', width: canvasW, height: canvasH },
+    shapes, edges,
+    connectorColor: '#9aa0ab',
+  };
+}
+
+// Board chooser. Offers the token's existing boards plus "create a new one",
+// which is usually what you want — appending 400 shapes to a board someone is
+// already working on is rarely the intent.
+async function pickMiroBoard(hidden) {
+  const conn = await window.electronAPI.miroTestConnection();
+  if (!conn.success) { showToast('Miro: ' + conn.error, 'error'); return null; }
+
+  const opts = (conn.boards || []).map(b =>
+    `<option value="${escapeHtml(b.id)}">${escapeHtml(b.name)}</option>`).join('');
+  // Exporting "as shown" drops collapsed subtrees entirely, which is easy to do
+  // by accident after tidying the view. Say so up front and default to the
+  // complete tree; unchecking is the deliberate "just this section" case.
+  const hiddenBlock = (hidden && hidden.hiddenNodes) ? (
+    '<div class="modal-message" style="margin-top:10px">' +
+    `<b>${hidden.hiddenNodes} page${hidden.hiddenNodes === 1 ? '' : 's'}</b> ` +
+    `${hidden.hiddenNodes === 1 ? 'is' : 'are'} hidden by ` +
+    `${hidden.collapsedNodes} collapsed section${hidden.collapsedNodes === 1 ? '' : 's'}.</div>` +
+    '<label class="setting-row" style="gap:8px"><input type="checkbox" id="_mb-expand" checked>' +
+    '<span>Include them (export the whole tree)</span></label>' +
+    '<p class="sp-help" style="margin-left:24px">Unchecked, collapsed sections export as a stacked block.</p>' +
+    '<label class="sp-field" style="margin-left:24px"><span>Stacked block shows</span>' +
+    '<select id="_mb-hidden-label">' +
+    '<option value="count">The hidden page count</option>' +
+    '<option value="plus">Just a + (more pages)</option>' +
+    '</select></label>'
+  ) : '';
+  const body =
+    '<div class="modal-message">Where should the sitemap go?</div>' +
+    '<label class="setting-row" style="gap:8px"><input type="radio" name="_mb" value="new" checked>' +
+    '<span>Create a new board</span></label>' +
+    '<input type="text" id="_mb-name" class="setting-input" style="margin:4px 0 10px 24px;width:calc(100% - 24px)">' +
+    (opts
+      ? '<label class="setting-row" style="gap:8px"><input type="radio" name="_mb" value="existing">' +
+        '<span>Add to an existing board</span></label>' +
+        '<select id="_mb-board" class="setting-input" style="margin-left:24px;width:calc(100% - 24px)">' + opts + '</select>'
+      : '<p class="sp-help" style="margin-left:24px">This token can see no existing boards.</p>')
+    + hiddenBlock;
+
+  // Read the form in onClick with closeOnClick:false — the house pattern (see
+  // the "Create menu" dialog). openModal removes the dialog from the DOM before
+  // it calls onClose, so reading fields there returns null and every answer
+  // silently collapses to the default.
+  const choice = await new Promise(resolve => {
+    let settled = false;
+    openModal({
+      title: 'Export to Miro', width: 460, body, escapeValue: null,
+      buttons: [
+        { label: 'Cancel', variant: 'ghost' },
+        {
+          label: 'Export', variant: 'primary', primary: true, closeOnClick: false,
+          onClick: (api) => {
+            const picked = document.querySelector('input[name="_mb"]:checked');
+            const mode = picked ? picked.value : 'new';
+            const expandEl = $('_mb-expand');
+            const expandAll = expandEl ? expandEl.checked : false;
+            const hiddenLabel = (($('_mb-hidden-label') || {}).value) || 'count';
+            const val = mode === 'existing'
+              ? { existing: ($('_mb-board') || {}).value, expandAll, hiddenLabel }
+              : { newName: (($('_mb-name') || {}).value || '').trim(), expandAll, hiddenLabel };
+            settled = true;
+            api.close();
+            resolve(val);
+          },
+        },
+      ],
+      onClose: () => { if (!settled) resolve(null); },
+    });
+    const nameEl = $('_mb-name');
+    const ps = state.projectSettings || {};
+    const base = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
+    if (nameEl) nameEl.value = base ? base + ' — Sitemap' : 'Sitemap';
+
+    const labelSel = $('_mb-hidden-label');
+    const expandBox = $('_mb-expand');
+    if (labelSel) {
+      labelSel.value = (ps.miroExport && ps.miroExport.hiddenLabel) || 'count';
+      const syncLabelState = () => { labelSel.disabled = !!(expandBox && expandBox.checked); };
+      if (expandBox) expandBox.addEventListener('change', syncLabelState);
+      syncLabelState();
+    }
+  });
+  if (!choice) return null;
+
+  if (choice.existing) return { boardId: choice.existing, expandAll: choice.expandAll, hiddenLabel: choice.hiddenLabel };
+  const r = await window.electronAPI.miroCreateBoard({
+    name: choice.newName || 'Sitemap',
+    description: 'Generated by Transmission.',
+  });
+  if (!r.success) { showToast('Could not create board: ' + r.error, 'error'); return null; }
+  return { boardId: r.board.id, expandAll: choice.expandAll, hiddenLabel: choice.hiddenLabel };
+}
+
+async function sitemapExportMiro(baseData, st) {
+  const status = await window.electronAPI.miroStatus();
+  if (!status.hasToken) {
+    showToast('Connect Miro first (App Settings → Miro)', 'error');
+    return;
+  }
+  const collapsedNow = new Set((st && st.collapsed) || baseData.initialCollapsed || []);
+  const hidden = countMiroHidden(baseData.roots, collapsedNow);
+
+  const picked = await pickMiroBoard(hidden);
+  if (!picked) return;
+  const { boardId, expandAll, hiddenLabel } = picked;
+
+  // Remember per project — this is a house-style choice for a client's deck,
+  // not a one-off, and it travels with the file like other sitemap settings.
+  if (hiddenLabel && (state.projectSettings.miroExport || {}).hiddenLabel !== hiddenLabel) {
+    state.projectSettings.miroExport = Object.assign({}, state.projectSettings.miroExport, { hiddenLabel });
+    setDirty(true);
+  }
+
+  const plan = buildMiroSitemapPlan(baseData, st, { expandAll, hiddenLabel });
+  if (!plan.shapes.length) { showToast('Nothing visible to export', 'error'); return; }
+
+  // Connectors have no bulk endpoint and cost the same per item as shapes, so
+  // the honest estimate is one call per node plus one per edge.
+  const totalItems = 1 + plan.shapes.length + plan.edges.length;
+  let cancelled = false;
+  const modal = openModal({
+    title: 'Exporting to Miro', width: 460,
+    body: '<div class="modal-message" id="_mx-msg">Preparing…</div>' +
+          '<div style="height:8px;background:var(--bg-inset,#e8eaed);border-radius:4px;overflow:hidden">' +
+          '<div id="_mx-bar" style="height:100%;width:0;background:var(--accent);transition:width .2s"></div></div>' +
+          '<p class="sp-help" id="_mx-sub" style="margin-top:8px"></p>',
+    escapeValue: 'cancel',
+    buttons: [{ label: 'Cancel', variant: 'ghost', value: 'cancel' }],
+    onClose: (v) => { if (v === 'cancel') { cancelled = true; window.electronAPI.miroCancelExport(); } },
+  });
+
+  window.electronAPI.onMiroExportProgress(p => {
+    const bar = $('_mx-bar'), msg = $('_mx-msg'), sub = $('_mx-sub');
+    if (!bar) return;
+    bar.style.width = Math.round((p.done / p.total) * 100) + '%';
+    if (msg) msg.textContent = { frame: 'Creating frame…', shapes: 'Creating pages…', connectors: 'Drawing connections…' }[p.phase] || 'Working…';
+    if (sub) sub.textContent = p.done + ' of ' + p.total + ' items';
+  });
+
+  const r = await window.electronAPI.miroExportSitemap({ boardId, plan });
+  try { modal.close(); } catch (e) { /* already closed by Cancel/Esc */ }
+
+  if (!r.success) {
+    if (cancelled || /cancelled/i.test(r.error || '')) showToast('Miro export cancelled', 'info');
+    else showToast('Miro export failed: ' + r.error, 'error');
+    return;
+  }
+  // Report partial failures rather than claiming a clean run.
+  const notes = [];
+  if (r.edgeFailures) notes.push(r.edgeFailures + ' connector(s) failed');
+  if (r.skippedEdges) notes.push(r.skippedEdges + ' edge(s) skipped');
+  showToast(
+    `Exported ${r.shapes} pages + ${r.connectors} connections to Miro` + (notes.length ? ' — ' + notes.join(', ') : ''),
+    notes.length ? 'info' : 'success'
+  );
+  const board = (await window.electronAPI.miroTestConnection());
+  const hit = board.success && (board.boards || []).find(b => b.id === boardId);
+  if (hit && hit.viewLink) window.electronAPI.openExternal(hit.viewLink);
 }
 
 async function sitemapExportClient(baseData, st, slug, templateModule) {
@@ -13457,6 +13892,9 @@ async function generateNavSitemap() {
   invalidateNavPageCountsCache();
   const pageCounts = _navPageCountsCache();
   const initialCollapsed = [];
+  // Computed once for the whole build, not per node — this is a single pass
+  // over every audit row, and navToSitemap runs once per node.
+  const rowAgg = computeNavRowFieldAggregates();
 
   // Map one sitemap node → a SitemapNode. `topLabel` is the node's top-level section
   // label, stamped onto colorValue so "color by section" tints the whole subtree.
@@ -13483,6 +13921,14 @@ async function generateNavSitemap() {
         writeAssignee: node.writeAssignee || '',
         migrateAssignee: node.migrateAssignee || '',
       },
+      // Spreadsheet-derived dimensions, aggregated across the audit rows
+      // assigned to this node. `rowFields` is the dominant value per column
+      // (what the section mostly is); `rowFieldSets` is every distinct value
+      // present, which the 'any-is' operator uses to flag a section that
+      // merely CONTAINS something — e.g. one Kill inside an otherwise Keep
+      // branch. See computeNavRowFieldAggregates().
+      rowFields: (rowAgg[node.id] && rowAgg[node.id].dominant) || {},
+      rowFieldSets: (rowAgg[node.id] && rowAgg[node.id].sets) || {},
     };
     if (count > 0) out.sub = count + (count === 1 ? ' page' : ' pages');
     if (kids.length) {
@@ -13512,7 +13958,6 @@ async function generateNavSitemap() {
     : sections.map(s => ({ ...s, root: true }));
 
   const palette = (Array.isArray(ps.brandPalette) && ps.brandPalette.length) ? ps.brandPalette : SITEMAP_DEFAULT_PALETTE;
-  const sectionLabels = [...new Set(state.navTree.map(s => s.label || '(section)'))];
   const title = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
 
   openSitemapView({
@@ -13521,7 +13966,12 @@ async function generateNavSitemap() {
     rootHeadings: false,
     roots,
     slug: sitemapProjectSlug() + '-sitemap',
-    defaultColorRules: sitemapValueRules(sectionLabels, palette, '#9aa0ab', SITEMAP_ROOT_COLOR),
+    // Colour by depth. Section colouring keys on top-level children, so a
+    // tree with a single top-level node —
+    // common when a crawl roots everything under one homepage node — paints
+    // every descendant the same colour and reads as monochrome. Depth always
+    // has something to say. Users can switch back via Settings → Colors.
+    defaultColorRules: sitemapDepthRules(sitemapMaxDepth(roots), palette, '#9aa0ab', SITEMAP_ROOT_COLOR),
     palette,
     rootColor: SITEMAP_ROOT_COLOR,
     initialCollapsed,
@@ -13534,18 +13984,93 @@ async function generateNavSitemap() {
 // offers, matching navToSitemap()'s node.fields keys above. Menus don't carry
 // these fields at all, so generateMenuSitemap() simply omits fieldDefs — the
 // engine hides the picker whenever the host doesn't declare any.
+// Audit-row columns worth colouring a sitemap by. These are the "content call"
+// dimensions — what a page IS and what we decided to do with it — as opposed to
+// the build/workflow dimensions carried on the nav node itself.
+//
+// Deliberately a curated list rather than every header: a crawl export has
+// 100+ columns (word counts, response times, canonical URLs) and offering them
+// all as colour dimensions would bury the handful anyone actually uses. Add a
+// column here to expose it; nothing else needs changing.
+const SITEMAP_ROW_FIELDS = [
+  { col: 'Page_Type',            key: 'row.pageType',        label: 'Content Type' },
+  { col: 'KKE_Recommendation',   key: 'row.kke',             label: 'KKE' },
+  { col: 'Final_KKE',            key: 'row.finalKke',        label: 'Final KKE' },
+  { col: 'Content_Nature',       key: 'row.contentNature',   label: 'Renders as' },
+  { col: 'Migration_Track',      key: 'row.migrationTrack',  label: 'Migration Track' },
+  { col: 'Content_Theme',        key: 'row.contentTheme',    label: 'Content Theme' },
+  { col: 'Published_Status',     key: 'row.published',       label: 'Published Status' },
+  { col: 'Target_Content_Type',  key: 'row.targetType',      label: 'Target Content Type' },
+];
+
 function navSitemapFieldDefs() {
   const pageStatusColors = {};
   (state.pageStatusLibrary || []).forEach(s => { if (s && s.name) pageStatusColors[s.name] = s.color; });
-  return [
-    { key: 'phase', label: 'Phase' },
-    { key: 'nodeType', label: 'Node Type', valueLabels: { '': 'Page', Header: 'Header', Fragment: 'Fragment' } },
-    { key: 'pageStatus', label: 'Page Status', valueColors: pageStatusColors },
-    { key: 'buildPattern', label: 'Build Pattern' },
-    { key: 'buildAssignee', label: 'Builder' },
-    { key: 'writeAssignee', label: 'Writer' },
-    { key: 'migrateAssignee', label: 'Migrator' },
+
+  const nodeDefs = [
+    { key: 'phase', label: 'Phase', source: 'node' },
+    { key: 'nodeType', label: 'Node Type', source: 'node', valueLabels: { '': 'Page', Header: 'Header', Fragment: 'Fragment' } },
+    { key: 'pageStatus', label: 'Page Status', source: 'node', valueColors: pageStatusColors },
+    { key: 'buildPattern', label: 'Build Pattern', source: 'node' },
+    { key: 'buildAssignee', label: 'Builder', source: 'node' },
+    { key: 'writeAssignee', label: 'Writer', source: 'node' },
+    { key: 'migrateAssignee', label: 'Migrator', source: 'node' },
   ];
+
+  // Only offer row fields whose column actually exists in this file — a
+  // dimension with nothing behind it is worse than no dimension.
+  const kkeColors = {};
+  allKkeStates().forEach(st => { const c = resolvedKkeColor && resolvedKkeColor(st); if (c) kkeColors[st] = c; });
+  const rowDefs = SITEMAP_ROW_FIELDS
+    .filter(f => state.headers.includes(f.col))
+    .map(f => Object.assign(
+      { key: f.key, label: f.label, source: 'row' },
+      /KKE/i.test(f.col) && Object.keys(kkeColors).length ? { valueColors: kkeColors } : {}
+    ));
+
+  return nodeDefs.concat(rowDefs);
+}
+
+// Aggregates the audit rows assigned to each nav node, once per sitemap build.
+// Returns { [sitemapId]: { dominant: {key: value}, sets: {key: [values]} } }.
+//
+// Two aggregations because a node routinely holds several pages and the two
+// questions differ: "what is this section mostly?" (dominant, drives colour)
+// versus "does it contain ANY page that is X?" (set, drives flagging). The
+// rule engine's 'any-is' operator reads the set; everything else reads dominant.
+function computeNavRowFieldAggregates() {
+  const cols = SITEMAP_ROW_FIELDS.filter(f => state.headers.includes(f.col));
+  const byNode = {};
+  if (!cols.length) return byNode;
+
+  const counts = {};   // sitemapId -> key -> value -> n
+  (state.editedRows || []).forEach(row => {
+    const id = String(row.Sitemap_ID || '').trim();
+    if (!id) return;
+    counts[id] = counts[id] || {};
+    cols.forEach(f => {
+      const v = String(row[f.col] == null ? '' : row[f.col]).trim();
+      if (!v) return;                       // blanks tell us nothing; skip
+      counts[id][f.key] = counts[id][f.key] || {};
+      counts[id][f.key][v] = (counts[id][f.key][v] || 0) + 1;
+    });
+  });
+
+  Object.keys(counts).forEach(id => {
+    const keys = Object.keys(counts[id]);
+    if (!keys.length) return;      // rows placed but unaudited — nothing to aggregate
+    const dominant = {}, sets = {};
+    keys.forEach(key => {
+      const tally = counts[id][key];
+      const values = Object.keys(tally);
+      sets[key] = values;
+      // Ties break on the higher count then alphabetically, so the same data
+      // always yields the same colour rather than depending on row order.
+      dominant[key] = values.sort((a, b) => (tally[b] - tally[a]) || (a < b ? -1 : 1))[0];
+    });
+    byNode[id] = { dominant, sets };
+  });
+  return byNode;
 }
 
 // ─── Treemap data builder ──────────────────────────────────────────────────
