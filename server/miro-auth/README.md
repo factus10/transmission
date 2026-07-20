@@ -61,8 +61,12 @@ Note the **Client ID** and **Client secret**.
 
 ### 2. Create the KV namespace
 
+All `wrangler` commands below run **from this directory** (`server/miro-auth`,
+relative to the repository root — note that while this feature is on a branch,
+the only checkout of it is the git worktree, not the main clone):
+
 ```bash
-cd server/miro-auth
+cd "$(git rev-parse --show-toplevel)/server/miro-auth"
 npx wrangler kv namespace create SESSIONS
 ```
 
