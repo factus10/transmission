@@ -49,8 +49,9 @@
     //    localStorage (client mode).
     var S = Object.assign({
       vertDepth: 2, childThresh: 3,
-      cardWidth: 148, cardHeight: 54,
+      cardWidth: 148, cardHeight: 70,
       hGap: 40, vRow: 60, vlGap: 12, vlDrop: 32, vlHgap: 20, pad: 72,
+      cardRadius: 5, cardPadX: 7, cardPadY: 5,
       showNumbers: true,
       colorRules: [],
       legendLabels: {},
@@ -119,7 +120,9 @@
         hGap: S.hGap, vRow: S.vRow, vlGap: S.vlGap, vlDrop: S.vlDrop,
         vlHgap: S.vlHgap, pad: S.pad,
         showNumbers: showNumbers,
+        cardRadius: S.cardRadius, cardPadX: S.cardPadX, cardPadY: S.cardPadY,
         colorRules: S.colorRules,
+        baseCardStyle: S.baseCardStyle,
         legendLabels: S.legendLabels,
         nodeOverrides: S.nodeOverrides
       };
@@ -156,19 +159,9 @@
     // ════════════════════════════════════════════════════════════════════════
     // Color resolution: node override > first matching rule > fallback
     // ════════════════════════════════════════════════════════════════════════
-    function matchesRule(node, depth, rule) {
-      var c = rule.condition || {};
-      switch (c.type) {
-        case 'depth': return depth === c.value;
-        case 'depthRange': return depth >= c.min && depth <= c.max;
-        case 'parentId': return INDEX[node.id] && INDEX[node.id].parentId === c.parentId;
-        case 'value': return (node.colorValue || '') === c.value;
-        case 'external': return !!node.external;
-        case 'field': return String((node.fields && node.fields[c.field]) || '') === c.value;
-        case 'always': return true;
-        default: return false;
-      }
-    }
+    // Rule matching lives in sitemap-layout.js alongside the geometry, so the
+    // exporter resolves a node to exactly the colour drawn here. See the note
+    // there on precedence.
 
     // Generic "color by any host-declared field" support. The engine has no
     // built-in knowledge of which fields exist — the host (renderer.js) passes
@@ -183,106 +176,65 @@
       if (def && def.valueLabels && (val in def.valueLabels)) return def.valueLabels[val];
       return val || '(none)';
     }
+    // Where a field's value lives depends on its declared source: node fields
+    // sit on node.fields, spreadsheet-derived ones on node.rowFields (the
+    // dominant value across the audit rows assigned to that node).
+    function fieldSourceOf(key) {
+      var def = fieldDefOf(key);
+      return (def && def.source) || 'node';
+    }
+    function nodeFieldValue(node, key) {
+      var bag = fieldSourceOf(key) === 'row' ? node.rowFields : node.fields;
+      return (bag && bag[key]) || '';
+    }
     function distinctFieldValues(key) {
       var seen = {}, out = [];
       for (var id in INDEX) {
-        var v = (INDEX[id].node.fields && INDEX[id].node.fields[key]) || '';
+        var v = nodeFieldValue(INDEX[id].node, key);
         if (!(v in seen)) { seen[v] = 1; out.push(v); }
       }
       out.sort(function (a, b) { if (a === '') return 1; if (b === '') return -1; return a < b ? -1 : a > b ? 1 : 0; });
       return out;
     }
-    function resolveColor(node) {
-      var ov = S.nodeOverrides[node.id];
-      if (ov && ov.color) return ov.color;
-      var depth = depthOf(node);
-      for (var i = 0; i < S.colorRules.length; i++) {
-        if (matchesRule(node, depth, S.colorRules[i])) return S.colorRules[i].color;
-      }
-      return FALLBACK_COLOR;
+    // How many nodes actually carry each value — shown in the generator so a
+    // dimension with no data reads as empty rather than silently producing a
+    // one-rule "(none)" scheme.
+    function fieldCoverage(key) {
+      var total = 0, filled = 0;
+      for (var id in INDEX) { total++; if (nodeFieldValue(INDEX[id].node, key)) filled++; }
+      return { total: total, filled: filled };
     }
+    function resolveColor(node) { return LAYOUT.resolveColor(node, FALLBACK_COLOR); }
 
     // ════════════════════════════════════════════════════════════════════════
     // Layout — ported from prototype, generalized to N stacked roots.
     // Constants come from settings so the Layout tab can tune them live.
     // ════════════════════════════════════════════════════════════════════════
-    function L() {
-      return {
-        CW: S.cardWidth, CH: S.cardHeight, H_GAP: S.hGap, V_ROW: S.vRow,
-        VL_GAP: S.vlGap, VL_DROP: S.vlDrop, VL_HGAP: S.vlHgap, PAD: S.pad, SHADOW: 8
-      };
-    }
+    // Geometry lives in sitemap-layout.js so the Miro exporter can compute the
+    // same positions host-side without a DOM. Injected ahead of this engine as
+    // window.__SITEMAP_LAYOUT__; `S` and `collapsed` are passed by reference so
+    // settings-panel edits and collapse toggles are picked up on next compute.
+    var LAYOUT = window.__SITEMAP_LAYOUT__.create({
+      roots: function () { return ROOTS; },
+      settings: S,
+      collapsed: collapsed,
+      rootHeadings: ROOT_HEADINGS,
+      headingH: HEADING_H,
+      rootGap: ROOT_GAP
+    });
 
-    function shouldBeVert(node, depth) {
-      var ov = S.nodeOverrides[node.id];
-      if (ov && ov.layout) return ov.layout === 'vert';
-      if (S.vertDepth !== 99 && depth >= S.vertDepth) return true;
-      if (S.childThresh !== 99 && depth >= 1 && node.children && node.children.length >= S.childThresh) return true;
-      return false;
-    }
-
-    function subtreeBox(node, depth) {
-      var k = L();
-      var hasKids = node.children && node.children.length && !collapsed.has(node.id);
-      var isStacked = node.stacked || (collapsed.has(node.id) && node.children && node.children.length);
-      if (!hasKids) return { w: k.CW + (isStacked ? k.SHADOW : 0), h: k.CH + (isStacked ? k.SHADOW : 0) };
-      if (shouldBeVert(node, depth)) {
-        var cb = node.children.map(function (c) { return subtreeBox(c, depth + 1); });
-        var colH = cb.reduce(function (s, b, i) { return s + b.h + (i > 0 ? k.VL_GAP : 0); }, 0);
-        var maxW = cb.reduce(function (m, b) { return Math.max(m, b.w); }, 0);
-        return { w: Math.max(k.CW, k.VL_HGAP + maxW), h: k.CH + k.VL_DROP + colH };
-      } else {
-        var boxes = node.children.map(function (c) { return subtreeBox(c, depth + 1); });
-        var totalW = boxes.reduce(function (s, b, i) { return s + b.w + (i > 0 ? k.H_GAP : 0); }, 0);
-        var maxH = boxes.reduce(function (m, b) { return Math.max(m, b.h); }, 0);
-        return { w: Math.max(k.CW, totalW), h: k.CH + k.V_ROW + maxH };
-      }
-    }
+    function L() { return LAYOUT.consts(); }
+    function shouldBeVert(node, depth) { return LAYOUT.shouldBeVert(node, depth); }
 
     var positions = {};
-    function layoutNode(node, x, y, depth) {
-      var k = L();
-      var hasKids = node.children && node.children.length && !collapsed.has(node.id);
-      if (!shouldBeVert(node, depth)) {
-        var boxes = node.children && !collapsed.has(node.id) ? node.children.map(function (c) { return subtreeBox(c, depth + 1); }) : [];
-        var totalW = boxes.reduce(function (s, b, i) { return s + b.w + (i > 0 ? k.H_GAP : 0); }, 0) || k.CW;
-        var cardX = x + totalW / 2 - k.CW / 2;
-        positions[node.id] = { x: cardX, y: y, depth: depth };
-        if (hasKids) {
-          var cx = x;
-          node.children.forEach(function (c, i) { layoutNode(c, cx, y + k.CH + k.V_ROW, depth + 1); cx += boxes[i].w + k.H_GAP; });
-        }
-      } else {
-        positions[node.id] = { x: x, y: y, depth: depth };
-        if (hasKids) {
-          var xcol = x + k.VL_HGAP;
-          var cy = y + k.CH + k.VL_DROP;
-          node.children.forEach(function (c) { layoutNode(c, xcol, cy, depth + 1); cy += subtreeBox(c, depth + 1).h + k.VL_GAP; });
-        }
-      }
-    }
-
     var canvasW = 100, canvasH = 100;
     var rootHeadingY = {}; // rootIndex -> y of heading
     function computeLayout() {
-      var k = L();
-      positions = {};
-      rootHeadingY = {};
-      var yCursor = k.PAD;
-      ROOTS.forEach(function (root, i) {
-        if (ROOT_HEADINGS) { rootHeadingY[i] = yCursor; yCursor += HEADING_H; }
-        layoutNode(root, k.PAD, yCursor, 0);
-        var box = subtreeBox(root, 0);
-        yCursor += box.h + ROOT_GAP;
-      });
-      var maxX = 0, maxY = 0;
-      for (var id in positions) {
-        var p = positions[id];
-        maxX = Math.max(maxX, p.x + k.CW + 16);
-        maxY = Math.max(maxY, p.y + k.CH);
-      }
-      canvasW = maxX + k.PAD;
-      canvasH = maxY + k.PAD;
+      var r = LAYOUT.compute();
+      positions = r.positions;
+      canvasW = r.canvasW;
+      canvasH = r.canvasH;
+      rootHeadingY = r.rootHeadingY;
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -326,6 +278,15 @@
 
     function render() {
       computeLayout();
+      // Global look settings (not per-rule): corner radius and inner padding
+      // describe how a card is drawn, not what it means, so they live in the
+      // Layout tab rather than the rule engine.
+      var cl0 = document.getElementById('cards-layer');
+      if (cl0) {
+        cl0.style.setProperty('--card-radius', (S.cardRadius == null ? 5 : S.cardRadius) + 'px');
+        cl0.style.setProperty('--card-pad-x', (S.cardPadX == null ? 7 : S.cardPadX) + 'px');
+        cl0.style.setProperty('--card-pad-y', (S.cardPadY == null ? 5 : S.cardPadY) + 'px');
+      }
       var k = L();
       var canvas = document.getElementById('canvas');
       canvas.style.width = canvasW + 'px';
@@ -375,8 +336,28 @@
       card.style.top = pos.y + 'px';
       card.style.width = k.CW + 'px';
       card.style.height = k.CH + 'px';
-      var color = node.isMenuRoot ? '#94a3b8' : resolveColor(node);
-      card.style.setProperty('--section-color', color);
+      // Full style, not just a colour: rules can drive fill, border and text as
+      // well as the top band, which is what makes the "white box, heavy
+      // coloured outline" convention expressible. Legacy `color` rules resolve
+      // to a band and look exactly as they did.
+      // `accent` is the node's identifying colour whichever convention is in
+      // play — the band in band mode, the border in outline mode. The number
+      // span below is tinted with it, so it must be defined for every branch.
+      var accent;
+      if (node.isMenuRoot) {
+        accent = '#94a3b8';
+        card.style.setProperty('--section-color', accent);
+      } else {
+        var st = LAYOUT.resolveStyle(node);
+        accent = (st.band && st.band !== 'none') ? st.band : st.border;
+        card.style.setProperty('--section-color', st.band || 'transparent');
+        card.style.setProperty('--card-fill', st.fill);
+        card.style.setProperty('--card-border', st.border);
+        card.style.setProperty('--card-bw', st.borderWidth);
+        card.style.setProperty('--card-text', st.text);
+        card.style.setProperty('--card-bs', st.borderStyle || 'solid');
+        if (!st.band || st.band === 'none') card.classList.add('no-band');
+      }
 
       var ov = S.nodeOverrides[node.id];
       if (MODE === 'app' && ov && (ov.layout || ov.color)) {
@@ -390,7 +371,7 @@
       if (showNumbers && numMap[node.id]) {
         var n = document.createElement('span');
         n.className = 'node-num';
-        n.style.color = color;
+        n.style.color = accent;
         n.textContent = numMap[node.id];
         card.appendChild(n);
       }
@@ -420,6 +401,12 @@
       if (MODE === 'app' && node.children && node.children.length) {
         card.addEventListener('contextmenu', function (e) { openNodeContextMenu(e, node); });
       }
+
+      // Long labels clip to two lines, so keep the full text reachable on
+      // hover. Appended rather than assigned: the override branch above may
+      // already have set a title, and that information is worth keeping too.
+      var fullLabel = node.label || '';
+      if (fullLabel) card.title = card.title ? (fullLabel + '\n' + card.title) : fullLabel;
 
       document.getElementById('cards-layer').appendChild(card);
       if (node.children) node.children.forEach(renderCards);
@@ -561,6 +548,7 @@
       if ($('btn-settings')) $('btn-settings').addEventListener('click', function (e) { e.stopPropagation(); openSettings(); });
       if ($('btn-export-client')) $('btn-export-client').addEventListener('click', function () { emit({ type: 'export', format: 'client', state: currentState() }); });
       if ($('btn-export-pdf')) $('btn-export-pdf').addEventListener('click', function () { emit({ type: 'export', format: 'pdf', state: currentState() }); });
+      if ($('btn-export-miro')) $('btn-export-miro').addEventListener('click', function () { emit({ type: 'export', format: 'miro', state: currentState() }); });
 
       document.addEventListener('click', function () {
         removeCtx();
@@ -643,27 +631,73 @@
       ['cardWidth', 'Card width'], ['cardHeight', 'Card height'],
       ['hGap', 'Horizontal gap'], ['vRow', 'Vertical row gap'],
       ['vlGap', 'Vertical list gap'], ['vlDrop', 'Vertical drop'],
-      ['vlHgap', 'Vertical indent'], ['pad', 'Canvas padding']
+      ['vlHgap', 'Vertical indent'], ['pad', 'Canvas padding'],
+      ['cardRadius', 'Corner radius'], ['cardPadX', 'Padding L/R'], ['cardPadY', 'Padding top/btm']
     ];
     function layoutTabHtml() {
       var rows = NUM_FIELDS.map(function (f) {
         return '<label class="sp-field"><span>' + f[1] + '</span><input type="number" data-key="' + f[0] + '" value="' + S[f[0]] + '"></label>';
       }).join('');
       return '<div class="sp-grid">' + rows + '</div>' +
-        '<p class="sp-help">Layout dimensions in pixels. Changes preview live.</p>';
+        '<p class="sp-help">Layout dimensions in pixels. Changes preview live. ' +
+        'Note for Miro export: corner radius exports as square vs rounded only (Miro has no radius setting), ' +
+        'and inner padding is app-only \u2014 Miro centres shape text itself.</p>';
     }
     function wireLayoutTab() {
       Array.prototype.forEach.call(document.querySelectorAll('#sp-body input[data-key]'), function (inp) {
         inp.addEventListener('input', function () {
+          var key = inp.getAttribute('data-key');
           var v = parseInt(inp.value, 10);
-          if (!isNaN(v) && v >= 0) { S[inp.getAttribute('data-key')] = v; render(); pushState(); }
+          if (isNaN(v) || v < 0) return;
+          // Padding eats the label's room; the card is already tight enough that
+          // an unbounded value silently clips every label. Cap rather than let
+          // the user discover that the hard way.
+          if (key === 'cardPadX') v = Math.min(v, Math.floor(S.cardWidth / 3));
+          if (key === 'cardPadY') v = Math.min(v, Math.floor(S.cardHeight / 3));
+          if (key === 'cardRadius') v = Math.min(v, Math.floor(Math.min(S.cardWidth, S.cardHeight) / 2));
+          if (String(v) !== inp.value) inp.value = String(v);
+          S[key] = v; render(); pushState();
         });
       });
     }
 
     // ── Colors tab ──
+    //
+    // A rule is { label, when: [conditions], style: {...} }, evaluated top to
+    // bottom, first match wins, style merged over the base card style. The
+    // older { condition, color } shape is still accepted everywhere (it means
+    // "set the top band to this colour") so existing projects open unchanged;
+    // legacyToWhen() is the only place that needs to know the difference.
+
+    var OPS = [
+      { op: 'is', label: 'is' },
+      { op: 'is-not', label: 'is not' },
+      { op: 'any-is', label: 'any page is', rowOnly: true },
+      { op: 'contains', label: 'contains' },
+      { op: 'not-contains', label: 'does not contain' },
+      { op: 'blank', label: 'is blank', noValue: true },
+      { op: 'not-blank', label: 'is set', noValue: true }
+    ];
+
+    function legacyToWhen(rule) {
+      if (rule.when) return rule.when;
+      var c = rule.condition || {};
+      return c.type === 'always' ? [] : [c];
+    }
+    function ruleStyleOf(rule) {
+      return rule.style || { band: rule.color };
+    }
+
     function condSummary(c) {
       if (!c) return '';
+      if (c.source) {
+        var d = fieldDefOf(c.key);
+        var name = d ? d.label : (c.key === 'depth' ? 'Depth' : c.key);
+        var opDef = OPS.filter(function (o) { return o.op === c.op; })[0];
+        var opLabel = opDef ? opDef.label : c.op;
+        if (opDef && opDef.noValue) return name + ' ' + opLabel;
+        return name + ' ' + opLabel + ' ' + fieldValueLabel(c.key, c.value);
+      }
       switch (c.type) {
         case 'depth': return 'Depth = ' + c.value;
         case 'depthRange': return 'Depth ' + c.min + '–' + c.max;
@@ -675,28 +709,67 @@
         default: return c.type;
       }
     }
+    function ruleSummary(rule) {
+      var w = legacyToWhen(rule);
+      if (!w.length) return 'All other nodes';
+      return w.map(condSummary).join('  ·  and  ·  ');
+    }
+    // A miniature of the card the rule produces, so the list reads as what you
+    // will actually see rather than a row of undifferentiated colour chips.
+    function stylePreviewHtml(rule) {
+      var st = ruleStyleOf(rule);
+      var base = S.baseCardStyle || {};
+      var fill = st.fill || base.fill || '#ffffff';
+      var border = st.border || base.border || '#c8cdd6';
+      var bw = st.borderWidth || base.borderWidth || '1.5px';
+      var band = st.band == null ? base.band : st.band;
+      var bandHtml = (band && band !== 'none')
+        ? '<i style="position:absolute;top:0;left:0;right:0;height:3px;background:' + esc(band) + ';border-radius:3px 3px 0 0"></i>' : '';
+      var bs = st.borderStyle || base.borderStyle || 'solid';
+      return '<span class="sp-rule-prev" style="background:' + esc(fill) + ';border:' + esc(bw) + ' ' + esc(bs) + ' ' + esc(border) +
+        ';border-radius:' + (S.cardRadius == null ? 5 : S.cardRadius) + 'px">' + bandHtml + '</span>';
+    }
     function renderColorsTab() {
       var body = $('sp-body');
-      var html = '<div class="sp-rules" id="sp-rules">';
+
+      // Style mode. "Outline" is the convention most sitemap decks use — white
+      // box, heavy coloured border — and reads better at 400 nodes than filled
+      // boxes, which turn into a quilt.
+      var mode = (S.baseCardStyle && S.baseCardStyle.band === 'none') ? 'outline' : 'band';
+      var html = '<div class="sp-stylemode">' +
+        '<span>Card style</span>' +
+        '<button class="sp-seg' + (mode === 'band' ? ' on' : '') + '" id="sp-mode-band">Colour band</button>' +
+        '<button class="sp-seg' + (mode === 'outline' ? ' on' : '') + '" id="sp-mode-outline">Heavy outline</button>' +
+        '</div>';
+
+      html += '<div class="sp-rules" id="sp-rules">';
       S.colorRules.forEach(function (rule, i) {
         html += '<div class="sp-rule" data-i="' + i + '">' +
           '<span class="sp-rule-move" title="Drag to reorder" draggable="true">☰</span>' +
-          '<input type="color" class="sp-rule-color" value="' + rule.color + '">' +
-          '<span class="sp-rule-label">' + esc(rule.label || '') + '<small>' + esc(condSummary(rule.condition)) + '</small></span>' +
+          stylePreviewHtml(rule) +
+          '<span class="sp-rule-label">' + esc(rule.label || '(unnamed)') + '<small>' + esc(ruleSummary(rule)) + '</small></span>' +
+          '<button class="sp-rule-edit" title="Edit rule">✎</button>' +
           '<button class="sp-rule-del" title="Delete rule">✕</button>' +
           '</div>';
       });
+      if (!S.colorRules.length) html += '<p class="sp-help" style="padding:10px">No rules yet — use a generator below to start.</p>';
       html += '</div>';
       html += '<div class="sp-rule-add">' +
         '<button class="sp-btn" id="sp-add-rule">+ Add rule</button>' +
-        '<button class="sp-btn" id="sp-gen-depth">Color by depth</button>' +
-        '<button class="sp-btn" id="sp-gen-section">Color by top-level section</button>' +
-        '<button class="sp-btn" id="sp-mark-external">Mark external links</button>' +
+        '<button class="sp-btn" id="sp-gen-depth">By depth</button>' +
+        '<button class="sp-btn" id="sp-gen-section">By section</button>' +
+        '<button class="sp-btn" id="sp-mark-external">Mark external</button>' +
         '</div>';
       if (DATA.fieldDefs && DATA.fieldDefs.length) {
+        // Coverage in the option label answers "why did colouring by Content
+        // Type give me one grey rule" before the user has to ask it.
         html += '<div class="sp-rule-add">' +
-          '<select id="sp-field-select">' + DATA.fieldDefs.map(function (f) { return '<option value="' + f.key + '">' + esc(f.label) + '</option>'; }).join('') + '</select>' +
-          '<button class="sp-btn" id="sp-gen-field">Color by field</button>' +
+          '<select id="sp-field-select" style="flex:1;min-width:0">' + DATA.fieldDefs.map(function (f) {
+            var cov = fieldCoverage(f.key);
+            var note = cov.filled ? (cov.filled + '/' + cov.total) : 'no data';
+            return '<option value="' + esc(f.key) + '"' + (cov.filled ? '' : ' disabled') + '>' + esc(f.label) + ' — ' + note + '</option>';
+          }).join('') + '</select>' +
+          '<button class="sp-btn" id="sp-gen-field">Colour by this</button>' +
           '</div>';
       }
       // node color overrides list
@@ -711,14 +784,39 @@
         });
         html += '</div>';
       }
-      html += '<p class="sp-help">Rules are evaluated top to bottom; first match wins. A node’s own color (right-click → Set color) overrides all rules.</p>';
+      html += '<p class="sp-help">Rules are read top to bottom. Each property (colour, fill, line style) is taken from the first matching rule that sets it, so you can encode one dimension by colour and another by line style in separate rules. A node’s own colour (right-click → Set color) overrides all rules.</p>';
       body.innerHTML = html;
       wireColorsTab();
     }
+    // Switches the whole scheme between the two conventions in place, keeping
+    // each rule's colour: in band mode the colour is the top strip; in outline
+    // mode it becomes a 3px border and the strip is dropped.
+    function applyStyleMode(mode) {
+      var outline = mode === 'outline';
+      S.baseCardStyle = outline
+        ? { fill: '#ffffff', border: '#c8cdd6', borderWidth: '3px', band: 'none', text: '#1a1d23' }
+        : { fill: '#ffffff', border: '#c8cdd6', borderWidth: '1.5px', band: '#c8cdd6', text: '#1a1d23' };
+      S.colorRules = S.colorRules.map(function (r) {
+        var st = ruleStyleOf(r);
+        var colour = st.band && st.band !== 'none' ? st.band : st.border;
+        if (!colour) return r;
+        return {
+          id: r.id, label: r.label, when: legacyToWhen(r),
+          style: outline
+            ? { border: colour, borderWidth: '3px', band: 'none' }
+            : { band: colour, borderWidth: '1.5px' }
+        };
+      });
+      render(); pushState(); renderColorsTab();
+    }
+
     function wireColorsTab() {
+      $('sp-mode-band').addEventListener('click', function () { applyStyleMode('band'); });
+      $('sp-mode-outline').addEventListener('click', function () { applyStyleMode('outline'); });
+
       Array.prototype.forEach.call(document.querySelectorAll('.sp-rule'), function (row) {
         var i = parseInt(row.getAttribute('data-i'), 10);
-        row.querySelector('.sp-rule-color').addEventListener('input', function (e) { S.colorRules[i].color = e.target.value; render(); pushState(); });
+        row.querySelector('.sp-rule-edit').addEventListener('click', function () { openRuleEditor(i); });
         row.querySelector('.sp-rule-del').addEventListener('click', function () { S.colorRules.splice(i, 1); render(); pushState(); renderColorsTab(); });
         var grip = row.querySelector('.sp-rule-move');
         grip.addEventListener('dragstart', function (e) { e.dataTransfer.setData('text/plain', String(i)); row.classList.add('dragging'); });
@@ -738,10 +836,14 @@
       $('sp-gen-depth').addEventListener('click', function () { S.colorRules = genDepthRules(); render(); pushState(); renderColorsTab(); });
       $('sp-gen-section').addEventListener('click', function () { S.colorRules = genSectionRules(); render(); pushState(); renderColorsTab(); });
       $('sp-mark-external').addEventListener('click', function () {
-        if (S.colorRules.some(function (r) { return r.condition && r.condition.type === 'external'; })) { flash(this, 'Already added'); return; }
+        var hasExternal = S.colorRules.some(function (r) {
+          if (r.condition && r.condition.type === 'external') return true;
+          return (r.when || []).some(function (c) { return c.key === 'external' || c.type === 'external'; });
+        });
+        if (hasExternal) { flash(this, 'Already added'); return; }
         // Unshifted to the very top: external links should stand out regardless of
         // whatever depth/section scheme is already active, so it must win first-match.
-        S.colorRules.unshift({ id: 'r-external', label: 'Links to another site', condition: { type: 'external' }, color: '#c77b1f' });
+        S.colorRules.unshift({ id: 'r-external', label: 'Links to another site', when: [{ source: 'tree', key: 'external', op: 'is-true' }], style: styleFor('#c77b1f') });
         render(); pushState(); renderColorsTab();
       });
       if ($('sp-gen-field')) {
@@ -754,15 +856,24 @@
         b.addEventListener('click', function () { setOverride(b.getAttribute('data-id'), 'color', null); renderColorsTab(); });
       });
     }
+    // Every generator emits rules through this, so a generated scheme always
+    // matches the currently selected card style instead of resetting it.
+    function styleFor(colour) {
+      var outline = S.baseCardStyle && S.baseCardStyle.band === 'none';
+      return outline
+        ? { border: colour, borderWidth: '3px', band: 'none' }
+        : { band: colour, borderWidth: '1.5px' };
+    }
+
     function genDepthRules() {
       var pal = DATA.palette || ['#2d6a9f', '#1e7a4e', '#7a3a9f', '#9f6a1e', '#2d7a7a', '#7a2d2d'];
       var maxDepth = 0;
       for (var id in INDEX) { if (INDEX[id].depth > maxDepth) maxDepth = INDEX[id].depth; }
-      var rules = [{ id: 'r-root', label: 'Homepage / root', condition: { type: 'depth', value: 0 }, color: (DATA.rootColor || '#1a3a6b') }];
+      var rules = [{ id: 'r-root', label: 'Homepage / root', when: [{ source: 'tree', key: 'depth', op: 'is', value: 0 }], style: styleFor(DATA.rootColor || '#1a3a6b') }];
       for (var d = 1; d <= maxDepth; d++) {
-        rules.push({ id: 'r-depth-' + d, label: 'Depth ' + d, condition: { type: 'depth', value: d }, color: pal[(d - 1) % pal.length] });
+        rules.push({ id: 'r-depth-' + d, label: 'Depth ' + d, when: [{ source: 'tree', key: 'depth', op: 'is', value: d }], style: styleFor(pal[(d - 1) % pal.length]) });
       }
-      rules.push({ id: 'r-fallback', label: 'Everything else', condition: { type: 'always' }, color: FALLBACK_COLOR });
+      rules.push({ id: 'r-fallback', label: 'Everything else', when: [], style: styleFor(FALLBACK_COLOR) });
       return rules;
     }
     function genSectionRules() {
@@ -770,14 +881,14 @@
       // stamps each node's top-level section label onto colorValue), so the
       // section node AND its descendants share one color.
       var pal = DATA.palette || ['#2d6a9f', '#1e7a4e', '#7a3a9f', '#9f6a1e', '#2d7a7a', '#7a2d2d'];
-      var rules = [{ id: 'r-root', label: 'Homepage / root', condition: { type: 'depth', value: 0 }, color: (DATA.rootColor || '#1a3a6b') }];
+      var rules = [{ id: 'r-root', label: 'Homepage / root', when: [{ source: 'tree', key: 'depth', op: 'is', value: 0 }], style: styleFor(DATA.rootColor || '#1a3a6b') }];
       var seen = {};
       topLevelSections().forEach(function (sec, i) {
         var val = sec.colorValue || sec.label;
         if (seen[val]) return; seen[val] = 1;
-        rules.push({ id: 'r-sec-' + sec.id, label: sec.label, condition: { type: 'value', value: val }, color: pal[i % pal.length] });
+        rules.push({ id: 'r-sec-' + sec.id, label: sec.label, when: [{ source: 'tree', key: 'colorValue', op: 'is', value: val }], style: styleFor(pal[i % pal.length]) });
       });
-      rules.push({ id: 'r-fallback', label: 'Everything else', condition: { type: 'always' }, color: FALLBACK_COLOR });
+      rules.push({ id: 'r-fallback', label: 'Everything else', when: [], style: styleFor(FALLBACK_COLOR) });
       return rules;
     }
     function genFieldRules(key) {
@@ -787,11 +898,12 @@
       // app) and falling back to the palette otherwise.
       var pal = DATA.palette || ['#2d6a9f', '#1e7a4e', '#7a3a9f', '#9f6a1e', '#2d7a7a', '#7a2d2d'];
       var def = fieldDefOf(key) || {};
+      var src = fieldSourceOf(key);
       var rules = distinctFieldValues(key).map(function (v, i) {
         var color = (def.valueColors && def.valueColors[v]) || pal[i % pal.length];
-        return { id: 'r-field-' + key + '-' + i, label: fieldValueLabel(key, v), condition: { type: 'field', field: key, value: v }, color: color };
+        return { id: 'r-field-' + key + '-' + i, label: fieldValueLabel(key, v), when: [{ source: src, key: key, op: 'is', value: v }], style: styleFor(color) };
       });
-      rules.push({ id: 'r-fallback', label: 'Everything else', condition: { type: 'always' }, color: FALLBACK_COLOR });
+      rules.push({ id: 'r-fallback', label: 'Everything else', when: [], style: styleFor(FALLBACK_COLOR) });
       return rules;
     }
     function topLevelSections() {
@@ -801,68 +913,189 @@
       return out;
     }
 
-    function openRuleEditor() {
+    // Rule editor. Handles both add (no index) and edit (index of the rule).
+    // Conditions are ANDed and built from one flat list of dimensions:
+    // structural ones the engine knows natively, plus every field the host
+    // declared — node properties and spreadsheet-derived columns alike.
+    function ruleDimensions() {
+      var dims = [
+        { v: 'tree:depth', label: 'Depth', kind: 'number' },
+        { v: 'tree:colorValue', label: 'Top-level section', kind: 'section' },
+        { v: 'tree:external', label: 'Links to another site', kind: 'bool' }
+      ];
+      (DATA.fieldDefs || []).forEach(function (f) {
+        dims.push({ v: (f.source || 'node') + ':' + f.key, label: f.label, kind: 'field', key: f.key, source: f.source || 'node' });
+      });
+      return dims;
+    }
+
+    function openRuleEditor(editIndex) {
+      var editing = typeof editIndex === 'number';
+      var existing = editing ? S.colorRules[editIndex] : null;
+      var dims = ruleDimensions();
+      var conds = existing ? legacyToWhen(existing).map(function (c) {
+        // Normalise a legacy condition into the generic shape for editing, so
+        // the editor only ever deals with one representation.
+        if (c.source) return { source: c.source, key: c.key, op: c.op || 'is', value: c.value };
+        if (c.type === 'depth') return { source: 'tree', key: 'depth', op: 'is', value: c.value };
+        if (c.type === 'external') return { source: 'tree', key: 'external', op: 'is-true' };
+        if (c.type === 'value') return { source: 'tree', key: 'colorValue', op: 'is', value: c.value };
+        if (c.type === 'field') return { source: fieldSourceOf(c.field), key: c.field, op: 'is', value: c.value };
+        return { source: 'tree', key: 'depth', op: 'is', value: 0 };
+      }) : [];
+
+      var st0 = existing ? ruleStyleOf(existing) : {};
+      var colour0 = (st0.band && st0.band !== 'none' ? st0.band : st0.border) || '#2d6a9f';
+
       var ov = document.createElement('div');
       ov.className = 'sp-overlay'; ov.style.zIndex = 2000;
-      var sectsOpts = topLevelSections().map(function (s) { return '<option value="' + s.id + '">' + esc(s.label) + '</option>'; }).join('');
-      var fieldOpt = (DATA.fieldDefs && DATA.fieldDefs.length) ? '<option value="field">A specific field value</option>' : '';
       ov.innerHTML =
-        '<div class="sp-modal" style="width:340px;">' +
-        '<div class="sp-head"><span>Add color rule</span><button class="sp-x" id="re-x">✕</button></div>' +
+        '<div class="sp-modal" style="width:430px;">' +
+        '<div class="sp-head"><span>' + (editing ? 'Edit' : 'Add') + ' colour rule</span><button class="sp-x" id="re-x">✕</button></div>' +
         '<div class="sp-body">' +
-        '<label class="sp-field"><span>Applies to</span><select id="re-type">' +
-        '<option value="depth">Nodes at depth</option>' +
-        '<option value="depthRange">Depth range</option>' +
-        '<option value="parentId">Children of a section</option>' +
-        fieldOpt +
-        '<option value="external">Links to another site</option>' +
-        '<option value="always">All other nodes</option>' +
-        '</select></label>' +
-        '<div id="re-args"></div>' +
-        '<label class="sp-field"><span>Label</span><input type="text" id="re-label" placeholder="e.g. Top-level sections"></label>' +
-        '<label class="sp-field"><span>Color</span><input type="color" id="re-color" value="#2d6a9f"></label>' +
+        '<label class="sp-field"><span>Label</span><input type="text" id="re-label" placeholder="e.g. Articles" value="' + esc(existing ? (existing.label || '') : '') + '"></label>' +
+        '<div class="sp-subhead" style="margin-top:4px">Applies when <small style="font-weight:400">(all must match)</small></div>' +
+        '<div id="re-conds"></div>' +
+        '<button class="sp-btn" id="re-add-cond" style="margin-top:6px">+ Add condition</button>' +
+        '<p class="sp-help" id="re-anyhint" style="margin-top:6px"></p>' +
+        '<div class="sp-subhead" style="margin-top:10px">Appearance</div>' +
+        '<label class="sp-field"><span>Colour</span><input type="color" id="re-colour" value="' + esc(colour0) + '"></label>' +
+        '<label class="sp-field"><span>Line style</span><select id="re-linestyle">' +
+        ['', 'solid', 'dashed', 'dotted'].map(function (v) {
+          var lbl = v === '' ? '— leave unset —' : (v.charAt(0).toUpperCase() + v.slice(1));
+          return '<option value="' + v + '"' + ((st0.borderStyle || '') === v ? ' selected' : '') + '>' + lbl + '</option>';
+        }).join('') + '</select></label>' +
+        '<label class="sp-field"><span>Fill</span><input type="color" id="re-fill" value="' + esc(st0.fill || (S.baseCardStyle && S.baseCardStyle.fill) || '#ffffff') + '"></label>' +
         '</div>' +
-        '<div class="sp-foot"><span style="flex:1"></span><button class="sp-btn" id="re-cancel">Cancel</button><button class="sp-btn sp-primary" id="re-add">Add</button></div>' +
+        '<div class="sp-foot"><span style="flex:1"></span><button class="sp-btn" id="re-cancel">Cancel</button>' +
+        '<button class="sp-btn sp-primary" id="re-save">' + (editing ? 'Save' : 'Add') + '</button></div>' +
         '</div>';
       document.body.appendChild(ov);
-      function renderArgs() {
-        var t = ov.querySelector('#re-type').value;
-        var box = ov.querySelector('#re-args');
-        if (t === 'depth') box.innerHTML = '<label class="sp-field"><span>Depth</span><input type="number" id="re-depth" value="1" min="0"></label>';
-        else if (t === 'depthRange') box.innerHTML = '<label class="sp-field"><span>Min depth</span><input type="number" id="re-min" value="1" min="0"></label><label class="sp-field"><span>Max depth</span><input type="number" id="re-max" value="2" min="0"></label>';
-        else if (t === 'parentId') box.innerHTML = '<label class="sp-field"><span>Section</span><select id="re-parent">' + sectsOpts + '</select></label>';
-        else if (t === 'field') {
-          var fieldOpts = (DATA.fieldDefs || []).map(function (f) { return '<option value="' + f.key + '">' + esc(f.label) + '</option>'; }).join('');
-          box.innerHTML = '<label class="sp-field"><span>Field</span><select id="re-field">' + fieldOpts + '</select></label>' +
-                           '<label class="sp-field"><span>Value</span><select id="re-fieldval"></select></label>';
-          var refreshFieldVals = function () {
-            var fk = box.querySelector('#re-field').value;
-            var vals = distinctFieldValues(fk);
-            box.querySelector('#re-fieldval').innerHTML = vals.map(function (v) { return '<option value="' + esc(v) + '">' + esc(fieldValueLabel(fk, v)) + '</option>'; }).join('');
-          };
-          box.querySelector('#re-field').addEventListener('change', refreshFieldVals);
-          refreshFieldVals();
+
+      function valueControl(c, idx) {
+        var dim = dims.filter(function (d) { return d.v === c.source + ':' + c.key; })[0];
+        var opDef = OPS.filter(function (o) { return o.op === c.op; })[0];
+        if (c.op === 'is-true' || (opDef && opDef.noValue)) return '<span class="re-val-none">—</span>';
+        if (dim && dim.kind === 'number') return '<input type="number" class="re-val" data-i="' + idx + '" value="' + esc(String(c.value == null ? 0 : c.value)) + '" min="0">';
+        if (dim && dim.kind === 'section') {
+          return '<select class="re-val" data-i="' + idx + '">' + topLevelSections().map(function (sc) {
+            var v = sc.colorValue || sc.label;
+            return '<option value="' + esc(v) + '"' + (v === c.value ? ' selected' : '') + '>' + esc(sc.label) + '</option>';
+          }).join('') + '</select>';
         }
-        else box.innerHTML = '';
+        if (dim && dim.kind === 'field') {
+          var vals = distinctFieldValues(dim.key);
+          return '<select class="re-val" data-i="' + idx + '">' + vals.map(function (v) {
+            return '<option value="' + esc(v) + '"' + (v === c.value ? ' selected' : '') + '>' + esc(fieldValueLabel(dim.key, v)) + '</option>';
+          }).join('') + '</select>';
+        }
+        return '<input type="text" class="re-val" data-i="' + idx + '" value="' + esc(String(c.value == null ? '' : c.value)) + '">';
       }
-      renderArgs();
-      ov.querySelector('#re-type').addEventListener('change', renderArgs);
+
+      function renderConds() {
+        var box = ov.querySelector('#re-conds');
+        if (!conds.length) {
+          box.innerHTML = '<p class="sp-help">No conditions — this rule matches every node (use it as the catch-all, last in the list).</p>';
+        } else {
+          box.innerHTML = conds.map(function (c, i) {
+            var dimV = c.source + ':' + c.key;
+            var isRow = c.source === 'row';
+            return '<div class="re-cond" data-i="' + i + '">' +
+              '<select class="re-dim" data-i="' + i + '">' + dims.map(function (d) {
+                return '<option value="' + esc(d.v) + '"' + (d.v === dimV ? ' selected' : '') + '>' + esc(d.label) + '</option>';
+              }).join('') + '</select>' +
+              '<select class="re-op" data-i="' + i + '">' + OPS.filter(function (o) {
+                return !o.rowOnly || isRow;          // "any page is" only means something for row data
+              }).map(function (o) {
+                return '<option value="' + o.op + '"' + (o.op === c.op ? ' selected' : '') + '>' + esc(o.label) + '</option>';
+              }).join('') + '</select>' +
+              valueControl(c, i) +
+              '<button class="re-cond-del" data-i="' + i + '" title="Remove">✕</button>' +
+              '</div>';
+          }).join('');
+        }
+        // Explain any-is where it applies, since it is the non-obvious one.
+        var hasAny = conds.some(function (c) { return c.op === 'any-is'; });
+        ov.querySelector('#re-anyhint').textContent = hasAny
+          ? '“any page is” matches when ANY audit row on the node has that value — use it to flag a section that merely contains something.'
+          : 'Row fields use the node’s dominant value (what its pages mostly are).';
+
+        Array.prototype.forEach.call(ov.querySelectorAll('.re-dim'), function (sel) {
+          sel.addEventListener('change', function () {
+            var i = +sel.getAttribute('data-i');
+            var parts = sel.value.split(':');
+            conds[i].source = parts[0]; conds[i].key = parts.slice(1).join(':');
+            if (conds[i].key === 'external') conds[i].op = 'is-true';
+            else if (conds[i].op === 'is-true') conds[i].op = 'is';
+            if (conds[i].source !== 'row' && conds[i].op === 'any-is') conds[i].op = 'is';
+            conds[i].value = undefined;
+            renderConds();
+          });
+        });
+        Array.prototype.forEach.call(ov.querySelectorAll('.re-op'), function (sel) {
+          sel.addEventListener('change', function () { conds[+sel.getAttribute('data-i')].op = sel.value; renderConds(); });
+        });
+        Array.prototype.forEach.call(ov.querySelectorAll('.re-val'), function (inp) {
+          inp.addEventListener('input', function () {
+            var i = +inp.getAttribute('data-i');
+            conds[i].value = inp.type === 'number' ? (parseInt(inp.value, 10) || 0) : inp.value;
+          });
+          inp.addEventListener('change', function () {
+            var i = +inp.getAttribute('data-i');
+            conds[i].value = inp.type === 'number' ? (parseInt(inp.value, 10) || 0) : inp.value;
+          });
+        });
+        Array.prototype.forEach.call(ov.querySelectorAll('.re-cond-del'), function (b) {
+          b.addEventListener('click', function () { conds.splice(+b.getAttribute('data-i'), 1); renderConds(); });
+        });
+      }
+      renderConds();
+
+      ov.querySelector('#re-add-cond').addEventListener('click', function () {
+        conds.push({ source: 'tree', key: 'depth', op: 'is', value: 1 });
+        renderConds();
+      });
+
       function close() { ov.remove(); }
       ov.querySelector('#re-x').addEventListener('click', close);
       ov.querySelector('#re-cancel').addEventListener('click', close);
       ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
-      ov.querySelector('#re-add').addEventListener('click', function () {
-        var t = ov.querySelector('#re-type').value;
-        var cond = { type: t };
-        if (t === 'depth') cond.value = parseInt(ov.querySelector('#re-depth').value, 10) || 0;
-        else if (t === 'depthRange') { cond.min = parseInt(ov.querySelector('#re-min').value, 10) || 0; cond.max = parseInt(ov.querySelector('#re-max').value, 10) || 0; }
-        else if (t === 'parentId') cond.parentId = ov.querySelector('#re-parent').value;
-        else if (t === 'field') { cond.field = ov.querySelector('#re-field').value; cond.value = ov.querySelector('#re-fieldval').value; }
-        var rule = { id: 'r-' + Date.now(), label: ov.querySelector('#re-label').value || condSummary(cond), condition: cond, color: ov.querySelector('#re-color').value };
-        // insert before any trailing 'always' rule
-        var idx = S.colorRules.length;
-        if (S.colorRules.length && S.colorRules[S.colorRules.length - 1].condition && S.colorRules[S.colorRules.length - 1].condition.type === 'always') idx = S.colorRules.length - 1;
-        S.colorRules.splice(idx, 0, rule);
+
+      ov.querySelector('#re-save').addEventListener('click', function () {
+        // Default a select-backed condition to its first option when the user
+        // never touched it, rather than saving an undefined value that matches
+        // nothing and looks like a broken rule.
+        conds.forEach(function (c) {
+          if (c.value !== undefined || c.op === 'is-true') return;
+          var dim = dims.filter(function (d) { return d.v === c.source + ':' + c.key; })[0];
+          if (dim && dim.kind === 'field') c.value = distinctFieldValues(dim.key)[0] || '';
+          else if (dim && dim.kind === 'section') { var t = topLevelSections()[0]; c.value = t ? (t.colorValue || t.label) : ''; }
+          else if (dim && dim.kind === 'number') c.value = 0;
+          else c.value = '';
+        });
+        var colour = ov.querySelector('#re-colour').value;
+        var style = styleFor(colour);
+        var fill = ov.querySelector('#re-fill').value;
+        if (fill && fill.toLowerCase() !== ((S.baseCardStyle && S.baseCardStyle.fill) || '#ffffff').toLowerCase()) style.fill = fill;
+        // Left unset, this property falls through to whatever later rule claims
+        // it — that is what lets colour and line style live in separate rules.
+        var ls = ov.querySelector('#re-linestyle').value;
+        if (ls) style.borderStyle = ls;
+        var rule = {
+          id: existing ? existing.id : ('r-' + (S.colorRules.length + 1) + '-' + conds.length),
+          label: ov.querySelector('#re-label').value || (conds.length ? conds.map(condSummary).join(' and ') : 'All other nodes'),
+          when: conds,
+          style: style
+        };
+        if (editing) S.colorRules[editIndex] = rule;
+        else {
+          // Insert above any catch-all, or it would never be reached.
+          var idx = S.colorRules.length;
+          for (var i = 0; i < S.colorRules.length; i++) {
+            if (!legacyToWhen(S.colorRules[i]).length) { idx = i; break; }
+          }
+          S.colorRules.splice(idx, 0, rule);
+        }
         close(); render(); pushState(); renderColorsTab();
       });
     }
@@ -952,9 +1185,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);font-famil
 #connector-svg path{fill:none;stroke:var(--border-dk);stroke-width:1.5;stroke-linejoin:round;}
 #cards-layer{position:absolute;top:0;left:0;}
 .root-heading{position:absolute;font-size:12px;font-weight:700;color:var(--text-mid);text-transform:uppercase;letter-spacing:.05em;}
-.node-card{position:absolute;width:148px;height:54px;background:var(--white);border:1.5px solid var(--border);border-radius:5px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px 8px;text-align:center;transition:box-shadow .15s,border-color .15s;}
+.node-card{position:absolute;width:148px;height:54px;background:var(--card-fill,var(--white));border:var(--card-bw,1.5px) var(--card-bs,solid) var(--card-border,var(--border));border-radius:var(--card-radius,5px);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:var(--card-pad-y,5px) var(--card-pad-x,7px);text-align:center;overflow:hidden;transition:box-shadow .15s,border-color .15s;}
 .node-card:hover{border-color:var(--border-dk);box-shadow:0 2px 10px rgba(0,0,0,.12);z-index:10;}
-.node-card::after{content:'';position:absolute;top:0;left:0;right:0;height:4px;background:var(--section-color,var(--border));border-radius:5px 5px 0 0;}
+.node-card::after{content:'';position:absolute;top:0;left:0;right:0;height:4px;background:var(--section-color,var(--border));border-radius:var(--card-radius,5px) var(--card-radius,5px) 0 0;}
+/* Outline convention: rules that set a border instead of a band hide the strip. */
+.node-card.no-band::after{display:none;}
+.node-card .node-label{color:var(--card-text,var(--text));}
 .node-card.root{border:2px solid var(--c-root);}
 .node-card.root::after{background:var(--c-root);height:5px;}
 .node-card.menu-root{border:2px solid #94a3b8;background:#eef1f5;}
@@ -966,10 +1202,10 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);font-famil
 .node-card.collapsible{cursor:pointer;}
 .toggle-dot{position:absolute;bottom:5px;right:7px;width:15px;height:15px;border-radius:50%;background:#eef0f4;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim);transition:background .12s;}
 .node-card.collapsible:hover .toggle-dot{background:#dde0e8;}
-.node-num{font-size:10px;font-weight:600;letter-spacing:.04em;line-height:1;margin-bottom:3px;}
+.node-num{font-size:10px;font-weight:600;letter-spacing:.04em;line-height:1;margin-bottom:2px;flex:0 0 auto;}
 body.hide-numbers .node-num{display:none;}
-.node-label{font-size:11.5px;font-weight:500;color:var(--text);line-height:1.2;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
-.node-sub{font-size:9.5px;color:var(--text-dim);margin-top:2px;}
+.node-label{font-size:11.5px;font-weight:500;color:var(--text);line-height:1.2;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;flex:0 1 auto;min-height:0;overflow-wrap:anywhere;}
+.node-sub{font-size:9.5px;color:var(--text-dim);line-height:1.25;margin-top:1px;flex:0 0 auto;}
 #hint{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);background:rgba(26,29,35,.75);color:rgba(255,255,255,.85);font-size:11px;padding:5px 14px;border-radius:20px;pointer-events:none;z-index:200;white-space:nowrap;transition:opacity .6s;}
 .ctx-menu{position:fixed;background:#fff;border:1px solid #c8cdd6;border-radius:5px;box-shadow:0 4px 16px rgba(0,0,0,.15);z-index:1000;font-size:11px;overflow:hidden;min-width:185px;padding:2px 0;}
 .ctx-item{display:flex;align-items:center;gap:6px;width:100%;padding:7px 12px;border:none;background:none;text-align:left;cursor:pointer;font-size:11px;font-family:inherit;color:#4a5060;}
@@ -983,6 +1219,21 @@ body.hide-numbers .node-num{display:none;}
 .sp-head span{flex:1;}
 .sp-x{border:none;background:none;font-size:14px;cursor:pointer;color:var(--text-dim);}
 .sp-tabs{display:flex;gap:2px;padding:8px 12px 0;border-bottom:1px solid var(--border);}
+/* Colours tab: style-mode segmented control, rule rows, condition builder. */
+.sp-stylemode{display:flex;align-items:center;gap:6px;padding:10px 12px 0;font-size:11px;color:var(--text-mid);}
+.sp-seg{border:1px solid var(--border);background:#fff;padding:4px 10px;font-size:11px;font-family:inherit;cursor:pointer;border-radius:4px;color:var(--text-mid);}
+.sp-seg.on{background:#eef1f8;border-color:#4F46E5;color:#1a1d23;font-weight:600;}
+.sp-rule-prev{position:relative;display:inline-block;width:30px;height:20px;border-radius:4px;flex:0 0 auto;box-sizing:border-box;}
+.sp-rule-edit{border:none;background:none;cursor:pointer;color:var(--text-dim);font-size:12px;padding:2px 4px;}
+.sp-rule-edit:hover{color:var(--text);}
+.re-cond{display:flex;align-items:center;gap:4px;margin-bottom:5px;}
+.re-cond select,.re-cond input{font-family:inherit;font-size:11px;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:#fff;min-width:0;}
+.re-cond .re-dim{flex:1.3;}
+.re-cond .re-op{flex:1;}
+.re-cond .re-val{flex:1.3;}
+.re-val-none{flex:1.3;color:var(--text-dim);font-size:11px;text-align:center;}
+.re-cond-del{border:none;background:none;cursor:pointer;color:var(--text-dim);font-size:11px;padding:2px 4px;flex:0 0 auto;}
+.re-cond-del:hover{color:#c0392b;}
 .sp-tab{border:none;background:none;padding:6px 12px;font-size:12px;font-family:inherit;cursor:pointer;color:var(--text-mid);border-bottom:2px solid transparent;}
 .sp-tab.active{color:var(--text);font-weight:600;border-bottom-color:#4F46E5;}
 .sp-body{padding:14px;overflow:auto;flex:1;}
@@ -1027,6 +1278,10 @@ body.hide-numbers .node-num{display:none;}
     var title = (data && data.title) || 'Visual Sitemap';
     var dataJson = JSON.stringify(data || {}).replace(/<\//g, '<\\/');
     var engineSrc = sitemapEngine.toString();
+    // The webview cannot require() src/sitemap-layout.js, so its source is
+    // inlined ahead of the engine. Same file, same geometry, one implementation.
+    var layoutSrc = (typeof window !== 'undefined' && window.SitemapLayout && window.SitemapLayout.__source) || '';
+    if (!layoutSrc) throw new Error('SitemapLayout not loaded — sitemap-layout.js must load before sitemap-template.js');
 
     // Toolbar varies by mode.
     var toolbar = '';
@@ -1056,6 +1311,7 @@ body.hide-numbers .node-num{display:none;}
         toolbar += '<div class="tb-sep"></div>';
         toolbar += '<button class="tb-btn" id="btn-export-client">Export HTML</button>';
         toolbar += '<button class="tb-btn" id="btn-export-pdf">Export PDF</button>';
+        toolbar += '<button class="tb-btn" id="btn-export-miro">Export to Miro</button>';
       }
       toolbar += '</div>';
     }
@@ -1070,6 +1326,7 @@ body.hide-numbers .node-num{display:none;}
       + '<div id="viewport"><div id="canvas"><svg id="connector-svg"></svg><div id="cards-layer"></div></div></div>'
       + hint
       + '<script>window.__SITEMAP_DATA__=' + dataJson + ';<\/script>'
+      + '<script>window.__SITEMAP_LAYOUT__=(' + layoutSrc + ')();<\/script>'
       + '<script>(' + engineSrc + ')();<\/script>'
       + '</body></html>';
     return html;

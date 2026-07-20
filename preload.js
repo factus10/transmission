@@ -120,5 +120,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   exportReportHtml:           (payload) => ipcRenderer.invoke('export-report-html', payload),
   exportSitemapPdf:           (payload) => ipcRenderer.invoke('export-sitemap-pdf', payload),
   saveAuditTemplate:   (payload) => ipcRenderer.invoke('save-audit-template', payload),
-  loadAuditTemplate:   ()        => ipcRenderer.invoke('load-audit-template')
+  loadAuditTemplate:   ()        => ipcRenderer.invoke('load-audit-template'),
+
+  // Miro. Note there is deliberately no getter for the token — it is stored
+  // encrypted in the main process and never travels back across this bridge.
+  miroStatus:          ()        => ipcRenderer.invoke('miro-status'),
+  miroSetToken:        (token)   => ipcRenderer.invoke('miro-set-token', token),
+  miroClearToken:      ()        => ipcRenderer.invoke('miro-clear-token'),
+  miroTestConnection:  ()        => ipcRenderer.invoke('miro-test-connection'),
+  miroTokenInfo:       ()        => ipcRenderer.invoke('miro-token-info'),
+  miroCreateBoard:     (payload) => ipcRenderer.invoke('miro-create-board', payload),
+  miroCreateFrame:     (payload) => ipcRenderer.invoke('miro-create-frame', payload),
+  miroCreateItemsBulk: (payload) => ipcRenderer.invoke('miro-create-items-bulk', payload),
+  miroCreateConnector: (payload) => ipcRenderer.invoke('miro-create-connector', payload),
+  miroListItems:       (payload) => ipcRenderer.invoke('miro-list-items', payload),
+  miroExportSitemap:   (payload) => ipcRenderer.invoke('miro-export-sitemap', payload),
+  miroCancelExport:    ()        => ipcRenderer.invoke('miro-cancel-export'),
+  onMiroExportProgress:(cb)      => ipcRenderer.on('miro-export-progress', (e, p) => cb(p)),
+  miroProbeWrite:      (payload) => ipcRenderer.invoke('miro-probe-write', payload)
 });
