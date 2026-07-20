@@ -2,16 +2,23 @@
 //
 // Token handling and a thin REST client for the Miro v2 API.
 //
-// AUTH MODEL — why a pasted token rather than OAuth.
-// Miro's authorization endpoint does not support PKCE (no code_challenge
-// parameter, and none in the OpenAPI security scheme). A desktop app running a
-// full authorization-code flow would therefore have to present client_secret at
-// token exchange, which means shipping the secret inside the bundle where any
-// user can extract it. Instead we use Miro's documented service-account path:
-// the user creates a Miro app, clicks "Install app and get OAuth token", and
-// pastes the resulting token here. No redirect server, no embedded secret, no
-// refresh cycle. The tradeoff is that a token is scoped to the one team it was
-// installed for, so multi-team users need one token per team.
+// AUTH MODEL — two paths, and why.
+// Miro requires the OAuth authorization-code flow and does NOT support PKCE
+// (no code_challenge anywhere in their API surface). The code→token exchange
+// therefore needs the app's client_secret, which must not ship inside a desktop
+// bundle where anyone could extract it and impersonate this app.
+//
+//  1. Connect to Miro (default) — the secret lives in a small Cloudflare Worker
+//     (server/miro-auth) that performs the exchange. The user clicks once,
+//     authorises in their browser, and we claim the token. See that README.
+//
+//  2. Paste a token (fallback) — the user creates their own Miro app and pastes
+//     the token from "Install app and get OAuth token". No infrastructure
+//     involved, so it still works if the worker is unreachable, and it lets a
+//     power user scope a token to a different team. Kept deliberately.
+//
+// Either way a token is scoped to ONE Miro team; multi-team users connect once
+// per team.
 //
 // STORAGE — deliberately NOT prefs.json.
 // prefs.json is cleartext and get-prefs ships its whole contents to the
@@ -21,12 +28,18 @@
 // to the renderer — the renderer can set it, ask whether one exists, clear it,
 // and ask main to make calls on its behalf, but cannot read it back.
 
-const { safeStorage, net } = require('electron');
+const { safeStorage, net, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const MIRO_API_BASE = 'https://api.miro.com';
 const TOKEN_FILENAME = 'miro-token.bin';
+
+// Token-exchange worker (server/miro-auth). Holds the Miro client secret so the
+// desktop bundle doesn't have to — see that README for why this exists at all.
+// Empty string disables one-click Connect and leaves only the paste path.
+const MIRO_AUTH_BASE = 'https://transmission-miro-auth.factus10.workers.dev';
 
 let tokenPath = null;
 
@@ -82,6 +95,87 @@ function clearToken() {
   try { if (hasToken()) fs.unlinkSync(tokenPath); } catch (e) { /* ignore */ }
 }
 
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// ─── One-click connect ────────────────────────────────────────────────────────
+//
+// Opens the user's browser at the worker, which bounces to Miro's consent
+// screen and stashes the resulting token; we then claim it. The `sid` travels
+// through the browser (so it's in history); `secret` never leaves this process,
+// and the worker requires it to release the token.
+
+const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+let _connectAbort = null;
+function cancelConnect() { if (_connectAbort) _connectAbort.cancelled = true; }
+
+function connectConfigured() { return !!MIRO_AUTH_BASE; }
+
+async function authFetch(apiPath, opts = {}) {
+  const res = await net.fetch(MIRO_AUTH_BASE + apiPath, {
+    method: opts.method || 'GET',
+    headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+    signal: AbortSignal.timeout(15000),
+  });
+  const text = await res.text();
+  let body = null;
+  if (text) { try { body = JSON.parse(text); } catch (e) { /* non-JSON */ } }
+  return { status: res.status, body };
+}
+
+// Resolves once the user finishes consent in the browser, or throws on
+// timeout/cancel. Stores the token on success — the token itself is never
+// returned to the caller, matching the rest of this module.
+async function connectViaBrowser({ timeoutMs = 180000, onStatus } = {}) {
+  if (!connectConfigured()) throw new Error('One-click connect is not configured in this build');
+  if (!encryptionAvailable()) {
+    throw new Error('This system cannot store credentials securely (OS encryption unavailable)');
+  }
+
+  const sid = b64url(crypto.randomBytes(32));
+  const secret = b64url(crypto.randomBytes(32));
+  const secretHash = crypto.createHash('sha256').update(secret).digest('hex');
+
+  const begin = await authFetch('/begin', { method: 'POST', body: { sid, secretHash } });
+  if (begin.status !== 200) throw new Error('Could not reach the Transmission auth service');
+
+  await shell.openExternal(`${MIRO_AUTH_BASE}/start?s=${encodeURIComponent(sid)}`);
+  if (onStatus) onStatus('waiting');
+
+  const ticket = { cancelled: false };
+  _connectAbort = ticket;
+  const deadline = Date.now() + timeoutMs;
+  try {
+    for (;;) {
+      if (ticket.cancelled) throw new Error('Connection cancelled');
+      if (Date.now() > deadline) throw new Error('Timed out waiting for Miro authorisation');
+      await sleep(1500);
+      if (ticket.cancelled) throw new Error('Connection cancelled');
+
+      let r;
+      try { r = await authFetch('/claim', { method: 'POST', body: { sid, secret } }); }
+      catch (e) { continue; }                       // transient network blip; keep polling
+
+      if (r.status === 202) continue;               // consent not finished yet
+      if (r.status === 403) throw new Error('Authorisation could not be verified — please try again');
+      if (r.status !== 200 || !r.body || !r.body.access_token) continue;
+
+      setToken(r.body.access_token);
+      return {
+        teamId: r.body.team_id || null,
+        scope: r.body.scope || '',
+        // Only present if the Miro app was created with EXPIRING tokens. There
+        // is no refresh plumbing here by design, so surface it rather than let
+        // the user discover it when the token silently dies in an hour.
+        expiring: !!r.body.expires_in || !!r.body.has_refresh_token,
+      };
+    }
+  } finally {
+    if (_connectAbort === ticket) _connectAbort = null;
+  }
+}
+
 // ─── REST client ──────────────────────────────────────────────────────────────
 
 // Miro returns errors as { type, code, message, status }. Surface the message
@@ -102,7 +196,6 @@ function describeError(status, body) {
   return msg || `Miro API error ${status}`;
 }
 
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // Rate limiting. Miro allows 100,000 credits/minute per user+app, and EVERY
 // item creation costs 100 — including items inside a bulk call, which is billed
@@ -493,6 +586,9 @@ module.exports = {
   init,
   exportSitemap,
   cancelExport,
+  connectViaBrowser,
+  cancelConnect,
+  connectConfigured,
   hasToken,
   setToken,
   clearToken,

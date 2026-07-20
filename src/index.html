@@ -711,18 +711,29 @@
         <label class="setting-label">Miro <span class="setting-hint">(optional, for sitemap export)</span></label>
         <div id="miro-token-unset">
           <div class="setting-row-inline">
-            <input type="password" id="pref-miro-token" class="setting-input" style="flex:1" placeholder="Paste Miro OAuth token">
-            <button id="btn-miro-save-token" class="btn btn-sm btn-primary">Save</button>
+            <button id="btn-miro-connect" class="btn btn-sm btn-primary">Connect to Miro</button>
+            <span id="miro-connect-status" class="setting-hint" style="flex:1"></span>
+            <button id="btn-miro-connect-cancel" class="btn btn-sm btn-ghost hidden">Cancel</button>
           </div>
           <div class="setting-hint" style="margin-top:6px; line-height:1.5">
-            In Miro: <b>Profile settings → Your apps → Create new app</b>. Tick
-            <code>boards:read</code> and <code>boards:write</code> <b>first</b> — the token is
-            minted with whatever scopes are selected at install time — then use
-            <b>Install app and get OAuth token</b> at the bottom of the page.
-            Not the Client ID or Secret; those are for the OAuth redirect flow.
-            A token is scoped to one team.
-            <a href="#" id="miro-help-link">Open Miro apps page ↗</a>
+            Opens Miro in your browser to authorise Transmission, then returns here.
+            You'll pick which Miro team to connect.
           </div>
+          <details id="miro-manual" style="margin-top:8px">
+            <summary class="setting-hint" style="cursor:pointer">Advanced: paste a token from your own Miro app</summary>
+            <div class="setting-row-inline" style="margin-top:6px">
+              <input type="password" id="pref-miro-token" class="setting-input" style="flex:1" placeholder="Paste Miro OAuth token">
+              <button id="btn-miro-save-token" class="btn btn-sm btn-ghost">Save</button>
+            </div>
+            <div class="setting-hint" style="margin-top:6px; line-height:1.5">
+              In Miro: <b>Profile settings → Your apps → Create new app</b>. Tick
+              <code>boards:read</code> and <code>boards:write</code> <b>first</b> — the token is
+              minted with whatever scopes are selected at install time — then use
+              <b>Install app and get OAuth token</b> at the bottom of the page.
+              Not the Client ID or Secret; those are for the OAuth redirect flow.
+              <a href="#" id="miro-help-link">Open Miro apps page ↗</a>
+            </div>
+          </details>
         </div>
         <div id="miro-token-set" class="hidden">
           <div class="setting-row-inline">
