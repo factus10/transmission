@@ -52,9 +52,21 @@ day — far beyond what this needs.
 Miro → **Profile settings → Your apps → Create new app**.
 
 - Tick scopes **`boards:read`** and **`boards:write`**.
-- Choose **non-expiring tokens**. This is *immutable after creation* — pick it
-  now. With expiring tokens you'd also need refresh plumbing, which neither the
-  worker nor the app implements.
+- **Leave the "Expire user authorization token" checkbox UNTICKED.** That
+  checkbox lives in the REST API authorization section, and unticked is what
+  gives non-expiring tokens. Note the polarity: you are avoiding a box, not
+  selecting an option.
+
+  This **cannot be enabled, disabled, or changed after the app is created** —
+  getting it wrong means creating a new app and having everyone reconnect.
+
+  Ticked, you would get 1-hour access tokens with a 60-day refresh token, and
+  refreshing *also* requires the client secret. That would make this worker
+  permanent infrastructure every user depends on hourly, rather than something
+  touched once per user at connect time — and it needs refresh plumbing that
+  neither the worker nor the app implements. Miro does recommend expiring
+  tokens in general; the trade was made deliberately here because the tokens
+  are encrypted at rest, narrowly scoped, and used by a small internal team.
 - Leave the redirect URI blank for now; you'll fill it in at step 4.
 
 Note the **Client ID** and **Client secret**.
