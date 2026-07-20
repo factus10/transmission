@@ -946,6 +946,10 @@
 
       var st0 = existing ? ruleStyleOf(existing) : {};
       var colour0 = (st0.band && st0.band !== 'none' ? st0.band : st0.border) || '#2d6a9f';
+      // A new rule sets a colour by default; an existing one only if it has one.
+      // Without this, every rule would claim the colour property and a
+      // line-style-only rule could never fall through to a colour rule below it.
+      var colourSet = existing ? !!((st0.band && st0.band !== 'none') || st0.border) : true;
 
       var ov = document.createElement('div');
       ov.className = 'sp-overlay'; ov.style.zIndex = 2000;
@@ -959,7 +963,11 @@
         '<button class="sp-btn" id="re-add-cond" style="margin-top:6px">+ Add condition</button>' +
         '<p class="sp-help" id="re-anyhint" style="margin-top:6px"></p>' +
         '<div class="sp-subhead" style="margin-top:10px">Appearance</div>' +
-        '<label class="sp-field"><span>Colour</span><input type="color" id="re-colour" value="' + esc(colour0) + '"></label>' +
+        '<label class="sp-field"><span>Colour</span>' +
+        '<span style="display:flex;gap:6px;align-items:center;flex:1">' +
+        '<input type="checkbox" id="re-colour-on"' + (colourSet ? ' checked' : '') + ' title="Uncheck to leave colour to another rule">' +
+        '<input type="color" id="re-colour" value="' + esc(colour0) + '"' + (colourSet ? '' : ' disabled') + '>' +
+        '</span></label>' +
         '<label class="sp-field"><span>Line style</span><select id="re-linestyle">' +
         ['', 'solid', 'dashed', 'dotted'].map(function (v) {
           var lbl = v === '' ? '— leave unset —' : (v.charAt(0).toUpperCase() + v.slice(1));
@@ -1051,6 +1059,13 @@
       }
       renderConds();
 
+      var colourOn = ov.querySelector('#re-colour-on');
+      if (colourOn) {
+        colourOn.addEventListener('change', function () {
+          ov.querySelector('#re-colour').disabled = !colourOn.checked;
+        });
+      }
+
       ov.querySelector('#re-add-cond').addEventListener('click', function () {
         conds.push({ source: 'tree', key: 'depth', op: 'is', value: 1 });
         renderConds();
@@ -1073,8 +1088,12 @@
           else if (dim && dim.kind === 'number') c.value = 0;
           else c.value = '';
         });
-        var colour = ov.querySelector('#re-colour').value;
-        var style = styleFor(colour);
+        // Unset properties are "don't care" and fall through to the next
+        // matching rule that sets them — this is what makes colour-in-one-rule
+        // and line-style-in-another work regardless of their order.
+        var style = ov.querySelector('#re-colour-on').checked
+          ? styleFor(ov.querySelector('#re-colour').value)
+          : {};
         var fill = ov.querySelector('#re-fill').value;
         if (fill && fill.toLowerCase() !== ((S.baseCardStyle && S.baseCardStyle.fill) || '#ffffff').toLowerCase()) style.fill = fill;
         // Left unset, this property falls through to whatever later rule claims
