@@ -77,6 +77,34 @@ function timingSafeEqual(a, b) {
 
 const redirectUriFor = (url) => new URL('/callback', url.origin).toString();
 
+// Turns Miro's token-endpoint error into something diagnostic but safe to show.
+//
+// The constraint: Miro takes client_secret as a QUERY parameter, so its error
+// bodies can echo a URL containing the secret. So this never passes text
+// through — it matches a whitelist of known OAuth error codes and renders our
+// own wording. Anything unrecognised degrades to the bare HTTP status.
+const OAUTH_ERROR_HELP = {
+  invalid_client: 'The app credentials were rejected — check MIRO_CLIENT_SECRET on the worker.',
+  invalid_grant: 'The authorisation code was already used or has expired — start again.',
+  invalid_request: 'The token request was malformed.',
+  unauthorized_client: 'This app is not allowed to use this grant type.',
+  redirect_uri_mismatch: 'The redirect URI does not match the one registered in Miro.',
+  unsupported_grant_type: 'The grant type is not supported.',
+};
+
+function safeOauthError(bodyText, status) {
+  let code = '';
+  try {
+    const b = JSON.parse(bodyText);
+    // Only ever read the identifier field, never a message or description.
+    const raw = String((b && (b.error || b.code)) || '');
+    if (/^[a-z_]{3,40}$/.test(raw)) code = raw;
+  } catch (e) { /* non-JSON body — fall through to the status */ }
+  if (code && OAUTH_ERROR_HELP[code]) return `${OAUTH_ERROR_HELP[code]} (${code})`;
+  if (code) return `Miro reported: ${code}`;
+  return `Miro returned HTTP ${status}.`;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -130,9 +158,16 @@ export default {
 
         const res = await fetch(ex.toString(), { method: 'POST' });
         if (!res.ok) {
-          // Deliberately not echoing Miro's body — it can contain the request
-          // URL, and that URL carries the client secret.
-          return html('<h1>Miro rejected the connection</h1><p>Please try again from Transmission.</p>', 502);
+          // Miro's body can echo the request URL, and that URL carries the
+          // client secret — so never render it wholesale. Instead lift only the
+          // short OAuth error identifier, which is what actually diagnoses the
+          // failure (`invalid_client` = bad/missing secret, `invalid_grant` =
+          // stale or reused code, `redirect_uri_mismatch` = registration).
+          // A generic failure here cost real debugging time once already.
+          return html(
+            '<h1>Miro rejected the connection</h1>' +
+            `<p>${safeOauthError(await res.text().catch(() => ''), res.status)}</p>` +
+            '<p>Please try again from Transmission.</p>', 502);
         }
         const tok = await res.json();
         if (!tok || !tok.access_token) return html('<h1>No token returned</h1><p>Please try again from Transmission.</p>', 502);

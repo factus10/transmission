@@ -6,6 +6,27 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.8.0] — "How Soon Is Now?"
+
+The Visual Sitemap can now be pushed to a Miro board as real, editable shapes, and
+the colour rules behind it were rebuilt to encode anything in your audit.
+
+### Added
+- **Export the Visual Sitemap to Miro.** The sitemap toolbar gains **Export to Miro** alongside Export HTML and Export PDF. It creates a frame, one Miro shape per page positioned exactly where it sits in the app, and a connector for every parent→child link — carrying the colours and line styles from your colour rules. These are real Miro items, not a flat picture, so a client can move them around in a workshop. About 400 pages plus 400 connectors takes roughly a minute, with a progress bar and a Cancel button; Miro's own rate limits are the floor there, not the export.
+- **One-click Miro connection.** App Settings → Miro → **Connect to Miro** opens your browser, you authorise Transmission and choose which Miro team to connect, and you're done. The token is stored encrypted in the OS keychain — deliberately not in the ordinary preferences file — and is never readable by the app's interface layer. An **Advanced** option remains for anyone who would rather paste a token from their own Miro app, which also covers the case where the connection service is unreachable.
+- **Colour rules can read anything in the audit.** Sitemap cards can be coloured by 15 dimensions: seven from the sitemap node (Phase, Node Type, Page Status, Build Pattern, Builder, Writer, Migrator) and eight from the spreadsheet (Content Type, KKE, Final KKE, Renders as, Migration Track, Content Theme, Published Status, Target Content Type). Spreadsheet dimensions only appear when that column exists, and the picker shows how many nodes actually carry a value for each — so an empty dimension is visible as empty rather than silently producing a one-colour scheme.
+- **Rules that ask "does this section contain…".** A sitemap node usually holds several pages, so a rule can test either the node's dominant value ("mostly Articles") or, with the new **any page is** operator, whether *any* page beneath it matches — which is how you flag a section containing a single Kill inside an otherwise Keep branch.
+- **Rules compose.** Each visual property is taken from the first matching rule that actually sets it, so colour can come from one rule and line style from another. Encoding two dimensions at once no longer needs a rule for every combination.
+- **Heavy-outline card style**, the convention most sitemap decks use — white card, thick coloured border — as an alternative to the colour band. Switching converts existing rules in place and keeps their colours.
+- **Line style per rule** (solid, dashed, dotted), plus **corner radius** and **inner padding** in the Layout tab.
+- **Collapsed sections are surfaced, not silently dropped.** Exporting with sections collapsed used to omit those pages without saying so. The export dialog now reports how many pages are hidden and offers to include them (on by default); sections left collapsed export as a stacked block labelled with either the hidden page count or a "+".
+
+### Fixed
+- **Long page names no longer spill outside their card in the Visual Sitemap.** Cards had no overflow boundary, so a name too tall for the box escaped it instead of clipping. Names now clip cleanly, the full name is available on hover, and the default card height fits a two-line name alongside the number and page count.
+
+### Changed
+- The nav sitemap now defaults to colouring **by depth**. Colouring by top-level section keys on the tree's top-level children, so a site whose pages all hang off a single root node came out effectively one colour. Depth always has something to say. Either can be chosen in Settings → Colors.
+
 ## [2.7.2] — "How Soon Is Now?"
 
 Two Sitemap-editor undo/redo correctness fixes.

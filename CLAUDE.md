@@ -70,11 +70,14 @@ The **sidebar toolbar** is two rows: Row 1 is a full-width search input with cle
 ```
 main.js          — Main process: file I/O, IPC, menus, prefs
 project-store.js — SQLite persistence for .transmission project files (better-sqlite3)
+miro.js          — Miro integration: encrypted token storage, REST client, sitemap exporter
+server/miro-auth — Cloudflare Worker holding the Miro client secret (OAuth code→token exchange)
 preload.js       — contextBridge: exposes window.electronAPI
 src/
   index.html     — DOM structure (no inline scripts/styles)
   help.html      — Help window (separate BrowserWindow)
   renderer.js    — All UI logic (no Node APIs)
+  sitemap-layout.js — Pure box-tree geometry + colour/style resolution, shared by the webview engine AND host-side callers (the Miro exporter). Loaded BEFORE sitemap-template.js.
   sitemap-template.js — Visual Sitemap engine: window.SitemapTemplate.build(data) → standalone HTML (app/client/print). Loaded before renderer.js.
   styles.css     — All styling via CSS custom properties
 assets/
@@ -190,6 +193,19 @@ A `.transmission` file is a **SQLite database** (better-sqlite3, WAL mode) that 
 | renderer → main | `check-for-updates` | none → `{ available, current, latest, notes, changelogUrl, downloadUrl, publishedAt } \| { error }` — fetches `update-manifest.json` and compares to `app.getVersion()` |
 | renderer → main | `open-changelog-window` | url string — opens the changelog URL in a small internal `BrowserWindow` (rejects untrusted hosts) |
 | main → renderer | `menu-check-updates` | none — Help → Check for Updates… |
+| renderer → main | `miro-status`      | none → `{ hasToken, encryptionAvailable, connectAvailable }` |
+| renderer → main | `miro-connect`     | none → `{ success, teamId?, scope?, expiring?, error? }` — opens the browser, polls the auth worker, stores the token in main |
+| renderer → main | `miro-cancel-connect` | none — aborts an in-flight connect |
+| renderer → main | `miro-set-token`   | token string → `{ success, error? }` — the paste fallback |
+| renderer → main | `miro-clear-token` | none → `{ success }` |
+| renderer → main | `miro-test-connection` | none → `{ success, boards[], total, error? }` |
+| renderer → main | `miro-token-info`  | none → `{ success, type, scopes[], team, organization, user, error? }` — answers "connected but I see no boards" (wrong team) |
+| renderer → main | `miro-create-board` | `{ name, description }` → `{ success, board?, error? }` |
+| renderer → main | `miro-create-frame` / `miro-create-items-bulk` / `miro-create-connector` / `miro-list-items` | board-writing primitives used by the exporter |
+| renderer → main | `miro-probe-write` | `{ boardId }` → creates one off-palette shape, reports what Miro stored, deletes it — proves `boards:write` (which `miro-test-connection` cannot) |
+| renderer → main | `miro-export-sitemap` | `{ boardId, plan }` → `{ success, frameId, shapes, connectors, edgeFailures, skippedEdges, error? }` |
+| renderer → main | `miro-cancel-export` | none → `{ success }` |
+| main → renderer | `miro-export-progress` | `{ phase, done, total }` — pushed during export; a 400-node board takes ~a minute and silence reads as a hang |
 | main → renderer | `update-check-result` | update-check result object — pushed once, ~3s after launch, only when `available` is true |
 
 `FileData` = `{ filePath, headers, rows, urlColumn, navTree?, projectSettings? }`
@@ -604,6 +620,102 @@ Toggled via **Cmd+Shift+M**, the **Menus** view-switcher tab, or View → Menus 
 **Node ids are namespaced per menu (`menu.id + ':' + it.id`), not the raw item id.** Menu item ids are only meant to be unique *within* their own menu (`genMenuItemId(menu)` scans just that menu's `items`) — two different menus routinely reuse the same item id (e.g. both have a `mi-0105`). `generateMenuSitemap()` merges every menu's tree into ONE shared engine instance whose `INDEX`/`positions` maps key nodes by `id` globally across the whole combined diagram — an un-namespaced id collision silently overwrote one colliding node's computed position with the other's, rendering it detached/in the wrong spot (found via a real client file where a "Departments & Faculty" item in one menu collided with an unrelated item of the same local id in another menu). The nav sitemap doesn't need this — `state.navNodes` ids are already globally unique.
 
 ---
+
+## Miro export
+
+**`src/sitemap-layout.js` is the reason this is possible.** The box-tree geometry
+was extracted out of `sitemap-template.js`'s engine so the webview and host-side
+callers share ONE implementation: the exporter needs every node's x/y *without
+rendering anything*. That only works because the module is genuinely pure — no
+`getBoundingClientRect`, no `offsetWidth`, no `getComputedStyle`, no canvas text
+measurement. Card size is a settings constant and the two-line label clamp is CSS
+that never feeds back into geometry. **Keep it that way**: the moment this file
+measures a DOM node, the exporter breaks and the two surfaces silently drift.
+It's authored as a real function and exposed twice — `window.SitemapLayout` for
+direct calls, and `__source` (via `Function.toString()`) which `build()` inlines
+ahead of the engine, the same trick the engine itself uses.
+
+Colour/style resolution lives there too, so the exporter resolves a node to
+exactly the style the webview draws. Verified behaviour-preserving against the
+pre-extraction code across 9 scenarios on a 408-node tree — byte-identical
+positions — and host-side output verified position-identical to the rendered
+webview.
+
+**Style rules.** Two shapes are accepted. Legacy `{condition, color}` (what every
+existing project has persisted in `projectSettings.sitemapSettings.*.colorRules`)
+still works untouched — it means "set the top band to this colour". The generic
+form is `{ when: [{source, key, op, value}], style: {...} }`, conditions ANDed,
+where `source` is `tree` (depth/colorValue/external/parentId), `node`
+(`node.fields[key]`), or `row` (`node.rowFields[key]` — the DOMINANT value across
+audit rows assigned to that node, with `node.rowFieldSets[key]` holding every
+distinct value so the `any-is` operator can ask "does this section CONTAIN one").
+Row aggregates are computed once per sitemap build by
+`computeNavRowFieldAggregates()`; `SITEMAP_ROW_FIELDS` is the curated list of
+audit columns exposed (deliberately curated — a crawl export has 100+ columns and
+offering them all would bury the useful ones).
+
+`resolveStyle()` cascades **per property**, not first-rule-wins: each style
+property is claimed by the first matching rule that actually sets it, so colour
+and line style can live in separate rules without needing a rule per combination.
+This is backward compatible because legacy rules only ever set `band`.
+
+Style properties: `fill`, `border`, `borderWidth`, `borderStyle`, `band`, `text`,
+merged over `settings.baseCardStyle`. Corner radius and inner padding are
+deliberately NOT per-rule — they describe how a card is drawn rather than what it
+means, so they're global Layout settings (`cardRadius`/`cardPadX`/`cardPadY`,
+clamped in `wireLayoutTab` so padding can't squeeze the label out).
+
+**`miro.js` (main process)** owns the token and the REST client. The token is
+encrypted with `safeStorage` into its own file and **never crosses IPC** — the
+renderer can set/clear/test it and ask main to act, but cannot read it back.
+Deliberately not `prefs.json`, which is cleartext and whose entire contents ship
+to the renderer on every `get-prefs` (see `claudeApiKey`).
+
+**Auth: two paths.** Miro requires the OAuth authorization-code flow and has **no
+PKCE** (`code_challenge` appears nowhere in their spec), so the code→token
+exchange needs the client secret. Shipping that in the bundle would let anyone
+impersonate the app, so it lives in `server/miro-auth` (a Cloudflare Worker) and
+`connectViaBrowser()` drives a one-click flow against it: app registers
+`{sid, secretHash}`, opens the browser, worker exchanges the code and stashes the
+token briefly, app claims it with `{sid, secret}`. `sid` travels through the
+browser and so leaks into history; only `secret` (never in the browser) can claim
+the token. Paste-a-token remains as a fallback and for power users.
+
+The Miro app must be created with **non-expiring tokens** (the "Expire user
+authorization token" checkbox left UNTICKED — immutable after creation). There is
+no refresh plumbing by design; refreshing also needs the client secret, which
+would make the worker permanent infrastructure every user depends on hourly
+rather than something touched once per user.
+
+**Export.** `buildMiroSitemapPlan(baseData, st, opts)` (renderer) computes layout
+host-side and emits `{frame, shapes, edges}`; shape coordinates are the layout's
+own top-left-origin values converted to centres, sent verbatim as frame-relative
+positions — **verified against a live board: Miro stores and returns child
+coordinates in exactly that space, so no translation is needed.** `exportSitemap`
+(main) creates the frame, bulk-creates shapes 20 at a time (response order
+matches request order, which is what maps node ids to Miro item ids), then
+connectors at concurrency 5.
+
+Rate limiting is proactive, not reactive: Miro bills **Level 2 per ITEM even
+inside a bulk call**, so batching buys round trips and atomicity, never
+throughput — the ceiling is ~1,000 items/minute however you batch. A 429
+mid-export leaves a half-drawn board, hence the credit limiter at 85k/min with
+429 retry reading `X-RateLimit-Reset`. ~409 nodes + 408 connectors ≈ 68s.
+
+**Miro constraints worth knowing before extending this:**
+- **No collapse for shapes.** Only mind maps collapse, and `MindmapCreateRequest`
+  has no `style` at all (`type` can only be `text`), so using them would lose the
+  entire colour system. Collapsed sections export as a stacked block instead —
+  two offset backing shapes, matching the app's own CSS box-shadow offsets and
+  fitting inside the `SHADOW` allowance `subtreeBox` already reserves.
+- **No corner radius.** Only `shape: rectangle` vs `round_rectangle`, so a
+  continuous radius collapses to a binary on export.
+- **No padding.** Miro centres shape text itself.
+- `borderStyle` is exactly `normal | dotted | dashed`, which is why the app offers
+  only those three line styles — anything else would render in-app and silently
+  flatten on export.
+- Shape `fillColor` accepts arbitrary hex despite documenting a 16-value palette
+  (verified live). Sticky notes, by contrast, are a hard enum.
 
 ## SME workflow
 
