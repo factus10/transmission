@@ -6,11 +6,11 @@ compatibility_date = "2026-07-01"
 # separately with `wrangler secret put MIRO_CLIENT_SECRET` so it never appears
 # in this file or in git.
 [vars]
-MIRO_CLIENT_ID = "REPLACE_WITH_YOUR_MIRO_CLIENT_ID"
+MIRO_CLIENT_ID = "3458764678677025142"
 
 # Short-lived session records only: a pending secret hash, then a token that
 # lives for at most 5 minutes and is deleted on first successful claim.
 # Create with:  wrangler kv namespace create SESSIONS
 [[kv_namespaces]]
 binding = "SESSIONS"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "4e3d228d627e431ea4bb618015333472"
