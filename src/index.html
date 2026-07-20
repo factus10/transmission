@@ -708,6 +708,36 @@
       </div>
       <div class="setting-divider"></div>
       <div class="setting-group">
+        <label class="setting-label">Miro <span class="setting-hint">(optional, for sitemap export)</span></label>
+        <div id="miro-token-unset">
+          <div class="setting-row-inline">
+            <input type="password" id="pref-miro-token" class="setting-input" style="flex:1" placeholder="Paste Miro OAuth token">
+            <button id="btn-miro-save-token" class="btn btn-sm btn-primary">Save</button>
+          </div>
+          <div class="setting-hint" style="margin-top:6px; line-height:1.5">
+            In Miro: <b>Profile settings → Your apps → Create new app</b>. Tick
+            <code>boards:read</code> and <code>boards:write</code> <b>first</b> — the token is
+            minted with whatever scopes are selected at install time — then use
+            <b>Install app and get OAuth token</b> at the bottom of the page.
+            Not the Client ID or Secret; those are for the OAuth redirect flow.
+            A token is scoped to one team.
+            <a href="#" id="miro-help-link">Open Miro apps page ↗</a>
+          </div>
+        </div>
+        <div id="miro-token-set" class="hidden">
+          <div class="setting-row-inline">
+            <span id="miro-status-text" class="setting-hint" style="flex:1">Token saved.</span>
+            <button id="btn-miro-test" class="btn btn-sm btn-ghost">Test connection</button>
+            <button id="btn-miro-clear" class="btn btn-sm btn-ghost">Remove</button>
+          </div>
+          <div id="miro-board-row" class="setting-row-inline hidden" style="margin-top:6px">
+            <select id="miro-board-select" class="setting-input" style="flex:1"></select>
+            <button id="btn-miro-probe" class="btn btn-sm btn-ghost">Verify write access</button>
+          </div>
+        </div>
+      </div>
+      <div class="setting-divider"></div>
+      <div class="setting-group">
         <label class="setting-label">Sidebar columns <span class="setting-hint">(extra columns shown in row list)</span></label>
         <div id="sidebar-col-list" class="setting-col-map"></div>
         <div class="setting-row-inline" style="margin-top:6px">
@@ -1121,6 +1151,7 @@
   <!-- Toast -->
   <div id="toast"></div>
 
+  <script src="sitemap-layout.js"></script>
   <script src="sitemap-template.js"></script>
   <script src="treemap-template.js"></script>
   <script src="renderer.js"></script>

@@ -4,6 +4,7 @@ const fs = require('fs');
 const XLSX = require('xlsx');
 const ExcelJS = require('exceljs');
 const { ProjectStore, PROJECT_EXT } = require('./project-store');
+const miro = require('./miro');
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -21,6 +22,9 @@ const isProjectFile = (fp) => typeof fp === 'string' && fp.toLowerCase().endsWit
 
 const userDataPath = app.getPath('userData');
 const prefsPath    = path.join(userDataPath, 'prefs.json');
+
+// Miro token lives in its own encrypted file, not prefs.json — see miro.js.
+miro.init(userDataPath);
 
 // One-time migration: the app was renamed "KKE Audit Tool" → "Transmission",
 // which moves the userData folder. Carry the old prefs over the first time the
@@ -2252,6 +2256,110 @@ ipcMain.handle('get-prefs', () => {
 ipcMain.handle('save-prefs', (event, updates) => {
   savePrefs(updates);
   return { success: true };
+});
+
+// ─── Miro ─────────────────────────────────────────────────────────────────────
+//
+// The token is write-scoped and never crosses back over IPC — the renderer can
+// set it, ask whether one exists, clear it, and ask main to act on its behalf,
+// but cannot read it. That is the whole reason these are separate handlers
+// rather than another key in get-prefs/save-prefs.
+
+ipcMain.handle('miro-status', () => ({
+  hasToken: miro.hasToken(),
+  encryptionAvailable: miro.encryptionAvailable(),
+}));
+
+ipcMain.handle('miro-set-token', (event, token) => {
+  try {
+    miro.setToken(token);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('miro-clear-token', () => {
+  miro.clearToken();
+  return { success: true };
+});
+
+ipcMain.handle('miro-test-connection', async () => {
+  try {
+    return { success: true, ...(await miro.testConnection()) };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('miro-create-board', async (event, { name, description }) => {
+  try {
+    return { success: true, board: await miro.createBoard(name, description) };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Low-level board-writing surface used by the sitemap exporter.
+ipcMain.handle('miro-create-frame', async (event, { boardId, ...opts }) => {
+  try { return { success: true, frame: await miro.createFrame(boardId, opts) }; }
+  catch (err) { return { success: false, error: err.message }; }
+});
+
+ipcMain.handle('miro-create-items-bulk', async (event, { boardId, items }) => {
+  try { return { success: true, items: await miro.createItemsBulk(boardId, items) }; }
+  catch (err) { return { success: false, error: err.message }; }
+});
+
+ipcMain.handle('miro-create-connector', async (event, { boardId, ...opts }) => {
+  try { return { success: true, connector: await miro.createConnector(boardId, opts) }; }
+  catch (err) { return { success: false, error: err.message }; }
+});
+
+ipcMain.handle('miro-list-items', async (event, { boardId, limit }) => {
+  try { return { success: true, items: await miro.listItems(boardId, limit) }; }
+  catch (err) { return { success: false, error: err.message }; }
+});
+
+// Sitemap export. Progress is pushed back on a channel rather than returned,
+// since a 400-node board takes tens of seconds and silence reads as a hang.
+ipcMain.handle('miro-export-sitemap', async (event, { boardId, plan }) => {
+  try {
+    const result = await miro.exportSitemap(boardId, plan, (p) => {
+      try { event.sender.send('miro-export-progress', p); } catch (e) { /* window gone */ }
+    });
+    return { success: true, ...result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('miro-cancel-export', () => { miro.cancelExport(); return { success: true }; });
+
+ipcMain.handle('miro-token-info', async () => {
+  try {
+    return { success: true, ...(await miro.tokenInfo()) };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Write-access probe. Creates one shape with an off-palette fill, reports what
+// Miro stored, then deletes it. Cleanup is best-effort: a leftover test shape
+// is untidy but harmless, and reporting the write success matters more than
+// reporting a failed delete.
+ipcMain.handle('miro-probe-write', async (event, { boardId }) => {
+  try {
+    const probe = await miro.createProbeShape(boardId);
+    let cleanedUp = false;
+    if (probe.itemId) {
+      try { await miro.deleteItem(boardId, probe.itemId); cleanedUp = true; }
+      catch (e) { /* leave it; surfaced via cleanedUp */ }
+    }
+    return { success: true, sentFillColor: '#8fd14f', ...probe, cleanedUp };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 // ─── Rubrics ──────────────────────────────────────────────────────────────────
