@@ -19,7 +19,30 @@ const { marked } = require('marked');
 
 const repoRoot = path.resolve(__dirname, '..');
 const mdPath = path.join(repoRoot, 'CHANGELOG.md');
-const outPath = process.argv[2] || path.resolve(repoRoot, '..', 'transmission-updates', 'changelog.html');
+
+// The sibling repo is a sibling of the MAIN clone, which is not the same as a
+// sibling of `repoRoot` when this runs from a git worktree — worktrees live
+// under .claude/worktrees/, so `../transmission-updates` resolves to a path
+// that does not exist. Derive the main clone from the shared git dir instead.
+function defaultOutPath() {
+  try {
+    const common = require('child_process')
+      .execSync('git rev-parse --path-format=absolute --git-common-dir', { cwd: repoRoot })
+      .toString().trim();
+    const mainClone = path.dirname(common);           // .../transmission/.git -> .../transmission
+    return path.resolve(mainClone, '..', 'transmission-updates', 'changelog.html');
+  } catch (e) {
+    return path.resolve(repoRoot, '..', 'transmission-updates', 'changelog.html');
+  }
+}
+
+const outPath = process.argv[2] || defaultOutPath();
+if (!fs.existsSync(path.dirname(outPath))) {
+  console.error(`Target directory does not exist: ${path.dirname(outPath)}\n` +
+    'Pass an explicit output path, e.g.\n' +
+    '  node scripts/gen-changelog-html.js ~/path/to/transmission-updates/changelog.html');
+  process.exit(1);
+}
 
 const HEAD = `<!doctype html>
 <html lang="en">
