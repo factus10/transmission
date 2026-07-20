@@ -125,6 +125,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Miro. Note there is deliberately no getter for the token — it is stored
   // encrypted in the main process and never travels back across this bridge.
   miroStatus:          ()        => ipcRenderer.invoke('miro-status'),
+  miroConnect:         ()        => ipcRenderer.invoke('miro-connect'),
+  miroCancelConnect:   ()        => ipcRenderer.invoke('miro-cancel-connect'),
   miroSetToken:        (token)   => ipcRenderer.invoke('miro-set-token', token),
   miroClearToken:      ()        => ipcRenderer.invoke('miro-clear-token'),
   miroTestConnection:  ()        => ipcRenderer.invoke('miro-test-connection'),

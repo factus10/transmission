@@ -6362,15 +6362,20 @@ async function refreshMiroSettingsUi() {
 
   if (!status.hasToken) {
     // Tell the user up front if this machine can't store a credential safely,
-    // rather than letting them paste a token and hit an opaque save failure.
+    // rather than letting them connect and hit an opaque save failure.
     const input = $('pref-miro-token');
     const saveBtn = $('btn-miro-save-token');
-    if (!status.encryptionAvailable) {
-      if (input) { input.disabled = true; input.placeholder = 'Secure storage unavailable on this system'; }
-      if (saveBtn) saveBtn.disabled = true;
-    } else if (input) {
-      input.disabled = false;
-      if (saveBtn) saveBtn.disabled = false;
+    const connectBtn = $('btn-miro-connect');
+    const ok = !!status.encryptionAvailable;
+    if (input) { input.disabled = !ok; if (!ok) input.placeholder = 'Secure storage unavailable on this system'; }
+    if (saveBtn) saveBtn.disabled = !ok;
+    if (connectBtn) connectBtn.disabled = !ok || !status.connectAvailable;
+    // A build with no auth worker configured falls back to paste-only; say so
+    // rather than showing a button that cannot work.
+    if (connectBtn && !status.connectAvailable) {
+      connectBtn.title = 'One-click connect is not configured in this build';
+      const manual = $('miro-manual');
+      if (manual) manual.open = true;
     }
     return;
   }
@@ -6410,6 +6415,40 @@ function setupMiroSettings() {
 
   saveBtn.addEventListener('click', saveToken);
   tokenIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveToken(); } });
+
+  // One-click connect. Main opens the browser and polls the auth worker; this
+  // just reflects progress and lets the user bail out.
+  const connectBtn = $('btn-miro-connect');
+  const connectCancel = $('btn-miro-connect-cancel');
+  const connectStatus = $('miro-connect-status');
+  connectBtn?.addEventListener('click', async () => {
+    connectBtn.disabled = true;
+    connectCancel?.classList.remove('hidden');
+    if (connectStatus) connectStatus.textContent = 'Waiting for Miro in your browser…';
+
+    const r = await window.electronAPI.miroConnect();
+
+    connectBtn.disabled = false;
+    connectCancel?.classList.add('hidden');
+    if (connectStatus) connectStatus.textContent = '';
+
+    if (!r.success) {
+      if (/cancelled/i.test(r.error || '')) showToast('Miro connection cancelled', 'info');
+      else showToast('Miro: ' + r.error, 'error');
+      return;
+    }
+    await refreshMiroSettingsUi();
+    // A token that expires in an hour would look like a random failure later,
+    // so name it now — the fix is a Miro app created with non-expiring tokens.
+    if (r.expiring) {
+      showToast('Connected, but this Miro app issues expiring tokens — reconnect will be needed', 'info');
+    } else {
+      showToast('Connected to Miro', 'success');
+    }
+    testConnection();
+  });
+
+  connectCancel?.addEventListener('click', () => { window.electronAPI.miroCancelConnect(); });
 
   async function testConnection() {
     if (statusEl) statusEl.textContent = 'Testing…';
