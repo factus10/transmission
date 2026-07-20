@@ -96,13 +96,21 @@ Deploy prints the worker URL, e.g. `https://transmission-miro-auth.<you>.workers
 
 ### 4. Register the redirect URI in Miro
 
-Back in the Miro app settings, set the redirect URI to **exactly**:
+Back in the Miro app settings, find the **Redirect URI for OAuth2.0** section,
+paste the URL into the input, and **click Add**:
 
 ```
 https://transmission-miro-auth.<you>.workers.dev/callback
 ```
 
-Miro matches this string exactly — a trailing slash difference will fail.
+Two ways this goes wrong:
+
+- **Typing the URL without clicking Add** leaves it unregistered. Consent then
+  fails with *"A client must have at least one registered redirect URL"* — the
+  worker is fine, Miro simply has nothing on file. Confirm the URL appears in
+  the list below the input before leaving the page.
+- **A trailing slash.** Miro matches this string exactly against the
+  `redirect_uri` the worker sends, which has none.
 
 ### 5. Point the app at the worker
 
