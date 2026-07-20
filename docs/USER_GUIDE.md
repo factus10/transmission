@@ -1001,12 +1001,12 @@ So **need placement → 0** confirms every Keep/Evolve page is in the IA, **empt
 - **Visual Sitemap** (toolbar **Sitemap**) renders the content IA as one interactive box-tree rooted at your homepage, with a page-count badge on each card and a stacked shadow signalling a collapsed subtree or a multi-page leaf. It opens live in the app — click a card to **collapse/expand**, scroll to **zoom**, drag to **pan**, **Fit** to frame, toggle **Numbers**, **Expand all** / **Collapse all**. Controls:
   - **Smart layout** — each branch lays out **horizontally** (children fan sideways below the parent) or **vertically** (children stack below-and-indented) automatically. Two toolbar dropdowns decide which, whichever fires first: **Vertical from depth** (go vertical at this depth) and **or if children ≥** (go vertical for any node with this many children). Right-click any node with children to **force horizontal / force vertical** or clear the override; nodes you've overridden show a dashed outline.
   - **Settings** (button → panel, three tabs):
-    - **Layout** — card width/height and every gap, in pixels; previews live.
-    - **Colors** — a rule engine. Each card's top band is colored by the **first matching rule** (or a per-node override). Start from **Color by depth** or **Color by top-level section**, then add your own rules (by depth, depth range, section, value, or **links to another site**), recolor or delete them, and drag to reorder. **Mark external links** is a one-click shortcut that adds an external-link rule to the top of the list — above whatever depth/section scheme you already have — so off-site destinations stand out no matter where they sit in the tree. **Color by field** lets you pick any of **Phase**, **Node Type**, **Page Status**, **Build Pattern**, or the three **assignee** roles and generates one rule per value actually in use on your tree (plus a "not set" bucket, so you can spot gaps at a glance) — Page Status reuses the same colors you already assigned it in Project Settings → Migration, so it looks consistent everywhere. Right-click a single node → **Set color** to override just that node. Uses your **Client brand** palette (Project Settings → Identity) when set.
+    - **Layout** — card width/height and every gap, in pixels, plus **Corner radius**, **Padding L/R**, and **Padding top/btm**. These are global looks, not per-rule. Radius and padding are capped relative to the card, so a large value can't squeeze the label out of its box. Previews live. Long page names clip cleanly at the card edge (hover a card for the full name), and the default card height fits a two-line name alongside the number and page count.
+    - **Colors** — a rule engine, covered in full under [Colour rules in depth](#colour-rules-in-depth). In short: pick a **Card style** — **Colour band** (the colour sits on a strip across the top of a white card) or **Heavy outline** (a white card with a thick coloured border, the convention most sitemap decks use and the one that reads better zoomed out over hundreds of cards) — then build rules that test anything on your sitemap *or* in your spreadsheet. Each rule can set a colour, a fill, and a **line style** (solid / dashed / dotted). New projects start coloured **by depth**; colouring by top-level section keys on the tree's top-level children, so a site whose pages all hang off a single root node came out effectively one colour. Start from a generator — **By depth**, **By section**, **Mark external** (off-site destinations, inserted at the top of the list so they win over whatever scheme you already have), or **Colour by this** for a single field — then add, recolor, delete, and drag to reorder. Right-click a single node → **Set color** to override just that node. Uses your **Client brand** palette (Project Settings → Identity) when set.
     - **Legend** — edit the legend's labels for the client-facing exports.
     - **Save as my defaults** stores the current layout/colors/legend as your app-wide starting point for new projects; **Reset to defaults** restores them.
-  - Border encodes build phase (solid = current build, dashed = phased).
-  - **Share it:** **Export HTML** writes a single self-contained, **still-interactive** file your client opens in any browser (they can collapse/expand, zoom, and pan — no app required; their tweaks persist in that file's local storage). **Export PDF** prints the current view to one page sized to the tree.
+  - Phased nodes are drawn with a **dashed** border, and that wins over whatever line style a colour rule sets — so a dashed card always means "not in this build." Every other card takes its line style from your rules (solid unless a rule says otherwise).
+  - **Share it:** **Export HTML** writes a single self-contained, **still-interactive** file your client opens in any browser (they can collapse/expand, zoom, and pan — no app required; their tweaks persist in that file's local storage). **Export PDF** prints the current view to one page sized to the tree. **Export to Miro** pushes the diagram onto a Miro board as real, movable shapes — see [Send the sitemap to Miro](#send-the-sitemap-to-miro).
 
 - **Treemap** (toolbar **Treemap**, next to Visual Sitemap) shows the same content as space-filling boxes sized by page count — good for "how much of the site is what" at a glance. Pick **Depth** and **Color by** in a small dialog, then **Generate**; there's no live in-webview settings panel here, so changing either means reopening the dialog. **Depth** rolls deeper levels up into the box above them — Depth 2 shows each top-level section broken into its direct children; **Unlimited** shows the real tree at whatever depth it actually goes. **Color by KKE decision** (each box's dominant Keep/Kill/Evolve/Consolidate/Exclude call, with the composition percentage) or **top-level section** work at any depth; **Phase**, **Node Type**, **Page Status**, **Build Pattern**, or an **assignee** role are only offered at **Unlimited** depth, since a rolled-up box has no single value to report for those. Pan/zoom/Fit, a legend, and the same **Export HTML** / **Export PDF** as the Visual Sitemap.
 
@@ -1057,6 +1057,49 @@ The columns are Node (number, toggle, label — it fills the width), Slug, Colla
 #### Reading the Pages column
 
 A link icon means an external URL, an arrow means a reference, **NEW** means net-new, an empty circle means an empty leaf, and a number is the page count (click it to expand). The **Menu Report** (Menus → Report) adds per-item badges: a page-count on each page reference, `↗` on an external link, `≡` on a header, and a red **missing** badge on a broken reference. These are purely informational — Transmission never blocks a save over coverage.
+
+#### Colour rules in depth
+
+Colour is the fastest way to make a sitemap *say* something. The rule engine lives in the Visual Sitemap's **Settings → Colors**.
+
+**Card style.** Two conventions, toggled at the top of the tab. **Colour band** puts the colour on a strip across the top of an otherwise white card. **Heavy outline** leaves the card white and draws a thick coloured border — this is what most sitemap decks use, and it stays legible when the whole tree is zoomed out. Switching between them converts the rules you already have, keeping each one's colour, so it's a safe thing to try.
+
+**What a rule can test.** Fifteen dimensions, from two places:
+
+| Source | Dimensions |
+|--------|------------|
+| **The sitemap node** | Phase · Node Type · Page Status · Build Pattern · Builder · Writer · Migrator |
+| **The spreadsheet** | Content Type · KKE · Final KKE · Renders as · Migration Track · Content Theme · Published Status · Target Content Type |
+
+(Plus the structural ones: **Depth**, **Top-level section**, and **Links to another site**.)
+
+Spreadsheet dimensions only appear if that column exists in the open file. And the **Colour by this** picker shows how many nodes actually carry a value for each one — `38/121`, or **no data**, in which case it's greyed out. So you can see at a glance which dimensions are worth colouring by, instead of generating a scheme and then wondering why it came out all one colour.
+
+**Dominant value vs "any page is".** A sitemap node usually holds several pages, so there are two different questions you can ask of a spreadsheet dimension:
+
+- The normal operators — **is**, **is not**, **contains**, **does not contain**, **is blank**, **is set** — test the node's **dominant** value: what its pages *mostly* are.
+- The **any page is** operator asks whether **any** page under that node matches.
+
+That second one is how you flag a section that merely *contains* something. `KKE any page is Kill` lights up a section holding one page marked Kill inside an otherwise Keep branch — which a dominant-value rule would never surface, because one Kill among twenty Keeps isn't the dominant value.
+
+**Multiple conditions.** **+ Add condition** stacks conditions on one rule; *all* of them must match. A rule with no conditions matches everything — that's your catch-all, and it belongs last (new rules are inserted above it automatically, so it can't get stranded).
+
+**Rules compose — this is the part worth understanding.** Rules are read top to bottom, but it isn't simply "first match wins and nothing else applies." Each visual property — **colour**, **fill**, **line style** — is claimed independently by the **first matching rule that actually sets it**. A rule that leaves a property unset doesn't claim it, so a rule further down can still supply it — line style has a "— leave unset —" option, and colour has a checkbox you can untick for the same purpose. That means you can encode two different dimensions at once, in separate rules, instead of writing a rule for every combination.
+
+> **Worked example — colour by who's building it, line style by whether it's ready.**
+>
+> Say you have four builders and three page statuses. Encoding both in single rules would need one rule per *pair* — twelve rules, and a thirteenth the moment someone joins the team. Instead:
+>
+> 1. Add four rules — one per Builder — each setting a **colour** and leaving **Line style** on its "— leave unset —" option.
+> 2. Add three rules — one per Page Status — each setting a **line style** (say Published → solid, In Progress → dashed, Not Started → dotted) and **unticking the Colour checkbox** so the rule claims only the line style.
+>
+> Seven rules instead of twelve, and adding a builder costs one rule rather than three. Every card takes its colour from the first group and its line style from the second.
+>
+> **Untick Colour on any rule that isn't about colour.** A rule with the Colour box ticked claims the colour of every card it matches, so a status rule that keeps its colour would recolour cards by status wherever it matched first. With Colour unticked the two groups are independent and their order doesn't matter.
+
+**Line style** is per-rule: **solid**, **dashed**, **dotted**, or the "— leave unset —" option to let a later rule decide.
+
+A node's own colour (right-click a card → **Set color**) beats every rule.
 
 #### Reference picker and Visual Sitemap
 
@@ -1274,6 +1317,50 @@ Reports are read-only views, generated on demand from the current file — run t
 ### Export them
 
 Every report preview has **PDF** and **HTML** buttons. Choose HTML when the client wants to drop it into Word or a doc; PDF for a fixed deliverable.
+
+### Send the sitemap to Miro
+
+A PDF is something a client reads. A Miro board is something a client can *work on* — which is what you want when the sitemap is going into a workshop and people will be moving boxes around and arguing about where things belong. **Export to Miro** puts the Visual Sitemap onto a Miro board as real, editable Miro shapes, not a flat picture.
+
+#### Connect to Miro (one time)
+
+Open **App Settings** (**⚙**) and find the **Miro** section:
+
+1. Click **Connect to Miro**. Your browser opens, you authorise Transmission, and you pick **which Miro team to connect**.
+2. Return to the app — that's it. The connection persists, so you only do this once.
+
+Your token is stored **encrypted using the OS keychain**, deliberately *not* in the ordinary preferences file, and it's never readable by the app's interface layer. Once connected you get **Test connection** (confirms the token is live and lists the boards it can see), **Verify write access**, and **Remove**.
+
+> **A connection is scoped to one Miro team.** That's how Miro's tokens work, not a limitation of the app. If you work across two teams, connect once per team — reconnecting swaps which team you're pointed at.
+
+> **Advanced: paste a token from your own Miro app.** Tucked under the Connect button is a fallback for anyone who'd rather not use the connect service, or needs it when that service is unreachable. It means creating your own app in Miro (**Profile settings → Your apps → Create new app**), ticking the `boards:read` and `boards:write` scopes **before** you install it — the token is minted with whatever scopes are selected at install time — and pasting the resulting OAuth token. Most people never need this route.
+
+#### Export
+
+In the Visual Sitemap toolbar, click **Export to Miro** (it sits alongside Export HTML and Export PDF). A dialog asks:
+
+- **Where it goes** — **Create a new board** (pre-named from your client and project) or **Add to an existing board**, chosen from the boards your connection can see. New is usually right; appending 400 shapes to a board someone else is working in rarely is.
+- **What to do about collapsed sections** — if any sections are collapsed, the dialog says how many pages are hidden and by how many collapsed sections, with **Include them (export the whole tree)** ticked by default. Leave it ticked and everything exports. Untick it and you get a second choice: what the collapsed block should be labelled with — **the hidden page count**, or **just a +**.
+
+Then it runs, with a progress bar (creating the frame, then the pages, then the connections) and a **Cancel** button. When it finishes, the board opens in your browser.
+
+#### What lands on the board
+
+- A **frame** sized to the whole sitemap.
+- **One shape per visible node**, positioned exactly where it sits in the app.
+- **A connector for every parent → child** relationship.
+- The **colours and line styles from your colour rules** (see [Colour rules in depth](#colour-rules-in-depth)) — so a board colour-coded by KKE or by builder arrives that way.
+- **Collapsed sections as a stacked block** — two offset blocks behind the card, so it's visibly a folded-up section rather than a page that happens to be a dead end.
+
+#### What to expect on speed and fidelity
+
+Roughly **400 pages plus 400 connectors takes about a minute**. That's a floor, not a slow implementation: Miro rate-limits how fast items can be created, and connectors have no bulk endpoint, so it's one call per shape and one per connector.
+
+Three things don't survive the trip exactly, and it's worth knowing which before you present:
+
+- **Collapsed sections aren't collapsible on the board.** Miro has no collapse behaviour for shapes — only Miro *mind maps* collapse, and those are text-only with no colour, so using them would throw away all your colour coding. The stacked block is the substitute: it shows that something is folded away, but nobody can unfold it in Miro.
+- **Corner radius becomes square-or-rounded.** Miro has no radius setting, so whatever specific radius you set in the Layout tab arrives as simply "rounded".
+- **Inner padding is app-only.** Miro centres shape text itself and offers no padding control.
 
 ### Quick self-check
 
@@ -1543,6 +1630,8 @@ Hidden from the data-sheet picker; they carry project state and travel with the 
 
 Last opened file (reopened on launch), window bounds, sidebar width, search text, sort order, visible metadata fields, tag library, group library, auto-advance, rubric directory (global + per-file), API key, column mappings (per file), sidebar column selection. Stored in `~/Library/Application Support/Transmission/prefs.json`.
 
+**The Miro connection is the exception.** Your Miro token is *not* in `prefs.json` — it's stored encrypted in its own file using the OS keychain, and the app's interface layer can never read it back (it can set one, ask whether one exists, clear it, and ask the main process to make calls on its behalf). Manage it in **App Settings → Miro**; see [Send the sitemap to Miro](#send-the-sitemap-to-miro).
+
 ## Installation
 
 **From DMG:** open the `.dmg` → drag **Transmission** to Applications → double-click to launch. The app is **signed and notarized** (Apple Developer ID), so it opens normally — no right-click or security-override needed.
@@ -1562,6 +1651,11 @@ npm run build      # build universal .dmg (output in dist/)
 - **Tag/group libraries are global** — shared across files, not per-file.
 - **Fixed-element screenshots** — full-page captures scroll-and-stitch, so fixed headers/footers may repeat.
 - **macOS only** — built and tested for macOS.
+- **Miro: collapsed sections can't be unfolded on the board** — Miro has no collapse behaviour for shapes. Only Miro *mind maps* collapse, and those are text-only with no colour, so using them would lose all the colour coding. Collapsed sections export as a stacked block instead, which shows that something is folded away but can't be opened.
+- **Miro: corner radius exports as square-vs-rounded only** — Miro has no radius setting, so a specific radius value in the app arrives as simply "rounded".
+- **Miro: inner padding is app-only** — Miro centres shape text itself and has no padding control.
+- **Miro: one team per connection** — a Miro token is scoped to a single team; working across teams means connecting once per team.
+- **New sitemap card defaults apply to new projects only** — existing projects keep the card height and colour rules they already saved. Changing them is a one-click job in the Visual Sitemap's **Layout** / **Colors** tabs.
 
 ---
 
