@@ -1,0 +1,16 @@
+name = "transmission-miro-auth"
+main = "src/worker.js"
+compatibility_date = "2026-07-01"
+
+# Not a secret — the client ID is public by design. The client SECRET is set
+# separately with `wrangler secret put MIRO_CLIENT_SECRET` so it never appears
+# in this file or in git.
+[vars]
+MIRO_CLIENT_ID = "REPLACE_WITH_YOUR_MIRO_CLIENT_ID"
+
+# Short-lived session records only: a pending secret hash, then a token that
+# lives for at most 5 minutes and is deleted on first successful claim.
+# Create with:  wrangler kv namespace create SESSIONS
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"

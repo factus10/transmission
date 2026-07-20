@@ -2268,6 +2268,7 @@ ipcMain.handle('save-prefs', (event, updates) => {
 ipcMain.handle('miro-status', () => ({
   hasToken: miro.hasToken(),
   encryptionAvailable: miro.encryptionAvailable(),
+  connectAvailable: miro.connectConfigured(),
 }));
 
 ipcMain.handle('miro-set-token', (event, token) => {
@@ -2335,6 +2336,18 @@ ipcMain.handle('miro-export-sitemap', async (event, { boardId, plan }) => {
 });
 
 ipcMain.handle('miro-cancel-export', () => { miro.cancelExport(); return { success: true }; });
+
+// One-click connect. Opens the browser and waits for the user to authorise;
+// the token is stored in main and never returned across IPC.
+ipcMain.handle('miro-connect', async () => {
+  try {
+    return { success: true, ...(await miro.connectViaBrowser()) };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('miro-cancel-connect', () => { miro.cancelConnect(); return { success: true }; });
 
 ipcMain.handle('miro-token-info', async () => {
   try {
