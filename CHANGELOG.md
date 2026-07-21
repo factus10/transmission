@@ -6,6 +6,15 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.8.2] — "How Soon Is Now?"
+
+Three Visual Sitemap interaction fixes.
+
+### Fixed
+- **Collapsing a branch is now the +/− button only.** Collapse/expand was bound to the whole card, so an errant click while reaching for right-click → **Set color** would hide the entire subtree you were trying to colour. Only the +/− toggles now; the card body does nothing. The +/− is a little larger with its own hover state.
+- **The node colour picker no longer closes the moment you drag a slider.** Right-click → **Set color** opens the OS colour panel; adjusting it used to tear the menu (and the panel with it) down on the first change. It now previews live, stays open while you fine-tune, and commits when you dismiss the panel.
+- **The Legend panel no longer renders behind the sitemap** (issue #9). The toolbar scrolls horizontally on narrow windows, which was silently clipping the dropdown where it hangs below the toolbar — so its lower half was cut away and the canvas showed through. The panel now floats above the canvas, anchored under the Legend button.
+
 ## [2.8.1] — "How Soon Is Now?"
 
 A packaging fix for 2.8.0.
