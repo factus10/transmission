@@ -389,12 +389,16 @@
         var dot = document.createElement('span');
         dot.className = 'toggle-dot';
         dot.textContent = collapsed.has(node.id) ? '+' : '−';
-        card.appendChild(dot);
-        card.addEventListener('click', function (e) {
+        dot.title = collapsed.has(node.id) ? 'Expand this branch' : 'Collapse this branch';
+        // ONLY the +/- toggles the branch. The whole card used to be the
+        // target, so an errant left-click while reaching for right-click → Set
+        // color would collapse the entire subtree you were trying to colour.
+        dot.addEventListener('click', function (e) {
           e.stopPropagation();
           if (collapsed.has(node.id)) collapsed.delete(node.id); else collapsed.add(node.id);
           render(); pushState();
         });
+        card.appendChild(dot);
       }
 
       // Right-click context menu (app mode only) for any node with children
@@ -449,7 +453,19 @@
       var ci = document.createElement('input');
       ci.type = 'color';
       ci.value = (ov.color || resolveColor(node));
-      ci.addEventListener('input', function () { setOverride(node.id, 'color', ci.value); });
+      // Live preview while dragging: apply the colour and repaint at most once
+      // per frame, without closing the menu or spamming the host with a state
+      // message per micro-move. Commit (pushState) on `change`, when the OS
+      // colour panel is dismissed.
+      var colorRAF = null;
+      ci.addEventListener('input', function () {
+        setOverride(node.id, 'color', ci.value, { keepOpen: true, defer: true, silent: true });
+        if (!colorRAF) colorRAF = requestAnimationFrame(function () { colorRAF = null; render(); });
+      });
+      ci.addEventListener('change', function () {
+        if (colorRAF) { cancelAnimationFrame(colorRAF); colorRAF = null; }
+        setOverride(node.id, 'color', ci.value, { keepOpen: true });
+      });
       ci.addEventListener('click', function (ev) { ev.stopPropagation(); });
       colorRow.appendChild(ci);
       menu.appendChild(colorRow);
@@ -462,12 +478,21 @@
       if (r.bottom > window.innerHeight) menu.style.top = (window.innerHeight - r.height - 6) + 'px';
       ctxMenu = menu;
     }
-    function setOverride(id, key, value) {
+    // opts: keepOpen — don't tear down the context menu (the colour picker needs
+    //       this, or dragging a slider fires `input`, closes the menu, and takes
+    //       the native colour panel bound to the input down with it);
+    //       defer — skip the immediate render (caller renders itself, e.g. via
+    //       requestAnimationFrame to coalesce a slider drag);
+    //       silent — don't pushState (live preview; commit happens on change).
+    function setOverride(id, key, value, opts) {
+      opts = opts || {};
       var ov = S.nodeOverrides[id] || {};
       if (value === null || value === undefined || value === '') { delete ov[key]; }
       else { ov[key] = value; }
       if (Object.keys(ov).length) S.nodeOverrides[id] = ov; else delete S.nodeOverrides[id];
-      removeCtx(); render(); pushState();
+      if (!opts.keepOpen) removeCtx();
+      if (!opts.defer) render();
+      if (!opts.silent) pushState();
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -1218,9 +1243,9 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);font-famil
 .node-card.has-override{outline:2px dashed #9aa0ab;outline-offset:3px;}
 .node-card.stacked{box-shadow:4px 4px 0 0 var(--white),4px 4px 0 1.5px var(--border),8px 8px 0 0 var(--white),8px 8px 0 1.5px var(--border);}
 .node-card.stacked:hover{box-shadow:4px 4px 0 0 var(--white),4px 4px 0 1.5px var(--border-dk),8px 8px 0 0 var(--white),8px 8px 0 1.5px var(--border-dk),0 2px 10px rgba(0,0,0,.12);}
-.node-card.collapsible{cursor:pointer;}
-.toggle-dot{position:absolute;bottom:5px;right:7px;width:15px;height:15px;border-radius:50%;background:#eef0f4;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim);transition:background .12s;}
+.toggle-dot{position:absolute;bottom:4px;right:6px;width:18px;height:18px;border-radius:50%;background:#eef0f4;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;line-height:1;color:var(--text-dim);cursor:pointer;transition:background .12s,border-color .12s,transform .08s;}
 .node-card.collapsible:hover .toggle-dot{background:#dde0e8;}
+.toggle-dot:hover{background:#cfd4de;border-color:var(--border-dk);transform:scale(1.12);color:var(--text);}
 .node-num{font-size:10px;font-weight:600;letter-spacing:.04em;line-height:1;margin-bottom:2px;flex:0 0 auto;}
 body.hide-numbers .node-num{display:none;}
 .node-label{font-size:11.5px;font-weight:500;color:var(--text);line-height:1.2;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;flex:0 1 auto;min-height:0;overflow-wrap:anywhere;}
