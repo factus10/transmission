@@ -70,7 +70,7 @@
       multiplePage: 'Multiple pages of the same type',
       rootNode: 'Homepage / site root',
       colorBand: 'Color band = node depth (customizable)',
-      interactionHint: 'Click section card → collapse/expand'
+      interactionHint: 'Click the +/− on a card → collapse/expand'
     };
     function legend(k) { return (S.legendLabels && S.legendLabels[k]) || DEFAULT_LEGEND[k]; }
 
@@ -569,7 +569,20 @@
       if (vd) { vd.value = String(S.vertDepth); vd.addEventListener('change', function () { S.vertDepth = parseInt(this.value, 10); render(); pushState(); fitToScreen(); }); }
       var ct = $('ct-select');
       if (ct) { ct.value = String(S.childThresh); ct.addEventListener('change', function () { S.childThresh = parseInt(this.value, 10); render(); pushState(); fitToScreen(); }); }
-      if ($('legend-btn')) $('legend-btn').addEventListener('click', function (e) { e.stopPropagation(); this.classList.toggle('open'); });
+      if ($('legend-btn')) $('legend-btn').addEventListener('click', function (e) {
+        e.stopPropagation();
+        var opening = !this.classList.contains('open');
+        this.classList.toggle('open');
+        // The panel is position:fixed (see CSS), so anchor it under the button
+        // each open — the button's x shifts with window width and toolbar scroll.
+        if (opening) {
+          var r = this.getBoundingClientRect();
+          var lp = $('legend-panel');
+          lp.style.top = (r.bottom + 8) + 'px';
+          lp.style.right = Math.max(6, window.innerWidth - r.right) + 'px';
+          lp.style.left = 'auto';
+        }
+      });
       if ($('btn-settings')) $('btn-settings').addEventListener('click', function (e) { e.stopPropagation(); openSettings(); });
       if ($('btn-export-client')) $('btn-export-client').addEventListener('click', function () { emit({ type: 'export', format: 'client', state: currentState() }); });
       if ($('btn-export-pdf')) $('btn-export-pdf').addEventListener('click', function () { emit({ type: 'export', format: 'pdf', state: currentState() }); });
@@ -1213,7 +1226,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);font-famil
 #vd-wrap{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-mid);white-space:nowrap;}
 #vd-wrap select{font-size:11px;font-family:inherit;border:1px solid var(--border-dk);border-radius:4px;padding:2px 6px;background:var(--white);color:var(--text);cursor:pointer;}
 #legend-btn{position:relative;cursor:pointer;}
-#legend-panel{display:none;position:absolute;top:calc(100% + 8px);right:0;background:var(--white);border:1px solid var(--border);border-radius:6px;padding:12px 14px;box-shadow:0 4px 16px rgba(0,0,0,.12);width:250px;font-size:11px;color:var(--text-mid);line-height:1.7;z-index:200;}
+/* Fixed, not absolute: the toolbar has overflow-x:auto (so it can scroll when
+   the buttons overflow a narrow window), which forces overflow-y to compute to
+   auto too — an absolute dropdown hanging below the 41px toolbar gets clipped
+   away, revealing the canvas behind it (issue #9). A fixed panel escapes the
+   toolbar's clip; wireToolbar() anchors top/right under the button on open. */
+#legend-panel{display:none;position:fixed;top:49px;right:14px;background:var(--white);border:1px solid var(--border);border-radius:6px;padding:12px 14px;box-shadow:0 4px 16px rgba(0,0,0,.12);width:250px;font-size:11px;color:var(--text-mid);line-height:1.7;z-index:400;}
 #legend-btn.open #legend-panel{display:block;}
 .legend-row{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
 .legend-note{line-height:1.7;}
