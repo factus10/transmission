@@ -1339,8 +1339,18 @@ Your token is stored **encrypted using the OS keychain**, deliberately *not* in 
 
 In the Visual Sitemap toolbar, click **Export to Miro** (it sits alongside Export HTML and Export PDF). A dialog asks:
 
-- **Where it goes** — **Create a new board** (pre-named from your client and project) or **Add to an existing board**, chosen from the boards your connection can see. New is usually right; appending 400 shapes to a board someone else is working in rarely is.
-- **What to do about collapsed sections** — if any sections are collapsed, the dialog says how many pages are hidden and by how many collapsed sections, with **Include them (export the whole tree)** ticked by default. Leave it ticked and everything exports. Untick it and you get a second choice: what the collapsed block should be labelled with — **the hidden page count**, or **just a +**.
+- **Where it goes** — three routes, because a work account can have thousands of boards:
+  - **Create a new board** (pre-named from your client and project). Usually right — appending 400 shapes to a board someone else is working in rarely is. This is what most exports should use.
+  - **Use an existing board** — **search by name** (the search runs on Miro's side, so it reaches every board you can see, not just a recent handful) or **paste a board link or ID** straight from your browser to land on one exact board. Either way the board's name is shown so you can confirm before exporting.
+  - **Export again to *&lt;the last board&gt;*** — appears once you've exported this project to a board before, for a one-click repeat. It's remembered by the board's Miro **ID**, not its name, so it still finds the board even if you created it fresh (Miro names new boards "Untitled") and renamed it afterwards — the dialog shows its current name.
+- **What to do about collapsed sections** — if any sections are collapsed, the dialog says how many pages are hidden and by how many collapsed sections, with **Include them (export the whole tree)** **off by default** — collapsed sections export as a stacked block unless you tick it (opt-in). When it's off, a second choice sets what the stacked block is labelled with — **the hidden page count**, or **just a +**. Your choice is remembered per project.
+- **Appearance** — four controls, all remembered per project:
+  - **Connector style** — Right-angle (the default and a match for the app's own sitemap) · Curved · Straight.
+  - **Card corners** — Rounded · Sharp/square. Also follows **Sitemap Settings → Layout → Corner radius** if you'd rather set it there — a radius of `0` gives square boxes. (Miro has no numeric corner radius, only "rounded shape" vs "square shape," so a rounded box shows Miro's own "Rounded corners: 0" field unused — that's expected, not a lost setting.)
+  - **Border thickness** — Thin · Medium · Heavy, for how heavy the card outlines are.
+  - **Include a color key** — adds a legend to the board (one labelled chip per color rule) so a client can read what each color means. On by default.
+
+> **A common workflow:** create a *new* board (nobody minds a fresh board getting 400 shapes), review it, then in Miro copy the pieces you want into the production board — or just promote the new board to production. Because Transmission remembers the board by ID, re-running the export after you've tidied and renamed it goes back to the same place.
 
 Then it runs, with a progress bar (creating the frame, then the pages, then the connections) and a **Cancel** button. When it finishes, the board opens in your browser.
 

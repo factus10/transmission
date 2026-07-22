@@ -131,6 +131,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   miroClearToken:      ()        => ipcRenderer.invoke('miro-clear-token'),
   miroTestConnection:  ()        => ipcRenderer.invoke('miro-test-connection'),
   miroTokenInfo:       ()        => ipcRenderer.invoke('miro-token-info'),
+  miroSearchBoards:    (payload) => ipcRenderer.invoke('miro-search-boards', payload),
+  miroGetBoard:        (payload) => ipcRenderer.invoke('miro-get-board', payload),
   miroCreateBoard:     (payload) => ipcRenderer.invoke('miro-create-board', payload),
   miroCreateFrame:     (payload) => ipcRenderer.invoke('miro-create-frame', payload),
   miroCreateItemsBulk: (payload) => ipcRenderer.invoke('miro-create-items-bulk', payload),
