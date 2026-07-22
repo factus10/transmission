@@ -6393,7 +6393,6 @@ function setupMiroSettings() {
   const probeBtn = $('btn-miro-probe');
   const helpLink = $('miro-help-link');
   const boardRow = $('miro-board-row');
-  const boardSel = $('miro-board-select');
   const statusEl = $('miro-status-text');
   if (!saveBtn || !tokenIn) return;
 
@@ -6464,12 +6463,9 @@ function setupMiroSettings() {
         ? `Connected — ${r.total} board${r.total === 1 ? '' : 's'} available.`
         : 'Connected, but this token can see no boards.';
     }
-    if (boardSel && r.boards.length) {
-      boardSel.innerHTML = r.boards
-        .map(b => `<option value="${escapeHtml(b.id)}">${escapeHtml(b.name)}</option>`)
-        .join('');
-      boardRow.classList.remove('hidden');
-    }
+    // Reveal the write-access probe once the read test passes; the probe opens
+    // its own search/paste board picker rather than a capped dropdown.
+    boardRow?.classList.remove('hidden');
     showToast('Miro connection OK', 'success');
   }
 
@@ -6492,11 +6488,11 @@ function setupMiroSettings() {
   // boards:write are distinct scopes — a token can pass the read test and still
   // fail every create call.
   probeBtn?.addEventListener('click', async () => {
-    const boardId = boardSel?.value;
-    if (!boardId) { showToast('Pick a board first', 'error'); return; }
+    const picked = await openMiroBoardSelectDialog({ title: 'Verify write access', confirmLabel: 'Test this board' });
+    if (!picked) return;
     probeBtn.disabled = true;
     if (statusEl) statusEl.textContent = 'Creating a test shape…';
-    const r = await window.electronAPI.miroProbeWrite({ boardId });
+    const r = await window.electronAPI.miroProbeWrite({ boardId: picked.id });
     probeBtn.disabled = false;
 
     if (!r.success) {
@@ -11494,7 +11490,6 @@ let _navEditorOpen = false;
 
 function setupNavTree() {
   // Nav editor buttons
-  $('btn-nav-editor-close').addEventListener('click', () => closeNavEditor());
   $('btn-nav-editor-add-root').addEventListener('click', addNavRootNode);
   $('btn-nav-remediate').addEventListener('click', remediateNavAssignments);
   $('btn-nav-consolidate-candidates').addEventListener('click', openConsolidationCandidates);
@@ -11854,7 +11849,6 @@ function setupMenusView() {
   const smap = $('btn-menu-sitemap'); if (smap) smap.addEventListener('click', generateMenuSitemap);
   const rep = $('btn-menu-report'); if (rep) rep.addEventListener('click', reportMenus);
   const chk = $('btn-menu-check'); if (chk) chk.addEventListener('click', openMenuOrphansDialog);
-  const close = $('btn-menus-view-close'); if (close) close.addEventListener('click', () => returnToAuditView());
   // Wired once here (not per-row-render) — closes any open "add child" popover on an outside click.
   document.addEventListener('click', () => {
     document.querySelectorAll('.mi-add-child.open').forEach(el => el.classList.remove('open'));
@@ -13093,6 +13087,9 @@ function buildMiroSitemapPlan(baseData, st, opts = {}) {
   });
   const { positions, canvasW, canvasH } = layout.compute();
   const k = layout.consts();
+  // An explicit border thickness chosen in the export dialog overrides the
+  // per-node derived width (the app's 1.5px band / 3px outline). 0 = derive.
+  const chosenBorderWidth = Number(opts.borderWidth) > 0 ? Math.round(Number(opts.borderWidth)) : 0;
 
   const shapes = [];
   const edges = [];
@@ -13117,12 +13114,20 @@ function buildMiroSitemapPlan(baseData, st, opts = {}) {
     // border there too rather than losing the signal entirely.
     const border = (style.band && style.band !== 'none') ? style.band : style.border;
     const fill = style.fill || '#ffffff';
-    const borderWidth = parseFloat(style.borderWidth) || 2;
+    // Round to an integer ≥2. The app's default band style is 1.5px, which Miro's
+    // integer-stepped thickness slider can't place a handle on — it renders
+    // hair-thin with a phantom slider position that only "takes" once clicked.
+    // A dialog-chosen thickness (chosenBorderWidth) wins when set.
+    const borderWidth = chosenBorderWidth || Math.max(2, Math.round(parseFloat(style.borderWidth) || 2));
     const borderStyle = style.borderStyle || 'solid';
-    // Miro has no corner-radius property — only a square vs rounded shape type.
-    // A continuous radius in the app therefore collapses to a binary here.
-    const shape = (Number(settings.cardRadius == null ? 5 : settings.cardRadius) > 0)
-      ? 'round_rectangle' : 'rectangle';
+    // Corners: an explicit choice from the export dialog wins; otherwise fall
+    // back to the app's Layout corner radius. Miro has no numeric radius for
+    // shapes — only the shape TYPE rectangle vs round_rectangle — so it's binary
+    // either way (round_rectangle's own rounding ignores Miro's unused numeric
+    // "Rounded corners" field, which is why that field reads 0 on a rounded box).
+    const shape = opts.cornerStyle === 'sharp' ? 'rectangle'
+      : opts.cornerStyle === 'rounded' ? 'round_rectangle'
+      : ((Number(settings.cardRadius == null ? 5 : settings.cardRadius) > 0) ? 'round_rectangle' : 'rectangle');
 
     const kids = node.children || [];
     const collapsedWithKids = kids.length && collapsed.has(node.id);
@@ -13139,40 +13144,244 @@ function buildMiroSitemapPlan(baseData, st, opts = {}) {
       }));
     }
 
+    // Mirror Miro's own mind-map convention of marking how much is hidden.
+    // 'plus' keeps a client-facing board uncluttered; 'count' is better for
+    // review, where knowing the size of what's folded away matters. On a static
+    // board a bare '+' is cryptic (nothing to expand), so 'plus' carries the
+    // count too — '+3' — staying compact while still saying how much is folded.
+    const subVal = hidden
+      ? (opts.hiddenLabel === 'plus' ? '+' + hidden : hidden + (hidden === 1 ? ' page hidden' : ' pages hidden'))
+      : (node.sub || '');
     shapes.push({
       nodeId: node.id,
       text: node.label || '',
-      // Mirror Miro's own mind-map convention of marking how much is hidden.
-      // 'plus' keeps a client-facing board uncluttered; 'count' is better for
-      // review, where knowing the size of what's folded away matters.
-      sub: hidden
-        ? (opts.hiddenLabel === 'plus' ? '+' : hidden + (hidden === 1 ? ' page hidden' : ' pages hidden'))
-        : (node.sub || ''),
+      sub: subVal,
       x: cx, y: cy, w: k.CW, h: k.CH,
       fill, border, borderWidth, borderStyle, shape,
+      // Full labels are kept (never truncated) and Miro fits the text into the
+      // fixed card itself — the cards are tall enough for the ~3 lines a long
+      // name needs at 12px. We deliberately do NOT pre-shrink the font: Miro
+      // rejects a shape whose fontSize is below its (undocumented) minimum with
+      // a generic "invalid parameters", which is what broke a 9–11px export.
       fontSize: 12,
     });
-    if (entry.parent) edges.push([entry.parent.id, node.id]);
+    // Carry each edge's orientation so the exporter can route vertical-column
+    // connectors down the side gutter instead of through the stacked cards.
+    // shouldBeVert(parent, parentDepth) is the same predicate the layout used,
+    // so this exactly matches how the tree was drawn. Parent depth = child - 1.
+    if (entry.parent) {
+      edges.push({
+        from: entry.parent.id,
+        to: node.id,
+        vertical: !!layout.shouldBeVert(entry.parent, entry.depth - 1),
+      });
+    }
   });
 
+  // Optional color key. One chip per color rule (white fill, border = the rule's
+  // color, text = the rule's label), stacked BELOW the tree so no tree
+  // coordinate has to move. Skipped when there are no colored, labeled rules.
+  let frameW = canvasW, frameH = canvasH;
+  if (opts.includeLegend !== false) {
+    const ruleColorOf = (r) => {
+      if (r && r.color) return r.color;                    // legacy {condition,color}
+      const s = (r && r.style) || {};
+      if (s.band && s.band !== 'none') return s.band;       // band color is the export's border
+      return s.border || s.fill || '';
+    };
+    const entries = (((settings && settings.colorRules) || [])
+      .map(r => ({ label: (r && r.label) || '', color: ruleColorOf(r) }))
+      .filter(e => e.color && e.label));
+    if (entries.length) {
+      const LGX = 24, LGW = 220, LGH = 26, LGGAP = 6, top = canvasH + 36;
+      const lbw = chosenBorderWidth || 2;
+      const legendShape = opts.cornerStyle === 'sharp' ? 'rectangle' : 'round_rectangle';
+      shapes.push({
+        nodeId: null, text: 'Color key', sub: '',
+        x: LGX + LGW / 2, y: top + LGH / 2, w: LGW, h: LGH,
+        fill: '#ffffff', border: '#8a90a0', borderWidth: 1, borderStyle: 'solid', shape: legendShape, fontSize: 12,
+      });
+      entries.forEach((e, i) => shapes.push({
+        nodeId: null, text: e.label, sub: '',
+        x: LGX + LGW / 2, y: top + (i + 1) * (LGH + LGGAP) + LGH / 2, w: LGW, h: LGH,
+        fill: '#ffffff', border: e.color, borderWidth: lbw, borderStyle: 'solid', shape: legendShape, fontSize: 12,
+      }));
+      frameH = top + (entries.length + 1) * (LGH + LGGAP) + 20;
+      frameW = Math.max(canvasW, LGX + LGW + 24);
+    }
+  }
+
+  // Connector style the user picked in the export dialog → Miro's connector
+  // shape enum. Right-angle (elbowed) matches the app's own sitemap.
+  const connectorShape = { 'right-angle': 'elbowed', curved: 'curved', straight: 'straight' }[opts.connectorStyle] || 'elbowed';
   const ps = state.projectSettings || {};
   const base = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
   return {
-    frame: { title: base ? base + ' — Sitemap' : 'Sitemap', width: canvasW, height: canvasH },
+    frame: { title: base ? base + ' — Sitemap' : 'Sitemap', width: frameW, height: frameH },
     shapes, edges,
     connectorColor: '#9aa0ab',
+    connectorShape,
   };
 }
 
-// Board chooser. Offers the token's existing boards plus "create a new one",
-// which is usually what you want — appending 400 shapes to a board someone is
-// already working on is rarely the intent.
-async function pickMiroBoard(hidden) {
-  const conn = await window.electronAPI.miroTestConnection();
-  if (!conn.success) { showToast('Miro: ' + conn.error, 'error'); return null; }
+// Short relative age ("3d ago") for a board's modifiedAt, so the search list
+// reads like Miro's own recency ordering rather than raw ISO timestamps.
+function miroRelTime(iso) {
+  const t = Date.parse(iso || '');
+  if (!t) return '';
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60); if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60); if (h < 24) return h + 'h ago';
+  const d = Math.floor(h / 24); if (d < 30) return d + 'd ago';
+  const mo = Math.floor(d / 30); if (mo < 12) return mo + 'mo ago';
+  return Math.floor(mo / 12) + 'y ago';
+}
 
-  const opts = (conn.boards || []).map(b =>
-    `<option value="${escapeHtml(b.id)}">${escapeHtml(b.name)}</option>`).join('');
+// Pull a board id out of a pasted Miro board URL, or accept a bare id. Board
+// URLs look like https://miro.com/app/board/uXjVK…=/?share_link_id=… — the id
+// is the segment after /board/ and can contain '=' '_' '-'.
+function extractMiroBoardId(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  const m = s.match(/\/board\/([^/?#]+)/);
+  if (m) { try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; } }
+  // A bare id: no whitespace, no slashes.
+  if (!/\s/.test(s) && !s.includes('/')) return s;
+  return '';
+}
+
+// Wires a live, server-side Miro board search into `container`: a text input, a
+// scrollable results list, and a "load more" pager. This is what makes a token
+// with thousands of boards usable — the query runs on Miro's side, so an empty
+// query shows the most-recently-modified boards and typing narrows across the
+// whole account, not just a first page of 50. Calls onSelect(board) on click.
+function attachMiroBoardSearch(container, onSelect) {
+  if (!container) return;
+  container.innerHTML =
+    '<input type="text" class="setting-input miro-bs-input" placeholder="Search boards by name…">' +
+    '<div class="miro-bs-results"></div>' +
+    '<div class="miro-bs-foot sp-help"></div>';
+  const input = container.querySelector('.miro-bs-input');
+  const list  = container.querySelector('.miro-bs-results');
+  const foot  = container.querySelector('.miro-bs-foot');
+
+  let seq = 0;            // guards against out-of-order responses
+  let curQuery = '';
+  let loaded = [];        // accumulated boards for the current query
+  let total = 0;
+  let nextOffset = 0;
+  let loading = false;
+  let selectedId = null;
+  let timer = null;
+
+  function render() {
+    if (loading && !loaded.length) { list.innerHTML = '<div class="miro-bs-empty">Searching…</div>'; foot.textContent = ''; return; }
+    if (!loaded.length) { list.innerHTML = '<div class="miro-bs-empty">No boards match.</div>'; foot.textContent = ''; return; }
+    list.innerHTML = loaded.map(b => {
+      const when = miroRelTime(b.modifiedAt);
+      return '<button type="button" class="miro-bs-row' + (b.id === selectedId ? ' selected' : '') + '" data-id="' + escapeHtml(b.id) + '">' +
+        '<span class="miro-bs-name">' + escapeHtml(b.name) + '</span>' +
+        (when ? '<span class="miro-bs-when">' + escapeHtml(when) + '</span>' : '') +
+      '</button>';
+    }).join('') + (loaded.length < total ? '<button type="button" class="miro-bs-more">Load more…</button>' : '');
+    foot.textContent = total > loaded.length
+      ? `Showing ${loaded.length} of ${total} — keep typing to narrow.`
+      : `${loaded.length} board${loaded.length === 1 ? '' : 's'}.`;
+  }
+
+  async function run(query, offset) {
+    const mySeq = ++seq;
+    loading = true;
+    if (!offset) { loaded = []; render(); }
+    const r = await window.electronAPI.miroSearchBoards({ query, offset, limit: 50, sort: 'last_modified' });
+    if (mySeq !== seq) return;                       // a newer keystroke superseded us
+    loading = false;
+    if (!r || !r.success) { list.innerHTML = '<div class="miro-bs-empty">' + escapeHtml((r && r.error) || 'Search failed') + '</div>'; foot.textContent = ''; return; }
+    loaded = offset ? loaded.concat(r.boards) : r.boards;
+    total = r.total;
+    nextOffset = (r.offset || 0) + (r.boards || []).length;
+    render();
+  }
+
+  input.addEventListener('input', () => {
+    curQuery = input.value.trim();
+    clearTimeout(timer);
+    timer = setTimeout(() => run(curQuery, 0), 300);
+  });
+  list.addEventListener('click', (e) => {
+    if (e.target.closest('.miro-bs-more')) { run(curQuery, nextOffset); return; }
+    const row = e.target.closest('.miro-bs-row');
+    if (!row) return;
+    selectedId = row.getAttribute('data-id');
+    const board = loaded.find(b => b.id === selectedId);
+    render();
+    if (board && onSelect) onSelect(board);
+  });
+
+  run('', 0);   // initial: most-recently-modified boards
+  return { focus: () => input.focus() };
+}
+
+// A search-or-paste board picker with no create/export machinery — used by the
+// settings write-access probe. Resolves to a board {id,name,viewLink} or null.
+async function openMiroBoardSelectDialog({ title = 'Select a Miro board', confirmLabel = 'Select' } = {}) {
+  const status = await window.electronAPI.miroStatus();
+  if (!status.hasToken) { showToast('Connect Miro first (App Settings → Miro)', 'error'); return null; }
+  let chosen = null;
+  const body =
+    '<div id="_mbp-search"></div>' +
+    '<div class="miro-bs-or sp-help">or paste a board link / ID</div>' +
+    '<div class="setting-row-inline">' +
+      '<input type="text" id="_mbp-paste" class="setting-input" style="flex:1" placeholder="https://miro.com/app/board/…">' +
+      '<button type="button" id="_mbp-go" class="btn btn-sm btn-ghost">Resolve</button>' +
+    '</div>' +
+    '<div id="_mbp-selected" class="miro-bs-selected"></div>';
+  return new Promise(resolve => {
+    let settled = false;
+    openModal({
+      title, width: 460, body, escapeValue: null,
+      buttons: [
+        { label: 'Cancel', variant: 'ghost' },
+        { label: confirmLabel, variant: 'primary', primary: true, closeOnClick: false, onClick: (api) => {
+          if (!chosen) { showToast('Pick a board from the list, or paste a link', 'error'); return; }
+          settled = true; api.close(); resolve(chosen);
+        } },
+      ],
+      onClose: () => { if (!settled) resolve(null); },
+    });
+    const setChosen = (b) => {
+      chosen = b;
+      const sel = $('_mbp-selected');
+      if (sel) sel.innerHTML = '✓ Selected: <b>' + escapeHtml(b.name) + '</b>';
+    };
+    attachMiroBoardSearch($('_mbp-search'), setChosen);
+    const go = $('_mbp-go'), paste = $('_mbp-paste');
+    const resolvePaste = async () => {
+      const id = extractMiroBoardId(paste.value);
+      if (!id) { showToast('Paste a Miro board link or ID', 'error'); return; }
+      go.disabled = true;
+      const r = await window.electronAPI.miroGetBoard({ boardId: id });
+      go.disabled = false;
+      if (!r.success) { showToast('Board not found: ' + r.error, 'error'); return; }
+      setChosen(r.board);
+    };
+    go?.addEventListener('click', resolvePaste);
+    paste?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); resolvePaste(); } });
+  });
+}
+
+// Board chooser for export. Real tokens see thousands of boards, so a single
+// dropdown is hopeless — this offers three routes: reuse the last board (keyed
+// by id, so it survives a rename in Miro), create a fresh one (the default —
+// appending 400 shapes to a board someone is already working on is rarely the
+// intent), or pick an existing board by live search OR by pasting its link.
+async function pickMiroBoard(hidden, settings) {
+  // Remembered target from a previous export on this project. Shown from the
+  // stored name immediately, then its CURRENT name is re-read from Miro below.
+  const remembered = ((state.projectSettings || {}).miroExport || {}).lastBoard || null;
+  let chosenBoard = null;   // set by a search-result click or a resolved paste
+
   // Exporting "as shown" drops collapsed subtrees entirely, which is easy to do
   // by accident after tidying the view. Say so up front and default to the
   // complete tree; unchecking is the deliberate "just this section" case.
@@ -13181,26 +13390,66 @@ async function pickMiroBoard(hidden) {
     `<b>${hidden.hiddenNodes} page${hidden.hiddenNodes === 1 ? '' : 's'}</b> ` +
     `${hidden.hiddenNodes === 1 ? 'is' : 'are'} hidden by ` +
     `${hidden.collapsedNodes} collapsed section${hidden.collapsedNodes === 1 ? '' : 's'}.</div>` +
-    '<label class="setting-row" style="gap:8px"><input type="checkbox" id="_mb-expand" checked>' +
+    '<label class="setting-row" style="gap:8px"><input type="checkbox" id="_mb-expand">' +
     '<span>Include them (export the whole tree)</span></label>' +
     '<p class="sp-help" style="margin-left:24px">Unchecked, collapsed sections export as a stacked block.</p>' +
-    '<label class="sp-field" style="margin-left:24px"><span>Stacked block shows</span>' +
-    '<select id="_mb-hidden-label">' +
+    '<div class="miro-appearance-field" style="margin-left:24px"><label for="_mb-hidden-label">Stacked block shows</label>' +
+    '<select id="_mb-hidden-label" class="setting-input">' +
     '<option value="count">The hidden page count</option>' +
     '<option value="plus">Just a + (more pages)</option>' +
-    '</select></label>'
+    '</select></div>'
   ) : '';
+
+  const lastBlock = (remembered && remembered.id) ? (
+    '<label class="setting-row" style="gap:8px"><input type="radio" name="_mb" value="last" checked>' +
+    '<span>Export again to <b id="_mb-last-name">' + escapeHtml(remembered.name || 'the last board') + '</b></span></label>'
+  ) : '';
+
+  // Appearance controls. Right-angle connectors + rounded corners default to the
+  // app's own look; the choices persist per project in miroExport.
+  const appearanceBlock =
+    '<div class="modal-message" style="margin-top:12px;font-weight:600">Appearance</div>' +
+    '<div class="miro-appearance">' +
+      '<label class="mae-label" for="_mb-conn">Connector style</label>' +
+      '<select id="_mb-conn" class="setting-input">' +
+        '<option value="right-angle">Right-angle</option>' +
+        '<option value="curved">Curved</option>' +
+        '<option value="straight">Straight</option>' +
+      '</select>' +
+      '<label class="mae-label" for="_mb-corner">Card corners</label>' +
+      '<select id="_mb-corner" class="setting-input">' +
+        '<option value="rounded">Rounded</option>' +
+        '<option value="sharp">Sharp (square)</option>' +
+      '</select>' +
+      '<label class="mae-label" for="_mb-bw">Border thickness</label>' +
+      '<select id="_mb-bw" class="setting-input">' +
+        '<option value="2">Thin</option>' +
+        '<option value="3">Medium</option>' +
+        '<option value="5">Heavy</option>' +
+      '</select>' +
+    '</div>' +
+    '<label class="setting-row" style="gap:8px;margin-top:10px"><input type="checkbox" id="_mb-legend" checked>' +
+    '<span>Include a color key (one chip per color rule)</span></label>';
+
   const body =
     '<div class="modal-message">Where should the sitemap go?</div>' +
-    '<label class="setting-row" style="gap:8px"><input type="radio" name="_mb" value="new" checked>' +
+    lastBlock +
+    '<label class="setting-row" style="gap:8px"><input type="radio" name="_mb" value="new"' + (remembered && remembered.id ? '' : ' checked') + '>' +
     '<span>Create a new board</span></label>' +
     '<input type="text" id="_mb-name" class="setting-input" style="margin:4px 0 10px 24px;width:calc(100% - 24px)">' +
-    (opts
-      ? '<label class="setting-row" style="gap:8px"><input type="radio" name="_mb" value="existing">' +
-        '<span>Add to an existing board</span></label>' +
-        '<select id="_mb-board" class="setting-input" style="margin-left:24px;width:calc(100% - 24px)">' + opts + '</select>'
-      : '<p class="sp-help" style="margin-left:24px">This token can see no existing boards.</p>')
-    + hiddenBlock;
+    '<label class="setting-row" style="gap:8px"><input type="radio" name="_mb" value="existing">' +
+    '<span>Use an existing board</span></label>' +
+    '<div id="_mb-existing" style="margin-left:24px">' +
+      '<div id="_mb-search"></div>' +
+      '<div class="miro-bs-or sp-help">or paste a board link / ID</div>' +
+      '<div class="setting-row-inline">' +
+        '<input type="text" id="_mb-paste" class="setting-input" style="flex:1" placeholder="https://miro.com/app/board/…">' +
+        '<button type="button" id="_mb-paste-go" class="btn btn-sm btn-ghost">Resolve</button>' +
+      '</div>' +
+      '<div id="_mb-selected" class="miro-bs-selected"></div>' +
+    '</div>' +
+    hiddenBlock +
+    appearanceBlock;
 
   // Read the form in onClick with closeOnClick:false — the house pattern (see
   // the "Create menu" dialog). openModal removes the dialog from the DOM before
@@ -13220,9 +13469,19 @@ async function pickMiroBoard(hidden) {
             const expandEl = $('_mb-expand');
             const expandAll = expandEl ? expandEl.checked : false;
             const hiddenLabel = (($('_mb-hidden-label') || {}).value) || 'count';
-            const val = mode === 'existing'
-              ? { existing: ($('_mb-board') || {}).value, expandAll, hiddenLabel }
-              : { newName: (($('_mb-name') || {}).value || '').trim(), expandAll, hiddenLabel };
+            const connectorStyle = (($('_mb-conn') || {}).value) || 'right-angle';
+            const cornerStyle = (($('_mb-corner') || {}).value) || 'rounded';
+            const borderWidth = Number(($('_mb-bw') || {}).value) || 3;
+            const includeLegend = $('_mb-legend') ? $('_mb-legend').checked : true;
+            if (mode === 'existing' && !chosenBoard) {
+              showToast('Pick a board from the list, or paste a link', 'error');
+              return;   // keep the dialog open
+            }
+            const look = { expandAll, hiddenLabel, connectorStyle, cornerStyle, borderWidth, includeLegend };
+            let val;
+            if (mode === 'last') val = Object.assign({ board: remembered }, look);
+            else if (mode === 'existing') val = Object.assign({ board: chosenBoard }, look);
+            else val = Object.assign({ newName: (($('_mb-name') || {}).value || '').trim() }, look);
             settled = true;
             api.close();
             resolve(val);
@@ -13231,29 +13490,90 @@ async function pickMiroBoard(hidden) {
       ],
       onClose: () => { if (!settled) resolve(null); },
     });
+
     const nameEl = $('_mb-name');
     const ps = state.projectSettings || {};
     const base = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
     if (nameEl) nameEl.value = base ? base + ' — Sitemap' : 'Sitemap';
 
+    // Existing-board picker: a click on a search result or a resolved paste
+    // both feed one selection, and either action selects the "existing" radio.
+    const setChosen = (b) => {
+      chosenBoard = b;
+      const sel = $('_mb-selected');
+      if (sel) sel.innerHTML = '✓ Selected: <b>' + escapeHtml(b.name) + '</b>';
+      const ex = document.querySelector('input[name="_mb"][value="existing"]');
+      if (ex) ex.checked = true;
+    };
+    attachMiroBoardSearch($('_mb-search'), setChosen);
+    const pasteGo = $('_mb-paste-go'), pasteIn = $('_mb-paste');
+    const resolvePaste = async () => {
+      const id = extractMiroBoardId(pasteIn.value);
+      if (!id) { showToast('Paste a Miro board link or ID', 'error'); return; }
+      pasteGo.disabled = true;
+      const r = await window.electronAPI.miroGetBoard({ boardId: id });
+      pasteGo.disabled = false;
+      if (!r.success) { showToast('Board not found: ' + r.error, 'error'); return; }
+      setChosen(r.board);
+    };
+    pasteGo?.addEventListener('click', resolvePaste);
+    pasteIn?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); resolvePaste(); } });
+
+    // Re-read the remembered board's current name (proves rename-tracking; drops
+    // the option if the board was deleted since we last exported to it).
+    if (remembered && remembered.id) {
+      window.electronAPI.miroGetBoard({ boardId: remembered.id }).then(r => {
+        if (!r || !r.success) {
+          const lastRadio = document.querySelector('input[name="_mb"][value="last"]');
+          const row = lastRadio ? lastRadio.closest('label') : null;
+          const wasChecked = lastRadio && lastRadio.checked;
+          if (row) row.remove();
+          if (wasChecked) { const nr = document.querySelector('input[name="_mb"][value="new"]'); if (nr) nr.checked = true; }
+          return;
+        }
+        remembered.name = r.board.name;
+        remembered.viewLink = r.board.viewLink || remembered.viewLink;
+        const nm = $('_mb-last-name');
+        if (nm) nm.textContent = r.board.name;
+      }).catch(() => {});
+    }
+
     const labelSel = $('_mb-hidden-label');
     const expandBox = $('_mb-expand');
+    // Including hidden nodes is opt-in and persisted — restore the saved choice
+    // BEFORE the sync so the hidden-label select's enabled state matches.
+    if (expandBox) expandBox.checked = !!(ps.miroExport && ps.miroExport.expandAll);
     if (labelSel) {
       labelSel.value = (ps.miroExport && ps.miroExport.hiddenLabel) || 'count';
       const syncLabelState = () => { labelSel.disabled = !!(expandBox && expandBox.checked); };
       if (expandBox) expandBox.addEventListener('change', syncLabelState);
       syncLabelState();
     }
+
+    // Appearance defaults: last-used choices, else right-angle + corners derived
+    // from the app's Layout radius (so the dialog opens on the current look).
+    const me = ps.miroExport || {};
+    const connSel = $('_mb-conn'), cornerSel = $('_mb-corner');
+    if (connSel) connSel.value = me.connectorStyle || 'right-angle';
+    if (cornerSel) {
+      const radiusRounded = Number((settings || {}).cardRadius == null ? 5 : settings.cardRadius) > 0;
+      cornerSel.value = me.cornerStyle || (radiusRounded ? 'rounded' : 'sharp');
+    }
+    const bwSel = $('_mb-bw'), legendChk = $('_mb-legend');
+    if (bwSel) bwSel.value = String(me.borderWidth || 3);
+    if (legendChk && me.includeLegend === false) legendChk.checked = false;
   });
   if (!choice) return null;
 
-  if (choice.existing) return { boardId: choice.existing, expandAll: choice.expandAll, hiddenLabel: choice.hiddenLabel };
+  if (choice.board && choice.board.id) {
+    return { boardId: choice.board.id, board: choice.board, expandAll: choice.expandAll, hiddenLabel: choice.hiddenLabel, connectorStyle: choice.connectorStyle, cornerStyle: choice.cornerStyle, borderWidth: choice.borderWidth, includeLegend: choice.includeLegend };
+  }
   const r = await window.electronAPI.miroCreateBoard({
     name: choice.newName || 'Sitemap',
     description: 'Generated by Transmission.',
   });
   if (!r.success) { showToast('Could not create board: ' + r.error, 'error'); return null; }
-  return { boardId: r.board.id, expandAll: choice.expandAll, hiddenLabel: choice.hiddenLabel };
+  return { boardId: r.board.id, board: r.board, expandAll: choice.expandAll, hiddenLabel: choice.hiddenLabel, connectorStyle: choice.connectorStyle, cornerStyle: choice.cornerStyle, borderWidth: choice.borderWidth, includeLegend: choice.includeLegend };
 }
 
 async function sitemapExportMiro(baseData, st) {
@@ -13265,18 +13585,20 @@ async function sitemapExportMiro(baseData, st) {
   const collapsedNow = new Set((st && st.collapsed) || baseData.initialCollapsed || []);
   const hidden = countMiroHidden(baseData.roots, collapsedNow);
 
-  const picked = await pickMiroBoard(hidden);
+  const picked = await pickMiroBoard(hidden, (st && st.settings) || baseData.settings || {});
   if (!picked) return;
-  const { boardId, expandAll, hiddenLabel } = picked;
+  const { boardId, board, expandAll, hiddenLabel, connectorStyle, cornerStyle, borderWidth, includeLegend } = picked;
 
-  // Remember per project — this is a house-style choice for a client's deck,
-  // not a one-off, and it travels with the file like other sitemap settings.
-  if (hiddenLabel && (state.projectSettings.miroExport || {}).hiddenLabel !== hiddenLabel) {
-    state.projectSettings.miroExport = Object.assign({}, state.projectSettings.miroExport, { hiddenLabel });
+  // Remember per project — these are house-style choices for a client's deck,
+  // not one-offs, and they travel with the file like other sitemap settings.
+  const me = state.projectSettings.miroExport || {};
+  if (me.hiddenLabel !== hiddenLabel || me.connectorStyle !== connectorStyle || me.cornerStyle !== cornerStyle ||
+      me.borderWidth !== borderWidth || me.includeLegend !== includeLegend || me.expandAll !== expandAll) {
+    state.projectSettings.miroExport = Object.assign({}, me, { hiddenLabel, connectorStyle, cornerStyle, borderWidth, includeLegend, expandAll });
     setDirty(true);
   }
 
-  const plan = buildMiroSitemapPlan(baseData, st, { expandAll, hiddenLabel });
+  const plan = buildMiroSitemapPlan(baseData, st, { expandAll, hiddenLabel, connectorStyle, cornerStyle, borderWidth, includeLegend });
   if (!plan.shapes.length) { showToast('Nothing visible to export', 'error'); return; }
 
   // Connectors have no bulk endpoint and cost the same per item as shapes, so
@@ -13318,9 +13640,24 @@ async function sitemapExportMiro(baseData, st) {
     `Exported ${r.shapes} pages + ${r.connectors} connections to Miro` + (notes.length ? ' — ' + notes.join(', ') : ''),
     notes.length ? 'info' : 'success'
   );
-  const board = (await window.electronAPI.miroTestConnection());
-  const hit = board.success && (board.boards || []).find(b => b.id === boardId);
-  if (hit && hit.viewLink) window.electronAPI.openExternal(hit.viewLink);
+
+  // Remember this board for the project so the next export offers a one-click
+  // re-export. Keyed by id: a board created "Untitled" and renamed later still
+  // resolves, because pickMiroBoard re-reads the current name by id on open.
+  state.projectSettings.miroExport = Object.assign({}, state.projectSettings.miroExport, {
+    lastBoard: { id: boardId, name: (board && board.name) || '', viewLink: (board && board.viewLink) || '' },
+  });
+  setDirty(true);
+
+  // Open the finished board. Prefer the viewLink we already hold; fall back to a
+  // direct lookup by id (reliable even when the board is buried among thousands,
+  // which the old testConnection scan of the first 50 was not).
+  let viewLink = board && board.viewLink;
+  if (!viewLink) {
+    const g = await window.electronAPI.miroGetBoard({ boardId });
+    if (g.success) viewLink = g.board.viewLink;
+  }
+  if (viewLink) window.electronAPI.openExternal(viewLink);
 }
 
 async function sitemapExportClient(baseData, st, slug, templateModule) {
@@ -22109,7 +22446,6 @@ const TV_ROW_HEIGHT = 28;
 const TV_OVERSCAN = 15;
 
 function setupTableView() {
-  $('btn-table-view-close').addEventListener('click', closeTableView);
   $('btn-table-columns').addEventListener('click', openTableColumnConfig);
   $('btn-tv-col-close').addEventListener('click', closeTableColumnConfig);
   $('btn-tv-col-cancel').addEventListener('click', closeTableColumnConfig);
@@ -22833,7 +23169,6 @@ function resyncNavBasedRedirects() {
 }
 
 function setupRedirectEditor() {
-  $('btn-redirect-editor-close').addEventListener('click', closeRedirectEditor);
   $('redirect-status-filter').addEventListener('change', () => renderRedirectEditor());
   // Debounced: each render rebuilds a DOM row per redirect (~30ms on a crawl with
   // a couple of thousand Kill/Consolidate pages), which is several frames per

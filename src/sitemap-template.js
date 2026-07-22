@@ -1215,9 +1215,14 @@
 :root{--bg:#f0f2f5;--white:#fff;--border:#c8cdd6;--border-dk:#9aa0ab;--text:#1a1d23;--text-mid:#4a5060;--text-dim:#8890a0;--c-root:#1a3a6b;}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);font-family:"Inter","IBM Plex Sans",system-ui,sans-serif;font-size:13px;color:var(--text);}
-#toolbar{position:fixed;top:0;left:0;right:0;height:41px;z-index:100;display:flex;align-items:center;gap:9px;padding:0 14px;background:var(--white);border-bottom:1px solid var(--border);overflow-x:auto;}
-#toolbar h1{font-size:13px;font-weight:700;white-space:nowrap;}
-.spacer{flex:1;}
+body{display:flex;flex-direction:column;}
+/* Toolbar wraps to extra rows on narrow windows instead of scrolling horizontally
+   (overflow-x:auto hid the right-hand export buttons off-screen). The flex-column
+   body then keeps #viewport filling whatever height is left below the wrapped bar,
+   so no fixed toolbar height to keep in sync. */
+#toolbar{z-index:100;display:flex;flex-wrap:wrap;align-items:center;gap:9px;padding:6px 14px;background:var(--white);border-bottom:1px solid var(--border);}
+#toolbar h1{font-size:13px;font-weight:700;white-space:nowrap;margin:0 4px 0 0;}
+.spacer{display:none;}
 .tb-btn{padding:3px 10px;font-size:11px;font-family:inherit;border:1px solid var(--border-dk);border-radius:4px;background:var(--white);color:var(--text-mid);cursor:pointer;white-space:nowrap;transition:background .12s,color .12s;}
 .tb-btn:hover{background:#eef0f4;color:var(--text);}
 #zoom-label{font-size:11px;color:var(--text-dim);min-width:36px;text-align:right;}
@@ -1226,11 +1231,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);font-famil
 #vd-wrap{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-mid);white-space:nowrap;}
 #vd-wrap select{font-size:11px;font-family:inherit;border:1px solid var(--border-dk);border-radius:4px;padding:2px 6px;background:var(--white);color:var(--text);cursor:pointer;}
 #legend-btn{position:relative;cursor:pointer;}
-/* Fixed, not absolute: the toolbar has overflow-x:auto (so it can scroll when
-   the buttons overflow a narrow window), which forces overflow-y to compute to
-   auto too — an absolute dropdown hanging below the 41px toolbar gets clipped
-   away, revealing the canvas behind it (issue #9). A fixed panel escapes the
-   toolbar's clip; wireToolbar() anchors top/right under the button on open. */
+/* Fixed, not absolute, and JS-anchored on open: the toolbar now wraps to extra
+   rows on narrow windows, so its height (and the Legend button's position) is
+   variable. wireToolbar() anchors this panel's top/right under the button when
+   it opens, so it always sits below the button whatever row it wrapped to; the
+   top:49px here is only the initial resting spot. (A fixed panel also can't be
+   clipped by the toolbar — the historical issue #9.) */
 #legend-panel{display:none;position:fixed;top:49px;right:14px;background:var(--white);border:1px solid var(--border);border-radius:6px;padding:12px 14px;box-shadow:0 4px 16px rgba(0,0,0,.12);width:250px;font-size:11px;color:var(--text-mid);line-height:1.7;z-index:400;}
 #legend-btn.open #legend-panel{display:block;}
 .legend-row{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
@@ -1240,7 +1246,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);font-famil
 .l-card.stacked::before,.l-card.stacked::after{content:'';position:absolute;inset:0;border-radius:3px;background:var(--white);border:1.5px solid var(--border);}
 .l-card.stacked::before{transform:translate(3px,3px);z-index:-1;}
 .l-card.stacked::after{transform:translate(6px,6px);z-index:-2;}
-#viewport{position:fixed;top:41px;left:0;right:0;bottom:0;overflow:hidden;cursor:grab;user-select:none;}
+#viewport{flex:1;min-height:0;overflow:hidden;cursor:grab;user-select:none;}
 #viewport.panning{cursor:grabbing;}
 #canvas{position:absolute;top:0;left:0;transform-origin:0 0;}
 #connector-svg{position:absolute;top:0;left:0;pointer-events:none;overflow:visible;}
@@ -1329,9 +1335,11 @@ body.hide-numbers .node-num{display:none;}
 .sp-ovlabel{flex:1;}
 @media print{
   #toolbar,#hint,.ctx-menu,.sp-overlay{display:none!important;}
-  #viewport{position:static;overflow:visible;top:0;}
+  /* Revert the screen-mode flex-column layout so print keeps its original static
+     flow (the PDF export renders this mode). */
+  #viewport{position:static;flex:none;overflow:visible;top:0;}
   #canvas{transform:none!important;position:static;}
-  body{background:#fff;overflow:visible;height:auto;}
+  body{background:#fff;overflow:visible;height:auto;display:block;}
 }
 `;
 
