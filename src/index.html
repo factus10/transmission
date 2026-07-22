@@ -402,7 +402,6 @@
           <button id="btn-redirect-resync-nav" class="btn btn-sm btn-ghost" title="For every Kill/Consolidate row placed on the sitemap, recompute its redirect destination from the current sitemap path. Rows not on the sitemap are left untouched.">Re-derive from sitemap</button>
           <span style="flex:1"></span>
           <span id="redirect-editor-stats"></span>
-          <button id="btn-redirect-editor-close" class="btn btn-sm btn-ghost">Back to Audit</button>
         </div>
         <div id="redirect-find-replace-bar" class="hidden">
           <label style="font-size:12px;color:var(--text-muted);flex-shrink:0;">Find:</label>
@@ -487,8 +486,6 @@
             <div class="nav-tb-sep"></div>
             <button id="btn-nav-sitemap" class="btn btn-sm btn-ghost" title="Generate the Visual Sitemap diagram from visible nodes">Visual Sitemap</button>
             <button id="btn-nav-treemap" class="btn btn-sm btn-ghost" title="Content inventory as a treemap, sized by page count">Treemap</button>
-            <span style="flex:1"></span>
-            <button id="btn-nav-editor-close" class="btn btn-sm btn-ghost">Back to Audit</button>
           </div>
           <div class="nav-tb-row2">
             <span id="nav-editor-stats"></span>
@@ -525,7 +522,6 @@
           <span style="flex:1"></span>
           <span id="table-view-stats"></span>
           <button id="btn-table-columns" class="btn btn-sm btn-ghost">Columns…</button>
-          <button id="btn-table-view-close" class="btn btn-sm btn-ghost">Back to Audit</button>
         </div>
         <div id="table-view-divergence" class="tv-divergence hidden"></div>
         <div id="table-view-header-wrap">
@@ -548,7 +544,6 @@
           <button id="btn-menu-check" class="btn btn-sm btn-ghost hidden" title="Menu items pointing at deleted pages">⚠ broken refs</button>
           <span style="flex:1"></span>
           <span id="menus-view-stats"></span>
-          <button id="btn-menus-view-close" class="btn btn-sm btn-ghost">Back to Audit</button>
         </div>
         <div id="menus-view-body">
           <div id="menus-list"></div>
@@ -742,8 +737,8 @@
             <button id="btn-miro-clear" class="btn btn-sm btn-ghost">Remove</button>
           </div>
           <div id="miro-board-row" class="setting-row-inline hidden" style="margin-top:6px">
-            <select id="miro-board-select" class="setting-input" style="flex:1"></select>
-            <button id="btn-miro-probe" class="btn btn-sm btn-ghost">Verify write access</button>
+            <span class="setting-hint" style="flex:1">Confirm this token can create items on a board.</span>
+            <button id="btn-miro-probe" class="btn btn-sm btn-ghost">Verify write access…</button>
           </div>
         </div>
       </div>

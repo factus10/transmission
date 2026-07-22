@@ -2293,6 +2293,26 @@ ipcMain.handle('miro-test-connection', async () => {
   }
 });
 
+// Server-side board search (name/description), paged — the workable path when a
+// token can see thousands of boards and a single 50-item list can't.
+ipcMain.handle('miro-search-boards', async (event, opts) => {
+  try {
+    return { success: true, ...(await miro.searchBoards(opts || {})) };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Resolve one board by id — for a pasted board link and for re-reading a
+// remembered board's current name (rename-safe re-export).
+ipcMain.handle('miro-get-board', async (event, { boardId } = {}) => {
+  try {
+    return { success: true, board: await miro.getBoard(boardId) };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMain.handle('miro-create-board', async (event, { name, description }) => {
   try {
     return { success: true, board: await miro.createBoard(name, description) };
