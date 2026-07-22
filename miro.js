@@ -183,6 +183,13 @@ async function connectViaBrowser({ timeoutMs = 180000, onStatus } = {}) {
 // raw codes ("tooManyRequests") are not useful to a end user.
 function describeError(status, body) {
   const msg = body && typeof body.message === 'string' ? body.message : '';
+  // Miro attaches field-level detail on validation errors (context.fields:
+  // [{ field, message }]). Surface it so a generic "invalid parameters" names
+  // the offending field instead of forcing a guess about which call broke.
+  const fields = body && body.context && Array.isArray(body.context.fields) ? body.context.fields : [];
+  const detail = fields.length
+    ? ' — ' + fields.map(f => [f.field, f.message].filter(Boolean).join(': ')).join('; ')
+    : '';
   if (status === 401) return 'Token rejected by Miro (expired, revoked, or mistyped)';
   // A token carries the scopes it was minted with, so widening permissions on
   // the Miro app is not enough — the user has to reinstall to get a new token.
@@ -191,9 +198,9 @@ function describeError(status, body) {
     return 'Token lacks permission for this call (needs boards:write). '
          + 'Tick the scope on your Miro app, reinstall it to mint a new token, and paste that.';
   }
-  if (status === 404) return msg || 'Not found';
+  if (status === 404) return (msg || 'Not found') + detail;
   if (status === 429) return 'Miro rate limit exceeded — wait a minute and retry';
-  return msg || `Miro API error ${status}`;
+  return (msg || `Miro API error ${status}`) + detail;
 }
 
 
@@ -273,23 +280,58 @@ async function miroFetch(apiPath, opts = {}) {
 
 // ─── Operations ───────────────────────────────────────────────────────────────
 
+// One shape for a board across every list/search/get call, so the renderer's
+// pickers and the export resolver all read the same fields.
+function mapBoard(b) {
+  return {
+    id: b && b.id,
+    name: (b && b.name) || '(untitled)',
+    viewLink: (b && b.viewLink) || '',
+    modifiedAt: (b && b.modifiedAt) || '',
+  };
+}
+
 // Validates the token and reports what it can see. Doubles as the "Test
 // connection" action: a 200 here proves the token is live and has boards:read.
 async function testConnection() {
-  const body = await miroFetch('/v2/boards?limit=50');
-  const boards = (body && Array.isArray(body.data) ? body.data : []).map(b => ({
-    id: b.id,
-    name: b.name || '(untitled)',
-    viewLink: b.viewLink || '',
-  }));
+  return searchBoards({ limit: 50 });
+}
+
+// Server-side board search — the answer to "I have thousands of boards." Miro's
+// `query` matches board name OR description (max 500 chars); an empty query is
+// the plain list. `sort` defaults to most-recently-modified so the top of the
+// list is what the user actually touched last, not Miro's opaque default order.
+// Paged via zero-based `offset` (Miro caps `limit` at 50 per page).
+async function searchBoards({ query = '', limit = 50, offset = 0, sort = 'last_modified' } = {}) {
+  const params = new URLSearchParams();
+  params.set('limit', String(Math.min(Math.max(Number(limit) || 50, 1), 50)));
+  if (offset) params.set('offset', String(Math.max(Number(offset) || 0, 0)));
+  if (sort) params.set('sort', sort);
+  const q = String(query || '').trim().slice(0, 500);
+  if (q) params.set('query', q);
+  const body = await miroFetch('/v2/boards?' + params.toString());
+  const boards = (body && Array.isArray(body.data) ? body.data : []).map(mapBoard);
   return {
     boards,
     total: body && typeof body.total === 'number' ? body.total : boards.length,
+    offset: body && typeof body.offset === 'number' ? body.offset : (Number(offset) || 0),
+    limit: body && typeof body.limit === 'number' ? body.limit : (Number(limit) || boards.length),
   };
 }
 
 async function listBoards() {
   return (await testConnection()).boards;
+}
+
+// Fetch one board by its stable id. Two jobs: (a) resolve a board the user
+// pasted a link to, confirming it exists and reporting its name; (b) re-read a
+// remembered board's CURRENT name before offering a re-export — so a board
+// created "Untitled" and renamed later shows its real name, and a since-deleted
+// board surfaces as a 404 rather than being silently reused.
+async function getBoard(boardId) {
+  if (!boardId) throw new Error('No board id');
+  const b = await miroFetch(`/v2/boards/${encodeURIComponent(boardId)}`);
+  return mapBoard(b);
 }
 
 // Creates a board in the token's team. Needed both for "export to a new board"
@@ -408,12 +450,20 @@ function escapeMiroHtml(s) {
 
 // Connectors have NO bulk endpoint — one call each. For a sitemap that is
 // roughly half the total item cost of an export.
-async function createConnector(boardId, { startId, endId, strokeColor, shape }) {
+//
+// startSnap/endSnap pick which edge of each card the connector attaches to.
+// Default is parent-bottom → child-top, which is clean for a horizontal row of
+// children fanning off a parent. But for a VERTICAL column (parent above a stack
+// of children sharing a centreline) that same bottom→top elbow runs straight
+// down through the intervening cards — Miro does no obstacle avoidance. Routing
+// those to the LEFT edge of both cards instead pushes the run into the gutter
+// beside the column, mirroring the app's own left-spine layout.
+async function createConnector(boardId, { startId, endId, strokeColor, shape, startSnap, endSnap }) {
   const c = await miroFetch(`/v2/boards/${encodeURIComponent(boardId)}/connectors`, {
     method: 'POST',
     body: {
-      startItem: { id: String(startId), snapTo: 'bottom' },
-      endItem: { id: String(endId), snapTo: 'top' },
+      startItem: { id: String(startId), snapTo: startSnap || 'bottom' },
+      endItem: { id: String(endId), snapTo: endSnap || 'top' },
       shape: shape || 'elbowed',
       style: {
         strokeColor: strokeColor || '#9aa0ab',
@@ -505,7 +555,8 @@ async function pool(items, size, worker) {
   return results;
 }
 
-// plan = { frame: {title, width, height}, shapes: [...], edges: [[parentId, childId]] }
+// plan = { frame: {title, width, height}, shapes: [...], edges: [{ from, to, vertical }],
+//          connectorShape: 'elbowed'|'curved'|'straight' }
 //
 // Shape coordinates arrive in the layout's own top-left-origin space and are
 // sent verbatim as frame-relative positions — verified against a live board:
@@ -555,20 +606,31 @@ async function exportSitemap(boardId, plan, onProgress) {
   }
 
   // 3. Connectors, one call each, bounded concurrency.
-  const edges = plan.edges.filter(([a, b]) => idMap[a] && idMap[b]);
+  const edges = plan.edges.filter(e => idMap[e.from] && idMap[e.to]);
   const skippedEdges = plan.edges.length - edges.length;
   let edgeFailures = 0;
-  await pool(edges, 5, async ([parentId, childId]) => {
+  const connectorShape = plan.connectorShape || 'elbowed';
+  await pool(edges, 5, async (e) => {
+    const base = { startId: idMap[e.from], endId: idMap[e.to], strokeColor: plan.connectorColor || '#9aa0ab', shape: connectorShape };
+    // Left-gutter routing only helps ELBOWED right-angle lines (otherwise they run
+    // straight down through the stacked cards). Curved/straight connectors look
+    // right with the plain parent-bottom → child-top attach, so only elbowed
+    // vertical edges get the side snap.
+    const gutter = e.vertical && connectorShape === 'elbowed';
+    const snap = gutter ? { startSnap: 'left', endSnap: 'left' } : { startSnap: 'bottom', endSnap: 'top' };
     await take(CREDITS_PER_ITEM);
     try {
-      await createConnector(boardId, {
-        startId: idMap[parentId], endId: idMap[childId],
-        strokeColor: plan.connectorColor || '#9aa0ab',
-      });
-    } catch (e) {
-      // One failed connector should not abandon a finished board — count it and
-      // report honestly at the end rather than throwing away the whole export.
-      edgeFailures++;
+      await createConnector(boardId, { ...base, ...snap });
+    } catch (e2) {
+      // A side-snap rejected by Miro's snapTo enum falls back to the default
+      // bottom→top attach so the edge still draws (old routing) instead of
+      // vanishing. One failed connector should never abandon a finished board.
+      if (gutter) {
+        try { await take(CREDITS_PER_ITEM); await createConnector(boardId, base); }
+        catch (e3) { edgeFailures++; }
+      } else {
+        edgeFailures++;
+      }
     }
     bump(1, 'connectors');
   });
@@ -596,6 +658,8 @@ module.exports = {
   testConnection,
   tokenInfo,
   listBoards,
+  searchBoards,
+  getBoard,
   createBoard,
   createFrame,
   createItemsBulk,

@@ -36,7 +36,7 @@ npm run build:intel  # Intel only
 
 Note: **Table View** (Cmd+T), **Sitemap** (Cmd+Shift+T), and **Redirect Editor** (Cmd+Shift+R) all hide the sidebar and go full-width. The `.tv-active` class on `#app` controls this layout switch and is used by all three views.
 
-**View switcher** (`#view-switcher`) sits between the OS titlebar and the app shell. Always visible. Five tabs: Audit · Table · Sitemap · Redirects · Menus. `setupViewSwitcher()` wires the clicks; `refreshViewSwitcher()` keeps the active state in sync with the underlying `_tableViewOpen` / `_navEditorOpen` / `_redirectEditorOpen` / `_menusViewOpen` flags and is called from each view's open/close functions.
+**View switcher** (`#view-switcher`) sits between the OS titlebar and the app shell. Always visible. Five tabs: Audit · Table · Sitemap · Redirects · Menus. `setupViewSwitcher()` wires the clicks; `refreshViewSwitcher()` keeps the active state in sync with the underlying `_tableViewOpen` / `_navEditorOpen` / `_redirectEditorOpen` / `_menusViewOpen` flags and is called from each view's open/close functions. The four full-panel views (Table/Sitemap/Redirects/Menus) no longer carry their own **"Back to Audit"** buttons — they were vestigial once the view switcher became always-visible (its Audit tab is the way back). The `close*`/`returnToAuditView` functions remain (called by the switcher and menus); only the per-view button + its wiring were removed.
 
 **Menu organization (post-reorg):**
 - **App menu (macOS) / File (Win/Linux)** — Preferences (Cmd+,)
@@ -198,7 +198,9 @@ A `.transmission` file is a **SQLite database** (better-sqlite3, WAL mode) that 
 | renderer → main | `miro-cancel-connect` | none — aborts an in-flight connect |
 | renderer → main | `miro-set-token`   | token string → `{ success, error? }` — the paste fallback |
 | renderer → main | `miro-clear-token` | none → `{ success }` |
-| renderer → main | `miro-test-connection` | none → `{ success, boards[], total, error? }` |
+| renderer → main | `miro-test-connection` | none → `{ success, boards[], total, error? }` — delegates to `searchBoards({limit:50})`; the lightweight "is the token alive" probe |
+| renderer → main | `miro-search-boards` | `{ query?, limit?, offset?, sort? }` → `{ success, boards[], total, offset, limit, error? }` — **server-side** board search (name/description via Miro's `query`, paged via `offset`); the workable path when a token sees thousands of boards. Each board carries `modifiedAt` for recency display |
+| renderer → main | `miro-get-board` | `{ boardId }` → `{ success, board?, error? }` — resolves one board by id: used for a pasted board link AND to re-read a remembered board's *current* name before offering a re-export (rename-safe) |
 | renderer → main | `miro-token-info`  | none → `{ success, type, scopes[], team, organization, user, error? }` — answers "connected but I see no boards" (wrong team) |
 | renderer → main | `miro-create-board` | `{ name, description }` → `{ success, board?, error? }` |
 | renderer → main | `miro-create-frame` / `miro-create-items-bulk` / `miro-create-connector` / `miro-list-items` | board-writing primitives used by the exporter |
@@ -696,11 +698,77 @@ coordinates in exactly that space, so no translation is needed.** `exportSitemap
 matches request order, which is what maps node ids to Miro item ids), then
 connectors at concurrency 5.
 
+**Board picker (`pickMiroBoard` in renderer).** A real work token sees thousands
+of boards, so a single 50-item dropdown is useless — the picker offers three
+routes: **create new** (default; appending 400 shapes to a live board is rarely
+the intent), **use an existing board** via `attachMiroBoardSearch()` (a live,
+debounced, server-side `miroSearchBoards` list — empty query = most-recently-
+modified — plus an "or paste a board link / ID" field routed through
+`extractMiroBoardId()` → `miroGetBoard`), or **export again to the last board**.
+Both existing-board methods feed one `chosenBoard`; either action ticks the
+"existing" radio. `attachMiroBoardSearch(container, onSelect)` is the reusable
+search component (also used by `openMiroBoardSelectDialog()`, which backs the
+App-Settings write-access probe — the old capped `<select id="miro-board-select">`
+is gone). **Remembered board:** after a successful export, `sitemapExportMiro`
+stores `projectSettings.miroExport.lastBoard = {id,name,viewLink}` (travels with
+the project via KKE_Settings JSON) and `setDirty(true)`. On reopen the picker
+re-reads that board's *current* name by id via `miroGetBoard` — so a board
+created "Untitled" and renamed later still resolves and shows its real name, and
+a since-deleted board drops the option (falls back to "new") instead of failing
+mid-export. This is why identity is the board **id**, never the name.
+
 Rate limiting is proactive, not reactive: Miro bills **Level 2 per ITEM even
 inside a bulk call**, so batching buys round trips and atomicity, never
 throughput — the ceiling is ~1,000 items/minute however you batch. A 429
 mid-export leaves a half-drawn board, hence the credit limiter at 85k/min with
 429 retry reading `X-RateLimit-Reset`. ~409 nodes + 408 connectors ≈ 68s.
+
+**Export appearance is user-chosen in the dialog.** The Export-to-Miro dialog has
+an **Appearance** section: **Connector style** (Right-angle→`elbowed` (default,
+matches the app) / Curved / Straight), **Card corners** (Rounded / Sharp; default
+derived from the app's Layout `cardRadius`), **Border thickness** (Thin/Medium/
+Heavy = 2/3/5px; overrides the per-node derived width), and **Include a color key**
+(a legend built from the color rules). Including collapsed/hidden nodes is now
+**opt-in** (the "Include them" box defaults OFF). Every one of these persists per
+project in `projectSettings.miroExport.{connectorStyle,cornerStyle,borderWidth,
+includeLegend,expandAll,hiddenLabel}` and is restored when the dialog reopens.
+`buildMiroSitemapPlan` maps `connectorStyle`→`plan.connectorShape`, picks the shape
+TYPE (`rectangle`/`round_rectangle`) from `cornerStyle`, applies `borderWidth` to
+every card (and legend chip), and — when `includeLegend !== false` — appends a
+**color key** BELOW the tree (one white chip per color rule, border = the rule's
+color via `ruleColorOf`, text = `rule.label`; placed below so no tree coordinate
+shifts, frame height grown to fit). `exportSitemap` passes `connectorShape` to
+every `createConnector`. Miro has no numeric corner radius for shapes — only the
+type — so `round_rectangle`'s own rounding shows even though Miro's separate
+numeric "Rounded corners" field reads 0 (not a bug).
+
+**Render fidelity vs the native view:**
+- **Connector routing is orientation-aware (elbowed only).** Miro does no obstacle
+  avoidance, so a `snapTo:'bottom'→'top'` elbow between a parent and a vertically-
+  stacked child (shared centreline) runs straight *through* the cards between them.
+  Each plan edge carries `vertical` = `layout.shouldBeVert(parent, parentDepth)`
+  (the exact predicate the layout drew with; parent depth = child depth − 1), and
+  for **elbowed** connectors `exportSitemap` snaps vertical-column edges to the
+  **left** edge of both cards so they run down the gutter beside the column like
+  the app's left-spine; horizontal rows (and all curved/straight edges) keep the
+  clean bottom→top attach. Plan edge shape is `{from, to, vertical}`, not `[a, b]`.
+  Because `snapTo:'left'` is unverified against Miro's enum, a rejected side-snap
+  is retried once with the default attach — the edge still draws rather than
+  vanishing.
+- **Border width is rounded to an integer ≥2.** The app's default band style is
+  1.5px; passed verbatim, Miro's integer-stepped thickness slider can't place a
+  handle on `1.5` and renders it hair-thin (a phantom ~80% position that only
+  "takes" once clicked). `Math.max(2, Math.round(...))` keeps it on a real slider
+  stop.
+- **Full labels are kept, not truncated, at a constant 12px.** The app clamps card
+  text to 2 lines via CSS; Miro can't, but the cards are tall enough for the ~3
+  lines a long name needs at 12px, so full names show without truncation. Do NOT
+  pre-shrink the font to "fit" long labels: Miro rejects any shape whose fontSize
+  is below its (undocumented) minimum with a generic `"invalid parameters"`, and a
+  9–11px experiment broke every export until it was reverted to a flat 12.
+- **Collapsed marker carries a count.** The compact `hiddenLabel:'plus'` option
+  renders `+N` (e.g. `+3`), not a bare `+` — a lone `+` is cryptic on a static
+  board where nothing expands. `'count'` still gives the full "N pages hidden".
 
 **Miro constraints worth knowing before extending this:**
 - **No collapse for shapes.** Only mind maps collapse, and `MindmapCreateRequest`
