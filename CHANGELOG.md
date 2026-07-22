@@ -6,6 +6,30 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.9.6] — "How Soon Is Now?"
+
+The Miro sitemap export becomes usable against a real work account — where a
+login can see thousands of boards — and you can now control how the exported
+board looks.
+
+### Added
+
+- **Find any Miro board, however many you have.** Exporting to Miro used to offer a fixed list of your 50 most-recent boards, which is unusable on a work account with thousands. The export dialog now **searches your boards by name** (the search runs on Miro's side, so it reaches every board, not just a recent handful), lets you **paste a board link or ID** to land on one exact board, and — once you've exported a project — offers a one-click **"Export again to _that board_"**. That last one is remembered by the board's Miro **ID**, not its name, so it still finds the board after you rename it (a board created "Untitled" and named later resolves to its real name).
+- **Control the look of the exported board.** A new **Appearance** section in the export dialog sets the **connector style** (right-angle, curved, or straight), the **card corners** (rounded or square), the **border thickness**, and whether to include a **color key** — a legend, built from your color rules, that tells a client what each color means. Every choice is remembered per project.
+- **Including collapsed sections is now opt-in.** The "Include them" option defaults off, so collapsed sections export as a compact stacked block unless you ask for the whole tree.
+
+### Fixed
+
+- **The Miro export no longer fails with "invalid parameters" on long page names.** An attempt to shrink long labels to fit the card sent Miro a font size below its minimum, which it rejects outright — so any sitemap with a long page title failed to export entirely. Labels are kept in full at a readable size and Miro fits them to the card.
+- **Connectors route around the cards, not through them.** In a vertical column, connector lines now run down the gutter beside the stack (matching the app's own sitemap) instead of straight through the boxes between a parent and its lower children.
+- **Card borders export at a visible weight.** A fractional border width rendered hair-thin on the board and left Miro's own thickness slider without a handle; it's now a clean whole number.
+
+### Changed
+
+- **The export dialog's controls are tidier.** The Appearance dropdowns sit in an aligned grid and are styled to match the rest of the app in both light and dark themes.
+- **The Visual Sitemap toolbar wraps instead of scrolling.** On a narrow window it flows its controls onto a second row rather than hiding the export buttons off the right edge.
+- **Removed the redundant "Back to Audit" buttons** from the Table, Sitemap, Redirects, and Menus views — the always-visible view switcher's Audit tab already does this.
+
 ## [2.8.2] — "How Soon Is Now?"
 
 Three Visual Sitemap interaction fixes.
