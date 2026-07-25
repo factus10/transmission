@@ -102,6 +102,20 @@ It assigns a stacked z-index and wires Esc. The modal keeps its own backdrop/but
 
 Notes/Assess popovers, the compare/redirect-find-replace/global-search toolbars, and the full-panel Table/Tree/Redirect views are intentionally *not* centered dialogs. They keep their own affordances (e.g. an `icon-btn ✕`). Don't force the modal standard onto them.
 
+### 1.7 Toolbars & control strips wrap at narrow widths
+
+Any horizontal strip of controls (view toolbars, filter bars, action bars, audit-bar clusters) **must wrap onto extra rows rather than overflow.** A `display:flex` strip with no wrap pushes its right-hand controls (stats, `Back to Audit`, `Replace All`, `Delete Selected…`) off the edge, where the container's `overflow:hidden` clips them invisibly — the user can't tell a control exists.
+
+The rule for every control strip:
+
+- Add **`flex-wrap: wrap; row-gap: 6px;`** (the sidebar toolbar `#toolbar-row2` and every view toolbar now do this). Don't rely on `overflow-x: auto` — a horizontal scrollbar inside app chrome is a smell and hides controls until scrolled.
+- Keep a `<span style="flex:1"></span>` spacer (or `margin-left:auto`) to right-align trailing controls; on wrap they drop to a new row, still visible.
+- Give any `flex:1` input a **`min-width`** so it can't collapse to a sliver when it shares a wrapped row (see `#redirect-find-replace-bar .re-search-input`).
+- Let a `flex:1` field cluster (e.g. `#meta-fields`) carry `overflow:hidden` so its `min-width` resolves to 0 and it absorbs the squeeze instead of forcing overflow.
+- Dialogs cap at `calc(100vw - 32px)` / `calc(100vh - 48px)` (`.app-modal` and `.modal-dialog`) so they never exceed a narrow window.
+
+The app window's `minWidth`/`minHeight` (`main.js`, 960×640) is the floor; verified graceful down to ~500px so there's comfortable headroom. Verify new strips with the in-project HTML-preview technique (a throwaway page linking `src/styles.css`, rendered in the browser pane at 960/760/620/500px).
+
 ---
 
 ## 2. Buttons
@@ -216,6 +230,7 @@ showToast('Nothing to apply to');  // neutral (omit type)
 - [ ] Header has a `.modal-close ×`; Esc and backdrop close it.
 - [ ] Footer: `btn btn-sm`; one green primary, rightmost; Cancel ghost to its left; utilities/count on the left via a `flex:1` span.
 - [ ] Destructive primary uses `.btn-danger` (or `danger:true`).
+- [ ] Any new toolbar / control strip has `flex-wrap: wrap` (§1.7) — verified controls wrap, not clip, at a narrow window.
 - [ ] No hardcoded colors/fonts/sizes — tokens only.
 - [ ] State-changing actions give feedback via `showToast`.
 - [ ] New IPC channel touches all three files; new pref key whitelisted in `get-prefs`.
