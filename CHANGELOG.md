@@ -6,6 +6,12 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.9.8] — "How Soon Is Now?"
+
+### Changed
+
+- **The Visual Sitemap's Page counts toggle now applies to the Miro export.** Turning **Page counts** off and exporting to Miro produces label-only cards, matching the in-app view and the HTML/PDF exports. Collapsed sections still carry their "+N hidden" marker — on a static board that's the only cue that content is folded beneath a card.
+
 ## [2.9.7] — "How Soon Is Now?"
 
 ### Added
