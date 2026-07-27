@@ -12883,7 +12883,7 @@ function sitemapAppDefaults() {
   return Object.assign({
     vertDepth: 2, childThresh: 3, cardWidth: 148, cardHeight: 70,
     hGap: 40, vRow: 60, vlGap: 12, vlDrop: 32, vlHgap: 20, pad: 72,
-    showNumbers: true
+    showNumbers: true, showCounts: true
   }, state.sitemapDefaults || {});
 }
 
@@ -12960,7 +12960,7 @@ function openSitemapView(opts) {
       vertDepth: eff.vertDepth, childThresh: eff.childThresh,
       cardWidth: eff.cardWidth, cardHeight: eff.cardHeight,
       hGap: eff.hGap, vRow: eff.vRow, vlGap: eff.vlGap, vlDrop: eff.vlDrop,
-      vlHgap: eff.vlHgap, pad: eff.pad, showNumbers: eff.showNumbers !== false,
+      vlHgap: eff.vlHgap, pad: eff.pad, showNumbers: eff.showNumbers !== false, showCounts: eff.showCounts !== false,
       colorRules: eff.colorRules, baseCardStyle: eff.baseCardStyle, legendLabels: eff.legendLabels, nodeOverrides: eff.nodeOverrides
     },
     // Nav uses node.collapse (the Nav Tree checkbox / Sitemap sheet's Collapse column) as the
@@ -12970,7 +12970,7 @@ function openSitemapView(opts) {
     initialCollapsed: opts.collapseToNavNodes ? (opts.initialCollapsed || []) : (eff.collapsed || opts.initialCollapsed || [])
   };
 
-  let lastState = { collapsed: baseData.initialCollapsed, showNumbers: baseData.settings.showNumbers, settings: baseData.settings };
+  let lastState = { collapsed: baseData.initialCollapsed, showNumbers: baseData.settings.showNumbers, showCounts: baseData.settings.showCounts, settings: baseData.settings };
 
   const persist = () => {
     const all = state.projectSettings.sitemapSettings || (state.projectSettings.sitemapSettings = {});
