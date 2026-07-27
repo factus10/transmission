@@ -13076,6 +13076,13 @@ function countMiroHidden(roots, collapsed) {
 // opts.expandAll — ignore the collapse state and export the whole tree.
 function buildMiroSitemapPlan(baseData, st, opts = {}) {
   const settings = (st && st.settings) || baseData.settings;
+  // The "Page counts" toggle (per-project, mirrored from the Visual Sitemap
+  // toolbar) suppresses each card's "N pages" tally on the exported board too.
+  // The collapsed-section "hidden" marker below is a separate structural signal
+  // (folded content lives here) and is deliberately NOT gated on it: on a static
+  // board where nothing expands, dropping it would make a folded section
+  // indistinguishable from a leaf page.
+  const showCounts = settings.showCounts !== false;
   const collapsed = opts.expandAll
     ? new Set()
     : new Set((st && st.collapsed) || baseData.initialCollapsed || []);
@@ -13151,7 +13158,7 @@ function buildMiroSitemapPlan(baseData, st, opts = {}) {
     // count too — '+3' — staying compact while still saying how much is folded.
     const subVal = hidden
       ? (opts.hiddenLabel === 'plus' ? '+' + hidden : hidden + (hidden === 1 ? ' page hidden' : ' pages hidden'))
-      : (node.sub || '');
+      : (showCounts ? (node.sub || '') : '');
     shapes.push({
       nodeId: node.id,
       text: node.label || '',
