@@ -6,6 +6,12 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.9.7] — "How Soon Is Now?"
+
+### Added
+
+- **Hide page counts in the Visual Sitemap.** A new **Page counts** toggle in the sitemap toolbar (next to **Numbers**) hides the per-card "N pages" tally so you can read the tree by its labels alone. The choice is remembered per project and rides along into the interactive HTML and PDF exports.
+
 ## [2.9.6] — "How Soon Is Now?"
 
 The Miro sitemap export becomes usable against a real work account — where a
