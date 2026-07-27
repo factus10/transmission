@@ -53,6 +53,7 @@
       hGap: 40, vRow: 60, vlGap: 12, vlDrop: 32, vlHgap: 20, pad: 72,
       cardRadius: 5, cardPadX: 7, cardPadY: 5,
       showNumbers: true,
+      showCounts: true,
       colorRules: [],
       legendLabels: {},
       nodeOverrides: {}
@@ -80,6 +81,7 @@
     // ── Local interaction state
     var collapsed = new Set();
     var showNumbers = S.showNumbers !== false;
+    var showCounts = S.showCounts !== false;
 
     // In client mode, restore the viewer's last session (overrides their start state).
     if (MODE === 'client') {
@@ -88,6 +90,7 @@
         if (saved) {
           (saved.collapsed || []).forEach(function (id) { collapsed.add(id); });
           if (typeof saved.showNumbers === 'boolean') showNumbers = saved.showNumbers;
+          if (typeof saved.showCounts === 'boolean') showCounts = saved.showCounts;
         } else if (DATA.initialCollapsed) {
           DATA.initialCollapsed.forEach(function (id) { collapsed.add(id); });
         }
@@ -110,6 +113,7 @@
       return {
         collapsed: [].concat.apply([], [Array.from(collapsed)]),
         showNumbers: showNumbers,
+        showCounts: showCounts,
         settings: serializableSettings()
       };
     }
@@ -120,6 +124,7 @@
         hGap: S.hGap, vRow: S.vRow, vlGap: S.vlGap, vlDrop: S.vlDrop,
         vlHgap: S.vlHgap, pad: S.pad,
         showNumbers: showNumbers,
+        showCounts: showCounts,
         cardRadius: S.cardRadius, cardPadX: S.cardPadX, cardPadY: S.cardPadY,
         colorRules: S.colorRules,
         baseCardStyle: S.baseCardStyle,
@@ -130,7 +135,7 @@
     function pushState() {
       if (MODE === 'app') emit({ type: 'state', state: currentState() });
       else if (MODE === 'client') {
-        try { localStorage.setItem(LS_KEY, JSON.stringify({ collapsed: Array.from(collapsed), showNumbers: showNumbers })); } catch (e) {}
+        try { localStorage.setItem(LS_KEY, JSON.stringify({ collapsed: Array.from(collapsed), showNumbers: showNumbers, showCounts: showCounts })); } catch (e) {}
       }
     }
 
@@ -316,6 +321,7 @@
 
       ROOTS.forEach(function (root) { renderCards(root); });
       updateNumbersVisibility();
+      updateCountsVisibility();
       if (MODE === 'print') setTimeout(markReady, 30);
     }
 
@@ -379,7 +385,7 @@
       lbl.className = 'node-label';
       lbl.textContent = node.label;
       card.appendChild(lbl);
-      if (node.sub) {
+      if (showCounts && node.sub) {
         var s = document.createElement('span');
         s.className = 'node-sub';
         s.textContent = node.sub;
@@ -418,6 +424,10 @@
 
     function updateNumbersVisibility() {
       document.body.classList.toggle('hide-numbers', !showNumbers);
+    }
+
+    function updateCountsVisibility() {
+      document.body.classList.toggle('hide-counts', !showCounts);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -564,6 +574,11 @@
       if (sn) {
         sn.checked = showNumbers;
         sn.addEventListener('change', function (e) { showNumbers = e.target.checked; updateNumbersVisibility(); render(); pushState(); });
+      }
+      var sc = $('show-counts');
+      if (sc) {
+        sc.checked = showCounts;
+        sc.addEventListener('change', function (e) { showCounts = e.target.checked; updateCountsVisibility(); render(); pushState(); });
       }
       var vd = $('vd-select');
       if (vd) { vd.value = String(S.vertDepth); vd.addEventListener('change', function () { S.vertDepth = parseInt(this.value, 10); render(); pushState(); fitToScreen(); }); }
@@ -1272,6 +1287,7 @@ body{display:flex;flex-direction:column;}
 .toggle-dot:hover{background:#cfd4de;border-color:var(--border-dk);transform:scale(1.12);color:var(--text);}
 .node-num{font-size:10px;font-weight:600;letter-spacing:.04em;line-height:1;margin-bottom:2px;flex:0 0 auto;}
 body.hide-numbers .node-num{display:none;}
+body.hide-counts .node-sub{display:none;}
 .node-label{font-size:11.5px;font-weight:500;color:var(--text);line-height:1.2;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;flex:0 1 auto;min-height:0;overflow-wrap:anywhere;}
 .node-sub{font-size:9.5px;color:var(--text-dim);line-height:1.25;margin-top:1px;flex:0 0 auto;}
 #hint{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);background:rgba(26,29,35,.75);color:rgba(255,255,255,.85);font-size:11px;padding:5px 14px;border-radius:20px;pointer-events:none;z-index:200;white-space:nowrap;transition:opacity .6s;}
@@ -1366,6 +1382,7 @@ body.hide-numbers .node-num{display:none;}
           + '</div><div class="tb-sep"></div>';
       }
       toolbar += '<label class="tb-label"><input type="checkbox" id="show-numbers" checked style="accent-color:#1a1d23"> Numbers</label>';
+      toolbar += '<label class="tb-label"><input type="checkbox" id="show-counts" checked style="accent-color:#1a1d23"> Page counts</label>';
       toolbar += '<div class="tb-sep"></div>';
       toolbar += '<button class="tb-btn" id="btn-expand">Expand all</button>';
       toolbar += '<button class="tb-btn" id="btn-collapse">Collapse all</button>';
