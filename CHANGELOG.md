@@ -6,6 +6,17 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.9.9] — "How Soon Is Now?"
+
+### Changed
+
+- **The synthetic "site root" box in the Visual Sitemap is now off by default.** Sitemaps show your own top-level nodes as the roots, with no extra wrapper box above them. Turn it back on per project in Project Settings → Identity ("Show a site root box in the Visual Sitemap") — and that choice now sticks. Note this affects existing projects: any that relied on the old default will no longer show the wrapper box until you re-enable it.
+- **Turning off Page counts now gives a fully label-only Miro export.** Previously the "N pages" tallies were dropped but collapsed sections kept a "+N" marker; now both are suppressed, so each exported card shows just the node's text. (Turn off **Page counts** in the sitemap toolbar before exporting.)
+
+### Fixed
+
+- **The "Show a site root box" setting is now preserved for .xlsx projects.** Unchecking it and reopening the spreadsheet silently reverted it — boolean project settings weren't surviving the spreadsheet round-trip (a stored "off" read back as the text "FALSE" and was ignored). Booleans now round-trip correctly. (.transmission projects were already fine.)
+
 ## [2.9.8] — "How Soon Is Now?"
 
 ### Changed
