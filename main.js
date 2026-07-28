@@ -889,6 +889,12 @@ function parseSettingsSheet(worksheet) {
     // Try to parse JSON arrays/objects
     if ((val.startsWith('[') && val.endsWith(']')) || (val.startsWith('{') && val.endsWith('}'))) {
       try { val = JSON.parse(val); } catch (_) {}
+    } else if (val === 'true' || val === 'false') {
+      // Booleans are written as JSON strings (see writeSettingsSheet) so they
+      // survive the round-trip. Without this, a bare boolean cell reads back as
+      // the string "FALSE" and a stored `false` (e.g. sitemapShowSiteRoot) is
+      // silently lost — the consumer's `!== false` check then never matches.
+      val = (val === 'true');
     }
     settings[key] = val;
   }
@@ -923,8 +929,10 @@ function writeSettingsSheet(workbook, settings) {
   const aoa = [['Key', 'Value']];
   const dropped = [];
   for (const [key, val] of Object.entries(settingsToWrite)) {
-    // Serialize arrays and objects as JSON strings
-    let serialized = (Array.isArray(val) || (val && typeof val === 'object')) ? JSON.stringify(val) : val;
+    // Serialize arrays and objects as JSON strings. Booleans too: a bare boolean
+    // cell reads back as "FALSE"/"TRUE" (see parseSettingsSheet), which loses a
+    // stored `false`; JSON-encoding makes it "false"/"true" so it round-trips.
+    let serialized = (Array.isArray(val) || (val && typeof val === 'object') || typeof val === 'boolean') ? JSON.stringify(val) : val;
     // Defense-in-depth: never let a single oversized value crash the entire save.
     // A value this large is virtually always JSON (menus, sitemapSettings), so
     // truncating the string would leave invalid JSON that fails to parse back
