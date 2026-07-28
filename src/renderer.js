@@ -6268,9 +6268,10 @@ function setupSettings() {
     if (_redirectEditorOpen) onSiteDomainChange();
   });
   if ($('ps-sitemap-show-root')) $('ps-sitemap-show-root').addEventListener('change', () => {
-    // Default is "show"; only store the setting when turned off (keeps files clean).
-    if ($('ps-sitemap-show-root').checked) delete state.projectSettings.sitemapShowSiteRoot;
-    else state.projectSettings.sitemapShowSiteRoot = false;
+    // Default is now "hide the synthetic site root". Store the explicit boolean
+    // (both true and false) so the choice round-trips — KKE_Settings now
+    // serializes booleans, and .transmission always did.
+    state.projectSettings.sitemapShowSiteRoot = $('ps-sitemap-show-root').checked;
     setDirty(true);
   });
   let _defaultRedirectDebounce;
@@ -6843,7 +6844,7 @@ function toggleProjectSettingsPopover() {
   $('ps-default-redirect').value = ps.defaultRedirectUrl || '';
   if ($('ps-breadcrumb-home')) $('ps-breadcrumb-home').value = ps.breadcrumbHomeLabel || '';
   if ($('ps-breadcrumb-maxdepth')) $('ps-breadcrumb-maxdepth').value = ps.breadcrumbMaxDepth || '';
-  if ($('ps-sitemap-show-root')) $('ps-sitemap-show-root').checked = ps.sitemapShowSiteRoot !== false;
+  if ($('ps-sitemap-show-root')) $('ps-sitemap-show-root').checked = ps.sitemapShowSiteRoot === true;
   renderBrandPalette();
   // KKE States tab
   renderCustomKkeList();
@@ -13077,11 +13078,10 @@ function countMiroHidden(roots, collapsed) {
 function buildMiroSitemapPlan(baseData, st, opts = {}) {
   const settings = (st && st.settings) || baseData.settings;
   // The "Page counts" toggle (per-project, mirrored from the Visual Sitemap
-  // toolbar) suppresses each card's "N pages" tally on the exported board too.
-  // The collapsed-section "hidden" marker below is a separate structural signal
-  // (folded content lives here) and is deliberately NOT gated on it: on a static
-  // board where nothing expands, dropping it would make a folded section
-  // indistinguishable from a leaf page.
+  // toolbar) makes the exported board label-only when off: it suppresses BOTH
+  // each card's "N pages" tally AND the collapsed-section "+N hidden" marker, so
+  // a node is just its text. (A folded section then reads like a leaf on the
+  // static board — a user asking for label-only cards is accepting that.)
   const showCounts = settings.showCounts !== false;
   const collapsed = opts.expandAll
     ? new Set()
@@ -13156,9 +13156,11 @@ function buildMiroSitemapPlan(baseData, st, opts = {}) {
     // review, where knowing the size of what's folded away matters. On a static
     // board a bare '+' is cryptic (nothing to expand), so 'plus' carries the
     // count too — '+3' — staying compact while still saying how much is folded.
-    const subVal = hidden
-      ? (opts.hiddenLabel === 'plus' ? '+' + hidden : hidden + (hidden === 1 ? ' page hidden' : ' pages hidden'))
-      : (showCounts ? (node.sub || '') : '');
+    const subVal = !showCounts
+      ? ''
+      : (hidden
+          ? (opts.hiddenLabel === 'plus' ? '+' + hidden : hidden + (hidden === 1 ? ' page hidden' : ' pages hidden'))
+          : (node.sub || ''));
     shapes.push({
       nodeId: node.id,
       text: node.label || '',
@@ -14325,12 +14327,12 @@ async function generateNavSitemap() {
 
   const ps = state.projectSettings || {};
   const sections = state.navTree.map(sec => navToSitemap(sec, sec.label || '(section)'));
-  // By default, wrap the tree in one synthetic "site" root (labeled from the
-  // domain / client / project) so it reads as a single anchored tree. When
-  // `sitemapShowSiteRoot` is false, the sitemap's own top-level node(s) become
-  // the root(s) instead — no extra layer above e.g. a "Home" node. The engine
-  // lays out N stacked roots, so multiple top-levels each become a root box.
-  const showSiteRoot = ps.sitemapShowSiteRoot !== false;
+  // By default the sitemap's own top-level node(s) are the root(s) — no extra
+  // synthetic layer above e.g. a "Home" node. Only when `sitemapShowSiteRoot`
+  // is explicitly true do we wrap the tree in one synthetic "site" root (labeled
+  // from the domain / client / project) so it reads as a single anchored tree.
+  // The engine lays out N stacked roots, so multiple top-levels each become a box.
+  const showSiteRoot = ps.sitemapShowSiteRoot === true;
   const roots = showSiteRoot
     ? [{
         id: '__site__',
