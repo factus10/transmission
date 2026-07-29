@@ -1376,6 +1376,194 @@ body.resizing-sidebar iframe {
 #design-pattern-chips .tag-chip .tag-remove { color: #7c3aed; }
 #design-pattern-chips .tag-chip .tag-remove:hover { color: #4c1d95; }
 
+/* ── Audience dropdown ───────────────────────────────────────────────────── */
+
+#audience-dropdown {
+  position: fixed;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  width: 300px;
+  max-height: 340px;
+  display: flex;
+  flex-direction: column;
+  z-index: 300;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  overflow: hidden;
+}
+#aud-search-wrap {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#aud-search {
+  width: 100%;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+}
+#aud-search:focus { border-color: var(--accent); }
+#aud-list { overflow-y: auto; flex: 1; padding: 4px 0; }
+/* Tier headers take the slot .dp-category-header does for components — the
+   workshop's ranking is the grouping, so priority stays visible while tagging. */
+.aud-tier-header {
+  padding: 4px 10px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-base);
+  border-top: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+}
+.aud-option {
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 100ms;
+}
+.aud-option:hover { background: var(--bg-hover); }
+.aud-option.selected { color: #9d174d; font-weight: 500; }
+.aud-option.selected::after { content: '✓'; font-size: 12px; margin-left: auto; }
+.aud-option-name { flex: 1; }
+.aud-swatch {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1px solid rgba(0,0,0,0.15);
+}
+#aud-create {
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+/* Audience chips — rose tint, distinct from tags (neutral) and components (violet) */
+#audience-input-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+#audience-chips { display: contents; }
+
+#audience-chips .tag-chip { background: #ffe4e6; color: #9f1239; border-color: #fda4af; }
+#audience-chips .tag-chip .tag-remove { color: #e11d48; }
+#audience-chips .tag-chip .tag-remove:hover { color: #881337; }
+
+/* Pending AI audience suggestion — a ghost offer, styled like the Migration
+   Track suggestion so "the tool proposes, you accept" reads the same everywhere. */
+.audience-suggestion {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-hover, #f1f5f9);
+}
+.aud-ghost-label { flex: 1; color: var(--text-muted); min-width: 0; }
+.aud-ghost-label strong { color: #9f1239; font-weight: 600; }
+.aud-ghost-conf {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: .04em;
+}
+
+/* ── Jobs-to-be-done dropdown ────────────────────────────────────────────── */
+
+#job-dropdown {
+  position: fixed;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  width: 420px;
+  max-height: 360px;
+  display: flex;
+  flex-direction: column;
+  z-index: 300;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  overflow: hidden;
+}
+#job-search-wrap {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#job-search {
+  width: 100%;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+}
+#job-search:focus { border-color: var(--accent); }
+#job-list { overflow-y: auto; flex: 1; padding: 4px 0; }
+/* Grouped by audience, so the job list reads in the same order as the
+   audience picker rather than as one flat alphabetical wall. */
+.job-group-header {
+  padding: 4px 10px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-base);
+  border-top: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+}
+.job-option {
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text-primary);
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  transition: background 100ms;
+}
+.job-option:hover { background: var(--bg-hover); }
+.job-option.selected { color: #9d174d; font-weight: 500; }
+.job-option.selected::after { content: '✓'; font-size: 12px; margin-left: auto; flex-shrink: 0; }
+.job-option-body { flex: 1; min-width: 0; }
+.job-option-label { display: block; }
+/* The full statement is the workshop's own wording — worth showing, but it is
+   secondary to the label you actually tag with. */
+.job-option-statement {
+  display: block;
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.35;
+  margin-top: 1px;
+}
+#job-create {
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#job-input-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+#job-chips { display: contents; }
+
+#job-chips .tag-chip { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+#job-chips .tag-chip .tag-remove { color: #b45309; }
+#job-chips .tag-chip .tag-remove:hover { color: #78350f; }
+
 /* ── Notes popover ────────────────────────────────────────────────────────── */
 
 #notes-popover {
@@ -2775,6 +2963,15 @@ body.dragging-popover iframe { pointer-events: none !important; }
 :root[data-theme="dark"] #design-pattern-chips .tag-chip { background: #2e1065; color: #c4b5fd; border-color: #5b21b6; }
 :root[data-theme="dark"] #design-pattern-chips .tag-chip .tag-remove { color: #a78bfa; }
 :root[data-theme="dark"] #design-pattern-chips .tag-chip .tag-remove:hover { color: #ddd6fe; }
+:root[data-theme="dark"] #audience-chips .tag-chip { background: #4c0519; color: #fda4af; border-color: #9f1239; }
+:root[data-theme="dark"] #audience-chips .tag-chip .tag-remove { color: #fb7185; }
+:root[data-theme="dark"] #audience-chips .tag-chip .tag-remove:hover { color: #fecdd3; }
+:root[data-theme="dark"] .aud-option.selected { color: #fda4af; }
+:root[data-theme="dark"] .aud-ghost-label strong { color: #fda4af; }
+:root[data-theme="dark"] #job-chips .tag-chip { background: #422006; color: #fcd34d; border-color: #92400e; }
+:root[data-theme="dark"] #job-chips .tag-chip .tag-remove { color: #fbbf24; }
+:root[data-theme="dark"] #job-chips .tag-chip .tag-remove:hover { color: #fde68a; }
+:root[data-theme="dark"] .job-option.selected { color: #fcd34d; }
 :root[data-theme="dark"] .ne-build-pattern  { background: #172554; color: #93c5fd; }
 :root[data-theme="dark"] .ne-build-guidance { background: #06281f; color: #6ee7b7; }
 :root[data-theme="dark"] .ne-build-brief    { background: #2e1065; color: #d8b4fe; }
@@ -2800,6 +2997,7 @@ body.dragging-popover iframe { pointer-events: none !important; }
 :root[data-theme="dark"] .cluster-decide   .cluster-pill { background: #172554; color: #93c5fd; }
 :root[data-theme="dark"] .cluster-classify .cluster-pill { background: #334155; color: #cbd5e1; }
 :root[data-theme="dark"] .cluster-patterns .cluster-pill { background: #2e1065; color: #c4b5fd; }
+:root[data-theme="dark"] .cluster-audience .cluster-pill { background: #4c0519; color: #fda4af; }
 :root[data-theme="dark"] .cluster-migrate  .cluster-pill { background: #422006; color: #fcd34d; }
 :root[data-theme="dark"] .cluster-cms      .cluster-pill { background: #14532d; color: #86efac; }
 
@@ -4539,6 +4737,7 @@ body.dragging-modal, body.dragging-modal * { cursor: grabbing !important; }
 .cluster-decide   .cluster-pill { background: #dbeafe; color: #1e40af; } /* blue */
 .cluster-classify .cluster-pill { background: #e2e8f0; color: #475569; } /* slate */
 .cluster-patterns .cluster-pill { background: #ede9fe; color: #5b21b6; } /* violet */
+.cluster-audience .cluster-pill { background: #ffe4e6; color: #9f1239; } /* rose */
 .cluster-migrate  .cluster-pill { background: #fef3c7; color: #92400e; } /* amber */
 .cluster-cms      .cluster-pill { background: #dcfce7; color: #166534; } /* green */
 
