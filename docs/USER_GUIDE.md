@@ -647,12 +647,25 @@ The disagreements are where this earns its keep. *GA says Keep, Audience says Ki
 
 **5. See it.** Color the Visual Sitemap or Treemap by **Primary Audience** to see which audience each section actually serves, and run the three audience reports — see [Reports](#16-reports-for-clients--stakeholders).
 
+### Jobs to be done
+
+Audiences answer *who* a page is for. **Jobs** answer *what they came to do* — and the two together are what a discovery workshop actually produces.
+
+**Load them** in **Project Settings → Audience → Jobs to be done**. Each job has a short **label** (what you tag with, so the spreadsheet stays readable), the full **statement** in the workshop's own words, and the **audiences** that have it — leave that blank for a job anyone might have, like *find who to contact*. **Paste from workshop…** takes the table straight from your spreadsheet.
+
+**Tag as you audit.** Once the library has entries, a **Jobs served** field appears in the Audience cluster. The picker puts the jobs belonging to *this page's* audiences at the top, so on a long list you're choosing from three rather than scrolling forty. Bulk-tag from the Multi-bar with **Add Job**, and use the **Needs a job** filter as the worklist.
+
+> **The point isn't the tagging — it's the gap.** Run **Reports → Jobs Coverage** and read the top section first: *jobs nothing answers*. Those are jobs the client told you people come to do, for which the site has no page. That is the strongest brief for net-new content you can write, because every line traces back to something they said themselves rather than to your judgement. The same list is appended to the **Net New Content Brief**, which otherwise only finds gaps in the sitemap you drew.
+
+The report's **Best page** column is the page you'd send someone to for that job — a Keep outranks an Evolve outranks an unreviewed page. It's a routing hint, not a quality score.
+
 ### Quick self-check — audience
 
 - [ ] The audience library reflects the workshop, with **real tiers** set
 - [ ] Every Keep/Evolve page is tagged, or on the **Needs audience** worklist
 - [ ] Pages that genuinely serve nobody are tagged **— None**, not left blank
 - [ ] You've reviewed the **Audience Debt** report before signing off the redirect map
+- [ ] If a JTBD workshop was run, **Jobs Coverage** has been read and its unserved jobs are in the net-new brief
 
 ---
 
@@ -1383,6 +1396,7 @@ Reports are read-only views, generated on demand from the current file — run t
 - **Audience × Section Matrix** — sections down, audiences across, cells shaded by share. The single most persuasive artifact here: it makes "this entire section is written for the wrong people" visible in one glance, and it argues IA changes rather than page-by-page ones.
 - **Site Consolidation Overview** — for audits merging several sites: what each source site contributes (pages, disposition mix, audiences served, how much of it duplicates another site, how many redirect rules retiring it needs). A site that is mostly overlap and serves no audience the others don't is a candidate to retire wholesale rather than migrate page by page.
 - **Cross-Site Duplicate Overlap** — pages whose title, H1 and meta description are identical across two or more source sites. Each set collapses to one surviving page: pick the master, mark the rest **Consolidate** pointing at it, and the redirect map writes itself. Exact-match only, so treat it as a floor rather than a ceiling.
+- **Jobs Coverage** — per job: how many pages serve it, what you're doing to them, and the page you'd send someone to. Leads with the jobs **nothing answers** — the strongest brief for net-new content, since each traces back to the client's own workshop.
 - **Audience Debt** — three worklists that translate straight into scope: pages serving only non-priority audiences (carrying cost, no return), priority-audience pages marked **Kill** (re-read these before signing off the redirect map), and pages tagged with four or more audiences (usually doing several jobs at once and needing a split).
 
 ### For information architecture

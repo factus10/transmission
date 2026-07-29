@@ -127,6 +127,8 @@ function injectAndOrderAuditColumns(headers, rows, columnMap) {
                      'Design_Patterns',
                      // Audience tagging: who this page serves (CSV) + who it's mainly for
                      'Audiences', 'Primary_Audience',
+                     // Jobs-to-be-done: which jobs this page actually does work for (CSV)
+                     'Jobs_Served',
                      // Derived: which source site this page came from (consolidation audits)
                      'Source_Site',
                      // Derived: the page's on-page breadcrumb (from its sitemap node's breadcrumb axis)
@@ -475,6 +477,7 @@ function buildMenu() {
         { label: 'Audience Coverage…',            click: send('menu-report-audience-coverage') },
         { label: 'Audience × Section Matrix…',    click: send('menu-report-audience-matrix') },
         { label: 'Audience Debt…',                click: send('menu-report-audience-debt') },
+        { label: 'Jobs Coverage…',                click: send('menu-report-jobs-coverage') },
         { type: 'separator' },
         { label: 'Site Consolidation Overview…',  click: send('menu-report-site-consolidation') },
         { label: 'Cross-Site Duplicate Overlap…', click: send('menu-report-cross-site-dupes') },
@@ -544,7 +547,7 @@ function readWorkbook(filePath, targetSheet) {
     // Structural sheets (not selectable as data sheets). 'navstructure' is the
     // legacy name for the sitemap-tree sheet (now written as 'Sitemap') — kept
     // here so older files still hide it from the data-sheet picker pre-migration.
-    const structuralNames = new Set(['navstructure', 'sitemap', 'kke_settings', 'kke_changelog', 'kke_glossary', 'contenttyperegistry', 'patternlibrary', 'designpatternlibrary', 'audiences', 'sites']);
+    const structuralNames = new Set(['navstructure', 'sitemap', 'kke_settings', 'kke_changelog', 'kke_glossary', 'contenttyperegistry', 'patternlibrary', 'designpatternlibrary', 'audiences', 'sites', 'jobs']);
     const dataSheets = allSheetNames.filter(s => !structuralNames.has(s.toLowerCase()));
 
     // Pick which sheet to load
@@ -695,6 +698,14 @@ function readWorkbook(filePath, targetSheet) {
       projectSettings.audienceLibrary = parseAudienceLibrarySheet(workbook.Sheets[audSheetName]);
     } else {
       projectSettings.audienceLibrary = projectSettings.audienceLibrary || [];
+    }
+
+    // Check for Jobs sheet (jobs-to-be-done workshop output)
+    const jobsSheetName = allSheetNames.find(s => s.toLowerCase() === 'jobs');
+    if (jobsSheetName) {
+      projectSettings.jobLibrary = parseJobLibrarySheet(workbook.Sheets[jobsSheetName]);
+    } else {
+      projectSettings.jobLibrary = projectSettings.jobLibrary || [];
     }
 
     // Check for Sites sheet (source sites in a consolidation audit)
@@ -953,6 +964,7 @@ function writeSettingsSheet(workbook, settings) {
     designPatternLibrary: _designPatternLibrary,
     audienceLibrary: _audienceLibrary,
     siteLibrary: _siteLibrary,
+    jobLibrary: _jobLibrary,
     ...settingsToWrite
   } = settings;
   if (Object.keys(settingsToWrite).length === 0) return [];
@@ -1204,6 +1216,69 @@ function writeAudienceLibrarySheet(workbook, library) {
   ]));
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = [{ wch: 32 }, { wch: 14 }, { wch: 10 }, { wch: 60 }, { wch: 50 }];
+  if (workbook.SheetNames.includes(sheetName)) {
+    workbook.Sheets[sheetName] = ws;
+  } else {
+    XLSX.utils.book_append_sheet(workbook, ws, sheetName);
+  }
+}
+
+// ─── Jobs (jobs-to-be-done) ──────────────────────────────────────────────────
+// The other half of the discovery workshop output. Audiences answer *who*; jobs
+// answer *what they came to do*. The payoff is the inverse question — a job with
+// no page serving it is the cleanest possible argument for net-new content,
+// because it traces a proposed page back to something the client said themselves.
+//
+// A job carries a short `label` (what goes in the row cell, so the spreadsheet
+// stays readable) and the full `statement` in the workshop's own words. It also
+// lists the audiences it belongs to — a list, not one owner, because most jobs
+// are audience-specific but some ("find who to contact") genuinely aren't, and
+// forcing those onto one audience would distort the coverage gap analysis.
+
+/** Commas separate values in the row cell, so a label can never contain one. */
+function sanitizeJobLabel(s) {
+  return String(s || '').replace(/,/g, ';').trim();
+}
+
+function parseJobLibrarySheet(worksheet) {
+  const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '', raw: false });
+  const entries = [];
+  for (let i = 1; i < rawData.length; i++) {
+    const label = sanitizeJobLabel(rawData[i][0]);
+    if (!label) continue;
+    entries.push({
+      label,
+      statement: String(rawData[i][1] || '').trim(),
+      audiences: String(rawData[i][2] || '').split(',').map(s => s.trim()).filter(Boolean),
+      notes: String(rawData[i][3] || '')
+    });
+  }
+  return entries;
+}
+
+function writeJobLibrarySheet(workbook, library) {
+  if (!Array.isArray(library)) return;
+  const sheetName = 'Jobs';
+  const HEADER = ['Job', 'Statement', 'Audiences', 'Notes'];
+  const entries = library.filter(e => String(e?.label || '').trim());
+  if (entries.length === 0) {
+    writeEmptyStructuralSheet(workbook, sheetName, HEADER);
+    return;
+  }
+  const aoa = [HEADER];
+  // Grouped by first audience then label, so the sheet reads like the workshop
+  // it came from rather than an arbitrary insertion order.
+  entries.slice()
+    .sort((a, b) => (String((a.audiences || [])[0] || '~').localeCompare(String((b.audiences || [])[0] || '~')))
+                 || String(a.label).localeCompare(String(b.label)))
+    .forEach(e => aoa.push([
+      e.label,
+      clampCell(e.statement || ''),
+      (e.audiences || []).join(', '),
+      clampCell(e.notes || '')
+    ]));
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 34 }, { wch: 70 }, { wch: 40 }, { wch: 40 }];
   if (workbook.SheetNames.includes(sheetName)) {
     workbook.Sheets[sheetName] = ws;
   } else {
@@ -1965,6 +2040,9 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
       }
       if (Array.isArray(projectSettings.siteLibrary)) {
         writeSiteLibrarySheet(workbook, projectSettings.siteLibrary);
+      }
+      if (Array.isArray(projectSettings.jobLibrary)) {
+        writeJobLibrarySheet(workbook, projectSettings.jobLibrary);
       }
     }
 

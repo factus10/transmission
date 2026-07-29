@@ -10,6 +10,10 @@ major-version codenames drawn from The Smiths.
 
 ### Added
 
+- **Jobs to be done — the other half of the discovery workshop.** Audiences answer *who* a page is for; jobs answer *what people came to do*. A per-project **Jobs** library (Project Settings → Audience) holds the JTBD output: a short label, the full statement in the workshop's own words, and which audiences have it (blank for a job anyone might have).
+  - A **Jobs served** field appears in the Audience cluster once the library has entries — the picker puts jobs belonging to *this page's* audiences at the top, so you're choosing from a few rather than scrolling all of them. Bulk-tag with **Add Job**; **Needs a job** is the worklist filter.
+  - **The payoff is the inverse question.** **Reports → Jobs Coverage** leads with the jobs *nothing on the site answers* — the strongest brief for net-new content available, because each line traces back to something the client said themselves rather than to an auditor's judgement. The same list is appended to the **Net New Content Brief**, which otherwise only finds gaps in the sitemap you drew.
+  - Lives on its own visible **`Jobs`** sheet, so the workshop output stays an editable working document.
 - **URL Variant Triage — a crawl is not a content inventory.** On a CMS-driven site much of a crawl is alternate views of the same page: pagination, sorting, faceted filters, tracking parameters. **Project → Triage URL Variants…** groups those by the page they point at and lets you dispose of them in bulk.
   - It reads the site's own **`rel=canonical`** rather than guessing from parameter names. Transmission always ingested that column and never used it; a declared canonical is authoritative where a rule about `?p=` versus `?page_id=` is a guess about someone else's CMS.
   - **Query-only variants** (same path, different query) become **Exclude** — the canonical's own redirect already covers them, so a rule each would bury the ones that matter. **Different-path variants** become **Consolidate** into the canonical, which writes the redirect for you.
