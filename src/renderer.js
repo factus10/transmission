@@ -588,6 +588,12 @@ function bindIPCListeners() {
       switchProjectSettingsTab('audience');
     });
   }
+  if (window.electronAPI.onMenuAudienceInherit) {
+    window.electronAPI.onMenuAudienceInherit(() => openAudienceInheritDialog());
+  }
+  if (window.electronAPI.onMenuAudienceAi) {
+    window.electronAPI.onMenuAudienceAi(() => openAudienceAiSuggestDialog());
+  }
   if (window.electronAPI.onMenuReportAudienceCoverage) {
     window.electronAPI.onMenuReportAudienceCoverage(() => reportAudienceCoverage());
   }
@@ -2883,7 +2889,7 @@ function applyFilter() {
 
   if (kf && kf.length > 0) {
     // Separate status values from special filters
-    const specialFilters = new Set(['_unreviewed', '_flagged', '_duplicates', '_sme-conflicts', '_sme-pending', '_consolidate-no-target', '_consolidate-dead-target', '_shared-nav', '_needs-placement', '_suggested-disagree', '_suggested-mismatch', '_needs-audience', '_audience-orphan', '_cross-site-duplicate', '_url-variant', '_variant-target-missing', '_needs-job']);
+    const specialFilters = new Set(['_unreviewed', '_flagged', '_duplicates', '_sme-conflicts', '_sme-pending', '_consolidate-no-target', '_consolidate-dead-target', '_shared-nav', '_needs-placement', '_suggested-disagree', '_suggested-mismatch', '_needs-audience', '_audience-orphan', '_audience-suggested', '_cross-site-duplicate', '_url-variant', '_variant-target-missing', '_needs-job']);
     const statusValues = kf.filter(v => !specialFilters.has(v));
     const specials = kf.filter(v => specialFilters.has(v));
 
@@ -2950,6 +2956,11 @@ function applyFilter() {
           // not "serves nobody".
           const list = rowAudiences(row);
           if (list.length && list.every(a => a === AUDIENCE_NONE || audienceTier(a) === 'Tertiary' || audienceTier(a) === 'Not a target')) return true;
+        }
+        if (s === '_audience-suggested') {
+          // The AI review queue: a suggestion is waiting and the page is still
+          // untagged, so the decision is genuinely outstanding.
+          if (!rowAudiences(row).length && row[SUGGESTED_AUDIENCES_COL]) return true;
         }
         if (s === '_shared-nav' && sharedNavIds) {
           const id = String(row['Sitemap_ID'] || '').trim();
@@ -4281,6 +4292,7 @@ function setRowAudiences(audiences) {
   setDirty(true);
   refreshRowInList(state.selectedIndex);
   refreshClusterSummaries(row);
+  renderAudienceSuggestionGhost(row);   // tagging by hand answers any pending suggestion
 }
 
 /** Keep Primary_Audience coherent with the tagged set. */
@@ -4518,6 +4530,7 @@ function setupAudienceHandlers() {
 function populateAudiences(row) {
   renderAudienceChips(rowAudiences(row));
   populatePrimaryAudienceSelect(row);
+  renderAudienceSuggestionGhost(row);
 }
 
 function applyAudienceFieldsVisibility() {
@@ -4767,6 +4780,644 @@ function applyJobsFieldVisibility() {
   const wrap = $('jobs-field-wrap');
   if (!wrap) return;
   wrap.classList.toggle('hidden', !(state.jobLibrary || []).length);
+}
+
+// ─── Audience at scale: inherit-from-section + AI suggestion (Phase 4) ────────
+//
+// Phases 1–3 made audience taggable and made it pay off; nothing made it
+// *affordable*. A 6,000-page crawl is thousands of judgements, and a column
+// that stays 4% full makes every report built on it worthless. These two are
+// the volume tools, and they differ deliberately:
+//
+//   • Inherit from section  — free, deterministic, needs no API key. It only
+//     ever propagates a decision the auditor already made elsewhere in the same
+//     section, so the worst case is a wrong guess traceable to a real choice.
+//   • AI suggestion         — costs credits and can be wrong in novel ways, so
+//     it never writes `Audiences` directly. It fills `_Suggested_Audiences` and
+//     the auditor accepts or rejects, exactly like `Suggested_KKE` never writes
+//     the human KKE column.
+
+const SUGGESTED_AUDIENCES_COL = '_Suggested_Audiences';
+
+function rowAudienceSuggestion(row) {
+  const raw = String(row?.[SUGGESTED_AUDIENCES_COL] || '').trim();
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw);
+    return {
+      audiences:  Array.isArray(o.audiences) ? o.audiences.filter(Boolean) : [],
+      primary:    String(o.primary || ''),
+      jobs:       Array.isArray(o.jobs) ? o.jobs.filter(Boolean) : [],
+      confidence: String(o.confidence || 'low'),
+      reasoning:  String(o.reasoning || '')
+    };
+  } catch (_) { return null; }
+}
+
+/** Rows eligible for either volume tool: in scope, still being carried forward
+ *  (or not yet reviewed), and not already tagged. Mirrors the `_needs-audience`
+ *  filter, widened to include Consolidate and unreviewed the way
+ *  `audienceScopeRows()` does — a page nobody has judged yet still owes an
+ *  audience answer. Returns `[{row, origIndex}]`. */
+function audienceFillTargets({ onlyFiltered = false, skipSuggested = false } = {}) {
+  const source = onlyFiltered
+    ? state.filteredRows.map(f => ({ row: f.row, origIndex: f.origIndex }))
+    : state.editedRows.map((row, origIndex) => ({ row, origIndex }));
+  return source.filter(({ row }) => {
+    if (!rowSiteInScope(row)) return false;
+    if (rowAudiences(row).length) return false;
+    // The AI path passes skipSuggested so a second run doesn't pay to re-answer
+    // pages already sitting in the review queue.
+    if (skipSuggested && rowAudienceSuggestion(row)) return false;
+    const eff = audEffectiveKke(row);
+    return eff === 'Keep' || eff === 'Evolve' || eff === 'Consolidate' || !eff;
+  });
+}
+
+/**
+ * Write an audience decision onto one row.
+ *
+ * Shared by inherit-from-section, the AI review dialog, and the per-row Accept,
+ * so all three log to the change log, land in one undo entry, and re-run the
+ * row's `Suggested_KKE` vote identically. `undoItems` is the array collected by
+ * `pushBulkEditUndo()`; pass null for a one-off.
+ */
+function writeAudienceDecision(origIndex, { audiences, primary, jobs }, undoItems) {
+  const row = state.editedRows[origIndex];
+  if (!row) return false;
+  let changed = false;
+  const setField = (field, nextRaw) => {
+    const old = String(row[field] || '');
+    const next = String(nextRaw || '');
+    if (old === next) return;
+    row[field] = next;
+    logChange(origIndex, field, old, next);
+    if (undoItems) undoItems.push({ origIndex, field, oldValue: old, newValue: next });
+    changed = true;
+  };
+
+  const list = (audiences || []).filter(Boolean);
+  setField(AUDIENCES_COL, list.join(', '));
+
+  // An explicit primary wins when it's actually in the set; otherwise fall back
+  // to the same "implied when there's only one" rule the chip input applies, and
+  // never name `— None` as a primary (serving nobody is not a lead audience).
+  let prim = primary && list.includes(primary) ? primary : '';
+  if (!prim && list.length === 1 && list[0] !== AUDIENCE_NONE) prim = list[0];
+  if (prim === AUDIENCE_NONE) prim = '';
+  setField(PRIMARY_AUDIENCE_COL, prim);
+
+  // Jobs are merged, never replaced — a job the auditor tagged by hand outranks
+  // anything a suggestion adds.
+  if (jobs && jobs.length && (state.jobLibrary || []).length) {
+    const merged = rowJobs(row);
+    jobs.filter(Boolean).forEach(j => { if (!merged.includes(j)) merged.push(j); });
+    setField(JOBS_COL, merged.join(', '));
+  }
+
+  // The suggestion has been answered — clearing it is what drains the review
+  // queue, and it rides in the same undo entry so a rejected accept comes back.
+  setField(SUGGESTED_AUDIENCES_COL, '');
+
+  if (changed) refreshSuggestedKkeForRow(origIndex);
+  return changed;
+}
+
+// ── Inherit from section ─────────────────────────────────────────────────────
+
+/**
+ * Per-section audience profile, built only from rows the auditor already tagged.
+ *
+ * `minShare` is the agreement bar: an audience has to appear on at least this
+ * share of the section's tagged pages before it's treated as characteristic of
+ * the section rather than of one page. `minEvidence` stops a section with two
+ * tagged pages from speaking for two hundred untagged ones.
+ */
+function computeSectionAudienceProfiles({ minEvidence = 3, minShare = 0.5 } = {}) {
+  const resolve = makeSectionResolver();
+  const bySection = new Map();
+  const targets = new Set(audienceFillTargets().map(t => t.origIndex));
+
+  state.editedRows.forEach((row, origIndex) => {
+    if (!rowSiteInScope(row)) return;
+    const section = resolve(row) || '(unsectioned)';
+    if (!bySection.has(section)) bySection.set(section, { section, tagged: [], fillable: [] });
+    const bucket = bySection.get(section);
+    if (rowAudiences(row).length) bucket.tagged.push(row);
+    else if (targets.has(origIndex)) bucket.fillable.push(origIndex);
+  });
+
+  const profiles = [];
+  bySection.forEach(b => {
+    const counts = new Map();
+    const primaryCounts = new Map();
+    b.tagged.forEach(row => {
+      // `— None` is deliberately never inherited. Propagating it would assert
+      // "this page serves nobody" — a Kill vote — onto pages no one has looked
+      // at, which is exactly the blank-means-unreviewed line the tool holds.
+      new Set(rowAudiences(row).filter(a => a !== AUDIENCE_NONE))
+        .forEach(a => counts.set(a, (counts.get(a) || 0) + 1));
+      const p = String(row[PRIMARY_AUDIENCE_COL] || '').trim();
+      if (p) primaryCounts.set(p, (primaryCounts.get(p) || 0) + 1);
+    });
+    const dominant = [...counts.entries()]
+      .filter(([, n]) => n / b.tagged.length >= minShare)
+      .sort((x, y) => y[1] - x[1] || String(x[0]).localeCompare(String(y[0])))
+      .map(([name, n]) => ({ name, count: n, share: n / b.tagged.length }));
+    const topPrimary = [...primaryCounts.entries()].sort((x, y) => y[1] - x[1])[0];
+    const primary = topPrimary && dominant.some(d => d.name === topPrimary[0]) ? topPrimary[0] : '';
+    profiles.push({
+      section: b.section,
+      taggedCount: b.tagged.length,
+      fillable: b.fillable,
+      dominant,
+      primary,
+      eligible: b.tagged.length >= minEvidence && dominant.length > 0 && b.fillable.length > 0
+    });
+  });
+
+  return profiles.sort((a, b) => b.fillable.length - a.fillable.length || a.section.localeCompare(b.section));
+}
+
+function openAudienceInheritDialog() {
+  if (!state.editedRows.length) { showToast('Open a file first', 'error'); return; }
+  if (!(state.audienceLibrary || []).length) {
+    alertDialog({
+      title: 'No audience library',
+      message: 'This project has no audiences yet. Add them in Project → Audience Library… (or paste your prioritization workshop output) first.'
+    });
+    return;
+  }
+
+  const profiles = computeSectionAudienceProfiles();
+  const eligible = profiles.filter(p => p.eligible);
+  if (!eligible.length) {
+    const anyTagged = profiles.some(p => p.taggedCount > 0);
+    alertDialog({
+      title: 'Nothing to inherit yet',
+      message: anyTagged
+        ? 'No section has enough agreement to propagate from. This needs at least 3 tagged pages in a section, with an audience appearing on half of them.\n\nTag a few pages in a section by hand first — this tool spreads a decision you already made, it does not make one.'
+        : 'No pages are tagged yet, so there is nothing to inherit from. Tag a handful of pages in a section (the Multi-bar does this fast), then run this again to spread them.'
+    });
+    return;
+  }
+
+  const totalFill = eligible.reduce((n, p) => n + p.fillable.length, 0);
+  const rowsHtml = eligible.slice(0, 200).map((p, i) => `
+    <tr>
+      <td style="padding:5px 8px;font-size:12px;">${escapeHtml(p.section)}</td>
+      <td style="padding:5px 8px;font-size:11px;color:var(--text-muted);white-space:nowrap;">${p.taggedCount} tagged</td>
+      <td style="padding:5px 8px;font-size:11px;">
+        ${p.dominant.map(d => `<span class="tag-chip" style="display:inline-block;margin:1px 3px 1px 0;font-size:10px;padding:1px 6px;">${escapeHtml(d.name)} <span style="opacity:.6;">${Math.round(d.share * 100)}%</span></span>`).join('')}
+        ${p.primary ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">primarily for ${escapeHtml(p.primary)}</div>` : ''}
+      </td>
+      <td style="padding:5px 8px;text-align:right;"><strong>${p.fillable.length.toLocaleString()}</strong></td>
+      <td style="padding:5px 8px;"><input type="checkbox" class="_aif-apply" data-i="${i}" checked></td>
+    </tr>`).join('');
+
+  const api = openModal({
+    title: 'Fill Audiences from Section',
+    width: 820,
+    body: `
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px;">
+        Spreads the audiences you have <em>already</em> tagged in a section onto that section's untagged pages.
+        Nothing is invented and nothing already tagged is touched — this only fills blanks, and it is one <kbd>Cmd+Z</kbd>.
+      </p>
+      <div style="font-size:12px;margin-bottom:10px;">
+        <strong>${totalFill.toLocaleString()}</strong> page${totalFill !== 1 ? 's' : ''} would be filled across
+        <strong>${eligible.length}</strong> section${eligible.length !== 1 ? 's' : ''}.
+      </div>
+      <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px;">
+        A section qualifies when at least 3 of its pages are tagged and an audience appears on half of them; the
+        percentage is that agreement. <code>— None (no target audience)</code> is never inherited — asserting that a
+        page nobody has looked at serves nobody would turn an unreviewed blank into a Kill vote.
+      </p>
+      <div style="max-height:44vh;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
+        <table style="width:100%;border-collapse:collapse;">
+          <thead><tr style="text-align:left;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-surface);">
+            <th style="padding:6px 8px;font-size:11px;">Section</th>
+            <th style="padding:6px 8px;font-size:11px;">Evidence</th>
+            <th style="padding:6px 8px;font-size:11px;">Would apply</th>
+            <th style="padding:6px 8px;font-size:11px;text-align:right;">Fills</th>
+            <th style="padding:6px 8px;font-size:11px;">Apply</th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
+      ${eligible.length > 200 ? `<p style="font-size:11px;color:var(--text-muted);margin:6px 0 0;">Showing the 200 largest of ${eligible.length} sections.</p>` : ''}
+    `,
+    buttons: [
+      { label: 'Cancel', variant: 'ghost', value: false },
+      { label: 'Fill Audiences', variant: 'primary', primary: true, closeOnClick: false,
+        onClick: (m) => { applyAudienceInherit(eligible, m); m.close(); } }
+    ]
+  });
+  return api;
+}
+
+function applyAudienceInherit(eligible, api) {
+  const chosen = new Set();
+  api.body.querySelectorAll('._aif-apply').forEach(cb => { if (cb.checked) chosen.add(+cb.dataset.i); });
+
+  const undoItems = [];
+  let filled = 0, sections = 0;
+  eligible.forEach((p, i) => {
+    if (!chosen.has(i)) return;
+    sections++;
+    const audiences = p.dominant.map(d => d.name);
+    p.fillable.forEach(origIndex => {
+      // Re-check: a row could have been tagged between building the dialog and
+      // pressing the button (the AI run, another accept).
+      if (rowAudiences(state.editedRows[origIndex]).length) return;
+      if (writeAudienceDecision(origIndex, { audiences, primary: p.primary }, undoItems)) filled++;
+    });
+  });
+
+  if (!filled) { showToast('Nothing to fill — those pages are already tagged', 'info'); return; }
+  pushBulkEditUndo(undoItems, 'inherit audiences from section');
+  setDirty(true);
+  applyFilter();
+  if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+  showToast(`Filled ${filled.toLocaleString()} page${filled !== 1 ? 's' : ''} across ${sections} section${sections !== 1 ? 's' : ''} — Cmd+Z to undo`, 'success');
+}
+
+// ── AI suggestion (batch) ────────────────────────────────────────────────────
+
+const AUDIENCE_AI_BATCH_SIZE = 20;   // pages per request — the library prompt is sent once per batch, not per page
+const AUDIENCE_AI_CONCURRENCY = 3;   // in-flight requests; enough to be tolerable, low enough to stay off rate limits
+let _audienceAiAbort = false;
+
+async function openAudienceAiSuggestDialog() {
+  if (!state.editedRows.length) { showToast('Open a file first', 'error'); return; }
+  if (!(state.audienceLibrary || []).length) {
+    alertDialog({
+      title: 'No audience library',
+      message: 'AI suggestion tags pages against THIS project\'s audiences, so the library has to exist first.\n\nAdd them in Project → Audience Library… — pasting your prioritization workshop output takes a minute and makes every suggestion specific to the client rather than generic.'
+    });
+    return;
+  }
+  if (!state.claudeApiKey) {
+    alertDialog({
+      title: 'API key required',
+      message: 'Add a Claude API key in App Settings to use AI suggestion. Requests are billed to your own key.'
+    });
+    return;
+  }
+
+  const pendingCount = pendingAudienceSuggestions().length;
+  const models = await window.electronAPI.getClaudeModels();
+  const saved = String(state.projectSettings.audienceAiModel || '');
+  const filteredCount = audienceFillTargets({ onlyFiltered: true, skipSuggested: true }).length;
+  const allCount = audienceFillTargets({ skipSuggested: true }).length;
+  if (!allCount) {
+    if (pendingCount) { openAudienceSuggestionReview(); return; }
+    showToast('Every in-scope page already has an audience', 'info');
+    return;
+  }
+
+  const api = openModal({
+    title: 'Suggest Audiences with AI',
+    width: 640,
+    body: `
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px;">
+        Reads each page's title, H1, meta description, URL and section against this project's audience library and
+        proposes who it serves. Suggestions land in a review queue — <strong>your <code>Audiences</code> column is not
+        written</strong> until you accept them.
+      </p>
+      ${pendingCount ? `<div style="background:#fef3c7;border-left:3px solid #d97706;padding:8px 10px;font-size:12px;margin:0 0 12px;display:flex;align-items:center;gap:10px;">
+        <span style="flex:1;"><strong>${pendingCount.toLocaleString()}</strong> suggestion${pendingCount !== 1 ? 's are' : ' is'} already waiting to be reviewed. Those pages are excluded from the counts below.</span>
+        <button class="btn btn-sm" id="_aia-review">Review now</button>
+      </div>` : ''}
+      <div class="setting-row" style="align-items:flex-start;">
+        <label style="min-width:110px;font-size:12px;">Pages</label>
+        <div style="flex:1;">
+          <label style="display:block;font-size:12px;margin-bottom:4px;">
+            <input type="radio" name="_aia-scope" value="all" checked>
+            All untagged pages — <strong>${allCount.toLocaleString()}</strong>
+          </label>
+          <label style="display:block;font-size:12px;">
+            <input type="radio" name="_aia-scope" value="filtered"${filteredCount ? '' : ' disabled'}>
+            Only the current filter — <strong>${filteredCount.toLocaleString()}</strong>
+            <span style="color:var(--text-muted);">(pilot one section first)</span>
+          </label>
+        </div>
+      </div>
+      <div class="setting-row">
+        <label style="min-width:110px;font-size:12px;">Model</label>
+        <select id="_aia-model" style="flex:1;padding:4px 6px;font-size:12px;">
+          ${models.map(m => `<option value="${escapeHtml(m.id)}"${m.id === saved ? ' selected' : ''}>${escapeHtml(m.label)} — ${escapeHtml(m.hint)}</option>`).join('')}
+        </select>
+      </div>
+      <p id="_aia-estimate" style="font-size:11px;color:var(--text-muted);margin:10px 0 0;"></p>
+      <p style="font-size:11px;color:var(--text-muted);margin:8px 0 0;">
+        Billed to your own API key. Press <kbd>Esc</kbd> during the run to stop — everything suggested up to that
+        point is kept.
+      </p>
+    `,
+    buttons: [
+      { label: 'Cancel', variant: 'ghost', value: false },
+      { label: 'Suggest', variant: 'primary', primary: true, closeOnClick: false,
+        onClick: (m) => {
+          const scope = m.body.querySelector('input[name="_aia-scope"]:checked').value;
+          const model = m.body.querySelector('#_aia-model').value;
+          state.projectSettings.audienceAiModel = model;
+          setDirty(true);
+          m.close();
+          runAudienceAiSuggest({ onlyFiltered: scope === 'filtered', model });
+        } }
+    ]
+  });
+
+  const est = api.body.querySelector('#_aia-estimate');
+  const refreshEstimate = () => {
+    const scope = api.body.querySelector('input[name="_aia-scope"]:checked').value;
+    const n = scope === 'filtered' ? filteredCount : allCount;
+    const batches = Math.ceil(n / AUDIENCE_AI_BATCH_SIZE);
+    est.innerHTML = `<strong>${n.toLocaleString()}</strong> pages in <strong>${batches.toLocaleString()}</strong> request${batches !== 1 ? 's' : ''} `
+      + `(${AUDIENCE_AI_BATCH_SIZE} pages each, ${AUDIENCE_AI_CONCURRENCY} at a time). Cost scales with the model you pick.`;
+  };
+  api.body.querySelectorAll('input[name="_aia-scope"]').forEach(r => r.addEventListener('change', refreshEstimate));
+  refreshEstimate();
+  const reviewBtn = api.body.querySelector('#_aia-review');
+  if (reviewBtn) reviewBtn.addEventListener('click', () => { api.close(); openAudienceSuggestionReview(); });
+}
+
+/** Metadata handed to the model. Deliberately narrow: title/H1/meta/URL/section
+ *  is what a human reads to make this call, and sending the whole crawl row
+ *  would bury it in Screaming Frog columns nobody judges audience from. */
+function audienceAiPagePayload(row, origIndex, resolve) {
+  const first = (...keys) => {
+    for (const k of keys) { const v = String(row[k] || '').trim(); if (v) return v.slice(0, 300); }
+    return '';
+  };
+  return {
+    ref:     String(origIndex),
+    url:     String(row[state.urlColumn || 'Address'] || '').slice(0, 400),
+    title:   first('Title 1', 'Title'),
+    h1:      first('H1-1', 'H1'),
+    meta:    first('Meta Description 1', 'Meta Description'),
+    type:    first('Page_Type'),
+    section: resolve(row) || ''
+  };
+}
+
+async function runAudienceAiSuggest({ onlyFiltered, model }) {
+  const targets = audienceFillTargets({ onlyFiltered, skipSuggested: true });
+  if (!targets.length) { showToast('Nothing to suggest for', 'info'); return; }
+
+  const resolve = makeSectionResolver();
+  const batches = [];
+  for (let i = 0; i < targets.length; i += AUDIENCE_AI_BATCH_SIZE) {
+    batches.push(targets.slice(i, i + AUDIENCE_AI_BATCH_SIZE)
+      .map(t => audienceAiPagePayload(t.row, t.origIndex, resolve)));
+  }
+
+  const audiences = sortedAudienceLibrary().map(a => ({ name: a.name, tier: a.tier, description: a.description }));
+  const jobs = (state.jobLibrary || []).map(j => ({ job: j.label, statement: j.statement }));
+
+  _audienceAiAbort = false;
+  const onAbort = (e) => { if (e.key === 'Escape') _audienceAiAbort = true; };
+  document.addEventListener('keydown', onAbort);
+
+  let doneBatches = 0, suggested = 0, errors = 0, lastError = '';
+  let cursor = 0;
+
+  const worker = async () => {
+    while (true) {
+      if (_audienceAiAbort) return;
+      const idx = cursor++;
+      if (idx >= batches.length) return;
+      const pages = batches[idx];
+      try {
+        const res = await window.electronAPI.suggestAudiencesLLM({
+          pages, audiences, jobs, model, apiKey: state.claudeApiKey
+        });
+        if (res.error) { errors++; lastError = res.error; }
+        else suggested += ingestAudienceSuggestions(res.results || []);
+      } catch (e) { errors++; lastError = e.message; }
+      doneBatches++;
+      showToast(`Suggesting audiences… ${Math.min(doneBatches * AUDIENCE_AI_BATCH_SIZE, targets.length).toLocaleString()}/${targets.length.toLocaleString()}  (Esc to stop)`);
+    }
+  };
+
+  try {
+    await Promise.all(Array.from({ length: Math.min(AUDIENCE_AI_CONCURRENCY, batches.length) }, worker));
+  } finally {
+    document.removeEventListener('keydown', onAbort);
+  }
+
+  if (suggested) setDirty(true);
+  applyFilter();
+  if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+
+  if (!suggested) {
+    alertDialog({
+      title: 'No suggestions produced',
+      message: errors ? `Every request failed. Last error:\n\n${lastError}` : 'The model returned no usable results.'
+    });
+    return;
+  }
+  const stopped = _audienceAiAbort ? 'Stopped — ' : '';
+  showToast(`${stopped}${suggested.toLocaleString()} suggestion${suggested !== 1 ? 's' : ''} ready to review${errors ? `, ${errors} request${errors !== 1 ? 's' : ''} failed` : ''}`, 'success');
+  openAudienceSuggestionReview();
+}
+
+/** Store one batch's results on their rows. Nothing here touches `Audiences`. */
+function ingestAudienceSuggestions(results) {
+  const known = new Set((state.audienceLibrary || []).map(a => a.name));
+  const knownJobs = new Set((state.jobLibrary || []).map(j => j.label));
+  let n = 0;
+  results.forEach(r => {
+    const origIndex = Number(r.ref);
+    const row = state.editedRows[origIndex];
+    if (!row) return;
+    if (rowAudiences(row).length) return;                 // tagged in the meantime — don't queue over it
+    // The schema constrains these to the library, but a stale library between
+    // request and response would still get through; filter rather than trust.
+    const list = (r.audiences || []).filter(a => known.has(a));
+    if (!list.length) return;                             // an honest abstention — nothing to review
+    row[SUGGESTED_AUDIENCES_COL] = JSON.stringify({
+      audiences:  list,
+      primary:    known.has(r.primary) && list.includes(r.primary) ? r.primary : '',
+      jobs:       (r.jobs || []).filter(j => knownJobs.has(j)),
+      confidence: ['high', 'medium', 'low'].includes(r.confidence) ? r.confidence : 'low',
+      reasoning:  String(r.reasoning || '').slice(0, 400)
+    });
+    n++;
+  });
+  return n;
+}
+
+function pendingAudienceSuggestions() {
+  const out = [];
+  state.editedRows.forEach((row, origIndex) => {
+    const sug = rowAudienceSuggestion(row);
+    if (sug && !rowAudiences(row).length) out.push({ origIndex, row, sug });
+  });
+  return out;
+}
+
+/**
+ * Review queue, grouped by the suggested set.
+ *
+ * Grouping is what makes this reviewable at all: a few thousand suggestions
+ * collapse into a few dozen distinct answers, and "every page the model thinks
+ * is for Prospective Students" is a single judgement rather than 400.
+ */
+function openAudienceSuggestionReview() {
+  const pending = pendingAudienceSuggestions();
+  if (!pending.length) { showToast('No audience suggestions waiting', 'info'); return; }
+
+  const groups = new Map();
+  pending.forEach(p => {
+    const key = p.sug.audiences.join(' | ') + ' › ' + p.sug.primary;
+    if (!groups.has(key)) groups.set(key, { audiences: p.sug.audiences, primary: p.sug.primary, items: [], conf: { high: 0, medium: 0, low: 0 } });
+    const g = groups.get(key);
+    g.items.push(p);
+    g.conf[p.sug.confidence] = (g.conf[p.sug.confidence] || 0) + 1;
+  });
+  const ordered = [...groups.values()].sort((a, b) => b.items.length - a.items.length);
+
+  const shortUrl = (u) => { try { const p = new URL(u); return p.pathname || '/'; } catch (_) { return String(u || ''); } };
+  const rowsHtml = ordered.slice(0, 200).map((g, i) => {
+    const samples = g.items.slice(0, 3).map(p => shortUrl(p.row[state.urlColumn || 'Address']));
+    const lowShare = Math.round((g.conf.low || 0) / g.items.length * 100);
+    return `
+      <tr>
+        <td style="padding:6px 8px;font-size:11px;">
+          ${g.audiences.map(a => `<span class="tag-chip" style="display:inline-block;margin:1px 3px 1px 0;font-size:10px;padding:1px 6px;">${escapeHtml(a)}</span>`).join('')}
+          ${g.primary ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">primarily for ${escapeHtml(g.primary)}</div>` : ''}
+        </td>
+        <td style="padding:6px 8px;text-align:right;"><strong>${g.items.length.toLocaleString()}</strong></td>
+        <td style="padding:6px 8px;font-size:10px;color:${lowShare > 50 ? 'var(--kke-kill)' : 'var(--text-muted)'};white-space:nowrap;">
+          ${lowShare > 50 ? `${lowShare}% low confidence` : `${Math.round((g.conf.high || 0) / g.items.length * 100)}% high`}
+        </td>
+        <td style="padding:6px 8px;font-size:10px;color:var(--text-muted);word-break:break-all;">${samples.map(s => escapeHtml(s)).join('<br>')}</td>
+        <td style="padding:6px 8px;"><input type="checkbox" class="_asr-accept" data-i="${i}" checked></td>
+      </tr>`;
+  }).join('');
+
+  const api = openModal({
+    title: 'Review Audience Suggestions',
+    width: 900,
+    body: `
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px;">
+        <strong>${pending.length.toLocaleString()}</strong> pages have a proposed audience, grouped by the answer.
+        Accepting writes <code>Audiences</code> and <code>Primarily for</code>; declining leaves the page blank —
+        still unreviewed, which is the honest state.
+      </p>
+      <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px;">
+        Judge a whole group by its samples. Low-confidence groups are where the metadata was too thin to tell —
+        worth opening a few pages before accepting those.
+      </p>
+      <div style="max-height:46vh;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
+        <table style="width:100%;border-collapse:collapse;">
+          <thead><tr style="text-align:left;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-surface);">
+            <th style="padding:6px 8px;font-size:11px;">Suggested audiences</th>
+            <th style="padding:6px 8px;font-size:11px;text-align:right;">Pages</th>
+            <th style="padding:6px 8px;font-size:11px;">Confidence</th>
+            <th style="padding:6px 8px;font-size:11px;">Sample paths</th>
+            <th style="padding:6px 8px;font-size:11px;">Accept</th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
+      ${ordered.length > 200 ? `<p style="font-size:11px;color:var(--text-muted);margin:6px 0 0;">Showing the 200 largest of ${ordered.length} groups; the rest stay queued.</p>` : ''}
+    `,
+    buttons: [
+      { label: 'Select none', variant: 'ghost', closeOnClick: false,
+        onClick: (m) => m.body.querySelectorAll('._asr-accept').forEach(cb => { cb.checked = false; }) },
+      { label: 'Discard all', variant: 'ghost', closeOnClick: false,
+        onClick: async (m) => { if (await discardAudienceSuggestions()) m.close(); } },
+      { label: 'Close', variant: 'ghost', value: false },
+      { label: 'Accept Selected', variant: 'primary', primary: true, closeOnClick: false,
+        onClick: (m) => { applyAudienceSuggestions(ordered, m); m.close(); } }
+    ]
+  });
+  return api;
+}
+
+function applyAudienceSuggestions(ordered, api) {
+  const chosen = new Set();
+  api.body.querySelectorAll('._asr-accept').forEach(cb => { if (cb.checked) chosen.add(+cb.dataset.i); });
+
+  const undoItems = [];
+  let accepted = 0;
+  ordered.forEach((g, i) => {
+    if (!chosen.has(i)) return;
+    g.items.forEach(p => {
+      if (rowAudiences(state.editedRows[p.origIndex]).length) return;
+      if (writeAudienceDecision(p.origIndex, { audiences: g.audiences, primary: g.primary, jobs: p.sug.jobs }, undoItems)) accepted++;
+    });
+  });
+
+  if (!accepted) { showToast('Nothing accepted', 'info'); return; }
+  pushBulkEditUndo(undoItems, 'accept audience suggestions');
+  setDirty(true);
+  applyFilter();
+  if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+  showToast(`Accepted ${accepted.toLocaleString()} suggestion${accepted !== 1 ? 's' : ''} — Cmd+Z to undo`, 'success');
+}
+
+async function discardAudienceSuggestions() {
+  const pending = pendingAudienceSuggestions();
+  if (!pending.length) { showToast('No suggestions to discard', 'info'); return true; }
+  const ok = await confirmDialog({
+    title: 'Discard audience suggestions',
+    message: `Clear all ${pending.length.toLocaleString()} pending suggestions? The pages go back to untagged and you'd have to re-run (and re-pay for) the AI pass to get them back.`,
+    confirmLabel: 'Discard',
+    danger: true
+  });
+  if (!ok) return false;
+  const undoItems = [];
+  pending.forEach(p => {
+    const row = state.editedRows[p.origIndex];
+    const old = String(row[SUGGESTED_AUDIENCES_COL] || '');
+    row[SUGGESTED_AUDIENCES_COL] = '';
+    undoItems.push({ origIndex: p.origIndex, field: SUGGESTED_AUDIENCES_COL, oldValue: old, newValue: '' });
+  });
+  pushBulkEditUndo(undoItems, 'discard audience suggestions');
+  setDirty(true);
+  applyFilter();
+  if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+  showToast(`Discarded ${pending.length.toLocaleString()} suggestions — Cmd+Z to undo`, 'info');
+  return true;
+}
+
+/** Per-row ghost in the audience cluster: the same suggestion the review dialog
+ *  groups, offered inline so an auditor working page-by-page can take it without
+ *  opening a bulk tool. Mirrors the Migration Track ghost. */
+function renderAudienceSuggestionGhost(row) {
+  const host = $('audience-suggestion');
+  if (!host) return;
+  const sug = row ? rowAudienceSuggestion(row) : null;
+  if (!sug || rowAudiences(row).length) { host.classList.add('hidden'); host.innerHTML = ''; return; }
+  host.classList.remove('hidden');
+  host.innerHTML = `
+    <span class="aud-ghost-label" title="${escapeHtml(sug.reasoning)}">AI suggests: <strong>${escapeHtml(sug.audiences.join(', '))}</strong>
+      <span class="aud-ghost-conf">${escapeHtml(sug.confidence)}</span></span>
+    <button class="btn btn-sm btn-primary" id="aud-ghost-accept">Accept</button>
+    <button class="btn btn-sm btn-ghost" id="aud-ghost-dismiss">Dismiss</button>`;
+  host.querySelector('#aud-ghost-accept').addEventListener('click', () => {
+    const origIndex = state.selectedIndex;
+    if (origIndex === null) return;
+    const undoItems = [];
+    writeAudienceDecision(origIndex, sug, undoItems);
+    pushBulkEditUndo(undoItems, 'accept audience suggestion');
+    setDirty(true);
+    populateAuditFields(state.editedRows[origIndex]);
+    refreshRowInList(origIndex);
+  });
+  host.querySelector('#aud-ghost-dismiss').addEventListener('click', () => {
+    const origIndex = state.selectedIndex;
+    if (origIndex === null) return;
+    const row2 = state.editedRows[origIndex];
+    const old = String(row2[SUGGESTED_AUDIENCES_COL] || '');
+    row2[SUGGESTED_AUDIENCES_COL] = '';
+    pushBulkEditUndo([{ origIndex, field: SUGGESTED_AUDIENCES_COL, oldValue: old, newValue: '' }], 'dismiss audience suggestion');
+    setDirty(true);
+    renderAudienceSuggestionGhost(row2);
+  });
 }
 
 // ─── Design Pattern chip input ────────────────────────────────────────────────
@@ -21163,6 +21814,7 @@ function renderKkeFilterOptions() {
     { value: '_suggested-mismatch', text: 'Suggested KKE: differs from my KKE' },
     { value: '_needs-audience', text: 'Needs audience (Keep/Evolve, untagged)' },
     { value: '_audience-orphan', text: 'Serves no priority audience' },
+    { value: '_audience-suggested', text: 'Audience suggested by AI (awaiting review)' },
     { value: '_cross-site-duplicate', text: 'Duplicated on another source site' },
     { value: '_needs-job', text: 'Needs a job (Keep/Evolve, untagged)' },
     { value: '_url-variant', text: 'Alternate view of another page (canonical)' },
@@ -25417,7 +26069,8 @@ const TV_HIDDEN_BY_DEFAULT = new Set([
   'Suggested_KKE_Sources',
   'Source_CMS_URL',
   'New_CMS_URL',
-  'Design_Patterns'
+  'Design_Patterns',
+  '_Suggested_Audiences'
 ]);
 
 // Plain-language explanations surfaced as column-header tooltips (Table View) so non-experts

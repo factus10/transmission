@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadRubrics:   ()        => ipcRenderer.invoke('load-rubrics'),
   assessRow:      (payload)  => ipcRenderer.invoke('assess-row', payload),
   assessRowLLM:   (payload)  => ipcRenderer.invoke('assess-row-llm', payload),
+  getClaudeModels: ()        => ipcRenderer.invoke('get-claude-models'),
+  suggestAudiencesLLM: (payload) => ipcRenderer.invoke('suggest-audiences-llm', payload),
   readRubricFile:   (payload) => ipcRenderer.invoke('read-rubric-file', payload),
   writeRubricFile:  (payload) => ipcRenderer.invoke('write-rubric-file', payload),
 
@@ -74,6 +76,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMenuDesignPatternLibrary: (cb) => ipcRenderer.on('menu-design-pattern-library', () => cb()),
   getDefaultDesignPatternLibrary: () => ipcRenderer.invoke('get-default-design-pattern-library'),
   onMenuAudienceLibrary: (cb) => ipcRenderer.on('menu-audience-library', () => cb()),
+  onMenuAudienceInherit: (cb) => ipcRenderer.on('menu-audience-inherit', () => cb()),
+  onMenuAudienceAi:      (cb) => ipcRenderer.on('menu-audience-ai', () => cb()),
   getDefaultAudienceLibrary: (opts) => ipcRenderer.invoke('get-default-audience-library', opts),
   getAudienceStarterSets: () => ipcRenderer.invoke('get-audience-starter-sets'),
   exportRedirectsMulti: (payload) => ipcRenderer.invoke('export-redirects-multi', payload),

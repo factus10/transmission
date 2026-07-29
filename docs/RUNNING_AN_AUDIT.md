@@ -96,11 +96,20 @@ Twenty minutes here saves days later, because most of it feeds automatic behavio
 
 Filter to a section — the search box, the KKE filter, or **+ Field filter** for any column — then apply to everything visible: set Group, Content Type, Published Status, or **Add Audience**.
 
-Audience and job tagging in particular are bulk jobs. Filter to `/admissions/`, select all, tag *Prospective Students* and *Compare programs*, move on. A large site is a few dozen passes plus hand-correction. Three filters give you the worklists:
+Audience and job tagging in particular are bulk jobs. Filter to `/admissions/`, select all, tag *Prospective Students* and *Compare programs*, move on. A large site is a few dozen passes plus hand-correction. Four filters give you the worklists:
 
 - **Needs audience** — Keep/Evolve pages nobody has assessed yet
 - **Serves no priority audience** — reviewed, and everything it serves is off-strategy
 - **Needs a job** — Keep/Evolve pages with no job tagged
+- **Audience suggested by AI** — a suggestion is waiting on your accept or reject
+
+**Then close the long tail.** Bulk passes get the obvious sections; two tools finish the job.
+
+`Project → Fill Audiences from Section…` spreads what you already tagged in a section onto that section's untagged pages. It costs nothing, needs no API key, invents nothing, and only fills blanks — so run it *after* your bulk passes, when there's something to propagate. It won't act on a section with fewer than three tagged pages, which is the point: it spreads your decision, it doesn't make one.
+
+`Project → Suggest Audiences with AI…` handles what's left, against *your* audience library rather than a generic one. It never writes the `Audiences` column — suggestions queue up and you accept them by group (thousands of pages collapse into a few dozen distinct answers) or one at a time from the audit bar. Pilot it on one filtered section before running the whole crawl; it's billed to your own API key.
+
+> **Order matters here.** Both tools are only as good as what they learn from. Hand-tag a section, bulk-tag the obvious ones, *then* inherit, *then* let AI take the remainder — running AI first spends money answering questions you were about to answer for free.
 
 > **Why before the audit pass:** a page you've already classified is faster to judge, and the suggestion engine has more to work with when you get to it.
 
@@ -192,6 +201,10 @@ Then `Migration → Redirect Chain Check…` before you hand anything over. If t
 **Killing what you meant to exclude.** `Kill` puts a page in the redirect map. `Exclude` says it was never in the inventory.
 
 **Treating Suggested KKE as the answer.** It's a weighted vote from partial signals. Its disagreements are more useful than its agreements.
+
+**Reaching for AI audience suggestion first.** It learns nothing from an empty library and an untagged crawl. Tag by hand, bulk-tag, inherit from section, *then* pay for the remainder.
+
+**Leaving AI suggestions unreviewed.** A pending suggestion is not a tagged page — it's an unanswered question, and every audience report still counts that page as untagged. Drain the queue before you run the readout.
 
 **Leaving Site Domain unset with several sites in scope.** Redirect destinations get built on an arbitrary domain. The tool warns; heed it.
 
