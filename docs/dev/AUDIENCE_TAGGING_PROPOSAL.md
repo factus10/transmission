@@ -1,7 +1,8 @@
 # Proposal — Audience & Jobs-to-be-Done tagging
 
-**Status:** approved · Phases 1 & 2 implemented 2026-07-28 · Phase 3 (JTBD) deferred
+**Status:** approved · Phases 1–3 implemented (1 & 2 on 2026-07-28, 3 on 2026-07-29) · Phase 4 not built
 **Date:** 2026-07-28
+**Scope:** make audience prioritization and JTBD workshop output a first-class, load-bearing input to the KKE process.
 
 ## Decisions taken
 
@@ -12,7 +13,6 @@
    rows abstain, so existing projects are unaffected until someone tags something.
 4. **Tiers are Primary / Secondary / Tertiary / Not a target**, kept deliberately
    constrained to make the prioritization conversation useful. Revisable later.
-**Scope:** make audience prioritization and JTBD workshop output a first-class, load-bearing input to the KKE process.
 
 ---
 
@@ -82,13 +82,17 @@ projectSettings.audienceLibrary = [
   ...
 ]
 
-projectSettings.jobLibrary = [   // Phase 3
-  { id: 'J-01',
+projectSettings.jobLibrary = [   // Phase 3 — as built
+  { label: 'Compare programs',        // what goes in the row cell
     statement: 'When I am comparing programs, I want outcome data, so I can justify the cost.',
     audiences: ['Prospective Undergraduates', 'Parents & Families'],
     notes: '' },
   ...
 ]
+
+// `label`, not an opaque `id`: the row cell has to stay readable in the
+// spreadsheet, which is the whole premise of this app. Commas are replaced
+// with `;` on entry, since commas separate values in `Jobs_Served`.
 ```
 
 Jobs carry a *list* of audiences rather than belonging to one. Most jobs are audience-specific, but some genuinely aren't ("find who to contact"), and forcing those into one owner distorts the gap analysis.
@@ -99,7 +103,9 @@ Jobs carry a *list* of audiences rather than belonging to one. Most jobs are aud
 
 But I recommend promoting the audience library to a real **`Audiences` structural sheet** (columns: `Name`, `Tier`, `Color`, `Description`, `Notes`), following the `ContentTypeRegistry` precedent. Reason: the workshop output arrives as a spreadsheet, and the client wants to see and edit it as a spreadsheet. A visible sheet makes "paste the workshop output in here" the import path, and makes the audience list an auditable artifact in the handoff rather than an opaque JSON blob in a settings cell.
 
-Jobs can stay in `KKE_Settings` JSON for Phase 3 and be promoted to a `Jobs` sheet only if clients ask to edit them directly.
+~~Jobs can stay in `KKE_Settings` JSON for Phase 3 and be promoted to a `Jobs` sheet only if clients ask to edit them directly.~~
+
+**As built:** jobs got their own `Jobs` sheet immediately, for the same reason audiences did — the JTBD workshop output arrives as a table and the client wants to keep editing it as one. Waiting for someone to ask would have meant a migration later for no benefit.
 
 ### 2.5 Seed defaults
 
@@ -208,7 +214,7 @@ Additions to existing reports, cheap and worth doing: an audience coverage line 
 |---|---|---|
 | **1 — Tag it** ✅ | `Audiences` + `Primary_Audience` columns · `audienceLibrary` + `Audiences` sheet · audit-bar cluster + tier-grouped chips · Project Settings → Audience tab · **multi-bar bulk actions** · `_needs-audience` / `_audience-orphan` filters · seed defaults · workshop paste-import | M |
 | **2 — Use it** ✅ | `Suggested_KKE` audience source + weight · sitemap/treemap coloring (`Primary_Audience`) · Audience Coverage + Audience × Section + Audience Debt reports · Migration Tracker / SME export columns | M |
-| **3 — Jobs** | `jobLibrary` · `Jobs_Served` tagging · Jobs Coverage report · unserved-jobs → Net New Content Brief | M |
+| **3 — Jobs** ✅ | `jobLibrary` + `Jobs` sheet · `Jobs_Served` tagging (audience-aware picker) · Jobs library editor + paste-import · `add-job`/`remove-job` bulk · `_needs-job` filter · Jobs Coverage report · unserved jobs appended to the Net New Content Brief | M |
 | **4 — Scale** | AI audience suggestion (batch) · inherit-from-section | S–M |
 
 `Jobs_Served` was **not** injected as a column in Phase 1 — an always-blank column

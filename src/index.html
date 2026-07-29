@@ -114,6 +114,8 @@
           <option value="add-audience">Add Audience</option>
           <option value="remove-audience">Remove Audience</option>
           <option value="primary-audience">Set Primary Audience</option>
+          <option value="add-job">Add Job</option>
+          <option value="remove-job">Remove Job</option>
           <option value="assign-nav">Assign to Sitemap…</option>
         </select>
         <select id="multi-value" class="group-select hidden" style="font-size:12px;padding:3px 6px;"></select>
@@ -293,6 +295,13 @@
                 <div id="audience-input-wrap">
                   <button id="btn-add-audience" class="tag-add-btn">+ Add audience</button>
                   <div id="audience-chips"></div>
+                </div>
+              </div>
+              <div id="jobs-field-wrap" class="audit-group audit-group-tags hidden" style="flex:1 1 100%;">
+                <label class="audit-label" title="Which jobs-to-be-done this page actually does work for">Jobs served</label>
+                <div id="job-input-wrap">
+                  <button id="btn-add-job" class="tag-add-btn">+ Add job</button>
+                  <div id="job-chips"></div>
                 </div>
               </div>
             </div>
@@ -596,6 +605,17 @@
     <div id="aud-list"></div>
     <div id="aud-create" class="hidden">
       <button id="btn-create-aud" class="btn btn-sm btn-primary">Add audience "<span id="aud-create-label"></span>"</button>
+    </div>
+  </div>
+
+  <!-- ── Jobs-to-be-done dropdown ─────────────────────────────────────────────── -->
+  <div id="job-dropdown" class="hidden">
+    <div id="job-search-wrap">
+      <input id="job-search" type="text" placeholder="Search jobs…">
+    </div>
+    <div id="job-list"></div>
+    <div id="job-create" class="hidden">
+      <button id="btn-create-job" class="btn btn-sm btn-primary">Add job "<span id="job-create-label"></span>"</button>
     </div>
   </div>
 
@@ -973,6 +993,24 @@
             </div>
             <div id="ps-aud-list" class="ps-mig-list"></div>
             <div id="ps-aud-footer" style="font-size:11px;color:var(--text-muted);margin-top:8px;"></div>
+          </div>
+
+          <div class="setting-divider"></div>
+
+          <div class="ps-section">
+            <div class="ps-section-head">
+              <span class="ps-section-title">Jobs to be done</span>
+              <span style="flex:1;"></span>
+              <button id="ps-job-import" class="btn btn-sm btn-ghost">Paste from workshop…</button>
+              <button id="ps-job-add" class="btn btn-sm btn-primary">+ Add job</button>
+            </div>
+            <div class="ps-section-hint">
+              What people came to <em>do</em>, in their own words. Each job can belong to one or more audiences —
+              leave that blank for a job everybody has. A job with <strong>no page serving it</strong> is the
+              cleanest argument for net-new content there is, which is what the Jobs Coverage report is for.
+            </div>
+            <div id="ps-job-list" class="ps-mig-list"></div>
+            <div id="ps-job-footer" style="font-size:11px;color:var(--text-muted);margin-top:8px;"></div>
           </div>
         </div>
 

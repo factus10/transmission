@@ -124,6 +124,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMenuReportAudienceCoverage: (cb) => ipcRenderer.on('menu-report-audience-coverage', () => cb()),
   onMenuReportAudienceMatrix:   (cb) => ipcRenderer.on('menu-report-audience-matrix',   () => cb()),
   onMenuReportAudienceDebt:     (cb) => ipcRenderer.on('menu-report-audience-debt',     () => cb()),
+  onMenuReportJobsCoverage:     (cb) => ipcRenderer.on('menu-report-jobs-coverage',     () => cb()),
   onMenuReportSiteConsolidation:(cb) => ipcRenderer.on('menu-report-site-consolidation', () => cb()),
   onMenuReportCrossSiteDupes:   (cb) => ipcRenderer.on('menu-report-cross-site-dupes',   () => cb()),
   onMenuReportContentCrosswalk: (cb) => ipcRenderer.on('menu-report-content-crosswalk',  () => cb()),

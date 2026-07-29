@@ -95,6 +95,7 @@ const state = {
   designPatternLibrary: [], // Design pattern inventory — { name, category, complexity, description, dsUrl, aliases, notes }[]
   showDesignPatterns:   false, // whether the patterns cluster is visible (persisted in prefs)
   audienceLibrary:      [], // Audience prioritization output — { name, tier, color, description, notes }[] (per-project, projectSettings + Audiences sheet)
+  jobLibrary:           [], // Jobs-to-be-done — { label, statement, audiences[], notes }[] (per-project, projectSettings + Jobs sheet)
   siteLibrary:          [], // Source sites being consolidated — { label, hosts[], cms, owner, inScope, color, notes }[] (per-project, projectSettings + Sites sheet)
   showAudienceFields:   false, // whether the audience cluster is visible (persisted in prefs; auto-reveals once a library exists)
 
@@ -251,6 +252,9 @@ const els = {
   btnAddDesignPattern:     $('btn-add-design-pattern'),
   dpDropdown:              $('design-pattern-dropdown'),
   audienceChips:           $('audience-chips'),
+  jobChips:                $('job-chips'),
+  btnAddJob:               $('btn-add-job'),
+  jobDropdown:             $('job-dropdown'),
   btnAddAudience:          $('btn-add-audience'),
   audDropdown:             $('audience-dropdown'),
   primaryAudienceSelect:   $('primary-audience-select'),
@@ -447,6 +451,7 @@ async function init() {
   setupCmsLinkHandlers();
   setupDesignPatternHandlers();
   setupAudienceHandlers();
+  setupJobHandlers();
   setupClusterCollapse();
   setupClusterQuickToggles();
   setupViewSwitcher();
@@ -591,6 +596,9 @@ function bindIPCListeners() {
   }
   if (window.electronAPI.onMenuReportAudienceDebt) {
     window.electronAPI.onMenuReportAudienceDebt(() => reportAudienceDebt());
+  }
+  if (window.electronAPI.onMenuReportJobsCoverage) {
+    window.electronAPI.onMenuReportJobsCoverage(() => reportJobsCoverage());
   }
   if (window.electronAPI.onMenuReportSiteConsolidation) {
     window.electronAPI.onMenuReportSiteConsolidation(() => reportSiteConsolidation());
@@ -1054,6 +1062,21 @@ function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, she
       maybeWarnMissingSiteDomain();
     }
   }
+
+  // Jobs-to-be-done library (per-project, Jobs sheet). Same fold-in as audiences:
+  // anything tagged in the data but missing from the library is recovered, so a
+  // hand-edited file never shows chips the picker can't reproduce.
+  state.jobLibrary = Array.isArray(state.projectSettings.jobLibrary)
+    ? state.projectSettings.jobLibrary
+    : [];
+  {
+    const known = new Set(state.jobLibrary.map(j => j.label));
+    const seen = new Set();
+    state.editedRows.forEach(r => rowJobs(r).forEach(l => { if (!known.has(l)) seen.add(l); }));
+    seen.forEach(label => state.jobLibrary.push({ label, statement: '', audiences: [], notes: '' }));
+    if (seen.size) state.projectSettings.jobLibrary = state.jobLibrary;
+  }
+  applyJobsFieldVisibility();
 
   // Auto-reveal the cluster the first time a project actually has audiences —
   // otherwise the feature hides behind a toggle nobody has a reason to find.
@@ -2860,7 +2883,7 @@ function applyFilter() {
 
   if (kf && kf.length > 0) {
     // Separate status values from special filters
-    const specialFilters = new Set(['_unreviewed', '_flagged', '_duplicates', '_sme-conflicts', '_sme-pending', '_consolidate-no-target', '_consolidate-dead-target', '_shared-nav', '_needs-placement', '_suggested-disagree', '_suggested-mismatch', '_needs-audience', '_audience-orphan', '_cross-site-duplicate', '_url-variant', '_variant-target-missing']);
+    const specialFilters = new Set(['_unreviewed', '_flagged', '_duplicates', '_sme-conflicts', '_sme-pending', '_consolidate-no-target', '_consolidate-dead-target', '_shared-nav', '_needs-placement', '_suggested-disagree', '_suggested-mismatch', '_needs-audience', '_audience-orphan', '_cross-site-duplicate', '_url-variant', '_variant-target-missing', '_needs-job']);
     const statusValues = kf.filter(v => !specialFilters.has(v));
     const specials = kf.filter(v => specialFilters.has(v));
 
@@ -2905,6 +2928,11 @@ function applyFilter() {
           }
         }
         if (s === '_cross-site-duplicate' && _crossSiteDupSet.has(origIndex)) return true;
+        if (s === '_needs-job' && (state.jobLibrary || []).length && !rowJobs(row).length) {
+          // Only pages we're carrying forward owe a job answer.
+          const eff = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
+          if (eff === 'Keep' || eff === 'Evolve') return true;
+        }
         if (s === '_url-variant' && _urlVariantSet.has(origIndex)) return true;
         if (s === '_variant-target-missing' && _variantTargetMissingSet.has(origIndex)) return true;
         if (s === '_needs-audience') {
@@ -3688,6 +3716,7 @@ function populateAuditFields(row) {
 
   // Audience
   populateAudiences(row);
+  populateJobs(row);
 
   // CMS links (Phase 1)
   populateCmsLinks(row);
@@ -3950,12 +3979,16 @@ function summarizeClassify(row) {
 }
 function summarizeAudience(row) {
   const list = rowAudiences(row);
-  if (!list.length) return '';
+  const jobCount = rowJobs(row).length;
+  // Jobs can be tagged without audiences — don't leave the cluster looking empty.
+  if (!list.length) return jobCount ? `${jobCount} job${jobCount !== 1 ? 's' : ''}` : '';
   if (list.length === 1 && list[0] === AUDIENCE_NONE) return 'no target audience';
   const primary = String(row[PRIMARY_AUDIENCE_COL] || '').trim();
   const lead = primary || list[0];
   const rest = list.filter(a => a !== lead).length;
-  return rest ? `${lead} +${rest}` : lead;
+  const jobs = rowJobs(row).length;
+  const base = rest ? `${lead} +${rest}` : lead;
+  return jobs ? `${base} · ${jobs} job${jobs !== 1 ? 's' : ''}` : base;
 }
 function summarizeMigrate(row) {
   const parts = [row['Content_Nature'], row['Migration_Track']]
@@ -4491,6 +4524,249 @@ function applyAudienceFieldsVisibility() {
   const wrap = $('audience-fields-wrap');
   if (!wrap) return;
   wrap.classList.toggle('hidden', !state.showAudienceFields);
+}
+
+// ─── Jobs-to-be-done ─────────────────────────────────────────────────────────
+// Audiences answer *who* a page is for; jobs answer *what they came to do*.
+// The payoff is the inverse: a job with no page serving it is the cleanest
+// argument for net-new content there is, because it traces a proposed page back
+// to something the client said in their own workshop.
+//
+// A job's `label` is what goes in the row cell (so the spreadsheet stays
+// readable); `statement` holds the full workshop wording; `audiences` is a LIST,
+// because most jobs belong to one audience but some genuinely don't.
+
+const JOBS_COL = 'Jobs_Served';
+
+function jobEntry(label) {
+  return (state.jobLibrary || []).find(j => j.label === label) || null;
+}
+
+/** Commas separate values in the cell, so a label can never contain one. */
+function sanitizeJobLabel(s) {
+  return sanitizeText(String(s || '')).replace(/,/g, ';').trim();
+}
+
+/** Library ordered the way the picker shows it: by first audience (in audience
+ *  tier order), then label. Cross-cutting jobs — those tied to no audience —
+ *  sort last, since they're the general case rather than the priority one. */
+function sortedJobLibrary() {
+  const tierRank = (name) => {
+    const t = audienceTier(name);
+    const i = AUDIENCE_TIERS.indexOf(t);
+    return i < 0 ? 99 : i;
+  };
+  return (state.jobLibrary || []).slice().sort((a, b) => {
+    const aa = (a.audiences || [])[0], ba = (b.audiences || [])[0];
+    if (!aa && ba) return 1;
+    if (aa && !ba) return -1;
+    if (aa && ba) {
+      const r = tierRank(aa) - tierRank(ba);
+      if (r) return r;
+      const n = String(aa).localeCompare(String(ba));
+      if (n) return n;
+    }
+    return String(a.label).localeCompare(String(b.label));
+  });
+}
+
+function rowJobs(row) {
+  return String(row?.[JOBS_COL] || '').split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function getRowJobs() {
+  if (state.selectedIndex === null) return [];
+  return rowJobs(state.editedRows[state.selectedIndex]);
+}
+
+function setRowJobs(jobs) {
+  if (state.selectedIndex === null) return;
+  const row = state.editedRows[state.selectedIndex];
+  const old = String(row[JOBS_COL] || '');
+  const next = jobs.join(', ');
+  if (old === next) return;
+  row[JOBS_COL] = next;
+  logChange(state.selectedIndex, JOBS_COL, old, next);
+  setDirty(true);
+  refreshRowInList(state.selectedIndex);
+  refreshClusterSummaries(row);
+}
+
+function renderJobChips(jobs) {
+  if (!els.jobChips) return;
+  els.jobChips.innerHTML = '';
+  jobs.forEach(label => {
+    const chip = document.createElement('div');
+    chip.className = 'tag-chip';
+    const entry = jobEntry(label);
+    chip.title = entry?.statement || label;
+    chip.textContent = label;
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'tag-remove';
+    removeBtn.textContent = '×';
+    removeBtn.title = `Remove "${label}"`;
+    removeBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      const updated = getRowJobs().filter(j => j !== label);
+      setRowJobs(updated);
+      renderJobChips(updated);
+    });
+    chip.appendChild(removeBtn);
+    els.jobChips.appendChild(chip);
+  });
+}
+
+function openJobDropdown() {
+  renderJobList('');
+  const rect = els.btnAddJob.getBoundingClientRect();
+  els.jobDropdown.style.left = rect.left + 'px';
+  els.jobDropdown.style.top  = (rect.bottom + 4) + 'px';
+  els.jobDropdown.classList.remove('hidden');
+  $('job-search').value = '';
+  $('job-search').focus();
+}
+
+function closeJobDropdown() {
+  if (els.jobDropdown) els.jobDropdown.classList.add('hidden');
+}
+
+/** Grouped by audience, with the jobs belonging to THIS page's audiences hoisted
+ *  to the top — on a library of any size that's the difference between picking
+ *  from three relevant jobs and scrolling forty. */
+function renderJobList(filter) {
+  const currentSet = new Set(getRowJobs());
+  const q = filter.toLowerCase();
+  const rowAuds = state.selectedIndex === null ? [] : rowAudiences(state.editedRows[state.selectedIndex]);
+  const rowAudSet = new Set(rowAuds);
+
+  const matches = sortedJobLibrary().filter(j =>
+    !q || j.label.toLowerCase().includes(q) || String(j.statement || '').toLowerCase().includes(q));
+
+  const relevant = [], other = [];
+  matches.forEach(j => {
+    const auds = j.audiences || [];
+    ((auds.length && auds.some(a => rowAudSet.has(a))) ? relevant : other).push(j);
+  });
+
+  const listEl = $('job-list');
+  listEl.innerHTML = '';
+
+  const addGroup = (heading, jobs) => {
+    if (!jobs.length) return;
+    const h = document.createElement('div');
+    h.className = 'job-group-header';
+    h.textContent = heading;
+    listEl.appendChild(h);
+    jobs.forEach(j => {
+      const opt = document.createElement('div');
+      opt.className = 'job-option' + (currentSet.has(j.label) ? ' selected' : '');
+      const body = document.createElement('div');
+      body.className = 'job-option-body';
+      const lab = document.createElement('span');
+      lab.className = 'job-option-label';
+      lab.textContent = j.label;
+      body.appendChild(lab);
+      if (j.statement) {
+        const st = document.createElement('span');
+        st.className = 'job-option-statement';
+        st.textContent = j.statement;
+        body.appendChild(st);
+      }
+      opt.appendChild(body);
+      opt.addEventListener('click', () => {
+        const cur = getRowJobs();
+        const updated = cur.includes(j.label) ? cur.filter(x => x !== j.label) : [...cur, j.label];
+        setRowJobs(updated);
+        renderJobChips(updated);
+        renderJobList(filter);
+      });
+      listEl.appendChild(opt);
+    });
+  };
+
+  addGroup(rowAuds.length ? "This page's audiences" : 'Jobs', relevant);
+  // Group the rest by their first audience so the list still reads by audience.
+  const byAud = new Map();
+  other.forEach(j => {
+    const key = (j.audiences || [])[0] || 'Any audience';
+    if (!byAud.has(key)) byAud.set(key, []);
+    byAud.get(key).push(j);
+  });
+  byAud.forEach((jobs, key) => addGroup(key, jobs));
+
+  // Jobs tagged on the row but no longer in the library
+  const adHoc = [...currentSet].filter(l => !(state.jobLibrary || []).some(j => j.label === l));
+  if (adHoc.length) {
+    addGroup('Not in the library', adHoc.map(l => ({ label: l, statement: '' })));
+  }
+
+  if (!listEl.children.length) {
+    const empty = document.createElement('div');
+    empty.className = 'job-option';
+    empty.style.color = 'var(--text-muted)';
+    empty.style.cursor = 'default';
+    empty.textContent = (state.jobLibrary || []).length
+      ? 'No matches.'
+      : 'No jobs yet — Project Settings → Audience → Jobs';
+    listEl.appendChild(empty);
+  }
+
+  const createEl = $('job-create');
+  const trimmed = sanitizeJobLabel(filter);
+  const canCreate = trimmed && !(state.jobLibrary || []).some(j => j.label.toLowerCase() === trimmed.toLowerCase());
+  createEl.classList.toggle('hidden', !canCreate);
+  if (canCreate) $('job-create-label').textContent = trimmed;
+}
+
+function setupJobHandlers() {
+  if (!els.btnAddJob) return;
+
+  els.btnAddJob.addEventListener('click', e => {
+    e.stopPropagation();
+    if (!els.jobDropdown.classList.contains('hidden')) closeJobDropdown();
+    else openJobDropdown();
+  });
+
+  $('job-search').addEventListener('input', () => renderJobList($('job-search').value));
+
+  $('btn-create-job')?.addEventListener('click', () => {
+    const label = sanitizeJobLabel($('job-search').value);
+    if (!label) return;
+    if (!(state.jobLibrary || []).some(j => j.label === label)) {
+      // Inherit the row's audiences — a job created while tagging a page almost
+      // always belongs to whoever that page serves.
+      const auds = state.selectedIndex === null ? [] : rowAudiences(state.editedRows[state.selectedIndex]).filter(a => a !== AUDIENCE_NONE);
+      state.jobLibrary.push({ label, statement: '', audiences: auds, notes: '' });
+      state.projectSettings.jobLibrary = state.jobLibrary;
+      setDirty(true);
+    }
+    const updated = [...getRowJobs(), label];
+    setRowJobs(updated);
+    renderJobChips(updated);
+    closeJobDropdown();
+  });
+
+  document.addEventListener('click', e => {
+    if (!els.jobDropdown.classList.contains('hidden') &&
+        !els.jobDropdown.contains(e.target) &&
+        e.target !== els.btnAddJob) {
+      closeJobDropdown();
+    }
+  });
+}
+
+function populateJobs(row) {
+  renderJobChips(rowJobs(row));
+}
+
+/** The Jobs field only appears once a project actually has jobs — an empty
+ *  chip input on every audit bar is noise for the majority of projects that
+ *  never run a JTBD workshop. */
+function applyJobsFieldVisibility() {
+  const wrap = $('jobs-field-wrap');
+  if (!wrap) return;
+  wrap.classList.toggle('hidden', !(state.jobLibrary || []).length);
 }
 
 // ─── Design Pattern chip input ────────────────────────────────────────────────
@@ -5878,6 +6154,100 @@ function reportCrossSiteDuplicates() {
     </p>
     ${groupHtml || '<p style="font-size:12px;color:#888;">No exact content duplicates across sites.</p>'}
     ${groups.length > 200 ? `<p style="font-size:11px;color:#888;">Showing the first 200 of ${groups.length} sets.</p>` : ''}
+  `;
+
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
+}
+
+/** Report — Jobs Coverage. Per job: what serves it, and — the point — what
+ *  doesn't. An unserved job is the cleanest brief for net-new content there is,
+ *  because it traces a proposed page back to something the client said in their
+ *  own workshop rather than to an auditor's opinion. */
+function reportJobsCoverage() {
+  const title = 'Jobs Coverage';
+  const lib = sortedJobLibrary();
+  if (!lib.length) {
+    showToast('No jobs defined — add them in Project Settings → Audience', 'error');
+    return;
+  }
+  const scopeRows = audienceScopeRows();
+  const urlCol = state.urlColumn || 'Address';
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
+
+  const byJob = new Map(lib.map(j => [j.label, []]));
+  scopeRows.forEach(r => rowJobs(r).forEach(l => { if (byJob.has(l)) byJob.get(l).push(r); }));
+
+  const unserved = lib.filter(j => !byJob.get(j.label).length);
+  const tagged = scopeRows.filter(r => rowJobs(r).length).length;
+
+  const rowsHtml = lib.map(job => {
+    const pages = byJob.get(job.label);
+    const kke = {};
+    pages.forEach(r => { const k = audEffectiveKke(r) || '(unreviewed)'; kke[k] = (kke[k] || 0) + 1; });
+    const kkeHtml = Object.entries(kke).sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => `<span style="${audKkeStyle(k)}">${escapeHtml(k)}</span>×${n}`).join(' · ') || '—';
+    // "Best page" = the one you'd send someone to: a Keep beats an Evolve beats
+    // anything unreviewed. Deliberately not a quality judgement — just the page
+    // most likely to survive and answer the job.
+    const rank = (r) => { const e = audEffectiveKke(r); return e === 'Keep' ? 0 : e === 'Evolve' ? 1 : e ? 3 : 2; };
+    const best = pages.slice().sort((a, b) => rank(a) - rank(b))[0];
+    return `<tr${pages.length ? '' : ' style="background:#fef2f2;"'}>
+      <td><strong>${escapeHtml(job.label)}</strong>
+        ${job.statement ? `<div style="font-size:11px;color:#777;">${escapeHtml(job.statement)}</div>` : ''}
+        <div style="font-size:11px;color:#999;">${(job.audiences || []).length ? escapeHtml(job.audiences.join(' · ')) : 'any audience'}</div></td>
+      <td>${pages.length
+        ? `<strong>${pages.length}</strong>`
+        : '<strong style="color:#dc2626;">none</strong>'}</td>
+      <td style="font-size:11px;">${kkeHtml}</td>
+      <td style="font-size:11px;word-break:break-all;">${best
+        ? `${titleCol && best[titleCol] ? escapeHtml(String(best[titleCol])) + '<br>' : ''}<span style="color:#777;">${escapeHtml(String(best[urlCol] || ''))}</span>`
+        : '<em style="color:#dc2626;">nothing answers this</em>'}</td>
+    </tr>`;
+  }).join('');
+
+  const body = `
+    <div style="display:flex;gap:20px;margin-bottom:18px;flex-wrap:wrap;">
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Jobs defined</div>
+        <div style="font-size:28px;font-weight:700;">${lib.length}</div>
+      </div>
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Unserved</div>
+        <div style="font-size:28px;font-weight:700;${unserved.length ? 'color:#dc2626;' : ''}">${unserved.length}</div>
+        <div style="font-size:11px;color:#888;">no page answers ${unserved.length === 1 ? 'it' : 'them'}</div>
+      </div>
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Pages tagged</div>
+        <div style="font-size:28px;font-weight:700;">${tagged} <span style="font-size:14px;color:#888;">/ ${scopeRows.length}</span></div>
+      </div>
+    </div>
+
+    ${unserved.length ? `
+    <h2 style="font-size:14px;margin:0 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">Jobs nothing answers</h2>
+    <p style="font-size:12px;color:#666;margin:0 0 8px;">
+      The client told you people come to do these, and the site has no page for them. This is the strongest
+      brief for net-new content available — each line traces back to the workshop rather than to an opinion.
+    </p>
+    <ul style="font-size:12px;margin:0 0 20px;padding-left:20px;">
+      ${unserved.map(j => `<li style="margin-bottom:4px;"><strong>${escapeHtml(j.label)}</strong>
+        ${j.statement ? `<br><span style="color:#666;">${escapeHtml(j.statement)}</span>` : ''}
+        ${(j.audiences || []).length ? `<br><span style="color:#999;font-size:11px;">${escapeHtml(j.audiences.join(' · '))}</span>` : ''}</li>`).join('')}
+    </ul>` : ''}
+
+    <h2 style="font-size:14px;margin:0 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">Coverage by job</h2>
+    <p style="font-size:12px;color:#666;margin:0 0 8px;">
+      Grouped by the audience each job belongs to. <strong>Best page</strong> is the one you'd send someone to —
+      a Keep outranks an Evolve outranks an unreviewed page. It is not a quality score.
+    </p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr style="text-align:left;border-bottom:2px solid #ddd;">
+        <th style="padding:6px 8px;">Job</th>
+        <th style="padding:6px 8px;">Pages</th>
+        <th style="padding:6px 8px;">Disposition</th>
+        <th style="padding:6px 8px;">Best page</th>
+      </tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
   `;
 
   showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
@@ -8677,6 +9047,7 @@ function computeAudienceUsage() {
 
 function renderAudienceTab() {
   renderAudienceLibList();
+  renderJobsSection();
 
   const wire = (id, handler) => {
     const btn = document.getElementById(id);
@@ -8701,6 +9072,233 @@ function renderAudienceTab() {
   wire('ps-aud-seed', () => openAudienceSeedChooser());
 
   wire('ps-aud-import', () => openAudiencePasteImport());
+}
+
+// ─── Project Settings: Jobs section (inside the Audience tab) ───────────────
+
+function computeJobUsage() {
+  const usage = new Map();
+  state.editedRows.forEach(r => rowJobs(r).forEach(l => usage.set(l, (usage.get(l) || 0) + 1)));
+  return usage;
+}
+
+function renderJobsSection() {
+  renderJobLibList();
+  const wire = (id, handler) => {
+    const b = document.getElementById(id);
+    if (b && !b._wired) { b._wired = true; b.addEventListener('click', handler); }
+  };
+  wire('ps-job-add', async () => {
+    const label = await showPrompt('New job', 'Short label, e.g. "Compare programs"', '');
+    if (!label) return;
+    const clean = sanitizeJobLabel(label);
+    if (!clean) return;
+    if ((state.jobLibrary || []).some(j => j.label.toLowerCase() === clean.toLowerCase())) {
+      showToast('That job already exists', 'error'); return;
+    }
+    const statement = await showPrompt(`Statement for "${clean}"`, 'When I… I want… so I can…', '');
+    state.jobLibrary.push({ label: clean, statement: sanitizeText(statement || '').trim(), audiences: [], notes: '' });
+    state.projectSettings.jobLibrary = state.jobLibrary;
+    setDirty(true);
+    applyJobsFieldVisibility();
+    renderJobLibList();
+  });
+  wire('ps-job-import', () => openJobPasteImport());
+}
+
+function renderJobLibList() {
+  const list = document.getElementById('ps-job-list');
+  if (!list) return;
+  const lib = sortedJobLibrary();
+  list.innerHTML = '';
+  const foot = document.getElementById('ps-job-footer');
+
+  if (!lib.length) {
+    list.innerHTML = '<div class="ps-mig-empty">No jobs yet. Paste your JTBD workshop output, or add them one at a time.</div>';
+    if (foot) foot.textContent = '';
+    return;
+  }
+
+  const usage = computeJobUsage();
+  lib.forEach(entry => {
+    const idx = state.jobLibrary.indexOf(entry);
+    const n = usage.get(entry.label) || 0;
+    const row = document.createElement('div');
+    row.className = 'ps-mig-row';
+    row.style.cssText = 'flex-wrap:wrap;align-items:flex-start;';
+    row.innerHTML = `
+      <span class="ps-mig-name" data-idx="${idx}" style="min-width:170px;">${escapeHtml(entry.label)}</span>
+      <span class="ps-mig-count">${n ? `${n} page${n !== 1 ? 's' : ''}` : '<span style="color:var(--kke-kill);">no pages</span>'}</span>
+      <span style="flex:1;"></span>
+      <button class="ps-job-auds btn btn-sm btn-ghost" data-idx="${idx}">Audiences</button>
+      <button class="ps-job-edit btn btn-sm btn-ghost" data-idx="${idx}">Edit</button>
+      <button class="ps-job-del btn btn-sm btn-ghost" data-idx="${idx}" style="color:var(--kke-kill);">Delete</button>
+      ${entry.statement ? `<div style="flex:1 1 100%;font-size:11px;color:var(--text-muted);margin-top:2px;">${escapeHtml(entry.statement)}</div>` : ''}
+      <div style="flex:1 1 100%;font-size:11px;color:var(--text-muted);">${
+        (entry.audiences || []).length ? escapeHtml(entry.audiences.join(' · ')) : '<em>any audience</em>'}</div>
+    `;
+    list.appendChild(row);
+  });
+
+  if (foot) {
+    const unserved = lib.filter(j => !(usage.get(j.label) || 0)).length;
+    foot.textContent = `${lib.length} job${lib.length !== 1 ? 's' : ''}`
+      + (unserved ? ` · ${unserved} with no page serving ${unserved === 1 ? 'it' : 'them'} — see Reports → Jobs Coverage` : ' · all served');
+  }
+
+  const persist = () => { state.projectSettings.jobLibrary = state.jobLibrary; setDirty(true); };
+
+  list.querySelectorAll('.ps-job-edit').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = +btn.dataset.idx, cur = state.jobLibrary[i];
+      const label = await showPrompt('Rename job', 'Short label', cur.label);
+      if (label !== null) {
+        const clean = sanitizeJobLabel(label);
+        if (clean && clean !== cur.label) {
+          if (state.jobLibrary.some(j => j.label.toLowerCase() === clean.toLowerCase())) {
+            showToast('That label is already in use', 'error'); return;
+          }
+          const touched = renameJobAcrossRows(cur.label, clean);
+          cur.label = clean;
+          if (touched) showToast(`Renamed · ${touched} page${touched !== 1 ? 's' : ''} updated`, 'success');
+        }
+      }
+      const st = await showPrompt(`Statement for "${cur.label}"`, 'When I… I want… so I can…', cur.statement || '');
+      if (st !== null) cur.statement = sanitizeText(st).trim();
+      persist();
+      renderJobLibList();
+      if (state.selectedIndex !== null) populateJobs(state.editedRows[state.selectedIndex]);
+    });
+  });
+
+  list.querySelectorAll('.ps-job-auds').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = +btn.dataset.idx, cur = state.jobLibrary[i];
+      const picked = await pickAudiencesForJob(cur);
+      if (picked === null) return;
+      cur.audiences = picked;
+      persist();
+      renderJobLibList();
+    });
+  });
+
+  list.querySelectorAll('.ps-job-del').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = +btn.dataset.idx, cur = state.jobLibrary[i];
+      const used = usage.get(cur.label) || 0;
+      const ok = await confirmDialog({
+        title: 'Delete job',
+        message: used
+          ? `Delete "${cur.label}"? ${used} page${used !== 1 ? 's' : ''} tagged with it will have the tag removed.`
+          : `Delete "${cur.label}"?`,
+        confirmLabel: 'Delete', danger: true
+      });
+      if (!ok) return;
+      if (used) renameJobAcrossRows(cur.label, null);
+      state.jobLibrary.splice(i, 1);
+      persist();
+      applyJobsFieldVisibility();
+      renderJobLibList();
+      if (state.selectedIndex !== null) populateJobs(state.editedRows[state.selectedIndex]);
+    });
+  });
+}
+
+/** Rename (or, with `next === null`, remove) a job across every row. */
+function renameJobAcrossRows(old, next) {
+  let touched = 0;
+  state.editedRows.forEach((r, i) => {
+    const list = rowJobs(r);
+    if (!list.includes(old)) return;
+    const updated = next === null ? list.filter(j => j !== old) : list.map(j => (j === old ? next : j));
+    const before = String(r[JOBS_COL] || '');
+    r[JOBS_COL] = updated.join(', ');
+    logChange(i, JOBS_COL, before, r[JOBS_COL]);
+    touched++;
+  });
+  return touched;
+}
+
+/** Multi-select of audiences for one job. Resolves to an array, or null on cancel. */
+function pickAudiencesForJob(job) {
+  return new Promise(resolve => {
+    let settled = false;
+    const lib = sortedAudienceLibrary().filter(a => a.name !== AUDIENCE_NONE);
+    const chosen = new Set(job.audiences || []);
+    const body = `<div class="modal-message">
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px;">
+        Which audiences have this job? Leave everything unticked for a job that any audience might have.</p>
+      ${lib.map(a => `<label style="display:flex;gap:8px;align-items:center;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:4px;cursor:pointer;">
+        <input type="checkbox" value="${escapeHtml(a.name)}"${chosen.has(a.name) ? ' checked' : ''}>
+        <span>${escapeHtml(a.name)} <span style="color:var(--text-muted);font-size:11px;">${escapeHtml(a.tier)}</span></span>
+      </label>`).join('') || '<em style="font-size:12px;color:var(--text-muted);">No audiences defined yet.</em>'}
+    </div>`;
+    openModal({
+      title: `Audiences for "${job.label}"`, width: 460, body, escapeValue: null,
+      buttons: [
+        { label: 'Cancel', variant: 'ghost', value: null },
+        { label: 'Save', variant: 'primary', primary: true,
+          onClick: (api) => [...api.body.querySelectorAll('input[type="checkbox"]:checked')].map(c => c.value) }
+      ],
+      onClose: (val) => { if (!settled) { settled = true; resolve(val); } }
+    });
+  });
+}
+
+/** JTBD workshops produce a table; accept it as one. */
+function openJobPasteImport() {
+  const body = `
+    <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px;">
+      One job per line: a short label, then the full statement, then the audiences it belongs to —
+      separated by tabs or commas.<br>
+      <code style="font-size:11px;">Compare programs&#9;When I'm comparing options, I want outcomes data, so I can justify the cost&#9;Prospective Students</code><br>
+      Label only is fine too. Existing jobs are skipped, never overwritten.
+    </p>
+    <textarea id="_jobimp-text" rows="10" style="width:100%;font-family:var(--font-mono);font-size:12px;padding:8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-base);color:var(--text-primary);"></textarea>
+    <div id="_jobimp-status" style="font-size:11px;color:var(--text-muted);margin-top:6px;"></div>
+  `;
+  openModal({
+    title: 'Paste jobs from workshop', width: 620, body,
+    buttons: [
+      { label: 'Cancel', variant: 'ghost', value: false },
+      { label: 'Import', variant: 'primary', primary: true, closeOnClick: false,
+        onClick: (api) => {
+          const raw = api.body.querySelector('#_jobimp-text').value || '';
+          const known = new Set((state.jobLibrary || []).map(j => j.label.toLowerCase()));
+          const audByLower = new Map((state.audienceLibrary || []).map(a => [a.name.toLowerCase(), a.name]));
+          let added = 0, skipped = 0;
+          raw.split('\n').forEach(line => {
+            if (!line.trim()) return;
+            // Tabs win when present — that's what a spreadsheet paste gives, and a
+            // JTBD statement is full of commas by construction ("When I…, I want…").
+            const sep = line.includes('\t') ? '\t' : ',';
+            const parts = line.split(sep);
+            const label = sanitizeJobLabel(parts[0]);
+            if (!label) return;
+            if (known.has(label.toLowerCase())) { skipped++; return; }
+            const statement = sanitizeText(parts[1] || '').trim();
+            // Everything after the statement is audience names; keep only ones we know.
+            const auds = parts.slice(2).join(sep).split(/[,;]/).map(a => sanitizeText(a).trim())
+              .map(a => audByLower.get(a.toLowerCase())).filter(Boolean);
+            state.jobLibrary.push({ label, statement, audiences: auds, notes: '' });
+            known.add(label.toLowerCase());
+            added++;
+          });
+          if (!added) {
+            api.body.querySelector('#_jobimp-status').textContent = skipped
+              ? `Nothing added — all ${skipped} are already in the library.`
+              : 'Nothing recognized in that text.';
+            return;
+          }
+          state.projectSettings.jobLibrary = state.jobLibrary;
+          setDirty(true);
+          api.close();
+          applyJobsFieldVisibility();
+          renderJobLibList();
+          showToast(`Added ${added} job${added !== 1 ? 's' : ''}${skipped ? ` · ${skipped} already present` : ''}`, 'success');
+        } }
+    ]
+  });
 }
 
 /** Cycle a distinct colour for each new audience so sitemap colouring works
@@ -20566,6 +21164,7 @@ function renderKkeFilterOptions() {
     { value: '_needs-audience', text: 'Needs audience (Keep/Evolve, untagged)' },
     { value: '_audience-orphan', text: 'Serves no priority audience' },
     { value: '_cross-site-duplicate', text: 'Duplicated on another source site' },
+    { value: '_needs-job', text: 'Needs a job (Keep/Evolve, untagged)' },
     { value: '_url-variant', text: 'Alternate view of another page (canonical)' },
     { value: '_variant-target-missing', text: 'Canonical target not in this crawl' }
   ];
@@ -22586,6 +23185,31 @@ function reportNetNewBrief() {
 
   if (netNew.length === 0) {
     body += `<p style="color:#228b22;">No net new pages needed — all sitemap nodes have content assigned.</p>`;
+  }
+
+  // Unserved jobs are the other half of "what's missing". The IA-derived list
+  // above finds gaps in the *structure* you've drawn; this finds gaps in what
+  // the client said people come to do — and that argument is stronger, because
+  // it traces back to their own workshop rather than to our sitemap.
+  const jobLib = sortedJobLibrary();
+  if (jobLib.length) {
+    const served = new Set();
+    audienceScopeRows().forEach(r => rowJobs(r).forEach(l => served.add(l)));
+    const unserved = jobLib.filter(j => !served.has(j.label));
+    body += `<h2 style="margin-top:24px;">Jobs nothing answers</h2>`;
+    if (unserved.length) {
+      body += `<p style="font-size:13px;color:#666;">The client's jobs-to-be-done workshop named these, and no page on the site serves them. Each is a brief for new content that traces back to something they said themselves.</p>`;
+      body += `<ul style="font-size:12px;">`;
+      unserved.forEach(j => {
+        body += `<li style="margin-bottom:6px;"><strong>${escapeHtml(j.label)}</strong>`;
+        if (j.statement) body += `<br><span style="color:#666;">${escapeHtml(j.statement)}</span>`;
+        if ((j.audiences || []).length) body += `<br><span style="color:#999;font-size:11px;">${escapeHtml(j.audiences.join(' · '))}</span>`;
+        body += `</li>`;
+      });
+      body += `</ul>`;
+    } else {
+      body += `<p style="color:#228b22;font-size:13px;">Every job in the library has at least one page serving it.</p>`;
+    }
   }
 
   const title = 'Net New Content Brief';
@@ -26475,6 +27099,8 @@ function setupMultiBar() {
       // Library order (tier, then name) — the same ranking the picker shows, so
       // bulk tagging a whole section stays anchored to the priority list.
       addOpts(sortedAudienceLibrary().map(e => e.name));
+    } else if (a === 'add-job' || a === 'remove-job') {
+      addOpts(sortedJobLibrary().map(j => j.label));
     } else if (a === 'primary-audience') {
       addOpts(sortedAudienceLibrary().filter(e => e.name !== AUDIENCE_NONE).map(e => e.name), { blank: true });
     } else if (a === 'assign-nav') {
@@ -26512,6 +27138,8 @@ function setupMultiBar() {
     const verb = a === 'add-tag' ? 'Add tag'
       : a === 'add-audience' ? 'Add audience'
       : a === 'remove-audience' ? 'Remove audience'
+      : a === 'add-job' ? 'Add job'
+      : a === 'remove-job' ? 'Remove job'
       : (v ? 'Set' : 'Clear');
     const valLabel = v || '(blank)';
     if (!(await confirmDialog({ title: 'Apply to rows', message: `${verb} "${valLabel}" — apply to ${targets.length} ${using} row${targets.length !== 1 ? 's' : ''}?`, confirmLabel: verb }))) return;
@@ -26577,6 +27205,17 @@ async function applyMultiAction(row, origIndex, action, value) {
     logChange(origIndex, AUDIENCES_COL, old, row[AUDIENCES_COL]);
     syncPrimaryAudience(origIndex, updated);
     refreshSuggestedKkeForRow(origIndex);
+    return true;
+  }
+  if (action === 'add-job' || action === 'remove-job') {
+    const current = rowJobs(row);
+    const has = current.includes(value);
+    if (action === 'add-job' && has) return false;
+    if (action === 'remove-job' && !has) return false;
+    const updated = action === 'add-job' ? [...current, value] : current.filter(j => j !== value);
+    const old = String(row[JOBS_COL] || '');
+    row[JOBS_COL] = updated.join(', ');
+    logChange(origIndex, JOBS_COL, old, row[JOBS_COL]);
     return true;
   }
   if (action === 'primary-audience') {

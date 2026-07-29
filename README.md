@@ -410,6 +410,11 @@ A crawl is not a content inventory. On a CMS-driven site much of it is alternate
 - Nothing is hidden: every page keeps its row and gets a logged decision, and the whole triage reverses with one **Cmd+Z**. Out-of-scope sites are skipped.
 - Filters: **Alternate view of another page (canonical)** and **Canonical target not in this crawl**.
 
+### Jobs to be done
+Audiences answer *who* a page is for; jobs answer *what people came to do*. A per-project **Jobs** library (Project Settings → Audience) holds the JTBD workshop output — a short label, the full statement, and which audiences have it.
+
+The payoff is the inverse question: **Reports → Jobs Coverage** leads with the jobs *nothing on the site answers*. That's the strongest brief for net-new content available, because each line traces back to something the client said in their own workshop. The same list is appended to the Net New Content Brief.
+
 ### Consolidating several sites into one
 When an audit merges multiple existing sites — `www.company.com`, `home.anothercompany.com`, `thirdcompany.com` — the **site** becomes a unit of work in its own right.
 

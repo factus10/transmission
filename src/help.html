@@ -429,6 +429,15 @@
         <li>Feeds <a href="#suggested-kke">Suggested_KKE</a> as a weighted source, colors the Visual Sitemap and Treemap by Primary Audience, and rides along in the Migration Tracker and SME export.</li>
       </ul>
 
+      <h4>Jobs to be done</h4>
+      <p class="help-mm"><strong>Mental model —</strong> audiences answer <em>who</em>; jobs answer <em>what they came to do</em>. The payoff is the inverse: a job with no page serving it is the strongest brief for net-new content, because it traces back to the client's own workshop.</p>
+      <ul>
+        <li><strong>Project Settings &rarr; Audience &rarr; Jobs to be done</strong> &mdash; short label (what you tag with), full statement, and which audiences have it (blank = anyone). <strong>Paste from workshop…</strong> takes the table.</li>
+        <li>A <strong>Jobs served</strong> field appears in the Audience cluster once the library has entries. The picker hoists jobs belonging to this page's audiences to the top.</li>
+        <li>Bulk-tag with <strong>Add Job</strong>; <strong>Needs a job</strong> is the worklist filter.</li>
+        <li><strong>Reports &rarr; Jobs Coverage</strong> leads with <em>jobs nothing answers</em>; the same list is appended to the Net New Content Brief.</li>
+      </ul>
+
       <h4>Good end-state</h4>
       <ul class="help-check">
         <li>Every page has a Group; Primary Tag where one descriptor dominates</li>
@@ -634,6 +643,7 @@
         <li><strong>Stakeholder:</strong> Executive Summary · Content Inventory by Section · SME Review Status.</li>
         <li><strong>IA &amp; structure:</strong> Menu Report · Sitemap Coverage Report · Content Type Crosswalk · Component Inventory · <strong>Audience × Section Matrix</strong> (sections down, audiences across, cells shaded by share &mdash; surfaces "this whole section is written for the wrong people").</li>
         <li><strong>Consolidation:</strong> <strong>Site Consolidation Overview</strong> (what each source site contributes &mdash; pages, disposition, audiences, overlap, redirect rules) &middot; <strong>Cross-Site Duplicate Overlap</strong> (same title+H1+meta on 2+ sites &mdash; the merge worklist).</li>
+        <li><strong>Jobs:</strong> <strong>Jobs Coverage</strong> (per job: pages serving it, best page, and the jobs nothing answers &mdash; the net-new brief).</li>
         <li><strong>Audience:</strong> <strong>Audience Coverage</strong> (pages per audience in tier order, with KKE mix and an under-served-Primary flag) · <strong>Audience Debt</strong> (off-strategy content · priority pages marked Kill · pages serving 4+ audiences).</li>
         <li><strong>Delivery:</strong> Migration Direction Brief · Migration Checklist · Net New Content Brief · Redirect Map Report.</li>
         <li>The <strong>Migration</strong> menu holds export/validation <em>tools</em>; the <strong>Progress Dashboard</strong> (<code>Cmd+P</code>) gives live completion stats.</li>
@@ -735,6 +745,7 @@
         <tr><td><code>Audiences</code></td><td>CSV text</td><td>Every audience the page serves. <strong>Blank = unreviewed</strong>; <em>— None</em> = reviewed, serves nobody</td></tr>
         <tr><td><code>Primary_Audience</code></td><td>Controlled</td><td>Who the page is mainly for (auto-filled when only one audience is tagged)</td></tr>
         <tr><td><code>Source_Site</code></td><td>Derived</td><td>Which source site the page came from. Read-only; recomputed from the Sites registry</td></tr>
+        <tr><td><code>Jobs_Served</code></td><td>CSV text</td><td>Which jobs-to-be-done this page does work for</td></tr>
       </table>
 
       <h3>SME review columns</h3>
@@ -870,6 +881,7 @@
         <tr><td><code>DesignPatternLibrary</code></td><td>Component Library</td></tr>
         <tr><td><code>Audiences</code></td><td>Audience prioritization output (name, tier, color, description)</td></tr>
         <tr><td><code>Sites</code></td><td>Source sites in a consolidation audit (label, hosts, CMS, owner, in-scope)</td></tr>
+        <tr><td><code>Jobs</code></td><td>Jobs-to-be-done workshop output (label, statement, audiences)</td></tr>
       </table>
       <p><strong>Appearance</strong> is a <strong>System / Light / Dark</strong> toggle in App Settings (per-user; <strong>System</strong> follows your macOS appearance, WCAG-compliant in both themes). <strong>The embedded browser always renders crawled pages as designed</strong> &mdash; it is never dark-mode-adapted, whatever this setting or the OS &mdash; so reviewing pages stays faithful. <strong>Undo/Redo</strong> (<code>Cmd+Z</code> / <code>Cmd+Shift+Z</code>) covers KKE changes and sitemap node deletions, single or bulk (100-action stack, cleared on reload).</p>
     </section>
