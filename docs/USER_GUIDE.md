@@ -641,11 +641,26 @@ Each audience carries a **tier** — Primary, Secondary, Tertiary, or Not a targ
 - **Needs audience** — Keep/Evolve pages nobody has assessed yet.
 - **Serves no priority audience** — reviewed, and everything it serves is off-strategy.
 
-**4. It votes on the KKE call.** Once pages are tagged, **Audience** joins GA and Rubric as a source in [Suggested KKE](#8-suggested_kke): serving a Primary audience argues **Keep**, serving only Tertiary/off-target audiences argues **Evolve**, and an explicit *— None* argues **Kill**. Untagged pages and Secondary-only pages abstain entirely, so an untagged project is completely unaffected. Tune its weight beside the others in Project Settings → **Suggestions**.
+**4. Two tools for the long tail.** Bulk passes get you most of the way; these two get you the rest.
+
+**Fill Audiences from Section…** (`Project` menu) spreads audiences you have *already* tagged in a section onto that section's untagged pages. It invents nothing — it only propagates a decision you made yourself somewhere else in the same section, and it only fills blanks. The dialog shows every section it can act on, what it would apply, the agreement behind it, and how many pages it would fill; untick any you disagree with. A section needs at least three tagged pages, with an audience appearing on at least half of them, before it's allowed to speak for the rest — so tag a handful by hand first, then run this. The whole fill is one **Cmd+Z**.
+
+> **— None is never inherited.** Spreading "serves nobody" onto pages no one has looked at would turn an unreviewed blank into a Kill vote. If a page genuinely serves no one, that stays a call you make.
+
+**Suggest Audiences with AI…** (`Project` menu, needs a Claude API key in App Settings) reads each page's title, H1, meta description, URL and section against *your* audience library and proposes who it serves. Because it's tagging against the library, the suggestions are specific to this client rather than generic — which is also why the library has to exist first.
+
+It **does not write your `Audiences` column.** Suggestions go into a review queue, exactly as Suggested KKE never touches your KKE call. Review them two ways:
+
+- **In bulk** — the review dialog groups every suggestion by the answer, so a few thousand pages become a few dozen decisions. Each group shows sample paths and a confidence reading; accept or decline the whole group. Low-confidence groups are where the metadata was too thin to tell — worth opening a couple of those pages first.
+- **One at a time** — a page with a pending suggestion shows it inline in the Audience cluster with **Accept** and **Dismiss**, so you can take them as you work through the audit normally. The **Audience suggested by AI** filter is that worklist.
+
+Pick the scope (everything untagged, or just the current filter — pilot one section before committing) and the model. Requests are billed to your own key, and **Esc** stops a run with everything suggested so far kept. Accepting is one **Cmd+Z**; declining leaves the page blank, which is the honest state — still unreviewed.
+
+**5. It votes on the KKE call.** Once pages are tagged, **Audience** joins GA and Rubric as a source in [Suggested KKE](#8-suggested_kke): serving a Primary audience argues **Keep**, serving only Tertiary/off-target audiences argues **Evolve**, and an explicit *— None* argues **Kill**. Untagged pages and Secondary-only pages abstain entirely, so an untagged project is completely unaffected. Tune its weight beside the others in Project Settings → **Suggestions**.
 
 The disagreements are where this earns its keep. *GA says Keep, Audience says Kill* is a popular page serving nobody strategic — often a legacy hub or an internal page ranking on brand terms. The reverse is under-served priority content, which argues for **promotion**, not removal.
 
-**5. See it.** Color the Visual Sitemap or Treemap by **Primary Audience** to see which audience each section actually serves, and run the three audience reports — see [Reports](#16-reports-for-clients--stakeholders).
+**6. See it.** Color the Visual Sitemap or Treemap by **Primary Audience** to see which audience each section actually serves, and run the three audience reports — see [Reports](#16-reports-for-clients--stakeholders).
 
 ### Jobs to be done
 
@@ -663,6 +678,7 @@ The report's **Best page** column is the page you'd send someone to for that job
 
 - [ ] The audience library reflects the workshop, with **real tiers** set
 - [ ] Every Keep/Evolve page is tagged, or on the **Needs audience** worklist
+- [ ] No AI suggestions are left sitting unreviewed (**Audience suggested by AI** filter is empty)
 - [ ] Pages that genuinely serve nobody are tagged **— None**, not left blank
 - [ ] You've reviewed the **Audience Debt** report before signing off the redirect map
 - [ ] If a JTBD workshop was run, **Jobs Coverage** has been read and its unserved jobs are in the net-new brief

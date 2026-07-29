@@ -426,6 +426,8 @@
         <li>Tag in the <strong>Audience</strong> cluster: <strong>Also serves</strong> (chips, grouped by tier) and <strong>Primarily for</strong> (auto-fills when only one is tagged). The cluster reveals itself once your library has entries.</li>
         <li><strong>Blank means unreviewed, not "serves nobody."</strong> Use the reserved <em>— None (no target audience)</em> entry for the positive call &mdash; only it argues Kill.</li>
         <li><strong>Tag in bulk.</strong> Multi-bar: Add / Remove Audience, Set Primary Audience. Worklists: the <strong>Needs audience</strong> and <strong>Serves no priority audience</strong> filters.</li>
+        <li><strong>Project &rarr; Fill Audiences from Section…</strong> &mdash; spreads audiences you already tagged in a section onto that section's untagged pages. Free, no API key, fills blanks only, one <kbd>Cmd+Z</kbd>. A section needs 3+ tagged pages with an audience on half of them before it can speak for the rest. <em>— None</em> is never inherited.</li>
+        <li><strong>Project &rarr; Suggest Audiences with AI…</strong> (needs a Claude API key in App Settings) &mdash; reads title / H1 / meta / URL / section against <em>your</em> library and proposes who each page serves. <strong>It never writes the <code>Audiences</code> column</strong>: suggestions go to a review queue grouped by answer, so thousands of pages become a few dozen decisions. Or take them one at a time from the ghost in the audit bar. <strong>Audience suggested by AI</strong> is that worklist.</li>
         <li>Feeds <a href="#suggested-kke">Suggested_KKE</a> as a weighted source, colors the Visual Sitemap and Treemap by Primary Audience, and rides along in the Migration Tracker and SME export.</li>
       </ul>
 
@@ -444,6 +446,7 @@
         <li>Tags drawn from a deliberate reused set; every active term defined</li>
         <li>Audience library reflects the workshop, with real tiers set</li>
         <li>Every Keep/Evolve page is tagged, or on the Needs-audience worklist</li>
+        <li>No AI suggestions left unreviewed (the <em>Audience suggested by AI</em> filter is empty)</li>
       </ul>
     </section>
 
@@ -746,6 +749,7 @@
         <tr><td><code>Primary_Audience</code></td><td>Controlled</td><td>Who the page is mainly for (auto-filled when only one audience is tagged)</td></tr>
         <tr><td><code>Source_Site</code></td><td>Derived</td><td>Which source site the page came from. Read-only; recomputed from the Sites registry</td></tr>
         <tr><td><code>Jobs_Served</code></td><td>CSV text</td><td>Which jobs-to-be-done this page does work for</td></tr>
+        <tr><td><code>_Suggested_Audiences</code></td><td>Internal</td><td>A pending AI audience suggestion awaiting your accept/reject. Hidden from Table View by default; cleared the moment you answer it</td></tr>
       </table>
 
       <h3>SME review columns</h3>

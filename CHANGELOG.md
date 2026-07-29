@@ -6,6 +6,20 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.11.0] — "Please, Please, Please, Let Me Get What I Want"
+
+### Added
+
+- **Audience tagging at crawl scale.** Tagging audiences was affordable on a section and unaffordable on a site, and a column that stays 4% full makes every report built on it worthless. Two tools close that gap, and they are deliberately trusted differently.
+  - **Project → Fill Audiences from Section…** spreads audiences you have *already* tagged in a section onto that section's untagged pages. It costs nothing, needs no API key, and invents nothing — it only propagates a decision you made yourself elsewhere in the same section. The dialog shows every section it can act on, what it would apply, the agreement behind it, and how many pages it would fill; untick any you disagree with. A section needs at least three tagged pages, with an audience appearing on half of them, before it may speak for the rest, and only blank cells are filled. The whole fill is one **Cmd+Z**. *— None (no target audience)* is never inherited: spreading "serves nobody" onto pages no one has looked at would turn an unreviewed blank into a Kill vote.
+  - **Project → Suggest Audiences with AI…** reads each page's title, H1, meta description, URL and section against **your** audience library — so suggestions are specific to this client rather than generic — and proposes who it serves. **It never writes your `Audiences` column.** Suggestions land in a review queue grouped by answer, which is what makes them reviewable: a few thousand pages collapse into a few dozen distinct decisions, each shown with sample paths and a confidence reading. Accept a whole group at once, or take suggestions one at a time from the ghost that appears in the audit bar. Declining leaves the page blank — still unreviewed, which is the honest state. **Audience suggested by AI** is the worklist filter, and accepting is one **Cmd+Z**.
+  - Pick the scope (everything untagged, or just the current filter, to pilot one section first) and the model — **Claude Opus 5**, **Sonnet 5**, or **Haiku 4.5**. Requests are batched twenty pages at a time and run three at once, so a crawl-sized run finishes in minutes rather than hours; **Esc** stops it with everything suggested so far kept. Billed to your own Claude API key.
+  - The model is constrained to the audiences in your library — it cannot invent one — and returns nothing at all for a page whose metadata was too thin to judge, rather than guessing.
+
+### Changed
+
+- **AI assessment now runs on current Claude models.** The rubric assessment path was pinned to a model retired long ago; both it and the new audience suggestion run through one shared, up-to-date call path with proper error reporting (a rejected key or a declined request now says so instead of failing as a parse error).
+
 ## [2.10.0] — "How Soon Is Now?"
 
 ### Added
