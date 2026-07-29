@@ -419,10 +419,22 @@
         <li><strong>Project &rarr; Edit Glossary…</strong> &mdash; markdown Notes per tag/group (empty entries pruned on save; travels in <code>KKE_Glossary</code>).</li>
         <li><strong>Export for Word…</strong> writes a styled <code>.html</code> key of every term + definition.</li>
       </ul>
+      <h4>Audience &mdash; who is this page for?</h4>
+      <p class="help-mm"><strong>Mental model —</strong> the audience prioritization workshop's ranking, made load-bearing. A page can have decent traffic, pass every rubric rule, and still serve nobody the client invested in &mdash; that finding is unreachable without this.</p>
+      <ul>
+        <li><strong>Project &rarr; Audience Library…</strong> &mdash; each audience gets a <strong>tier</strong> (Primary / Secondary / Tertiary / Not a target) and a color. <strong>Seed starter list…</strong> offers a generic <em>Higher education</em> or <em>General organization</em> set to begin from; <strong>Paste from workshop…</strong> drops your own table straight in and is the better path whenever you have the client's own ranking. Travels on the <code>Audiences</code> sheet. <em>Setting the tiers is the step that matters</em> &mdash; everything downstream reads them.</li>
+        <li>Tag in the <strong>Audience</strong> cluster: <strong>Also serves</strong> (chips, grouped by tier) and <strong>Primarily for</strong> (auto-fills when only one is tagged). The cluster reveals itself once your library has entries.</li>
+        <li><strong>Blank means unreviewed, not "serves nobody."</strong> Use the reserved <em>— None (no target audience)</em> entry for the positive call &mdash; only it argues Kill.</li>
+        <li><strong>Tag in bulk.</strong> Multi-bar: Add / Remove Audience, Set Primary Audience. Worklists: the <strong>Needs audience</strong> and <strong>Serves no priority audience</strong> filters.</li>
+        <li>Feeds <a href="#suggested-kke">Suggested_KKE</a> as a weighted source, colors the Visual Sitemap and Treemap by Primary Audience, and rides along in the Migration Tracker and SME export.</li>
+      </ul>
+
       <h4>Good end-state</h4>
       <ul class="help-check">
         <li>Every page has a Group; Primary Tag where one descriptor dominates</li>
         <li>Tags drawn from a deliberate reused set; every active term defined</li>
+        <li>Audience library reflects the workshop, with real tiers set</li>
+        <li>Every Keep/Evolve page is tagged, or on the Needs-audience worklist</li>
       </ul>
     </section>
 
@@ -477,6 +489,17 @@
       <ul class="help-check">
         <li>Every Consolidate page has a live target (no "no target" / "dead target")</li>
         <li>Targets survive as Keep/Evolve; redirects resolve to a real URL</li>
+      </ul>
+    </section>
+
+    <h2 id="url-variants">URL Variant Triage</h2>
+    <section class="help-section">
+      <p class="help-mm"><strong>Mental model —</strong> a crawl lists URLs that responded, not pages. Pagination, sorting, facets and tracking parameters produce many URLs for one page. The site says which via <code>rel=canonical</code>; Transmission reads that rather than guessing from parameter names.</p>
+      <ul>
+        <li><strong>Project &rarr; Triage URL Variants…</strong> &mdash; groups variants by the page they point at, largest first.</li>
+        <li><strong>Query only</strong> (same path) &rarr; <strong>Exclude</strong>; the canonical's redirect already covers them. <strong>Different path</strong> &rarr; <strong>Consolidate</strong> into the canonical, which writes the redirect.</li>
+        <li>Nothing is hidden &mdash; every page keeps its row and gets a logged decision, and <strong>Cmd+Z reverses the whole triage in one step</strong>. Out-of-scope sites are skipped.</li>
+        <li>Filters: <strong>Alternate view of another page (canonical)</strong> · <strong>Canonical target not in this crawl</strong>.</li>
       </ul>
     </section>
 
@@ -609,7 +632,9 @@
       <p class="help-mm"><strong>Mental model —</strong> reports are read-only views generated on demand; each exports to <strong>PDF or HTML</strong> (HTML opens cleanly in Word). Three audiences: stakeholder narratives, IA/structure, delivery/engineering.</p>
       <ul>
         <li><strong>Stakeholder:</strong> Executive Summary · Content Inventory by Section · SME Review Status.</li>
-        <li><strong>IA &amp; structure:</strong> Menu Report · Sitemap Coverage Report · Content Type Crosswalk · Component Inventory.</li>
+        <li><strong>IA &amp; structure:</strong> Menu Report · Sitemap Coverage Report · Content Type Crosswalk · Component Inventory · <strong>Audience × Section Matrix</strong> (sections down, audiences across, cells shaded by share &mdash; surfaces "this whole section is written for the wrong people").</li>
+        <li><strong>Consolidation:</strong> <strong>Site Consolidation Overview</strong> (what each source site contributes &mdash; pages, disposition, audiences, overlap, redirect rules) &middot; <strong>Cross-Site Duplicate Overlap</strong> (same title+H1+meta on 2+ sites &mdash; the merge worklist).</li>
+        <li><strong>Audience:</strong> <strong>Audience Coverage</strong> (pages per audience in tier order, with KKE mix and an under-served-Primary flag) · <strong>Audience Debt</strong> (off-strategy content · priority pages marked Kill · pages serving 4+ audiences).</li>
         <li><strong>Delivery:</strong> Migration Direction Brief · Migration Checklist · Net New Content Brief · Redirect Map Report.</li>
         <li>The <strong>Migration</strong> menu holds export/validation <em>tools</em>; the <strong>Progress Dashboard</strong> (<code>Cmd+P</code>) gives live completion stats.</li>
         <li><strong>Export the sitemap to Miro</strong> &mdash; a PDF is something a client reads; a Miro board is something they can <em>work on</em> in a workshop. <strong>Connect once</strong> in App Settings (&#9881;) &rarr; <strong>Miro</strong> &rarr; <strong>Connect to Miro</strong>: your browser opens, you authorise Transmission and pick which Miro <strong>team</strong> to connect, then return. The token is stored <strong>encrypted in the OS keychain</strong> &mdash; deliberately not in the ordinary preferences file &mdash; and is never readable by the app's interface layer. A connection covers <strong>one team</strong>; work across two and you connect once per team. An <strong>Advanced: paste a token from your own Miro app</strong> fallback exists for power users or if the connect service is unreachable (create your own Miro app, ticking <code>boards:read</code> + <code>boards:write</code> <em>before</em> installing it).</li>
@@ -707,6 +732,9 @@
         <tr><td><code>Primary Tag</code></td><td>Text</td><td>Single primary label</td></tr>
         <tr><td><code>Consolidate_Into</code></td><td>URL</td><td>Consolidation target page</td></tr>
         <tr><td><code>Redirect_Destination</code></td><td>URL</td><td>301 redirect target for Kill/moved pages (or <code>404</code>)</td></tr>
+        <tr><td><code>Audiences</code></td><td>CSV text</td><td>Every audience the page serves. <strong>Blank = unreviewed</strong>; <em>— None</em> = reviewed, serves nobody</td></tr>
+        <tr><td><code>Primary_Audience</code></td><td>Controlled</td><td>Who the page is mainly for (auto-filled when only one audience is tagged)</td></tr>
+        <tr><td><code>Source_Site</code></td><td>Derived</td><td>Which source site the page came from. Read-only; recomputed from the Sites registry</td></tr>
       </table>
 
       <h3>SME review columns</h3>
@@ -840,6 +868,8 @@
         <tr><td><code>ContentTypeRegistry</code></td><td>Current&rarr;target crosswalk</td></tr>
         <tr><td><code>PatternLibrary</code></td><td>Target Spec Library</td></tr>
         <tr><td><code>DesignPatternLibrary</code></td><td>Component Library</td></tr>
+        <tr><td><code>Audiences</code></td><td>Audience prioritization output (name, tier, color, description)</td></tr>
+        <tr><td><code>Sites</code></td><td>Source sites in a consolidation audit (label, hosts, CMS, owner, in-scope)</td></tr>
       </table>
       <p><strong>Appearance</strong> is a <strong>System / Light / Dark</strong> toggle in App Settings (per-user; <strong>System</strong> follows your macOS appearance, WCAG-compliant in both themes). <strong>The embedded browser always renders crawled pages as designed</strong> &mdash; it is never dark-mode-adapted, whatever this setting or the OS &mdash; so reviewing pages stays faithful. <strong>Undo/Redo</strong> (<code>Cmd+Z</code> / <code>Cmd+Shift+Z</code>) covers KKE changes and sitemap node deletions, single or bulk (100-action stack, cleared on reload).</p>
     </section>

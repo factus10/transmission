@@ -125,6 +125,10 @@ function injectAndOrderAuditColumns(headers, rows, columnMap) {
                      'Target_Content_Type',
                      // Design pattern inventory
                      'Design_Patterns',
+                     // Audience tagging: who this page serves (CSV) + who it's mainly for
+                     'Audiences', 'Primary_Audience',
+                     // Derived: which source site this page came from (consolidation audits)
+                     'Source_Site',
                      // Derived: the page's on-page breadcrumb (from its sitemap node's breadcrumb axis)
                      'Page_Breadcrumb',
                      // Internal: stable identity (master page's current Address) backing Consolidate_Into
@@ -426,9 +430,11 @@ function buildMenu() {
       submenu: [
         { label: 'Project Settings…',     click: send('menu-project-settings') },
         { label: 'Triage Non-200 Pages…', click: send('menu-non200-triage') },
+        { label: 'Triage URL Variants…',  click: send('menu-url-variant-triage') },
         { label: 'Create Sitemap from Audit…', click: send('menu-create-sitemap-from-audit') },
         { type: 'separator' },
         { label: 'Edit Glossary…',        click: send('menu-glossary') },
+        { label: 'Audience Library…',     click: send('menu-audience-library') },
         { label: 'Content Type Registry…', click: send('menu-content-type-registry') },
         { label: 'Target Spec Library…',    click: send('menu-pattern-library') },
         { label: 'Component Library…',      click: send('menu-design-pattern-library') },
@@ -465,6 +471,13 @@ function buildMenu() {
         { label: 'Sitemap Coverage Report…',    click: send('menu-nav-coverage') },
         { label: 'Component Inventory…',          click: send('menu-report-design-patterns') },
         { label: 'Content Type Crosswalk…',       click: send('menu-report-content-crosswalk') },
+        { type: 'separator' },
+        { label: 'Audience Coverage…',            click: send('menu-report-audience-coverage') },
+        { label: 'Audience × Section Matrix…',    click: send('menu-report-audience-matrix') },
+        { label: 'Audience Debt…',                click: send('menu-report-audience-debt') },
+        { type: 'separator' },
+        { label: 'Site Consolidation Overview…',  click: send('menu-report-site-consolidation') },
+        { label: 'Cross-Site Duplicate Overlap…', click: send('menu-report-cross-site-dupes') },
         { type: 'separator' },
         { label: 'Migration Direction Brief…', click: send('menu-report-assignee-brief') },
         { label: 'Migration Checklist…',    click: send('menu-report-migration-checklist') },
@@ -531,7 +544,7 @@ function readWorkbook(filePath, targetSheet) {
     // Structural sheets (not selectable as data sheets). 'navstructure' is the
     // legacy name for the sitemap-tree sheet (now written as 'Sitemap') — kept
     // here so older files still hide it from the data-sheet picker pre-migration.
-    const structuralNames = new Set(['navstructure', 'sitemap', 'kke_settings', 'kke_changelog', 'kke_glossary', 'contenttyperegistry', 'patternlibrary', 'designpatternlibrary']);
+    const structuralNames = new Set(['navstructure', 'sitemap', 'kke_settings', 'kke_changelog', 'kke_glossary', 'contenttyperegistry', 'patternlibrary', 'designpatternlibrary', 'audiences', 'sites']);
     const dataSheets = allSheetNames.filter(s => !structuralNames.has(s.toLowerCase()));
 
     // Pick which sheet to load
@@ -674,6 +687,22 @@ function readWorkbook(filePath, targetSheet) {
       projectSettings.patternLibrary = parsePatternLibrarySheet(workbook.Sheets[plSheetName]);
     } else {
       projectSettings.patternLibrary = projectSettings.patternLibrary || [];
+    }
+
+    // Check for Audiences sheet (audience prioritization workshop output)
+    const audSheetName = allSheetNames.find(s => s.toLowerCase() === 'audiences');
+    if (audSheetName) {
+      projectSettings.audienceLibrary = parseAudienceLibrarySheet(workbook.Sheets[audSheetName]);
+    } else {
+      projectSettings.audienceLibrary = projectSettings.audienceLibrary || [];
+    }
+
+    // Check for Sites sheet (source sites in a consolidation audit)
+    const sitesSheetName = allSheetNames.find(s => s.toLowerCase() === 'sites');
+    if (sitesSheetName) {
+      projectSettings.siteLibrary = parseSiteLibrarySheet(workbook.Sheets[sitesSheetName]);
+    } else {
+      projectSettings.siteLibrary = projectSettings.siteLibrary || [];
     }
 
     // Check for DesignPatternLibrary sheet
@@ -922,6 +951,8 @@ function writeSettingsSheet(workbook, settings) {
     patternLibrary: _patternLibrary,
     contentTypeRegistry: _contentTypeRegistry,
     designPatternLibrary: _designPatternLibrary,
+    audienceLibrary: _audienceLibrary,
+    siteLibrary: _siteLibrary,
     ...settingsToWrite
   } = settings;
   if (Object.keys(settingsToWrite).length === 0) return [];
@@ -1044,6 +1075,199 @@ function writeContentTypeRegistrySheet(workbook, registry) {
     e.targetSpec || ''
   ]));
   const ws = XLSX.utils.aoa_to_sheet(aoa);
+  if (workbook.SheetNames.includes(sheetName)) {
+    workbook.Sheets[sheetName] = ws;
+  } else {
+    XLSX.utils.book_append_sheet(workbook, ws, sheetName);
+  }
+}
+
+// ─── Audiences ───────────────────────────────────────────────────────────────
+// Per-project library capturing the output of an audience prioritization
+// workshop: who the site is for, and how much each of them matters. Deliberately
+// a visible structural sheet rather than a JSON blob in KKE_Settings — the
+// workshop output arrives as a spreadsheet and the client wants to keep editing
+// it as one, so the sheet IS the import/handoff path.
+//
+// Per-project, never global prefs: unlike components (which genuinely repeat
+// across clients) an audience list does not transfer between a university and a
+// hospital system.
+
+const AUDIENCE_TIERS = ['Primary', 'Secondary', 'Tertiary', 'Not a target'];
+
+// The reserved "we looked, and this serves nobody" entry. A BLANK Audiences cell
+// means nobody has reviewed the row yet; this means the review happened and came
+// back negative. Those are opposite findings, and collapsing them would make the
+// suggestion engine read every untouched row as a Kill candidate.
+const AUDIENCE_NONE = '— None (no target audience)';
+
+// Seeded at Secondary on purpose — NOT pre-tiered. Guessing the client's
+// priorities and having the guess silently accepted is worse than an empty
+// ranking, and an all-Secondary library abstains from KKE voting until someone
+// does the actual prioritization pass.
+//
+// Two starter lists, because "who is this site for" has no universal answer.
+// Both are a convenience for projects with no workshop output yet — pasting the
+// client's own ranking is always the better path, and the UI says so.
+const AUDIENCE_STARTER_SETS = {
+  'higher-ed': {
+    label: 'Higher education',
+    hint: 'Colleges, universities, schools — recruitment, enrollment, advancement.',
+    entries: [
+      { name: 'Prospective Undergraduates',    color: '#2563eb', description: 'High-school students evaluating where to apply.' },
+      { name: 'Prospective Graduate Students', color: '#7c3aed', description: 'Working professionals and recent graduates evaluating advanced programs.' },
+      { name: 'Current Students',              color: '#0891b2', description: 'Enrolled students handling registration, advising, campus life.' },
+      { name: 'Parents & Families',            color: '#db2777', description: 'Families supporting an applicant or enrolled student.' },
+      { name: 'Faculty & Staff',               color: '#65a30d', description: 'Internal audience — often better served by an intranet.' },
+      { name: 'Alumni',                        color: '#ea580c', description: 'Graduates staying connected, using services, attending events.' },
+      { name: 'Donors',                        color: '#ca8a04', description: 'Current and prospective givers evaluating impact.' },
+      { name: 'Employers & Partners',          color: '#0d9488', description: 'Recruiters, industry and community partners.' },
+      { name: 'Researchers',                   color: '#4f46e5', description: 'Academic peers and collaborators.' },
+      { name: 'Media',                         color: '#78716c', description: 'Journalists seeking experts, facts, contacts.' }
+    ]
+  },
+  general: {
+    label: 'General organization',
+    hint: 'Companies, nonprofits, agencies, government — anything not higher ed.',
+    entries: [
+      { name: 'Prospective Customers', color: '#2563eb', description: 'Evaluating and comparing before they buy or commit.' },
+      { name: 'Existing Customers',    color: '#0891b2', description: 'Already bought — support, documentation, account, renewal.' },
+      { name: 'Partners & Resellers',  color: '#0d9488', description: 'Channel, integration, referral, and delivery partners.' },
+      { name: 'Investors & Analysts',  color: '#ca8a04', description: 'Financials, governance, strategy, filings.' },
+      { name: 'Job Seekers',           color: '#7c3aed', description: 'Candidates researching roles, culture, and benefits.' },
+      { name: 'Employees',             color: '#65a30d', description: 'Internal audience — often better served by an intranet.' },
+      { name: 'Media & Press',         color: '#78716c', description: 'Journalists seeking facts, spokespeople, assets.' },
+      { name: 'Vendors & Suppliers',   color: '#ea580c', description: 'Procurement, onboarding, invoicing, compliance.' },
+      { name: 'General Public',        color: '#db2777', description: 'No specific relationship — reputation, community, transparency.' }
+    ]
+  }
+};
+
+// Shared across both sets: the reserved "reviewed, serves nobody" entry.
+const AUDIENCE_NONE_ENTRY = {
+  name: AUDIENCE_NONE, tier: 'Not a target', color: '#9ca3af',
+  description: 'Reviewed and serves no audience we are investing in. A Kill argument — distinct from an untagged page.',
+  notes: ''
+};
+
+function defaultAudienceLibrary(kind) {
+  const set = AUDIENCE_STARTER_SETS[kind] || AUDIENCE_STARTER_SETS['higher-ed'];
+  return set.entries
+    .map(e => ({ ...e, tier: 'Secondary', notes: '' }))
+    .concat([{ ...AUDIENCE_NONE_ENTRY }]);
+}
+
+function parseAudienceLibrarySheet(worksheet) {
+  const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '', raw: false });
+  const entries = [];
+  for (let i = 1; i < rawData.length; i++) {
+    const name = String(rawData[i][0] || '').trim();
+    if (!name) continue;
+    // A hand-edited sheet is the expected authoring path, so a tier typo must not
+    // silently become an unmatchable value — fall back rather than trust it.
+    const rawTier = String(rawData[i][1] || '').trim();
+    const tier = AUDIENCE_TIERS.find(t => t.toLowerCase() === rawTier.toLowerCase()) || 'Secondary';
+    entries.push({
+      name,
+      tier,
+      color:       String(rawData[i][2] || '').trim(),
+      description: String(rawData[i][3] || ''),
+      notes:       String(rawData[i][4] || '')
+    });
+  }
+  return entries;
+}
+
+function writeAudienceLibrarySheet(workbook, library) {
+  if (!Array.isArray(library)) return;
+  const sheetName = 'Audiences';
+  const HEADER = ['Name', 'Tier', 'Color', 'Description', 'Notes'];
+  const entries = library.filter(e => String(e?.name || '').trim());
+  if (entries.length === 0) {
+    writeEmptyStructuralSheet(workbook, sheetName, HEADER);
+    return;
+  }
+  const aoa = [HEADER];
+  // Tier order, then alphabetical — the sheet should read like the workshop
+  // output it came from, with the priorities at the top.
+  const ordered = entries.slice().sort((a, b) => {
+    const ta = AUDIENCE_TIERS.indexOf(a.tier), tb = AUDIENCE_TIERS.indexOf(b.tier);
+    if (ta !== tb) return (ta < 0 ? 99 : ta) - (tb < 0 ? 99 : tb);
+    return String(a.name).localeCompare(String(b.name));
+  });
+  ordered.forEach(e => aoa.push([
+    e.name,
+    e.tier || '',
+    e.color || '',
+    clampCell(e.description || ''),
+    clampCell(e.notes || '')
+  ]));
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 32 }, { wch: 14 }, { wch: 10 }, { wch: 60 }, { wch: 50 }];
+  if (workbook.SheetNames.includes(sheetName)) {
+    workbook.Sheets[sheetName] = ws;
+  } else {
+    XLSX.utils.book_append_sheet(workbook, ws, sheetName);
+  }
+}
+
+// ─── Sites ───────────────────────────────────────────────────────────────────
+// The source sites an audit is consolidating. Transmission otherwise models an
+// audit as one site becoming one site; in a merger the unit of work is often the
+// SITE — it has an owner, a CMS to export from, its own redirect configuration,
+// and its own in-scope decision.
+//
+// A registry rather than "parse the host", because host ≠ site: `www.company.com`
+// and `company.com` are always one site, while `careers.company.com` may be one
+// site with them or a separate property being retired. Only the auditor knows,
+// so `hosts` is a list they curate. The registry auto-seeds one entry per host
+// found in the data, which makes an ordinary single-domain project a one-entry
+// registry that changes nothing.
+
+function parseSiteLibrarySheet(worksheet) {
+  const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '', raw: false });
+  const entries = [];
+  for (let i = 1; i < rawData.length; i++) {
+    const label = String(rawData[i][0] || '').trim();
+    if (!label) continue;
+    entries.push({
+      label,
+      hosts: String(rawData[i][1] || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+      cms:     String(rawData[i][2] || '').trim(),
+      owner:   String(rawData[i][3] || '').trim(),
+      // Blank means in scope. Only an explicit no opts a site out, so a
+      // hand-edited sheet can never silently drop a site from every report.
+      inScope: !/^(n|no|false|0)$/i.test(String(rawData[i][4] || '').trim()),
+      color:   String(rawData[i][5] || '').trim(),
+      notes:   String(rawData[i][6] || '')
+    });
+  }
+  return entries;
+}
+
+function writeSiteLibrarySheet(workbook, library) {
+  if (!Array.isArray(library)) return;
+  const sheetName = 'Sites';
+  const HEADER = ['Label', 'Hosts', 'CMS', 'Owner', 'In_Scope', 'Color', 'Notes'];
+  const entries = library.filter(e => String(e?.label || '').trim());
+  if (entries.length === 0) {
+    writeEmptyStructuralSheet(workbook, sheetName, HEADER);
+    return;
+  }
+  const aoa = [HEADER];
+  entries.slice()
+    .sort((a, b) => String(a.label).localeCompare(String(b.label)))
+    .forEach(e => aoa.push([
+      e.label,
+      (e.hosts || []).join(', '),
+      e.cms || '',
+      e.owner || '',
+      e.inScope === false ? 'No' : 'Yes',
+      e.color || '',
+      clampCell(e.notes || '')
+    ]));
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 30 }, { wch: 44 }, { wch: 18 }, { wch: 18 }, { wch: 10 }, { wch: 10 }, { wch: 50 }];
   if (workbook.SheetNames.includes(sheetName)) {
     workbook.Sheets[sheetName] = ws;
   } else {
@@ -1327,7 +1551,7 @@ const DEFAULT_DESIGN_PATTERN_LIBRARY = [
   { name: 'Card – News',          category: 'Card',    complexity: 'Low',    description: 'Headline + date + excerpt for editorial/news content.',                          dsUrl: '', aliases: 'Article Card, Blog Card', notes: '' },
   { name: 'Card – Logo',          category: 'Card',    complexity: 'Low',    description: 'Partner or sponsor logo with an optional link.',                                 dsUrl: '', aliases: 'Partner Card', notes: '' },
   // ── Collection layouts ───────────────────────────────────────────────────────
-  { name: 'Card Collection',      category: 'Collection', complexity: 'Low',    description: 'Grid or row of cards; the most common section pattern on institutional sites.', dsUrl: '', aliases: 'Card Grid, Card Row', notes: '' },
+  { name: 'Card Collection',      category: 'Collection', complexity: 'Low',    description: 'Grid or row of cards; the most common section pattern on content-heavy sites.', dsUrl: '', aliases: 'Card Grid, Card Row', notes: '' },
   { name: 'Filterable Card Grid', category: 'Collection', complexity: 'High',   description: 'Card grid with filter chips or dropdowns to narrow results by tag/category.',   dsUrl: '', aliases: 'Filtered Listing', notes: '' },
   { name: 'Carousel / Slider',    category: 'Collection', complexity: 'Medium', description: 'Auto- or manually-advancing sequence of cards or images.',                      dsUrl: '', aliases: 'Slideshow, Rotator', notes: 'Low engagement in A/B research; use sparingly.' },
   { name: 'Logo Cloud',           category: 'Collection', complexity: 'Low',    description: 'Horizontal strip of partner, client, or accreditation logos.',                  dsUrl: '', aliases: 'Partner Logos, Sponsor Strip', notes: '' },
@@ -1736,6 +1960,12 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
       if (Array.isArray(projectSettings.designPatternLibrary)) {
         writeDesignPatternLibrarySheet(workbook, projectSettings.designPatternLibrary);
       }
+      if (Array.isArray(projectSettings.audienceLibrary)) {
+        writeAudienceLibrarySheet(workbook, projectSettings.audienceLibrary);
+      }
+      if (Array.isArray(projectSettings.siteLibrary)) {
+        writeSiteLibrarySheet(workbook, projectSettings.siteLibrary);
+      }
     }
 
     // Append to change log sheet (or replace it wholesale when the caller is
@@ -2142,6 +2372,11 @@ ipcMain.handle('get-default-content-type-registry', () => DEFAULT_CONTENT_TYPE_R
 // Phase 2, Chunk β: same pattern for PatternLibrary.
 ipcMain.handle('get-default-pattern-library', () => DEFAULT_PATTERN_LIBRARY.map(e => ({ ...e })));
 ipcMain.handle('get-default-design-pattern-library', () => DEFAULT_DESIGN_PATTERN_LIBRARY.map(e => ({ ...e })));
+
+ipcMain.handle('get-default-audience-library', (event, opts) => defaultAudienceLibrary(opts && opts.kind));
+
+ipcMain.handle('get-audience-starter-sets', () =>
+  Object.entries(AUDIENCE_STARTER_SETS).map(([kind, s]) => ({ kind, label: s.label, hint: s.hint, count: s.entries.length + 1 })));
 
 ipcMain.handle('open-help-window', () => { openHelpWindow(); });
 
@@ -3300,6 +3535,36 @@ ipcMain.handle('export-redirects', async (event, { rows }) => {
     );
     fs.writeFileSync(result.filePath, csvHeaders + '\n' + csvRows.join('\n'), 'utf8');
     return { success: true, filePath: result.filePath, count: rows.length };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+});
+
+/** One CSV per source site. Each retiring domain is deployed as its own redirect
+ *  configuration, so a consolidation hand-off wants N files, not one merged list
+ *  the implementer has to split. Mirrors `sme-export-multi`: pick a folder once,
+ *  write every file into it. */
+ipcMain.handle('export-redirects-multi', async (event, { files }) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose folder for redirect map files',
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (result.canceled || !result.filePaths.length) return { success: false, error: 'Cancelled' };
+  const dir = result.filePaths[0];
+  try {
+    const headers = ['Source URL', 'Destination URL', 'Status Code', 'Reason'];
+    let total = 0;
+    for (const file of files) {
+      const csv = [headers.join(',')].concat(file.rows.map(row =>
+        headers.map(h => {
+          const val = String(row[h] || '');
+          return /[",\n]/.test(val) ? '"' + val.replace(/"/g, '""') + '"' : val;
+        }).join(',')
+      )).join('\n');
+      fs.writeFileSync(path.join(dir, file.fileName), csv, 'utf8');
+      total += file.rows.length;
+    }
+    return { success: true, dir, files: files.length, count: total };
   } catch (e) {
     return { success: false, error: e.message };
   }

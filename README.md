@@ -66,9 +66,9 @@ The View menu mirrors these and adds **Audit Progress…** (`Cmd+P`), zoom contr
 - **App menu (macOS) / File (Win/Linux)** — Preferences (`Cmd+,`)
 - **File** — Open · Open Recent · Save · **Save As Project…** (`Cmd+Shift+S`) · Import/Merge · Merge Auditor Decisions · Save/Load Template · **Export…** (unified Cmd+Shift+E) · **Export Full Workbook (.xlsx)…**
 - **View** — view switcher mirrors + Audit Progress + zoom
-- **Project** — Project Settings · Glossary · Content Type Registry · Target Spec Library · Component Library · **AI Suggest for Unreviewed** · Run Rubric · Refresh GA KKE · Recompute Suggested KKE · Triage Non-200 Pages
+- **Project** — Project Settings · Glossary · **Audience Library** · Content Type Registry · Target Spec Library · Component Library · **AI Suggest for Unreviewed** · Run Rubric · Refresh GA KKE · Recompute Suggested KKE · Triage Non-200 Pages
 - **Migration** (export & validation tools) — **Pre-Handoff Check** · Migration Tracker · Export Redirect Map (CSV) · Redirect Chain Check
-- **Reports** (all reports, grouped) — Executive Summary · Content Inventory · SME Review Status · Menu Report · Sitemap Coverage · Component Inventory · Migration Checklist · Net New Content Brief · Redirect Map Report
+- **Reports** (all reports, grouped) — Executive Summary · Content Inventory · SME Review Status · Menu Report · Sitemap Coverage · Component Inventory · **Audience Coverage · Audience × Section Matrix · Audience Debt · Site Consolidation Overview · Cross-Site Duplicate Overlap** · Migration Checklist · Net New Content Brief · Redirect Map Report
 - **SME** — Export · Import · **Compare KKE vs SME** · Resolve Conflicts
 - **Help** — Getting Started · Product Tour · Keyboard Shortcuts (`Cmd+/`) · Help
 
@@ -388,11 +388,40 @@ A system for cataloging the UI design patterns present on each page, helping ens
 - Tag chips and the Group select in the audit bar show the glossary note as a hover tooltip
 - **Export for Word…** button in the glossary modal generates a standalone `.html` file (client-branded with your project/client names) that Word opens with formatting preserved. Ready to drop into a content strategy deliverable.
 
+### Audience tagging
+Makes audience prioritization and jobs-to-be-done workshop output a real input to the audit instead of a slide nobody reopens. A page can have decent traffic, pass every rubric rule, and still serve nobody the client decided to invest in — that finding is unreachable without this.
+
+- **`Audiences`** (multi-value chips) records every audience a page does real work for; **`Primary_Audience`** records who it's mainly for (auto-filled when only one is tagged).
+- **Per-project library** with a **tier** per audience — Primary / Secondary / Tertiary / Not a target — plus a color. Lives on its own visible **`Audiences`** sheet, so the workshop output can be pasted in and kept as a working document. Managed in `Project → Audience Library…`. Paste your workshop output straight in, or seed an opt-in starter list — **Higher education** or **General organization** (all at Secondary; the ranking is yours to set).
+- **A blank cell means *unreviewed*, not "serves nobody."** The reserved *— None (no target audience)* entry is the positive call, and only it argues Kill.
+- **Bulk tagging** via the Multi-bar (Add / Remove Audience, Set Primary Audience) — the only realistic way to tag a large crawl. Two worklist filters: **Needs audience** and **Serves no priority audience**.
+- **Feeds Suggested_KKE** as a weighted source, colors the Visual Sitemap and Treemap by Primary Audience, and rides along in the Migration Tracker and SME export.
+- **Three reports** — Audience Coverage, Audience × Section Matrix, Audience Debt.
+
+### URL Variant Triage
+A crawl is not a content inventory. On a CMS-driven site much of it is alternate views of the same page — pagination, sorting, faceted filters, tracking parameters. **Project → Triage URL Variants…** groups those by the page they point at and disposes of them in bulk.
+
+- Reads the site's own **`rel=canonical`** rather than guessing from parameter names — authoritative, and no per-CMS rules to maintain.
+- **Query-only variants** (same path) become **Exclude**; the canonical's redirect already covers them. **Different-path variants** become **Consolidate** into the canonical, which writes the redirect for you.
+- Nothing is hidden: every page keeps its row and gets a logged decision, and the whole triage reverses with one **Cmd+Z**. Out-of-scope sites are skipped.
+- Filters: **Alternate view of another page (canonical)** and **Canonical target not in this crawl**.
+
+### Consolidating several sites into one
+When an audit merges multiple existing sites — `www.company.com`, `home.anothercompany.com`, `thirdcompany.com` — the **site** becomes a unit of work in its own right.
+
+- A **`Sites` registry** (Project Settings → **Sites**) lists each source site with its hosts, CMS, owner, and an **in scope** flag. It auto-creates one entry per domain found in the crawl; `www.`/non-`www.` is folded in automatically, and you decide whether `careers.` or `blog.` is the same site by moving hosts between entries.
+- **`Source_Site`** is derived onto every row, so you can filter, sort, colour the sitemap, and export by it.
+- **Out of scope** drops a site from every report denominator without deleting anything — for a property that isn't part of this phase.
+- **Redirect maps split per domain**, because each retiring domain is deployed as its own redirect configuration. One sheet per domain in the Migration Tracker; one CSV per domain from the Redirect Map export.
+- **Two consolidation reports** — **Site Consolidation Overview** (what each site contributes: pages, disposition, audiences, overlap, redirect rules required) and **Cross-Site Duplicate Overlap** (pages whose title, H1 and meta description appear on more than one site — the merge worklist).
+- Transmission warns if several sites are in scope and no **Site Domain** is set, since redirect destinations would otherwise be built on whichever domain happens to come first.
+
 ### Suggested_KKE (Unified Suggestion Engine)
 The audit bar's suggestion badge surfaces a unified recommendation drawn from multiple sources, prefixed with the winning source name (e.g., `GA: Kill`, `Rubric: Evolve`).
 
 - **GA source** — generates a Keep/Kill/Evolve recommendation from four GA4 metrics: Sessions, Engagement Rate, Average Session Duration, Views per Session. PERCENTRANK normalization, weighted composite, configurable thresholds.
 - **Rubric source** — field-rule + LLM assessment (per-row Assess button or batch via `Project → Run Rubric on filtered rows…`).
+- **Audience source** — turns the audience prioritization workshop into a vote: serving a **Primary** audience argues Keep, serving only Tertiary/off-target audiences argues Evolve, and an explicit *— None (no target audience)* argues Kill. Untagged and Secondary-only pages abstain, so an untagged project is unaffected. See [Audience tagging](#audience-tagging).
 - **Suggested_KKE column** stores the winning recommendation; **Suggested_KKE_Sources** is a JSON sidecar with the per-source breakdown.
 - **Disagreement detection** — when sources disagree, the badge gets a dashed amber border with a ⚠ glyph. The popover highlights the disagreement.
 - **One-time migration on file open** — files with legacy `GA_KKE_Recommendation` or `_AssessmentResult` get their values seeded into `Suggested_KKE` so the badge renders right away.
