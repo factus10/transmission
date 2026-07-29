@@ -32,12 +32,13 @@ Transmission is not neutral. A handful of decisions are baked in, and every one 
 2. Classify in bulk                      ← before you look at anything individually
 3. The audit pass                        ← the long part
 4. SME review                            ← optional, but usually the point
-5. IA and sitemap                        ← if you're replatforming
+5. IA, sitemap and menus                 ← if you're replatforming
 6. Redirects                             ← falls out of 3 + 5
-7. Deliverables
+7. Build planning                        ← only if you're staffing the build
+8. Deliverables
 ```
 
-Steps 0–3 are close to mandatory. Everything after depends on what you were hired to do — a pure content audit stops after 4; a replatform goes all the way through 7.
+Steps 0–3 are close to mandatory. Everything after depends on what you were hired to do — a pure content audit stops after 4; a replatform goes all the way through 8.
 
 ---
 
@@ -86,6 +87,8 @@ Twenty minutes here saves days later, because most of it feeds automatic behavio
 
 **Content Type Registry** (`Project → Content Type Registry…`) — only if you're replatforming. Maps each current content type to what it becomes in the new CMS, so classification flows automatically. The editor shows types in use with no crosswalk yet, so gaps are visible.
 
+**Target Spec Library** (`Project → Target Spec Library…`) — also replatform-only, and only worth it if you're running the build. These are the page templates and content models the new site is assembled from; each carries default build guidance and a writer brief that pre-fill a page when you assign the spec in step 7. Seed the 12 built-ins and edit from there.
+
 **Rubric and analytics** — optional, both feed `Suggested_KKE`. If you have GA4 data in the crawl the tool offers to configure it on open.
 
 ---
@@ -111,7 +114,7 @@ Audience and job tagging in particular are bulk jobs. Filter to `/admissions/`, 
 
 > **Order matters here.** Both tools are only as good as what they learn from. Hand-tag a section, bulk-tag the obvious ones, *then* inherit, *then* let AI take the remainder — running AI first spends money answering questions you were about to answer for free.
 
-> **Why before the audit pass:** a page you've already classified is faster to judge, and the suggestion engine has more to work with when you get to it.
+**Why all of this comes before the audit pass:** a page you've already classified is faster to judge, and the suggestion engine has more to work with by the time you get to it.
 
 ---
 
@@ -123,6 +126,7 @@ Now go page by page. The loop is: read the page in the built-in browser, make th
 - **Notes are the deliverable.** Six months later the note is why anyone believes the decision. Write for the client, not for yourself.
 - **Watch the Suggested KKE badge.** It shows the winning source (`GA: Kill`, `Audience: Keep`) and flags disagreement with a ⚠. Disagreement is signal: *high traffic, no priority audience* is usually a legacy hub; *low traffic, priority audience* argues for promotion, not removal.
 - **Consolidate opens a picker** so you name the surviving page. That relationship writes the redirect later, so it's worth getting right at the point of decision.
+- **Record components if the build team needs them.** The `Components` quick-chip reveals a chip input for the UI patterns on the page — hero, card grid, accordion. This is the only thing that feeds the **Component Inventory** report, and it's cheap while you're already looking at the page. Skip it entirely if nobody downstream asked.
 
 Track progress with **Audit Progress** (`Cmd+P`).
 
@@ -138,15 +142,27 @@ Then `Import SME Decisions…`, `Compare KKE vs SME…` to see the conflicts sid
 
 ---
 
-## 5. IA and sitemap
+## 5. IA, sitemap and menus
 
 Only if you're replatforming.
 
-**Create Sitemap from Audit…** (`Project` menu) builds a starter tree from your URL structure, which is faster than hand-building and easy to reorganize afterwards in the **Sitemap** view (`Cmd+Shift+T`).
+**Build the tree.** **Create Sitemap from Audit…** (`Project` menu) generates a starter tree from your URL structure — faster than hand-building and easy to reorganize afterwards in the **Sitemap** view (`Cmd+Shift+T`).
 
 Then place pages: the **Needs sitemap placement** filter finds Keep/Evolve pages with no home yet, and the Multi-bar's **Assign to Sitemap…** places many at once.
 
 Useful checks while you're here: **Sitemap Coverage Report** (empty nodes, overloaded nodes), and the **Consolidation Candidates** tool for nodes that ended up with several pages.
+
+**Then draw the menus — they are not the tree.** The **Menus** view (`Cmd+Shift+M`) is a separate axis on purpose. The sitemap says where a page *lives*; a menu says how people *get to it*, and the two genuinely differ — a page has one home but can appear in the top bar, a footer, and a mega-menu, and plenty of pages appear in no menu at all.
+
+- **Seed from content tree** gets you a first draft from the sitemap; edit from there.
+- Each menu has a **placement** (Top bar, Utility, Footer, Mega, …) so the hand-off says *where* it goes.
+- Items are one of three kinds: a **page** (points at a sitemap node — the label follows the node if you rename it), an external **link**, or a label-only **header** for grouping.
+- A red **⚠ broken refs** button appears if an item points at a node you've since deleted. Fix those before exporting.
+- **Report** produces the client-facing Menu Report; **Export…** produces the CMS-agnostic structure (Excel or JSON) the build team imports.
+
+> Skip menus if the engagement stops at the content audit. But if you're handing over an IA, the sitemap alone doesn't tell anyone what the navigation should say.
+
+**Show it.** The Sitemap toolbar's **Visual Sitemap** renders the tree as an interactive box diagram — this is the artifact clients actually react to. Color it by KKE, section, phase, page status, or an audit field; export a shareable standalone HTML for the client, a PDF for the deck, or push it to a **Miro** board if the client works there (connect once in App Settings). **Treemap** answers a different question — where the content actually *is*, sized by page count — and is usually the more uncomfortable picture.
 
 ---
 
@@ -160,7 +176,22 @@ Then `Migration → Redirect Chain Check…` before you hand anything over. If t
 
 ---
 
-## 7. Deliverables
+## 7. Build planning
+
+Only if you're staffing and sequencing the build rather than just handing over an inventory. All of it lives in the Sitemap node editor (double-click a node, or the ✎ button), in the **Build**, **Write** and **Migrate** sections.
+
+- **Page Status** — Not Started / In Progress / Built / In Review / Published / Blocked. Edit the vocabulary in Project Settings → Migration.
+- **Three roles, one pool of people** — a **builder** assembles the page, a **writer** produces the copy, a **migrator** maps the old content into the new CMS. One person often holds several; the roles are separate because the work and the timing are.
+- **Build guidance** and **Writer brief** are per-page markdown notes. Picking a **Target Spec** pre-fills them from that spec's defaults and asks before overwriting anything you already wrote.
+- The tree shows this back to you as status pills and role chips, and the **Build:** filter narrows to *no status*, *no assignee*, *has guidance*, and so on — that filter is how you find what's unstaffed.
+
+This is what feeds **Reports → Migration Direction Brief…**, which prints one person's whole queue: their pages, the source pages behind each, and where consolidations are hiding. It's the per-person work order, and it's the reason to fill any of this in.
+
+> Skip this whole step if the deliverable is the audit itself. It exists for engagements where you're also running the build.
+
+---
+
+## 8. Deliverables
 
 **Reports** (all export to PDF or HTML; the HTML opens cleanly in Word):
 
@@ -170,9 +201,11 @@ Then `Migration → Redirect Chain Check…` before you hand anything over. If t
 - *IA* — Menu Report · Sitemap Coverage · Content Type Crosswalk · Component Inventory
 - *Build* — Migration Direction Brief · Migration Checklist · Net New Content Brief · Redirect Map
 
-**Migration menu** — `Pre-Handoff Check…` runs every pre-flight check at once; run it before you ship anything. `Migration Tracker…` is the engineering hand-off.
+**Diagrams** (from the Sitemap toolbar, see step 5) — **Visual Sitemap** as interactive HTML for the client, PDF for the deck, or a **Miro** board; **Treemap** for the where-is-the-content picture. **Menus → Export…** hands the navigation to the build team as Excel or JSON.
 
-**File → Package for Handoff…** zips the project with a README for the receiving team.
+**Migration menu** — `Pre-Handoff Check…` runs every pre-flight check at once; run it before you ship anything. `Migration Tracker…` is the engineering hand-off. `Export Redirect Map (CSV)…` is the redirect config itself, split per source domain when there's more than one.
+
+**File → Package for Handoff…** zips the project with a README for the receiving team. **File → Export…** covers everything else — filtered rows, audit decisions, or a client-facing column subset via export profiles.
 
 ---
 
@@ -183,10 +216,14 @@ Then `Migration → Redirect Chain Check…` before you hand anything over. If t
 | URL variant triage | The crawl has no query strings and no duplicate paths |
 | Source sites | Single domain (the registry still auto-creates one entry; ignore it) |
 | Audience tagging | No audience research exists — but say so rather than leaving it blank by accident |
+| AI audience suggestion | The crawl is small enough to bulk-tag, or you have no API key. Inherit-from-section is free and covers most of it |
 | Jobs to be done | No JTBD workshop was run. The Jobs field stays hidden until the library has entries |
-| Content Type Registry | Not replatforming |
+| Component tagging | Nobody downstream asked for a component inventory |
+| Content Type Registry / Target Spec Library | Not replatforming |
 | SME round | The client has no reviewers, or you're the expert |
 | Sitemap / redirects | Content audit only, no migration |
+| Menus | You're handing over an inventory, not an IA |
+| Build planning (step 7) | You're not staffing or sequencing the build |
 
 ---
 
