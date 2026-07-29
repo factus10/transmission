@@ -80,6 +80,10 @@ Twenty minutes here saves days later, because most of it feeds automatic behavio
 - No workshop yet? **Seed starter list…** offers a *Higher education* or *General organization* set to start from — but treat that as scaffolding, not an answer.
 - **Set the tiers.** Everything downstream reads them: the picker's ordering, the coverage reports, and the audience vote in `Suggested_KKE`. A library left at the default `Secondary` for everything is inert — it will not be wrong, it will simply do nothing.
 
+**Jobs to be done** (same tab, below Audiences) — the other half of the discovery workshop. Audiences answer *who*; jobs answer *what they came to do*. **Paste from workshop…** takes the table: short label, full statement, which audiences have it (blank = everybody).
+
+> Worth doing even if you only get halfway. The payoff isn't the tagging — it's the inverse: a job with **no page serving it** is the strongest brief for net-new content you can write, because it traces back to something the client said themselves rather than to your opinion.
+
 **Content Type Registry** (`Project → Content Type Registry…`) — only if you're replatforming. Maps each current content type to what it becomes in the new CMS, so classification flows automatically. The editor shows types in use with no crosswalk yet, so gaps are visible.
 
 **Rubric and analytics** — optional, both feed `Suggested_KKE`. If you have GA4 data in the crawl the tool offers to configure it on open.
@@ -92,10 +96,11 @@ Twenty minutes here saves days later, because most of it feeds automatic behavio
 
 Filter to a section — the search box, the KKE filter, or **+ Field filter** for any column — then apply to everything visible: set Group, Content Type, Published Status, or **Add Audience**.
 
-Audience tagging in particular is a bulk job. Filter to `/admissions/`, select all, tag *Prospective Students*, move on. A large site is a few dozen passes plus hand-correction. Two filters give you the worklists:
+Audience and job tagging in particular are bulk jobs. Filter to `/admissions/`, select all, tag *Prospective Students* and *Compare programs*, move on. A large site is a few dozen passes plus hand-correction. Three filters give you the worklists:
 
 - **Needs audience** — Keep/Evolve pages nobody has assessed yet
 - **Serves no priority audience** — reviewed, and everything it serves is off-strategy
+- **Needs a job** — Keep/Evolve pages with no job tagged
 
 > **Why before the audit pass:** a page you've already classified is faster to judge, and the suggestion engine has more to work with when you get to it.
 
@@ -151,7 +156,7 @@ Then `Migration → Redirect Chain Check…` before you hand anything over. If t
 **Reports** (all export to PDF or HTML; the HTML opens cleanly in Word):
 
 - *Stakeholder* — Executive Summary · Content Inventory by Section · SME Review Status
-- *Audience* — Audience Coverage · Audience × Section Matrix · Audience Debt
+- *Audience* — Audience Coverage · Audience × Section Matrix · Audience Debt · Jobs Coverage
 - *Consolidation* — Site Consolidation Overview · Cross-Site Duplicate Overlap
 - *IA* — Menu Report · Sitemap Coverage · Content Type Crosswalk · Component Inventory
 - *Build* — Migration Direction Brief · Migration Checklist · Net New Content Brief · Redirect Map
@@ -169,6 +174,7 @@ Then `Migration → Redirect Chain Check…` before you hand anything over. If t
 | URL variant triage | The crawl has no query strings and no duplicate paths |
 | Source sites | Single domain (the registry still auto-creates one entry; ignore it) |
 | Audience tagging | No audience research exists — but say so rather than leaving it blank by accident |
+| Jobs to be done | No JTBD workshop was run. The Jobs field stays hidden until the library has entries |
 | Content Type Registry | Not replatforming |
 | SME round | The client has no reviewers, or you're the expert |
 | Sitemap / redirects | Content audit only, no migration |
@@ -188,12 +194,6 @@ Then `Migration → Redirect Chain Check…` before you hand anything over. If t
 **Treating Suggested KKE as the answer.** It's a weighted vote from partial signals. Its disagreements are more useful than its agreements.
 
 **Leaving Site Domain unset with several sites in scope.** Redirect destinations get built on an arbitrary domain. The tool warns; heed it.
-
----
-
-## Coming next
-
-**Jobs-to-be-done** — the second half of the audience work. Audiences answer *who*; JTBD answers *what they came to do*, and unserved jobs become the argument for net-new content. When it lands it slots into step 1 (alongside the audience library) and step 7 (a jobs coverage report feeding the Net New Content Brief). Until then, capture jobs in audience descriptions and notes.
 
 ---
 
