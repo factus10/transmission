@@ -111,6 +111,9 @@
           <option value="group">Set Group</option>
           <option value="primary-tag">Set Primary Tag</option>
           <option value="add-tag">Add Tag</option>
+          <option value="add-audience">Add Audience</option>
+          <option value="remove-audience">Remove Audience</option>
+          <option value="primary-audience">Set Primary Audience</option>
           <option value="assign-nav">Assign to Sitemap…</option>
         </select>
         <select id="multi-value" class="group-select hidden" style="font-size:12px;padding:3px 6px;"></select>
@@ -169,6 +172,7 @@
               <button type="button" id="qt-sme"      class="qt-chip" data-cluster="sme"      title="Show / hide SME review fields (read-only SME + Final KKE)" aria-pressed="false">SME</button>
               <button type="button" id="qt-migrate"  class="qt-chip" data-cluster="migrate"  title="Show / hide Migration fields (Nature + Track)" aria-pressed="false">Migrate</button>
               <button type="button" id="qt-patterns" class="qt-chip" data-cluster="patterns" title="Show / hide Components cluster" aria-pressed="false">Components</button>
+              <button type="button" id="qt-audience" class="qt-chip" data-cluster="audience" title="Show / hide Audience cluster (who this page serves)" aria-pressed="false">Audience</button>
             </div>
             <button id="btn-toggle-blank-meta" title="Show/hide blank metadata fields" class="icon-btn" aria-pressed="false">⊘</button>
             <button id="btn-field-picker" title="Choose visible fields" class="icon-btn">⚙</button>
@@ -270,6 +274,25 @@
                 <div id="tag-input-wrap">
                   <div id="tag-chips"></div>
                   <button id="btn-add-tag" class="tag-add-btn">+ Add tag</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- ── AUDIENCE: who this page serves ──────────────────────────── -->
+            <div id="audience-fields-wrap" class="audit-cluster cluster-audience hidden" data-cluster="audience">
+              <span class="cluster-pill" title="Click to collapse / expand"><span class="cluster-chev">▾</span>Audience</span>
+              <span class="cluster-summary" aria-hidden="true"></span>
+              <div class="audit-group audit-group-compact">
+                <label class="audit-label" title="Who this page is mainly for. Auto-filled when only one audience is tagged.">Primarily for</label>
+                <select id="primary-audience-select" class="primary-audience-select">
+                  <option value="">—</option>
+                </select>
+              </div>
+              <div class="audit-group audit-group-tags" style="flex:1 1 320px;">
+                <label class="audit-label" title="Every audience this page does meaningful work for">Also serves</label>
+                <div id="audience-input-wrap">
+                  <button id="btn-add-audience" class="tag-add-btn">+ Add audience</button>
+                  <div id="audience-chips"></div>
                 </div>
               </div>
             </div>
@@ -565,6 +588,17 @@
     </div>
   </div>
 
+  <!-- ── Audience dropdown ────────────────────────────────────────────────────── -->
+  <div id="audience-dropdown" class="hidden">
+    <div id="aud-search-wrap">
+      <input id="aud-search" type="text" placeholder="Search audiences…">
+    </div>
+    <div id="aud-list"></div>
+    <div id="aud-create" class="hidden">
+      <button id="btn-create-aud" class="btn btn-sm btn-primary">Add audience "<span id="aud-create-label"></span>"</button>
+    </div>
+  </div>
+
   <!-- ── Design Pattern dropdown ──────────────────────────────────────────────── -->
   <div id="design-pattern-dropdown" class="hidden">
     <div id="dp-search-wrap">
@@ -689,6 +723,10 @@
         <input type="checkbox" id="pref-show-design-patterns">
         <span>Show Components cluster</span>
       </label>
+      <label class="setting-row">
+        <input type="checkbox" id="pref-show-audience-fields">
+        <span>Show Audience cluster (who each page serves)</span>
+      </label>
       <div class="setting-group">
         <label class="setting-label">Rubrics folder</label>
         <div class="setting-row-inline">
@@ -797,6 +835,8 @@
         <button type="button" class="ps-tab active" data-tab="identity" role="tab">Identity</button>
         <button type="button" class="ps-tab" data-tab="kke-states" role="tab">KKE States</button>
         <button type="button" class="ps-tab" data-tab="suggestions" role="tab">Suggestions</button>
+        <button type="button" class="ps-tab" data-tab="audience" role="tab">Audience</button>
+        <button type="button" class="ps-tab" data-tab="sites" role="tab">Sites</button>
         <button type="button" class="ps-tab" data-tab="migration" role="tab">Migration</button>
         <button type="button" class="ps-tab" data-tab="saved-filters" role="tab">Saved Filters</button>
       </div>
@@ -892,11 +932,73 @@
                 <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;min-width:48px;">Rubric</span>
                 <input type="number" id="ps-weight-rubric" min="0" max="5" step="0.1" value="1.0" style="width:80px;height:28px;padding:0 6px;border:1px solid var(--border);border-radius:4px;">
               </div>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;min-width:48px;" title="Derived from the audience tiers set in the Audience tab">Audience</span>
+                <input type="number" id="ps-weight-audience" min="0" max="5" step="0.1" value="1.0" style="width:80px;height:28px;padding:0 6px;border:1px solid var(--border);border-radius:4px;">
+              </div>
+            </div>
+            <div class="setting-hint" style="margin-top:6px;">
+              Audience votes <strong>Keep</strong> when a page serves a Primary audience, <strong>Evolve</strong> when
+              everything it serves is Tertiary or off-target, and <strong>Kill</strong> only for the explicit
+              <em>— None</em> call. Untagged and Secondary-only pages abstain.
             </div>
             <div id="ps-suggested-last-run" style="margin-top:8px;font-size:11px;color:var(--text-muted);"></div>
             <div style="margin-top:8px;">
               <button id="ps-btn-recompute-suggested" class="btn btn-sm btn-primary">Save weights &amp; recompute</button>
             </div>
+          </div>
+        </div>
+
+        <!-- Audience tab — audience prioritization workshop output -->
+        <div class="ps-tab-content hidden" data-tab="audience">
+          <p style="color:var(--text-muted);font-size:12px;margin:0 0 14px;">
+            The audience prioritization workshop's output. Tiers drive the Audience suggestion in
+            <strong>Suggested&nbsp;KKE</strong> and the ordering of the tagging picker, so ranking these
+            is what turns audience tagging into a real audit input. Travels with the project on the
+            <strong>Audiences</strong> sheet.
+          </p>
+
+          <div class="ps-section">
+            <div class="ps-section-head">
+              <span class="ps-section-title">Audiences</span>
+              <span style="flex:1;"></span>
+              <button id="ps-aud-import" class="btn btn-sm btn-ghost">Paste from workshop…</button>
+              <button id="ps-aud-seed" class="btn btn-sm btn-ghost" title="Start from a generic list when there's no workshop output yet">Seed starter list…</button>
+              <button id="ps-aud-add" class="btn btn-sm btn-primary">+ Add audience</button>
+            </div>
+            <div class="ps-section-hint">
+              A <strong>blank</strong> Audiences cell means the page has not been reviewed yet.
+              The reserved <em>— None (no target audience)</em> entry is the positive
+              "reviewed, serves nobody" call — only that one argues Kill.
+            </div>
+            <div id="ps-aud-list" class="ps-mig-list"></div>
+            <div id="ps-aud-footer" style="font-size:11px;color:var(--text-muted);margin-top:8px;"></div>
+          </div>
+        </div>
+
+        <!-- Sites tab — the source sites a consolidation audit is merging -->
+        <div class="ps-tab-content hidden" data-tab="sites">
+          <p style="color:var(--text-muted);font-size:12px;margin:0 0 14px;">
+            The sites this audit is consolidating. One entry is created per domain found in the crawl —
+            merge the hosts that are really the same site (<code>www.</code> is folded in automatically,
+            but <code>careers.</code> or <code>blog.</code> is your call). Drives the
+            <strong>Source&nbsp;Site</strong> column, per-domain redirect maps, and the consolidation
+            reports. Travels with the project on the <strong>Sites</strong> sheet.
+          </p>
+          <div id="ps-sites-warn" class="hidden" style="background:var(--kke-kill-bg);border-left:3px solid var(--kke-kill);padding:8px 12px;font-size:12px;margin-bottom:12px;border-radius:var(--radius);"></div>
+
+          <div class="ps-section">
+            <div class="ps-section-head">
+              <span class="ps-section-title">Source sites</span>
+              <span style="flex:1;"></span>
+              <button id="ps-sites-rescan" class="btn btn-sm btn-ghost" title="Add an entry for any domain in the data that isn't listed yet">Rescan crawl</button>
+            </div>
+            <div class="ps-section-hint">
+              Un-tick <strong>In scope</strong> to drop a site from every report denominator — for a property
+              that isn't part of this phase. Nothing is deleted; the rows stay in the file.
+            </div>
+            <div id="ps-sites-list" class="ps-mig-list"></div>
+            <div id="ps-sites-footer" style="font-size:11px;color:var(--text-muted);margin-top:8px;"></div>
           </div>
         </div>
 

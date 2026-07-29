@@ -574,6 +574,79 @@ The Classify cluster also holds two fields that aren't tags but live alongside t
 
 The third Classify field, **Content Type**, is the key into the migration crosswalk and has its own section — see [Content Types & the Crosswalk](#7-content-types--the-crosswalk).
 
+### First: get the alternate views out of your queue
+
+A crawl lists *URLs that responded*, not pages. On a CMS-driven site a large share of those are the same page seen through pagination, sorting, faceted filters, or tracking parameters — on a recent 13,216-row crawl, roughly half. Auditing them one by one is wasted work, and counting them overstates the site to the client by more than double.
+
+**Project → Triage URL Variants…** finds them by reading the site's own `rel=canonical` — its explicit statement that a URL is not distinct content. That beats guessing from parameter names, which would mean maintaining rules for every CMS and plugin you meet.
+
+The dialog groups variants by the page they point at, largest first, and picks a sensible default for each:
+
+- **Query only** — the variant differs from its canonical by query string alone. The path is the same, so when that path is redirected the variants follow; they need no rule of their own. Default: **Exclude**.
+- **Different path** — the URL itself dies, so it needs a redirect. Default: **Consolidate** into the canonical, which fills in the redirect for you.
+- **Canonical target not in this crawl** — left alone. There's nothing to consolidate into; the `Canonical target not in this crawl` filter shows them.
+
+> **Nothing is hidden.** Every page keeps its row in the sidebar and gets a real, logged KKE decision you can see and change. **Cmd+Z reverses the entire triage in one step.** Pages that already have a decision are skipped unless you say otherwise, and sites you've marked out of scope are never touched.
+
+Two things get noticeably better afterwards: the **Duplicates** filter stops matching most of the site (it now ignores pages you've already dispositioned), and your undecided count reflects real content.
+
+### Consolidating several sites into one
+
+Most audits take one site to one site. When you're merging several — `www.company.com`, `home.anothercompany.com`, `thirdcompany.com` — the **site** becomes a unit of work with its own owner, CMS, redirect configuration, and go/no-go decision.
+
+Transmission builds a **Sites registry** for you: open the crawl and every domain in it gets an entry, with `www.` and non-`www.` folded together automatically. Manage them in **Project Settings → Sites**:
+
+- **Merge the hosts that are really one site.** Each host shows its page count; the **⇄** button moves it to another site. Whether `careers.company.com` belongs with the main corporate site or stands alone is your call, not something the tool should guess.
+- **Un-tick "In scope"** for a property that isn't part of this phase — an intranet, say. Its pages stay in the file, but drop out of every report denominator so completion percentages mean what they say.
+- Record each site's **CMS** and **owner** under **Details** — these travel into the hand-off.
+
+Every row then carries a **Source Site** value, so you can filter by it, sort on it, color the Visual Sitemap by it, and export it.
+
+Two things follow automatically:
+
+- **Redirect maps split per domain.** Each retiring domain deploys its own redirect configuration, so the Migration Tracker writes one sheet per domain and the Redirect Map export offers one CSV per domain (pick a folder; it writes them all).
+- **Set the Site Domain.** With several sites in scope and no target domain set, redirect destinations get built on whichever domain happens to come first in the crawl. Transmission warns you; set it on the **Identity** tab.
+
+Then run **Reports → Site Consolidation Overview** and **Cross-Site Duplicate Overlap** — see [Reports](#16-reports-for-clients--stakeholders).
+
+### Audience: who is this page for?
+
+Most engagements start with an **audience prioritization workshop** — the client ranks who the site is really for. That ranking has traditionally lived in a deck and never touched the audit, so Keep/Kill/Evolve got argued on traffic and quality alone. Audience tagging closes that loop: a page can have respectable traffic, pass every rubric rule, and still serve nobody the organization decided to invest in. That is a finding you can act on, and it is invisible without this.
+
+**1. Load the workshop output.** **Project → Audience Library…** (or Project Settings → **Audience**) is where the ranking lives. Add audiences one at a time, **Seed starter list…** to begin from a generic set (**Higher education** or **General organization**), or — usually fastest, and always the better answer when you have it — **Paste from workshop…** and drop in the table straight from your spreadsheet, one per line:
+
+```
+Prospective Undergraduates	Primary	High-school students choosing where to apply
+Alumni	Secondary	Graduates staying connected
+```
+
+Each audience carries a **tier** — Primary, Secondary, Tertiary, or Not a target — plus a color used later for sitemap shading. **Setting the tiers is the step that matters.** Everything downstream reads them, and a library left entirely at the default Secondary can't tell you anything.
+
+**2. Tag as you audit.** The **Audience** cluster appears in the audit bar (it reveals itself automatically once your library has entries; the `Audience` quick-chip toggles it). Two fields:
+
+- **Also serves** — a chip input for every audience the page does real work for. The picker groups by tier, so your priority ranking stays in front of you while you tag.
+- **Primarily for** — who it's *mainly* for. Tag exactly one audience and this fills itself in; tag several and you pick.
+
+> **A blank audience is not "serves nobody."** Blank means *nobody has looked yet*. When you review a page and conclude it genuinely serves no one you care about, tag it **— None (no target audience)**. That distinction is what lets the app argue Kill on the second case without accusing every untouched row of the same thing.
+
+**3. Tag in bulk — really.** Nobody hand-tags three thousand pages through a chip input, and a column that's 4% full makes every report below worthless. Filter to a section, select all, and use the Multi-bar's **Add Audience** / **Remove Audience** / **Set Primary Audience**. A large site is realistically a few dozen bulk passes plus hand-correction. Two filters give you the worklists:
+
+- **Needs audience** — Keep/Evolve pages nobody has assessed yet.
+- **Serves no priority audience** — reviewed, and everything it serves is off-strategy.
+
+**4. It votes on the KKE call.** Once pages are tagged, **Audience** joins GA and Rubric as a source in [Suggested KKE](#8-suggested_kke): serving a Primary audience argues **Keep**, serving only Tertiary/off-target audiences argues **Evolve**, and an explicit *— None* argues **Kill**. Untagged pages and Secondary-only pages abstain entirely, so an untagged project is completely unaffected. Tune its weight beside the others in Project Settings → **Suggestions**.
+
+The disagreements are where this earns its keep. *GA says Keep, Audience says Kill* is a popular page serving nobody strategic — often a legacy hub or an internal page ranking on brand terms. The reverse is under-served priority content, which argues for **promotion**, not removal.
+
+**5. See it.** Color the Visual Sitemap or Treemap by **Primary Audience** to see which audience each section actually serves, and run the three audience reports — see [Reports](#16-reports-for-clients--stakeholders).
+
+### Quick self-check — audience
+
+- [ ] The audience library reflects the workshop, with **real tiers** set
+- [ ] Every Keep/Evolve page is tagged, or on the **Needs audience** worklist
+- [ ] Pages that genuinely serve nobody are tagged **— None**, not left blank
+- [ ] You've reviewed the **Audience Debt** report before signing off the redirect map
+
 ---
 
 # C. Classify for migration
@@ -1299,6 +1372,11 @@ Reports are read-only views, generated on demand from the current file — run t
 - **Executive Summary** — the top-line story: total pages, the KKE distribution, auto-generated key findings, SME status, and a section breakdown. Lead a client readout with this.
 - **Content Inventory by Section** — the full inventory grouped by section, with KKE distribution, sample pages, and notes counts. Your detailed appendix.
 - **SME Review Status** — where expert review stands: overall completion plus a per-Content-Owner table (assigned, reviewed, %, approved vs changed, unresolved conflicts) and a conflict list.
+- **Audience Coverage** — per audience in priority order: how many pages serve them, how many treat them as the *primary* audience, what you're doing to that content, and which sections it lives in. Flags any Primary-tier audience with almost nothing aimed at it — usually the most actionable finding in the set. Ends with the pages nobody has reviewed for audience yet.
+- **Audience × Section Matrix** — sections down, audiences across, cells shaded by share. The single most persuasive artifact here: it makes "this entire section is written for the wrong people" visible in one glance, and it argues IA changes rather than page-by-page ones.
+- **Site Consolidation Overview** — for audits merging several sites: what each source site contributes (pages, disposition mix, audiences served, how much of it duplicates another site, how many redirect rules retiring it needs). A site that is mostly overlap and serves no audience the others don't is a candidate to retire wholesale rather than migrate page by page.
+- **Cross-Site Duplicate Overlap** — pages whose title, H1 and meta description are identical across two or more source sites. Each set collapses to one surviving page: pick the master, mark the rest **Consolidate** pointing at it, and the redirect map writes itself. Exact-match only, so treat it as a floor rather than a ceiling.
+- **Audience Debt** — three worklists that translate straight into scope: pages serving only non-priority audiences (carrying cost, no return), priority-audience pages marked **Kill** (re-read these before signing off the redirect map), and pages tagged with four or more audiences (usually doing several jobs at once and needing a split).
 
 ### For information architecture
 
@@ -1568,11 +1646,13 @@ Injected into every file on open if not already present.
 | **Target_Content_Type** | New-CMS content type (auto-filled from the crosswalk) |
 | **Content_Nature** | UI "Renders as": Page / Content Object (Fragment) / Generated |
 | **Migration_Track** | Scripted / Migrate Records / Configure / Manual Rebuild / Merge / Kill/Redirect |
-| **Suggested_KKE** | Unified suggestion (GA + Rubric + AI) |
+| **Suggested_KKE** | Unified suggestion (GA + Rubric + Audience) |
 | **Suggested_KKE_Sources** | JSON per-source breakdown for the badge |
 | **GA_KKE_Recommendation** / **GA_Score** | GA-derived rec + 0–1 composite |
 | **Source_CMS_URL** / **New_CMS_URL** | Admin/edit URLs in the source / new CMS |
 | **Design_Patterns** | CSV of component names on the page |
+| **Audiences** | CSV of every audience the page serves (blank = unreviewed) |
+| **Primary_Audience** | Who the page is mainly for |
 
 Internal (hidden from the field bar, saved in the file): `_Flagged`, `_AssessedAt`, `_AssessmentResult`.
 

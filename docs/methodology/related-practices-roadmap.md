@@ -24,6 +24,17 @@ This is a stub. Add new pages by following the conventions in [README.md](./READ
 - How to design a rubric for a specific engagement (the conversation with the client)
 - When rubrics fail / when not to use them
 
+### Audience Prioritization & Jobs-to-be-Done
+**Why we need it:** we run these workshops on most engagements, and until the audit tool grew [audience tagging](../dev/AUDIENCE_TAGGING_PROPOSAL.md) their output never reached a single row — KKE got argued on traffic and quality, both of which are downstream proxies for relevance to a person. Audience is now a first-class authority source alongside GA and the rubric, so the methodology should catch up to the tooling.
+
+**What the page should cover:**
+- Running the prioritization workshop (who's in the room, how the ranking is forced, how many tiers is too many)
+- Translating workshop output into a tiered audience library the audit can consume
+- What each tier *commits you to* downstream (Primary → Keep pressure; Tertiary → Evolve pressure)
+- Tagging strategy at scale: section-level bulk passes vs page-by-page, and when the tagging isn't worth it
+- Reading the disagreement cases (high traffic + no priority audience; low traffic + priority audience)
+- JTBD statements: capturing them, and using unserved jobs to justify net-new content
+
 ### SME Review Workflow
 **Why we need it:** the SME round is where most engagements lose time and clarity. Captures: how to structure the export, how to onboard SMEs, common SME failure modes (writing prose where dropdowns are required, not specifying targets for Consolidate, missing deadlines).
 
