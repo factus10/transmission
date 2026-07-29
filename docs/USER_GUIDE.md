@@ -11,6 +11,13 @@ Transmission is a desktop workspace for **content audits and site migrations**. 
 
 This guide takes you from *"I've never opened it"* to *"I could run an audit in my sleep,"* in the order you'll actually do the work.
 
+### Start here if you're new to an engagement
+
+This guide is organized **by feature** — it's the reference you come back to for
+any one thing. If you've just been handed a crawl and a client and want to know
+*what to do in what order*, read **[Running an Audit](./RUNNING_AN_AUDIT.md)**
+first. It's short, it's opinionated, and it explains why the order matters.
+
 ### How to use this guide
 
 - **New here? Read top to bottom.** The sections follow the real lifecycle of an audit, so each one builds on the one before it.
