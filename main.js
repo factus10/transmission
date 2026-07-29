@@ -134,7 +134,9 @@ function injectAndOrderAuditColumns(headers, rows, columnMap) {
                      // Derived: the page's on-page breadcrumb (from its sitemap node's breadcrumb axis)
                      'Page_Breadcrumb',
                      // Internal: stable identity (master page's current Address) backing Consolidate_Into
-                     '_ConsolidateTargetId'];
+                     '_ConsolidateTargetId',
+                     // Internal: pending audience suggestion (JSON) awaiting the auditor's accept/reject
+                     '_Suggested_Audiences'];
   auditCols.forEach(col => {
     if (!headers.includes(col)) {
       headers.push(col);
@@ -437,6 +439,8 @@ function buildMenu() {
         { type: 'separator' },
         { label: 'Edit Glossary…',        click: send('menu-glossary') },
         { label: 'Audience Library…',     click: send('menu-audience-library') },
+        { label: 'Fill Audiences from Section…', click: send('menu-audience-inherit') },
+        { label: 'Suggest Audiences with AI…',   click: send('menu-audience-ai') },
         { label: 'Content Type Registry…', click: send('menu-content-type-registry') },
         { label: 'Target Spec Library…',    click: send('menu-pattern-library') },
         { label: 'Component Library…',      click: send('menu-design-pattern-library') },
@@ -3306,33 +3310,193 @@ ipcMain.handle('assess-row', (event, { row }) => {
   return assessRow(row, rubrics);
 });
 
-ipcMain.handle('assess-row-llm', async (event, { row, rubrics, apiKey }) => {
+// ─── Claude API ───────────────────────────────────────────────────────────────
+// Raw HTTPS rather than @anthropic-ai/sdk: this is the only Claude call surface
+// in the app and adding an npm dependency to a signed/notarized universal build
+// costs more than the two dozen lines below. Every request goes through
+// callClaudeMessages() so the model, headers, and error shape stay in one place.
+
+/** Models offered wherever the app calls Claude. `effort` marks the ones that
+ *  accept `output_config.effort` — Haiku 4.5 rejects it, so the request shape
+ *  is per-model and the renderer's picker reads this list rather than
+ *  hard-coding a second copy of it. */
+const CLAUDE_MODELS = [
+  { id: 'claude-opus-5',    label: 'Claude Opus 5',    hint: 'Most capable — best judgement on thin metadata', effort: true },
+  { id: 'claude-sonnet-5',  label: 'Claude Sonnet 5',  hint: 'Near-Opus quality, roughly half the cost',        effort: true },
+  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', hint: 'Fastest and cheapest — for very large crawls',    effort: false }
+];
+const DEFAULT_CLAUDE_MODEL = 'claude-opus-5';
+
+ipcMain.handle('get-claude-models', () => CLAUDE_MODELS.map(m => ({ ...m })));
+
+/**
+ * One request to the Messages API.
+ *
+ * `schema` (a JSON Schema) turns on structured outputs, which is what makes the
+ * batch audience path trustworthy: the model cannot return an audience name that
+ * isn't in the project's library, because the schema constrains it to an enum.
+ * Without it we'd be regex-stripping fences off free text and hoping.
+ */
+async function callClaudeMessages({ apiKey, model, system, prompt, schema, maxTokens = 4096, effort }) {
+  const chosen = CLAUDE_MODELS.find(m => m.id === model) || CLAUDE_MODELS.find(m => m.id === DEFAULT_CLAUDE_MODEL);
+  const body = {
+    model: chosen.id,
+    max_tokens: maxTokens,
+    messages: [{ role: 'user', content: prompt }]
+  };
+  if (system) body.system = system;
+  const outputConfig = {};
+  if (schema) outputConfig.format = { type: 'json_schema', schema };
+  if (effort && chosen.effort) outputConfig.effort = effort;
+  if (Object.keys(outputConfig).length) body.output_config = outputConfig;
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const errText = await response.text();
+    let msg = errText;
+    try { msg = JSON.parse(errText)?.error?.message || errText; } catch (_) { /* keep raw */ }
+    const err = new Error(`API error ${response.status}: ${msg}`);
+    err.status = response.status;
+    throw err;
+  }
+  const data = await response.json();
+  // Safety classifiers can decline with a 200 and an empty content array — read
+  // stop_reason before indexing into content, or this looks like a parse failure.
+  if (data.stop_reason === 'refusal') {
+    const err = new Error('Claude declined this request' + (data.stop_details?.category ? ` (${data.stop_details.category})` : ''));
+    err.refusal = true;
+    throw err;
+  }
+  const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+  return { text, usage: data.usage || null, stopReason: data.stop_reason };
+}
+
+ipcMain.handle('assess-row-llm', async (event, { row, rubrics, apiKey, model }) => {
   try {
-    const prompt = buildLLMPrompt(row, rubrics);
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1024,
-        messages: [{ role: 'user', content: prompt }]
-      })
+    const { text } = await callClaudeMessages({
+      apiKey,
+      model: model || DEFAULT_CLAUDE_MODEL,
+      prompt: buildLLMPrompt(row, rubrics),
+      maxTokens: 2048,
+      effort: 'low'
     });
-    if (!response.ok) {
-      const errText = await response.text();
-      return { error: `API error ${response.status}: ${errText}` };
-    }
-    const data = await response.json();
-    const text = data.content?.[0]?.text || '';
     return parseLLMResponse(text);
   } catch (e) {
     return { error: e.message };
   }
 });
+
+/**
+ * Batch audience suggestion.
+ *
+ * Batched by design: one page per request is what makes AI triage unusable at
+ * crawl scale (the rubric path's ~1s/row is an hour for 3,600 pages). Twenty
+ * pages share one prompt — the audience library, which is the bulk of the
+ * tokens, is sent once instead of twenty times.
+ *
+ * `pages` = [{ ref, url, title, h1, meta, section }]; `ref` is opaque to main
+ * and comes back on each result so the renderer can map answers to rows without
+ * relying on array order.
+ */
+ipcMain.handle('suggest-audiences-llm', async (event, { pages, audiences, jobs, apiKey, model }) => {
+  try {
+    const names = (audiences || []).map(a => a.name).filter(Boolean);
+    if (!names.length) return { error: 'No audiences defined for this project' };
+    const jobNames = (jobs || []).map(j => j.job).filter(Boolean);
+
+    const schema = {
+      type: 'object',
+      properties: {
+        results: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              ref:        { type: 'string' },
+              // Enum-constrained: the model physically cannot invent an audience
+              // that isn't in this project's library.
+              audiences:  { type: 'array', items: { type: 'string', enum: names } },
+              primary:    { type: 'string', enum: ['', ...names] },
+              jobs:       { type: 'array', items: { type: 'string', enum: jobNames.length ? jobNames : [''] } },
+              confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+              reasoning:  { type: 'string' }
+            },
+            required: ['ref', 'audiences', 'primary', 'jobs', 'confidence', 'reasoning'],
+            additionalProperties: false
+          }
+        }
+      },
+      required: ['results'],
+      additionalProperties: false
+    };
+
+    const { text, usage } = await callClaudeMessages({
+      apiKey,
+      model: model || DEFAULT_CLAUDE_MODEL,
+      system: buildAudienceSystemPrompt(audiences, jobs),
+      prompt: buildAudienceBatchPrompt(pages),
+      schema,
+      effort: 'low',
+      maxTokens: Math.min(16000, 500 * (pages || []).length + 2000)
+    });
+
+    let parsed;
+    try { parsed = JSON.parse(text); }
+    catch (e) { return { error: 'Could not parse the response as JSON' }; }
+    return { results: Array.isArray(parsed.results) ? parsed.results : [], usage };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
+
+function buildAudienceSystemPrompt(audiences, jobs) {
+  let s = 'You are a content strategist tagging pages from a website audit with the audiences they serve.\n\n';
+  s += 'This project ranks its audiences into tiers from a prioritization workshop. Use the tiers as context for '
+     + 'who matters, but tag based on who a page ACTUALLY serves, not who the client wishes read it.\n\n';
+  s += '## Audiences\n';
+  (audiences || []).forEach(a => {
+    s += `- **${a.name}** (${a.tier || 'Secondary'})${a.description ? ` — ${a.description}` : ''}\n`;
+  });
+  if ((jobs || []).length) {
+    s += '\n## Jobs to be done\n';
+    jobs.forEach(j => { s += `- **${j.job}**${j.statement ? ` — ${j.statement}` : ''}\n`; });
+  }
+  s += `
+## Rules
+- Tag only audiences the page does real work for. Two or three is typical; tagging everything is the same as tagging nothing.
+- Set "primary" to the single audience the page is mainly for, or "" if it genuinely serves several equally.
+- Every audience in "primary" must also appear in "audiences".
+- Use the reserved audience "— None (no target audience)" ONLY when the page serves no listed audience at all
+  (internal tooling, legal boilerplate, an empty landing page). It is mutually exclusive with every other audience.
+- If the metadata is too thin to judge, return an empty "audiences" array and set confidence to "low". An honest
+  abstention is more useful than a guess — a human reviews every one of these.
+- "reasoning" is one short sentence, written for the auditor reviewing your call.`;
+  if (!(jobs || []).length) s += '\n- Return an empty "jobs" array — this project has no jobs library.';
+  return s;
+}
+
+function buildAudienceBatchPrompt(pages) {
+  let p = 'Tag each of these pages. Return one result per page, using the ref given.\n\n';
+  (pages || []).forEach(pg => {
+    p += `### ref: ${pg.ref}\n`;
+    if (pg.url)     p += `URL: ${pg.url}\n`;
+    if (pg.section) p += `Site section: ${pg.section}\n`;
+    if (pg.title)   p += `Title: ${pg.title}\n`;
+    if (pg.h1)      p += `H1: ${pg.h1}\n`;
+    if (pg.meta)    p += `Meta description: ${pg.meta}\n`;
+    if (pg.type)    p += `Content type: ${pg.type}\n`;
+    p += '\n';
+  });
+  return p;
+}
 
 function buildLLMPrompt(row, rubrics) {
   let prompt = `You are a content auditor assessing a web page. Based on the page metadata and the rubric rules below, recommend a KKE status: Keep, Kill, Evolve, or Exclude.\n\n`;

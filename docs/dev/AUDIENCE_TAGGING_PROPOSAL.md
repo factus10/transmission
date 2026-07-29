@@ -1,6 +1,6 @@
 # Proposal — Audience & Jobs-to-be-Done tagging
 
-**Status:** approved · Phases 1–3 implemented (1 & 2 on 2026-07-28, 3 on 2026-07-29) · Phase 4 not built
+**Status:** approved · **fully implemented** (1 & 2 on 2026-07-28, 3 and 4 on 2026-07-29)
 **Date:** 2026-07-28
 **Scope:** make audience prioritization and JTBD workshop output a first-class, load-bearing input to the KKE process.
 
@@ -215,7 +215,7 @@ Additions to existing reports, cheap and worth doing: an audience coverage line 
 | **1 — Tag it** ✅ | `Audiences` + `Primary_Audience` columns · `audienceLibrary` + `Audiences` sheet · audit-bar cluster + tier-grouped chips · Project Settings → Audience tab · **multi-bar bulk actions** · `_needs-audience` / `_audience-orphan` filters · seed defaults · workshop paste-import | M |
 | **2 — Use it** ✅ | `Suggested_KKE` audience source + weight · sitemap/treemap coloring (`Primary_Audience`) · Audience Coverage + Audience × Section + Audience Debt reports · Migration Tracker / SME export columns | M |
 | **3 — Jobs** ✅ | `jobLibrary` + `Jobs` sheet · `Jobs_Served` tagging (audience-aware picker) · Jobs library editor + paste-import · `add-job`/`remove-job` bulk · `_needs-job` filter · Jobs Coverage report · unserved jobs appended to the Net New Content Brief | M |
-| **4 — Scale** | AI audience suggestion (batch) · inherit-from-section | S–M |
+| **4 — Scale** ✅ | inherit-from-section (`computeSectionAudienceProfiles`, ≥3 tagged / ≥50% agreement, blanks only, `— None` never inherited) · AI audience suggestion batched 20/request × 3 concurrent, schema-constrained to the library, staged in `_Suggested_Audiences` and accepted via a set-grouped review dialog or a per-row ghost · `_audience-suggested` filter · model picker (Opus 5 / Sonnet 5 / Haiku 4.5) | S–M |
 
 `Jobs_Served` was **not** injected as a column in Phase 1 — an always-blank column
 in every export is worse than adding it when Phase 3 actually lands. Column
@@ -233,7 +233,9 @@ Phases 1 and 2 are the coherent first release; Phase 1 alone ships a column nobo
 
 **Not every page has an audience, and that's fine.** Policy pages, legal notices, and archive stubs will sit at `— None` or blank forever. The reports need to handle a large untagged tail without implying the audit is incomplete — coverage percentages should be stated against *in-scope Keep/Evolve rows*, not against the whole crawl.
 
-**One aside spotted while tracing the AI path:** `assess-row-llm` (main.js:2996) pins `claude-sonnet-4-20250514`. Phase 4 touches that code and should update it; unrelated to this feature but worth folding into that work rather than leaving stale.
+**One aside spotted while tracing the AI path:** `assess-row-llm` (main.js:2996) pinned `claude-sonnet-4-20250514`. ✅ Done in Phase 4 — both paths now share `callClaudeMessages()`, which also handles the `stop_reason: "refusal"` case that previously surfaced as a parse failure.
+
+**Resolved in Phase 4 — how much to trust each volume tool.** Inherit writes `Audiences` directly (its dialog *is* the review, and it only ever propagates a decision the auditor already made in that section); AI never does, staging into `_Suggested_Audiences` for accept/reject. That split follows the line the tool already holds with `Suggested_KKE`: a deterministic derivation from your own decisions can write; a model's guess cannot.
 
 ### Decisions I need from you
 
