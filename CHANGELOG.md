@@ -6,6 +6,62 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.11.0] — "Please, Please, Please, Let Me Get What I Want"
+
+### Added
+
+- **Audience tagging at crawl scale.** Tagging audiences was affordable on a section and unaffordable on a site, and a column that stays 4% full makes every report built on it worthless. Two tools close that gap, and they are deliberately trusted differently.
+  - **Project → Fill Audiences from Section…** spreads audiences you have *already* tagged in a section onto that section's untagged pages. It costs nothing, needs no API key, and invents nothing — it only propagates a decision you made yourself elsewhere in the same section. The dialog shows every section it can act on, what it would apply, the agreement behind it, and how many pages it would fill; untick any you disagree with. A section needs at least three tagged pages, with an audience appearing on half of them, before it may speak for the rest, and only blank cells are filled. The whole fill is one **Cmd+Z**. *— None (no target audience)* is never inherited: spreading "serves nobody" onto pages no one has looked at would turn an unreviewed blank into a Kill vote.
+  - **Project → Suggest Audiences with AI…** reads each page's title, H1, meta description, URL and section against **your** audience library — so suggestions are specific to this client rather than generic — and proposes who it serves. **It never writes your `Audiences` column.** Suggestions land in a review queue grouped by answer, which is what makes them reviewable: a few thousand pages collapse into a few dozen distinct decisions, each shown with sample paths and a confidence reading. Accept a whole group at once, or take suggestions one at a time from the ghost that appears in the audit bar. Declining leaves the page blank — still unreviewed, which is the honest state. **Audience suggested by AI** is the worklist filter, and accepting is one **Cmd+Z**.
+  - Pick the scope (everything untagged, or just the current filter, to pilot one section first) and the model — **Claude Opus 5**, **Sonnet 5**, or **Haiku 4.5**. Requests are batched twenty pages at a time and run three at once, so a crawl-sized run finishes in minutes rather than hours; **Esc** stops it with everything suggested so far kept. Billed to your own Claude API key.
+  - The model is constrained to the audiences in your library — it cannot invent one — and returns nothing at all for a page whose metadata was too thin to judge, rather than guessing.
+
+### Changed
+
+- **AI assessment now runs on current Claude models.** The rubric assessment path was pinned to a model retired long ago; both it and the new audience suggestion run through one shared, up-to-date call path with proper error reporting (a rejected key or a declined request now says so instead of failing as a parse error).
+
+## [2.10.0] — "How Soon Is Now?"
+
+### Added
+
+- **Jobs to be done — the other half of the discovery workshop.** Audiences answer *who* a page is for; jobs answer *what people came to do*. A per-project **Jobs** library (Project Settings → Audience) holds the JTBD output: a short label, the full statement in the workshop's own words, and which audiences have it (blank for a job anyone might have).
+  - A **Jobs served** field appears in the Audience cluster once the library has entries — the picker puts jobs belonging to *this page's* audiences at the top, so you're choosing from a few rather than scrolling all of them. Bulk-tag with **Add Job**; **Needs a job** is the worklist filter.
+  - **The payoff is the inverse question.** **Reports → Jobs Coverage** leads with the jobs *nothing on the site answers* — the strongest brief for net-new content available, because each line traces back to something the client said themselves rather than to an auditor's judgement. The same list is appended to the **Net New Content Brief**, which otherwise only finds gaps in the sitemap you drew.
+  - Lives on its own visible **`Jobs`** sheet, so the workshop output stays an editable working document.
+- **URL Variant Triage — a crawl is not a content inventory.** On a CMS-driven site much of a crawl is alternate views of the same page: pagination, sorting, faceted filters, tracking parameters. **Project → Triage URL Variants…** groups those by the page they point at and lets you dispose of them in bulk.
+  - It reads the site's own **`rel=canonical`** rather than guessing from parameter names. Transmission always ingested that column and never used it; a declared canonical is authoritative where a rule about `?p=` versus `?page_id=` is a guess about someone else's CMS.
+  - **Query-only variants** (same path, different query) become **Exclude** — the canonical's own redirect already covers them, so a rule each would bury the ones that matter. **Different-path variants** become **Consolidate** into the canonical, which writes the redirect for you.
+  - Nothing is hidden. Every page keeps its row and gets a real, logged decision, and the whole triage reverses with a single **Cmd+Z**. Triage skips sites you've marked out of scope.
+  - On a ~13,000-row crawl this took the undecided queue to ~6,500 and the **Duplicates** filter from ~9,000 rows to ~2,400.
+  - Two new filters: **Alternate view of another page (canonical)** and **Canonical target not in this crawl**.
+
+### Fixed
+
+- **The Duplicates filter no longer counts content you've already dispositioned.** Pages marked Kill or Exclude are left out of duplicate detection, so the filter is a worklist of duplicate content still needing a decision rather than a list that includes everything already dealt with.
+- **Triage is undoable.** Bulk triage actions now push a single undo entry covering every row they touched — one Cmd+Z, not one per page. Non-200 triage gained this too.
+- **Out-of-scope sites no longer disappear quietly.** Marking a site out of scope narrows report totals, but nothing said so — a summary could read "1,888 pages" with 11,328 silently dropped. Every report and every exported PDF/HTML now carries a banner naming what was left out and how many pages it covers, and the **Source Pages** and **Archive** sheets are complete again (they carry a Source Site column to filter on instead). Un-ticking **In scope** now also offers to mark those pages **KKE = Exclude**, so the judgement lives on the row — visible in the audit, the change log, and every export — rather than only as a reporting setting. The audit workflow itself never hid anything: the sidebar and Table View always showed every row.
+- **Section reports no longer break a translated site into language buckets.** On a multilingual site the reports grouped pages as *Es · De · It · Zh-Hans* — language rather than topic, with the same real sections repeated under each. Locale prefixes are now skipped, so the sections read *Product Lines*, *Events*, and so on. Detection is structural, not just pattern-matching: it needs three or more locale-shaped segments that share a section beneath them, so an intranet whose top sections are `/it/`, `/hr/` and `/pl/` is left alone.
+- **Non-Latin URL slugs are readable again.** A section or auto-derived sitemap bucket taken from an encoded slug showed as `%E4%BA%A7%E5%93%81%E7%BA%BF` instead of `产品线`.
+- **The Net New Content Brief no longer stalls on large sites.** It re-scanned every audit row once for every node beneath every net-new section, so cost grew with pages × sitemap nodes. On a 6,000-page crawl with a 6,000-node sitemap that worked out to roughly 24 seconds of scanning; it now indexes rows by sitemap node once and produces the same report in well under a tenth of a second.
+
+### Added
+
+- **Audience tagging — the audience prioritization workshop is now a real input to the audit.** Until now that ranking lived in a deck and never touched a row, so Keep/Kill/Evolve got argued on traffic and quality alone. A page can have respectable traffic, pass every rubric rule, and still serve nobody the client decided to invest in — that finding was previously unreachable.
+  - Two new columns: **`Audiences`** (a chip input for every audience a page does real work for) and **`Primary_Audience`** (who it's mainly for — fills itself in when only one audience is tagged).
+  - **Project → Audience Library…** holds the workshop output: each audience gets a **tier** (Primary / Secondary / Tertiary / Not a target), a color, and a description. Add them one at a time, **Paste from workshop…** to drop your table straight in, or **Seed starter list…** to begin from a generic **Higher education** or **General organization** set. It lives on its own visible **`Audiences`** sheet, so it stays an editable working document rather than a settings blob.
+  - **A blank cell means *unreviewed*, not "serves nobody."** When a page genuinely serves no one you care about, tag it **— None (no target audience)** — that's the positive call, and the only one that argues Kill.
+  - **Bulk tagging** via the Multi-bar (**Add Audience**, **Remove Audience**, **Set Primary Audience**) — filter to a section, select all, tag, move on. Two new sidebar filters give you the worklists: **Needs audience** and **Serves no priority audience**.
+- **Audience joins GA and Rubric as a Suggested_KKE source.** Serving a **Primary** audience argues Keep; serving only Tertiary or off-target audiences argues Evolve; an explicit *— None* argues Kill. Untagged and Secondary-only pages abstain, so projects that haven't started tagging are completely unaffected. Weight it beside the others in Project Settings → Suggestions. The disagreements are the interesting part: *GA says Keep, Audience says Kill* is a popular page serving nobody strategic, and the reverse argues for promoting under-served priority content rather than removing it.
+- **Three audience reports.** **Audience Coverage** (pages per audience in priority order, with disposition mix, top sections, and a flag on any Primary audience with almost nothing aimed at it), **Audience × Section Matrix** (sections down, audiences across, cells shaded by share — makes "this whole section is written for the wrong people" visible at a glance), and **Audience Debt** (off-strategy content · priority-audience pages marked Kill · pages serving four or more audiences).
+- **Source sites are now a real dimension, for audits merging several sites into one.** Open a crawl and Transmission builds a **Sites** registry — one entry per domain, with `www.`/non-`www.` folded together. Manage them in **Project Settings → Sites**: merge the hosts that are really one site (each shows its page count), record CMS and owner, and un-tick **In scope** for a property that isn't part of this phase.
+  - Every row gains a **`Source_Site`** value, so you can filter, sort, color the Visual Sitemap, and export by it.
+  - **Out-of-scope sites drop out of every report denominator** — nothing is deleted, but completion percentages stop counting content nobody is migrating.
+  - **Redirect maps split per domain**, because each retiring domain deploys its own redirect configuration: one sheet per domain in the Migration Tracker, and one CSV per domain from the Redirect Map export.
+  - Two new reports — **Site Consolidation Overview** (what each site contributes: pages, disposition, audiences served, cross-site overlap, redirect rules required) and **Cross-Site Duplicate Overlap** (pages whose title, H1 and meta description appear on more than one site — the merge worklist), plus a **Duplicated on another source site** sidebar filter.
+  - Transmission warns when several sites are in scope but no **Site Domain** is set, since redirect destinations would otherwise be built on whichever domain happened to come first in the crawl.
+- **Consolidation-aware section grouping.** When an audit spans several source sites — `www.company.com`, `home.anothercompany.com`, `thirdcompany.com` — the audience reports group unplaced pages as *domain › section* rather than merging two sites' `/about` pages into one row. `www.`/non-`www.` is treated as one site, and each site's own shared path prefix (a crawl rooted at `/acad/` or `/en/`) is stripped independently, so real sections surface on every site in the set.
+- **Color the Visual Sitemap and Treemap by Primary Audience**, using each audience's own color. Audience columns also flow into the Migration Tracker's Source Pages sheet and the SME export — SMEs are frequently the only people who know who actually reads a page.
+
 ## [2.9.9] — "How Soon Is Now?"
 
 ### Changed

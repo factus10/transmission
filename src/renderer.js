@@ -94,6 +94,10 @@ const state = {
   patternLibrary:      [],   // Phase 2, Chunk β — { patternName, description, buildGuidanceDefault, writerBriefDefault, defaultMigrationTrack, notes }[]
   designPatternLibrary: [], // Design pattern inventory — { name, category, complexity, description, dsUrl, aliases, notes }[]
   showDesignPatterns:   false, // whether the patterns cluster is visible (persisted in prefs)
+  audienceLibrary:      [], // Audience prioritization output — { name, tier, color, description, notes }[] (per-project, projectSettings + Audiences sheet)
+  jobLibrary:           [], // Jobs-to-be-done — { label, statement, audiences[], notes }[] (per-project, projectSettings + Jobs sheet)
+  siteLibrary:          [], // Source sites being consolidated — { label, hosts[], cms, owner, inScope, color, notes }[] (per-project, projectSettings + Sites sheet)
+  showAudienceFields:   false, // whether the audience cluster is visible (persisted in prefs; auto-reveals once a library exists)
 
   // Sidebar columns (which cols show in row list besides URL)
   sidebarColumns: [],        // pref: column headers to show in sidebar row list
@@ -113,6 +117,9 @@ const state = {
 
 // Hoisted variables used across functions
 let _duplicateSet = new Set(); // origIndex values that are duplicates
+let _crossSiteDupSet = new Set(); // origIndex values duplicated on ANOTHER source site
+let _urlVariantSet = new Set();   // origIndex values whose rel=canonical points elsewhere
+let _variantTargetMissingSet = new Set(); // ...and whose canonical target wasn't crawled
 
 // All KKE states (built-in + custom)
 const BUILTIN_KKE = ['Keep', 'Kill', 'Evolve', 'Consolidate', 'Exclude'];
@@ -244,6 +251,13 @@ const els = {
   designPatternChips:      $('design-pattern-chips'),
   btnAddDesignPattern:     $('btn-add-design-pattern'),
   dpDropdown:              $('design-pattern-dropdown'),
+  audienceChips:           $('audience-chips'),
+  jobChips:                $('job-chips'),
+  btnAddJob:               $('btn-add-job'),
+  jobDropdown:             $('job-dropdown'),
+  btnAddAudience:          $('btn-add-audience'),
+  audDropdown:             $('audience-dropdown'),
+  primaryAudienceSelect:   $('primary-audience-select'),
   btnNotes:         $('btn-notes'),
   notesIndicator:   $('notes-indicator'),
   // CMS link cluster (Phase 1)
@@ -404,6 +418,7 @@ async function init() {
   state.showSmeFields       = prefs.showSmeFields       || false;
   state.showMigrationFields = prefs.showMigrationFields || false;
   state.showDesignPatterns  = prefs.showDesignPatterns  || false;
+  state.showAudienceFields  = prefs.showAudienceFields  || false;
   state.hideBlankMetadata = prefs.hideBlankMetadata !== undefined ? prefs.hideBlankMetadata : true;
   state.collapsedClusters = prefs.collapsedClusters && typeof prefs.collapsedClusters === 'object'
     ? { ...prefs.collapsedClusters }
@@ -435,6 +450,8 @@ async function init() {
   setupPublishedAndTypeAndTheme();
   setupCmsLinkHandlers();
   setupDesignPatternHandlers();
+  setupAudienceHandlers();
+  setupJobHandlers();
   setupClusterCollapse();
   setupClusterQuickToggles();
   setupViewSwitcher();
@@ -556,8 +573,44 @@ function bindIPCListeners() {
   if (window.electronAPI.onMenuNon200Triage) {
     window.electronAPI.onMenuNon200Triage(() => openNon200TriageDialog());
   }
+  if (window.electronAPI.onMenuUrlVariantTriage) {
+    window.electronAPI.onMenuUrlVariantTriage(() => openUrlVariantTriageDialog());
+  }
   if (window.electronAPI.onMenuCreateSitemapFromAudit) {
     window.electronAPI.onMenuCreateSitemapFromAudit(() => openCreateSitemapFromAuditDialog());
+  }
+  if (window.electronAPI.onMenuAudienceLibrary) {
+    window.electronAPI.onMenuAudienceLibrary(() => {
+      // The library lives as a Project Settings tab rather than its own editor —
+      // it's a small controlled vocabulary like Page Statuses, not a master/detail
+      // library like Components. The menu item is just a direct route to it.
+      if (els.projectSettingsOverlay?.classList.contains('hidden')) toggleProjectSettingsPopover();
+      switchProjectSettingsTab('audience');
+    });
+  }
+  if (window.electronAPI.onMenuAudienceInherit) {
+    window.electronAPI.onMenuAudienceInherit(() => openAudienceInheritDialog());
+  }
+  if (window.electronAPI.onMenuAudienceAi) {
+    window.electronAPI.onMenuAudienceAi(() => openAudienceAiSuggestDialog());
+  }
+  if (window.electronAPI.onMenuReportAudienceCoverage) {
+    window.electronAPI.onMenuReportAudienceCoverage(() => reportAudienceCoverage());
+  }
+  if (window.electronAPI.onMenuReportAudienceMatrix) {
+    window.electronAPI.onMenuReportAudienceMatrix(() => reportAudienceMatrix());
+  }
+  if (window.electronAPI.onMenuReportAudienceDebt) {
+    window.electronAPI.onMenuReportAudienceDebt(() => reportAudienceDebt());
+  }
+  if (window.electronAPI.onMenuReportJobsCoverage) {
+    window.electronAPI.onMenuReportJobsCoverage(() => reportJobsCoverage());
+  }
+  if (window.electronAPI.onMenuReportSiteConsolidation) {
+    window.electronAPI.onMenuReportSiteConsolidation(() => reportSiteConsolidation());
+  }
+  if (window.electronAPI.onMenuReportCrossSiteDupes) {
+    window.electronAPI.onMenuReportCrossSiteDupes(() => reportCrossSiteDuplicates());
   }
 }
 
@@ -980,6 +1033,66 @@ function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, she
     ? state.projectSettings.contentThemeLibrary
     : [];
 
+  // Audience library is per-project (Audiences sheet / projectSettings). Any
+  // audience already used in the data but missing from the library is folded in,
+  // so a file tagged elsewhere (or hand-edited) never shows chips the picker
+  // can't reproduce.
+  state.audienceLibrary = Array.isArray(state.projectSettings.audienceLibrary)
+    ? state.projectSettings.audienceLibrary
+    : [];
+  {
+    const known = new Set(state.audienceLibrary.map(a => a.name));
+    const seen = new Set();
+    state.editedRows.forEach(r => rowAudiences(r).forEach(a => { if (!known.has(a)) seen.add(a); }));
+    seen.forEach(name => state.audienceLibrary.push({
+      name, tier: name === AUDIENCE_NONE ? 'Not a target' : 'Secondary', color: '', description: '', notes: ''
+    }));
+    if (seen.size) state.projectSettings.audienceLibrary = state.audienceLibrary;
+  }
+  // Source-site registry: seed one entry per host found in the data, then derive
+  // Source_Site for every row. On a single-domain project this is a one-entry
+  // registry and a constant column — nothing downstream behaves differently.
+  state.siteLibrary = Array.isArray(state.projectSettings.siteLibrary)
+    ? state.projectSettings.siteLibrary
+    : [];
+  {
+    const seeded = seedSiteLibraryFromData();
+    const changed = recomputeAllSourceSites();
+    // Only dirty the file when something actually changed, so merely opening a
+    // project doesn't ask to be saved.
+    if (seeded || changed) {
+      state.projectSettings.siteLibrary = state.siteLibrary;
+      setDirty(true);
+    }
+    if (state.siteLibrary.length > 1) {
+      maybeWarnMissingSiteDomain();
+    }
+  }
+
+  // Jobs-to-be-done library (per-project, Jobs sheet). Same fold-in as audiences:
+  // anything tagged in the data but missing from the library is recovered, so a
+  // hand-edited file never shows chips the picker can't reproduce.
+  state.jobLibrary = Array.isArray(state.projectSettings.jobLibrary)
+    ? state.projectSettings.jobLibrary
+    : [];
+  {
+    const known = new Set(state.jobLibrary.map(j => j.label));
+    const seen = new Set();
+    state.editedRows.forEach(r => rowJobs(r).forEach(l => { if (!known.has(l)) seen.add(l); }));
+    seen.forEach(label => state.jobLibrary.push({ label, statement: '', audiences: [], notes: '' }));
+    if (seen.size) state.projectSettings.jobLibrary = state.jobLibrary;
+  }
+  applyJobsFieldVisibility();
+
+  // Auto-reveal the cluster the first time a project actually has audiences —
+  // otherwise the feature hides behind a toggle nobody has a reason to find.
+  if (state.audienceLibrary.length && !state.showAudienceFields) {
+    state.showAudienceFields = true;
+    window.electronAPI.savePrefs({ showAudienceFields: true });
+    if (window._refreshClusterQuickToggles) window._refreshClusterQuickToggles();
+  }
+  applyAudienceFieldsVisibility();
+
   // Issue #1: Consolidate_Into is now a derived display (the master's relative new path) backed by
   // a stable identity column (_ConsolidateTargetId = the master's Address). Migrate legacy projects:
   // for consolidating rows that still hold a Consolidate_Into value but have no identity yet, resolve
@@ -1190,6 +1303,7 @@ function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, she
 
   // Triage Non-200 Pages: toast if there are unhandled non-200 pages
   maybeOfferNon200Triage();
+  maybeOfferUrlVariantTriage();
 
   // Session resume cue — re-establish momentum when reopening a partly-done audit
   showSessionResumeCue();
@@ -2775,7 +2889,7 @@ function applyFilter() {
 
   if (kf && kf.length > 0) {
     // Separate status values from special filters
-    const specialFilters = new Set(['_unreviewed', '_flagged', '_duplicates', '_sme-conflicts', '_sme-pending', '_consolidate-no-target', '_consolidate-dead-target', '_shared-nav', '_needs-placement', '_suggested-disagree', '_suggested-mismatch']);
+    const specialFilters = new Set(['_unreviewed', '_flagged', '_duplicates', '_sme-conflicts', '_sme-pending', '_consolidate-no-target', '_consolidate-dead-target', '_shared-nav', '_needs-placement', '_suggested-disagree', '_suggested-mismatch', '_needs-audience', '_audience-orphan', '_audience-suggested', '_cross-site-duplicate', '_url-variant', '_variant-target-missing', '_needs-job']);
     const statusValues = kf.filter(v => !specialFilters.has(v));
     const specials = kf.filter(v => specialFilters.has(v));
 
@@ -2818,6 +2932,35 @@ function applyFilter() {
             const eff = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
             if (eff === 'Keep' || eff === 'Evolve') return true;
           }
+        }
+        if (s === '_cross-site-duplicate' && _crossSiteDupSet.has(origIndex)) return true;
+        if (s === '_needs-job' && (state.jobLibrary || []).length && !rowJobs(row).length) {
+          // Only pages we're carrying forward owe a job answer.
+          const eff = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
+          if (eff === 'Keep' || eff === 'Evolve') return true;
+        }
+        if (s === '_url-variant' && _urlVariantSet.has(origIndex)) return true;
+        if (s === '_variant-target-missing' && _variantTargetMissingSet.has(origIndex)) return true;
+        if (s === '_needs-audience') {
+          // The tagging worklist: pages we intend to carry forward that nobody
+          // has assessed for audience yet. Gated to Keep/Evolve so a crawl full
+          // of Kill rows doesn't drown the queue.
+          if (!rowAudiences(row).length) {
+            const eff = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
+            if (eff === 'Keep' || eff === 'Evolve') return true;
+          }
+        }
+        if (s === '_audience-orphan') {
+          // The Kill worklist: reviewed for audience, and everything it serves
+          // is off-strategy. Untagged rows are excluded — blank is "unreviewed",
+          // not "serves nobody".
+          const list = rowAudiences(row);
+          if (list.length && list.every(a => a === AUDIENCE_NONE || audienceTier(a) === 'Tertiary' || audienceTier(a) === 'Not a target')) return true;
+        }
+        if (s === '_audience-suggested') {
+          // The AI review queue: a suggestion is waiting and the page is still
+          // untagged, so the decision is genuinely outstanding.
+          if (!rowAudiences(row).length && row[SUGGESTED_AUDIENCES_COL]) return true;
         }
         if (s === '_shared-nav' && sharedNavIds) {
           const id = String(row['Sitemap_ID'] || '').trim();
@@ -3582,6 +3725,10 @@ function populateAuditFields(row) {
   // Design patterns
   populateDesignPatterns(row);
 
+  // Audience
+  populateAudiences(row);
+  populateJobs(row);
+
   // CMS links (Phase 1)
   populateCmsLinks(row);
 
@@ -3653,6 +3800,7 @@ function setupClusterQuickToggles() {
   const smeChip = document.getElementById('qt-sme');
   const migChip = document.getElementById('qt-migrate');
   const dpChip  = document.getElementById('qt-patterns');
+  const audChip = document.getElementById('qt-audience');
 
   function refresh() {
     if (smeChip) {
@@ -3666,6 +3814,10 @@ function setupClusterQuickToggles() {
     if (dpChip) {
       dpChip.classList.toggle('active', !!state.showDesignPatterns);
       dpChip.setAttribute('aria-pressed', state.showDesignPatterns ? 'true' : 'false');
+    }
+    if (audChip) {
+      audChip.classList.toggle('active', !!state.showAudienceFields);
+      audChip.setAttribute('aria-pressed', state.showAudienceFields ? 'true' : 'false');
     }
   }
   refresh();
@@ -3701,6 +3853,17 @@ function setupClusterQuickToggles() {
       applyDesignPatternsVisibility();
       const settingsCb = document.getElementById('pref-show-design-patterns');
       if (settingsCb) settingsCb.checked = state.showDesignPatterns;
+      refresh();
+    });
+  }
+
+  if (audChip) {
+    audChip.addEventListener('click', () => {
+      state.showAudienceFields = !state.showAudienceFields;
+      window.electronAPI.savePrefs({ showAudienceFields: state.showAudienceFields });
+      applyAudienceFieldsVisibility();
+      const settingsCb = document.getElementById('pref-show-audience-fields');
+      if (settingsCb) settingsCb.checked = state.showAudienceFields;
       refresh();
     });
   }
@@ -3782,6 +3945,7 @@ function refreshClusterSummaries(row) {
     decide:   summarizeDecide(row),
     classify: summarizeClassify(row),
     patterns: summarizePatterns(row),
+    audience: summarizeAudience(row),
     migrate:  summarizeMigrate(row),
     cms:      summarizeCms(row)
   };
@@ -3823,6 +3987,19 @@ function summarizeClassify(row) {
   const tagCount = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean).length : 0;
   if (tagCount) pieces.push(`${tagCount} tag${tagCount !== 1 ? 's' : ''}`);
   return pieces.join(' · ') || '—';
+}
+function summarizeAudience(row) {
+  const list = rowAudiences(row);
+  const jobCount = rowJobs(row).length;
+  // Jobs can be tagged without audiences — don't leave the cluster looking empty.
+  if (!list.length) return jobCount ? `${jobCount} job${jobCount !== 1 ? 's' : ''}` : '';
+  if (list.length === 1 && list[0] === AUDIENCE_NONE) return 'no target audience';
+  const primary = String(row[PRIMARY_AUDIENCE_COL] || '').trim();
+  const lead = primary || list[0];
+  const rest = list.filter(a => a !== lead).length;
+  const jobs = rowJobs(row).length;
+  const base = rest ? `${lead} +${rest}` : lead;
+  return jobs ? `${base} · ${jobs} job${jobs !== 1 ? 's' : ''}` : base;
 }
 function summarizeMigrate(row) {
   const parts = [row['Content_Nature'], row['Migration_Track']]
@@ -4050,6 +4227,1197 @@ function addTagToRow(tag) {
   const newTags = [...current, tag];
   setRowTags(newTags);
   renderTagChips(newTags);
+}
+
+// ─── Audience tagging ─────────────────────────────────────────────────────────
+// Who each page serves, and which of those audiences the client actually
+// prioritized. `Audiences` is the multi-value set; `Primary_Audience` is the
+// single "mainly for" call that every downstream single-value consumer
+// (sitemap colouring, cross-tab reports, the KKE vote) reads.
+
+const AUDIENCES_COL        = 'Audiences';
+const PRIMARY_AUDIENCE_COL = 'Primary_Audience';
+
+const AUDIENCE_TIERS = ['Primary', 'Secondary', 'Tertiary', 'Not a target'];
+
+// The reserved "reviewed, serves nobody" entry. A blank cell means UNREVIEWED;
+// this means reviewed and negative. Keeping them distinct is what stops the
+// suggestion engine reading an untouched project as thousands of Kill calls.
+const AUDIENCE_NONE = '— None (no target audience)';
+
+function audienceEntry(name) {
+  return (state.audienceLibrary || []).find(a => a.name === name) || null;
+}
+function audienceTier(name) {
+  if (name === AUDIENCE_NONE) return 'Not a target';
+  return audienceEntry(name)?.tier || 'Secondary';
+}
+function audienceColor(name) {
+  return audienceEntry(name)?.color || '';
+}
+/** Library in workshop order: tier rank first, then alphabetical. */
+function sortedAudienceLibrary() {
+  return (state.audienceLibrary || []).slice().sort((a, b) => {
+    const ta = AUDIENCE_TIERS.indexOf(a.tier), tb = AUDIENCE_TIERS.indexOf(b.tier);
+    if (ta !== tb) return (ta < 0 ? 99 : ta) - (tb < 0 ? 99 : tb);
+    return String(a.name).localeCompare(String(b.name));
+  });
+}
+
+function parseAudienceCsv(raw) {
+  return String(raw || '').split(',').map(s => s.trim()).filter(Boolean);
+}
+function rowAudiences(row) {
+  return parseAudienceCsv(row?.[AUDIENCES_COL]);
+}
+
+function getRowAudiences() {
+  if (state.selectedIndex === null) return [];
+  return rowAudiences(state.editedRows[state.selectedIndex]);
+}
+
+function setRowAudiences(audiences) {
+  if (state.selectedIndex === null) return;
+  const row = state.editedRows[state.selectedIndex];
+  const old = String(row[AUDIENCES_COL] || '');
+  const next = audiences.join(', ');
+  if (old === next) return;
+  row[AUDIENCES_COL] = next;
+  logChange(state.selectedIndex, AUDIENCES_COL, old, next);
+  // "Mainly for" is only a real decision when there's a choice to make. With one
+  // audience tagged it's implied, so fill it — this is what keeps single-audience
+  // pages (the majority) from needing a second interaction each.
+  syncPrimaryAudience(state.selectedIndex, audiences);
+  refreshSuggestedKkeForRow(state.selectedIndex);
+  setDirty(true);
+  refreshRowInList(state.selectedIndex);
+  refreshClusterSummaries(row);
+  renderAudienceSuggestionGhost(row);   // tagging by hand answers any pending suggestion
+}
+
+/** Keep Primary_Audience coherent with the tagged set. */
+function syncPrimaryAudience(origIndex, audiences) {
+  const row = state.editedRows[origIndex];
+  const current = String(row[PRIMARY_AUDIENCE_COL] || '').trim();
+  let next = current;
+  if (audiences.length === 1 && audiences[0] === AUDIENCE_NONE) {
+    // "Primarily for: nobody" is a contradiction, and it would surface as a real
+    // value in sitemap colouring and the coverage report. A page that serves no
+    // one has no primary audience — the Audiences cell already carries the call.
+    next = '';
+  } else if (audiences.length === 1) {
+    next = audiences[0];
+  } else if (current && !audiences.includes(current)) {
+    // The primary was un-tagged. Clearing beats silently pointing at an audience
+    // this page no longer claims to serve.
+    next = '';
+  }
+  if (next !== current) {
+    row[PRIMARY_AUDIENCE_COL] = next;
+    logChange(origIndex, PRIMARY_AUDIENCE_COL, current, next);
+  }
+  // Only touch the audit bar for the row actually on screen — this also runs
+  // per-row inside bulk loops, where rebuilding the select from a non-selected
+  // row would leave the visible control showing someone else's audiences.
+  if (origIndex === state.selectedIndex) populatePrimaryAudienceSelect(row);
+}
+
+/** Add or remove one audience, keeping the "serves nobody" call coherent:
+ *  it is mutually exclusive with every real audience in both directions. */
+function toggleAudience(current, name) {
+  if (current.includes(name)) return current.filter(a => a !== name);
+  if (name === AUDIENCE_NONE) return [AUDIENCE_NONE];
+  return [...current.filter(a => a !== AUDIENCE_NONE), name];
+}
+
+function renderAudienceChips(audiences) {
+  if (!els.audienceChips) return;
+  els.audienceChips.innerHTML = '';
+  audiences.forEach(name => {
+    const chip = document.createElement('div');
+    chip.className = 'tag-chip';
+    const entry = audienceEntry(name);
+    const tier = audienceTier(name);
+    chip.title = entry?.description ? `${tier} — ${entry.description}` : tier;
+    chip.textContent = name;
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'tag-remove';
+    removeBtn.textContent = '×';
+    removeBtn.title = `Remove "${name}"`;
+    removeBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      const updated = getRowAudiences().filter(a => a !== name);
+      setRowAudiences(updated);
+      renderAudienceChips(updated);
+    });
+    chip.appendChild(removeBtn);
+    els.audienceChips.appendChild(chip);
+  });
+}
+
+/** Populate the "Primarily for" select from the tagged audiences on this row. */
+function populatePrimaryAudienceSelect(row) {
+  const sel = els.primaryAudienceSelect;
+  if (!sel) return;
+  const tagged = rowAudiences(row);
+  const current = String(row?.[PRIMARY_AUDIENCE_COL] || '').trim();
+  sel.innerHTML = '<option value="">—</option>';
+  // Offer the tagged set. A stored value that is no longer tagged is still added
+  // so it stays visible and selected rather than silently resetting to blank.
+  const options = tagged.slice();
+  if (current && !options.includes(current)) options.push(current);
+  options.forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name + (audienceTier(name) === 'Primary' ? ' ★' : '');
+    sel.appendChild(opt);
+  });
+  sel.value = current;
+  sel.disabled = options.length === 0;
+}
+
+function openAudienceDropdown() {
+  renderAudienceList('');
+  const rect = els.btnAddAudience.getBoundingClientRect();
+  els.audDropdown.style.left = rect.left + 'px';
+  els.audDropdown.style.top  = (rect.bottom + 4) + 'px';
+  els.audDropdown.classList.remove('hidden');
+  $('aud-search').value = '';
+  $('aud-search').focus();
+}
+
+function closeAudienceDropdown() {
+  if (els.audDropdown) els.audDropdown.classList.add('hidden');
+}
+
+/** Tier-grouped picker. Grouping by tier (rather than alphabetically) is the
+ *  point: it keeps the workshop's ranking in front of the auditor at the moment
+ *  the tagging decision is made. */
+function renderAudienceList(filter) {
+  const currentSet = new Set(getRowAudiences());
+  const q = filter.toLowerCase();
+
+  const byTier = {};
+  sortedAudienceLibrary().forEach(e => {
+    if (q && !e.name.toLowerCase().includes(q) && !(e.description || '').toLowerCase().includes(q)) return;
+    const tier = AUDIENCE_TIERS.includes(e.tier) ? e.tier : 'Secondary';
+    (byTier[tier] = byTier[tier] || []).push(e);
+  });
+
+  const adHoc = [...currentSet].filter(a => !(state.audienceLibrary || []).some(e => e.name === a));
+
+  const listEl = $('aud-list');
+  listEl.innerHTML = '';
+
+  AUDIENCE_TIERS.forEach(tier => {
+    const entries = byTier[tier];
+    if (!entries || !entries.length) return;
+    const header = document.createElement('div');
+    header.className = 'aud-tier-header';
+    header.textContent = tier;
+    listEl.appendChild(header);
+
+    entries.forEach(entry => {
+      const opt = document.createElement('div');
+      opt.className = 'aud-option' + (currentSet.has(entry.name) ? ' selected' : '');
+      if (entry.color) {
+        const sw = document.createElement('span');
+        sw.className = 'aud-swatch';
+        sw.style.background = entry.color;
+        opt.appendChild(sw);
+      }
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'aud-option-name';
+      nameSpan.textContent = entry.name;
+      opt.appendChild(nameSpan);
+      if (entry.description) opt.title = entry.description;
+      opt.addEventListener('click', () => {
+        const updated = toggleAudience(getRowAudiences(), entry.name);
+        setRowAudiences(updated);
+        renderAudienceChips(updated);
+        renderAudienceList(filter);
+      });
+      listEl.appendChild(opt);
+    });
+  });
+
+  if (adHoc.length > 0) {
+    const header = document.createElement('div');
+    header.className = 'aud-tier-header';
+    header.textContent = 'Not in the library';
+    listEl.appendChild(header);
+    adHoc.forEach(name => {
+      const opt = document.createElement('div');
+      opt.className = 'aud-option selected';
+      opt.textContent = name;
+      opt.addEventListener('click', () => {
+        const updated = getRowAudiences().filter(a => a !== name);
+        setRowAudiences(updated);
+        renderAudienceChips(updated);
+        renderAudienceList(filter);
+      });
+      listEl.appendChild(opt);
+    });
+  }
+
+  if (!listEl.children.length) {
+    const empty = document.createElement('div');
+    empty.className = 'aud-option';
+    empty.style.color = 'var(--text-muted)';
+    empty.style.cursor = 'default';
+    empty.textContent = (state.audienceLibrary || []).length
+      ? 'No matches.'
+      : 'No audiences yet — Project → Audience Library…';
+    listEl.appendChild(empty);
+  }
+
+  const createEl = $('aud-create');
+  const trimmed = filter.trim();
+  const canCreate = trimmed && !(state.audienceLibrary || []).some(e => e.name.toLowerCase() === trimmed.toLowerCase());
+  createEl.classList.toggle('hidden', !canCreate);
+  if (canCreate) $('aud-create-label').textContent = trimmed;
+}
+
+function setupAudienceHandlers() {
+  if (!els.btnAddAudience) return;
+
+  els.btnAddAudience.addEventListener('click', e => {
+    e.stopPropagation();
+    if (!els.audDropdown.classList.contains('hidden')) closeAudienceDropdown();
+    else openAudienceDropdown();
+  });
+
+  $('aud-search').addEventListener('input', () => renderAudienceList($('aud-search').value));
+
+  $('btn-create-aud')?.addEventListener('click', () => {
+    const name = sanitizeText($('aud-search').value.trim());
+    if (!name) return;
+    // New audiences land at Secondary — inventing a priority for a value the
+    // client never ranked would put a fabricated number into the KKE vote.
+    if (!(state.audienceLibrary || []).some(e => e.name === name)) {
+      state.audienceLibrary.push({ name, tier: 'Secondary', color: '', description: '', notes: '' });
+      state.projectSettings.audienceLibrary = state.audienceLibrary;
+      setDirty(true);
+    }
+    const updated = [...getRowAudiences().filter(a => a !== AUDIENCE_NONE), name];
+    setRowAudiences(updated);
+    renderAudienceChips(updated);
+    closeAudienceDropdown();
+  });
+
+  els.primaryAudienceSelect?.addEventListener('change', () => {
+    if (state.selectedIndex === null) return;
+    const row = state.editedRows[state.selectedIndex];
+    const old = String(row[PRIMARY_AUDIENCE_COL] || '');
+    const val = els.primaryAudienceSelect.value;
+    if (old === val) return;
+    row[PRIMARY_AUDIENCE_COL] = val;
+    logChange(state.selectedIndex, PRIMARY_AUDIENCE_COL, old, val);
+    setDirty(true);
+    refreshClusterSummaries(row);
+  });
+
+  document.addEventListener('click', e => {
+    if (!els.audDropdown.classList.contains('hidden') &&
+        !els.audDropdown.contains(e.target) &&
+        e.target !== els.btnAddAudience) {
+      closeAudienceDropdown();
+    }
+  });
+}
+
+function populateAudiences(row) {
+  renderAudienceChips(rowAudiences(row));
+  populatePrimaryAudienceSelect(row);
+  renderAudienceSuggestionGhost(row);
+}
+
+function applyAudienceFieldsVisibility() {
+  const wrap = $('audience-fields-wrap');
+  if (!wrap) return;
+  wrap.classList.toggle('hidden', !state.showAudienceFields);
+}
+
+// ─── Jobs-to-be-done ─────────────────────────────────────────────────────────
+// Audiences answer *who* a page is for; jobs answer *what they came to do*.
+// The payoff is the inverse: a job with no page serving it is the cleanest
+// argument for net-new content there is, because it traces a proposed page back
+// to something the client said in their own workshop.
+//
+// A job's `label` is what goes in the row cell (so the spreadsheet stays
+// readable); `statement` holds the full workshop wording; `audiences` is a LIST,
+// because most jobs belong to one audience but some genuinely don't.
+
+const JOBS_COL = 'Jobs_Served';
+
+function jobEntry(label) {
+  return (state.jobLibrary || []).find(j => j.label === label) || null;
+}
+
+/** Commas separate values in the cell, so a label can never contain one. */
+function sanitizeJobLabel(s) {
+  return sanitizeText(String(s || '')).replace(/,/g, ';').trim();
+}
+
+/** Library ordered the way the picker shows it: by first audience (in audience
+ *  tier order), then label. Cross-cutting jobs — those tied to no audience —
+ *  sort last, since they're the general case rather than the priority one. */
+function sortedJobLibrary() {
+  const tierRank = (name) => {
+    const t = audienceTier(name);
+    const i = AUDIENCE_TIERS.indexOf(t);
+    return i < 0 ? 99 : i;
+  };
+  return (state.jobLibrary || []).slice().sort((a, b) => {
+    const aa = (a.audiences || [])[0], ba = (b.audiences || [])[0];
+    if (!aa && ba) return 1;
+    if (aa && !ba) return -1;
+    if (aa && ba) {
+      const r = tierRank(aa) - tierRank(ba);
+      if (r) return r;
+      const n = String(aa).localeCompare(String(ba));
+      if (n) return n;
+    }
+    return String(a.label).localeCompare(String(b.label));
+  });
+}
+
+function rowJobs(row) {
+  return String(row?.[JOBS_COL] || '').split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function getRowJobs() {
+  if (state.selectedIndex === null) return [];
+  return rowJobs(state.editedRows[state.selectedIndex]);
+}
+
+function setRowJobs(jobs) {
+  if (state.selectedIndex === null) return;
+  const row = state.editedRows[state.selectedIndex];
+  const old = String(row[JOBS_COL] || '');
+  const next = jobs.join(', ');
+  if (old === next) return;
+  row[JOBS_COL] = next;
+  logChange(state.selectedIndex, JOBS_COL, old, next);
+  setDirty(true);
+  refreshRowInList(state.selectedIndex);
+  refreshClusterSummaries(row);
+}
+
+function renderJobChips(jobs) {
+  if (!els.jobChips) return;
+  els.jobChips.innerHTML = '';
+  jobs.forEach(label => {
+    const chip = document.createElement('div');
+    chip.className = 'tag-chip';
+    const entry = jobEntry(label);
+    chip.title = entry?.statement || label;
+    chip.textContent = label;
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'tag-remove';
+    removeBtn.textContent = '×';
+    removeBtn.title = `Remove "${label}"`;
+    removeBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      const updated = getRowJobs().filter(j => j !== label);
+      setRowJobs(updated);
+      renderJobChips(updated);
+    });
+    chip.appendChild(removeBtn);
+    els.jobChips.appendChild(chip);
+  });
+}
+
+function openJobDropdown() {
+  renderJobList('');
+  const rect = els.btnAddJob.getBoundingClientRect();
+  els.jobDropdown.style.left = rect.left + 'px';
+  els.jobDropdown.style.top  = (rect.bottom + 4) + 'px';
+  els.jobDropdown.classList.remove('hidden');
+  $('job-search').value = '';
+  $('job-search').focus();
+}
+
+function closeJobDropdown() {
+  if (els.jobDropdown) els.jobDropdown.classList.add('hidden');
+}
+
+/** Grouped by audience, with the jobs belonging to THIS page's audiences hoisted
+ *  to the top — on a library of any size that's the difference between picking
+ *  from three relevant jobs and scrolling forty. */
+function renderJobList(filter) {
+  const currentSet = new Set(getRowJobs());
+  const q = filter.toLowerCase();
+  const rowAuds = state.selectedIndex === null ? [] : rowAudiences(state.editedRows[state.selectedIndex]);
+  const rowAudSet = new Set(rowAuds);
+
+  const matches = sortedJobLibrary().filter(j =>
+    !q || j.label.toLowerCase().includes(q) || String(j.statement || '').toLowerCase().includes(q));
+
+  const relevant = [], other = [];
+  matches.forEach(j => {
+    const auds = j.audiences || [];
+    ((auds.length && auds.some(a => rowAudSet.has(a))) ? relevant : other).push(j);
+  });
+
+  const listEl = $('job-list');
+  listEl.innerHTML = '';
+
+  const addGroup = (heading, jobs) => {
+    if (!jobs.length) return;
+    const h = document.createElement('div');
+    h.className = 'job-group-header';
+    h.textContent = heading;
+    listEl.appendChild(h);
+    jobs.forEach(j => {
+      const opt = document.createElement('div');
+      opt.className = 'job-option' + (currentSet.has(j.label) ? ' selected' : '');
+      const body = document.createElement('div');
+      body.className = 'job-option-body';
+      const lab = document.createElement('span');
+      lab.className = 'job-option-label';
+      lab.textContent = j.label;
+      body.appendChild(lab);
+      if (j.statement) {
+        const st = document.createElement('span');
+        st.className = 'job-option-statement';
+        st.textContent = j.statement;
+        body.appendChild(st);
+      }
+      opt.appendChild(body);
+      opt.addEventListener('click', () => {
+        const cur = getRowJobs();
+        const updated = cur.includes(j.label) ? cur.filter(x => x !== j.label) : [...cur, j.label];
+        setRowJobs(updated);
+        renderJobChips(updated);
+        renderJobList(filter);
+      });
+      listEl.appendChild(opt);
+    });
+  };
+
+  addGroup(rowAuds.length ? "This page's audiences" : 'Jobs', relevant);
+  // Group the rest by their first audience so the list still reads by audience.
+  const byAud = new Map();
+  other.forEach(j => {
+    const key = (j.audiences || [])[0] || 'Any audience';
+    if (!byAud.has(key)) byAud.set(key, []);
+    byAud.get(key).push(j);
+  });
+  byAud.forEach((jobs, key) => addGroup(key, jobs));
+
+  // Jobs tagged on the row but no longer in the library
+  const adHoc = [...currentSet].filter(l => !(state.jobLibrary || []).some(j => j.label === l));
+  if (adHoc.length) {
+    addGroup('Not in the library', adHoc.map(l => ({ label: l, statement: '' })));
+  }
+
+  if (!listEl.children.length) {
+    const empty = document.createElement('div');
+    empty.className = 'job-option';
+    empty.style.color = 'var(--text-muted)';
+    empty.style.cursor = 'default';
+    empty.textContent = (state.jobLibrary || []).length
+      ? 'No matches.'
+      : 'No jobs yet — Project Settings → Audience → Jobs';
+    listEl.appendChild(empty);
+  }
+
+  const createEl = $('job-create');
+  const trimmed = sanitizeJobLabel(filter);
+  const canCreate = trimmed && !(state.jobLibrary || []).some(j => j.label.toLowerCase() === trimmed.toLowerCase());
+  createEl.classList.toggle('hidden', !canCreate);
+  if (canCreate) $('job-create-label').textContent = trimmed;
+}
+
+function setupJobHandlers() {
+  if (!els.btnAddJob) return;
+
+  els.btnAddJob.addEventListener('click', e => {
+    e.stopPropagation();
+    if (!els.jobDropdown.classList.contains('hidden')) closeJobDropdown();
+    else openJobDropdown();
+  });
+
+  $('job-search').addEventListener('input', () => renderJobList($('job-search').value));
+
+  $('btn-create-job')?.addEventListener('click', () => {
+    const label = sanitizeJobLabel($('job-search').value);
+    if (!label) return;
+    if (!(state.jobLibrary || []).some(j => j.label === label)) {
+      // Inherit the row's audiences — a job created while tagging a page almost
+      // always belongs to whoever that page serves.
+      const auds = state.selectedIndex === null ? [] : rowAudiences(state.editedRows[state.selectedIndex]).filter(a => a !== AUDIENCE_NONE);
+      state.jobLibrary.push({ label, statement: '', audiences: auds, notes: '' });
+      state.projectSettings.jobLibrary = state.jobLibrary;
+      setDirty(true);
+    }
+    const updated = [...getRowJobs(), label];
+    setRowJobs(updated);
+    renderJobChips(updated);
+    closeJobDropdown();
+  });
+
+  document.addEventListener('click', e => {
+    if (!els.jobDropdown.classList.contains('hidden') &&
+        !els.jobDropdown.contains(e.target) &&
+        e.target !== els.btnAddJob) {
+      closeJobDropdown();
+    }
+  });
+}
+
+function populateJobs(row) {
+  renderJobChips(rowJobs(row));
+}
+
+/** The Jobs field only appears once a project actually has jobs — an empty
+ *  chip input on every audit bar is noise for the majority of projects that
+ *  never run a JTBD workshop. */
+function applyJobsFieldVisibility() {
+  const wrap = $('jobs-field-wrap');
+  if (!wrap) return;
+  wrap.classList.toggle('hidden', !(state.jobLibrary || []).length);
+}
+
+// ─── Audience at scale: inherit-from-section + AI suggestion (Phase 4) ────────
+//
+// Phases 1–3 made audience taggable and made it pay off; nothing made it
+// *affordable*. A 6,000-page crawl is thousands of judgements, and a column
+// that stays 4% full makes every report built on it worthless. These two are
+// the volume tools, and they differ deliberately:
+//
+//   • Inherit from section  — free, deterministic, needs no API key. It only
+//     ever propagates a decision the auditor already made elsewhere in the same
+//     section, so the worst case is a wrong guess traceable to a real choice.
+//   • AI suggestion         — costs credits and can be wrong in novel ways, so
+//     it never writes `Audiences` directly. It fills `_Suggested_Audiences` and
+//     the auditor accepts or rejects, exactly like `Suggested_KKE` never writes
+//     the human KKE column.
+
+const SUGGESTED_AUDIENCES_COL = '_Suggested_Audiences';
+
+function rowAudienceSuggestion(row) {
+  const raw = String(row?.[SUGGESTED_AUDIENCES_COL] || '').trim();
+  if (!raw) return null;
+  try {
+    const o = JSON.parse(raw);
+    return {
+      audiences:  Array.isArray(o.audiences) ? o.audiences.filter(Boolean) : [],
+      primary:    String(o.primary || ''),
+      jobs:       Array.isArray(o.jobs) ? o.jobs.filter(Boolean) : [],
+      confidence: String(o.confidence || 'low'),
+      reasoning:  String(o.reasoning || '')
+    };
+  } catch (_) { return null; }
+}
+
+/** Rows eligible for either volume tool: in scope, still being carried forward
+ *  (or not yet reviewed), and not already tagged. Mirrors the `_needs-audience`
+ *  filter, widened to include Consolidate and unreviewed the way
+ *  `audienceScopeRows()` does — a page nobody has judged yet still owes an
+ *  audience answer. Returns `[{row, origIndex}]`. */
+function audienceFillTargets({ onlyFiltered = false, skipSuggested = false } = {}) {
+  const source = onlyFiltered
+    ? state.filteredRows.map(f => ({ row: f.row, origIndex: f.origIndex }))
+    : state.editedRows.map((row, origIndex) => ({ row, origIndex }));
+  return source.filter(({ row }) => {
+    if (!rowSiteInScope(row)) return false;
+    if (rowAudiences(row).length) return false;
+    // The AI path passes skipSuggested so a second run doesn't pay to re-answer
+    // pages already sitting in the review queue.
+    if (skipSuggested && rowAudienceSuggestion(row)) return false;
+    const eff = audEffectiveKke(row);
+    return eff === 'Keep' || eff === 'Evolve' || eff === 'Consolidate' || !eff;
+  });
+}
+
+/**
+ * Write an audience decision onto one row.
+ *
+ * Shared by inherit-from-section, the AI review dialog, and the per-row Accept,
+ * so all three log to the change log, land in one undo entry, and re-run the
+ * row's `Suggested_KKE` vote identically. `undoItems` is the array collected by
+ * `pushBulkEditUndo()`; pass null for a one-off.
+ */
+function writeAudienceDecision(origIndex, { audiences, primary, jobs }, undoItems) {
+  const row = state.editedRows[origIndex];
+  if (!row) return false;
+  let changed = false;
+  const setField = (field, nextRaw) => {
+    const old = String(row[field] || '');
+    const next = String(nextRaw || '');
+    if (old === next) return;
+    row[field] = next;
+    logChange(origIndex, field, old, next);
+    if (undoItems) undoItems.push({ origIndex, field, oldValue: old, newValue: next });
+    changed = true;
+  };
+
+  const list = (audiences || []).filter(Boolean);
+  setField(AUDIENCES_COL, list.join(', '));
+
+  // An explicit primary wins when it's actually in the set; otherwise fall back
+  // to the same "implied when there's only one" rule the chip input applies, and
+  // never name `— None` as a primary (serving nobody is not a lead audience).
+  let prim = primary && list.includes(primary) ? primary : '';
+  if (!prim && list.length === 1 && list[0] !== AUDIENCE_NONE) prim = list[0];
+  if (prim === AUDIENCE_NONE) prim = '';
+  setField(PRIMARY_AUDIENCE_COL, prim);
+
+  // Jobs are merged, never replaced — a job the auditor tagged by hand outranks
+  // anything a suggestion adds.
+  if (jobs && jobs.length && (state.jobLibrary || []).length) {
+    const merged = rowJobs(row);
+    jobs.filter(Boolean).forEach(j => { if (!merged.includes(j)) merged.push(j); });
+    setField(JOBS_COL, merged.join(', '));
+  }
+
+  // The suggestion has been answered — clearing it is what drains the review
+  // queue, and it rides in the same undo entry so a rejected accept comes back.
+  setField(SUGGESTED_AUDIENCES_COL, '');
+
+  if (changed) refreshSuggestedKkeForRow(origIndex);
+  return changed;
+}
+
+// ── Inherit from section ─────────────────────────────────────────────────────
+
+/**
+ * Per-section audience profile, built only from rows the auditor already tagged.
+ *
+ * `minShare` is the agreement bar: an audience has to appear on at least this
+ * share of the section's tagged pages before it's treated as characteristic of
+ * the section rather than of one page. `minEvidence` stops a section with two
+ * tagged pages from speaking for two hundred untagged ones.
+ */
+function computeSectionAudienceProfiles({ minEvidence = 3, minShare = 0.5 } = {}) {
+  const resolve = makeSectionResolver();
+  const bySection = new Map();
+  const targets = new Set(audienceFillTargets().map(t => t.origIndex));
+
+  state.editedRows.forEach((row, origIndex) => {
+    if (!rowSiteInScope(row)) return;
+    const section = resolve(row) || '(unsectioned)';
+    if (!bySection.has(section)) bySection.set(section, { section, tagged: [], fillable: [] });
+    const bucket = bySection.get(section);
+    if (rowAudiences(row).length) bucket.tagged.push(row);
+    else if (targets.has(origIndex)) bucket.fillable.push(origIndex);
+  });
+
+  const profiles = [];
+  bySection.forEach(b => {
+    const counts = new Map();
+    const primaryCounts = new Map();
+    b.tagged.forEach(row => {
+      // `— None` is deliberately never inherited. Propagating it would assert
+      // "this page serves nobody" — a Kill vote — onto pages no one has looked
+      // at, which is exactly the blank-means-unreviewed line the tool holds.
+      new Set(rowAudiences(row).filter(a => a !== AUDIENCE_NONE))
+        .forEach(a => counts.set(a, (counts.get(a) || 0) + 1));
+      const p = String(row[PRIMARY_AUDIENCE_COL] || '').trim();
+      if (p) primaryCounts.set(p, (primaryCounts.get(p) || 0) + 1);
+    });
+    const dominant = [...counts.entries()]
+      .filter(([, n]) => n / b.tagged.length >= minShare)
+      .sort((x, y) => y[1] - x[1] || String(x[0]).localeCompare(String(y[0])))
+      .map(([name, n]) => ({ name, count: n, share: n / b.tagged.length }));
+    const topPrimary = [...primaryCounts.entries()].sort((x, y) => y[1] - x[1])[0];
+    const primary = topPrimary && dominant.some(d => d.name === topPrimary[0]) ? topPrimary[0] : '';
+    profiles.push({
+      section: b.section,
+      taggedCount: b.tagged.length,
+      fillable: b.fillable,
+      dominant,
+      primary,
+      eligible: b.tagged.length >= minEvidence && dominant.length > 0 && b.fillable.length > 0
+    });
+  });
+
+  return profiles.sort((a, b) => b.fillable.length - a.fillable.length || a.section.localeCompare(b.section));
+}
+
+function openAudienceInheritDialog() {
+  if (!state.editedRows.length) { showToast('Open a file first', 'error'); return; }
+  if (!(state.audienceLibrary || []).length) {
+    alertDialog({
+      title: 'No audience library',
+      message: 'This project has no audiences yet. Add them in Project → Audience Library… (or paste your prioritization workshop output) first.'
+    });
+    return;
+  }
+
+  const profiles = computeSectionAudienceProfiles();
+  const eligible = profiles.filter(p => p.eligible);
+  if (!eligible.length) {
+    const anyTagged = profiles.some(p => p.taggedCount > 0);
+    alertDialog({
+      title: 'Nothing to inherit yet',
+      message: anyTagged
+        ? 'No section has enough agreement to propagate from. This needs at least 3 tagged pages in a section, with an audience appearing on half of them.\n\nTag a few pages in a section by hand first — this tool spreads a decision you already made, it does not make one.'
+        : 'No pages are tagged yet, so there is nothing to inherit from. Tag a handful of pages in a section (the Multi-bar does this fast), then run this again to spread them.'
+    });
+    return;
+  }
+
+  const totalFill = eligible.reduce((n, p) => n + p.fillable.length, 0);
+  const rowsHtml = eligible.slice(0, 200).map((p, i) => `
+    <tr>
+      <td style="padding:5px 8px;font-size:12px;">${escapeHtml(p.section)}</td>
+      <td style="padding:5px 8px;font-size:11px;color:var(--text-muted);white-space:nowrap;">${p.taggedCount} tagged</td>
+      <td style="padding:5px 8px;font-size:11px;">
+        ${p.dominant.map(d => `<span class="tag-chip" style="display:inline-block;margin:1px 3px 1px 0;font-size:10px;padding:1px 6px;">${escapeHtml(d.name)} <span style="opacity:.6;">${Math.round(d.share * 100)}%</span></span>`).join('')}
+        ${p.primary ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">primarily for ${escapeHtml(p.primary)}</div>` : ''}
+      </td>
+      <td style="padding:5px 8px;text-align:right;"><strong>${p.fillable.length.toLocaleString()}</strong></td>
+      <td style="padding:5px 8px;"><input type="checkbox" class="_aif-apply" data-i="${i}" checked></td>
+    </tr>`).join('');
+
+  const api = openModal({
+    title: 'Fill Audiences from Section',
+    width: 820,
+    body: `
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px;">
+        Spreads the audiences you have <em>already</em> tagged in a section onto that section's untagged pages.
+        Nothing is invented and nothing already tagged is touched — this only fills blanks, and it is one <kbd>Cmd+Z</kbd>.
+      </p>
+      <div style="font-size:12px;margin-bottom:10px;">
+        <strong>${totalFill.toLocaleString()}</strong> page${totalFill !== 1 ? 's' : ''} would be filled across
+        <strong>${eligible.length}</strong> section${eligible.length !== 1 ? 's' : ''}.
+      </div>
+      <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px;">
+        A section qualifies when at least 3 of its pages are tagged and an audience appears on half of them; the
+        percentage is that agreement. <code>— None (no target audience)</code> is never inherited — asserting that a
+        page nobody has looked at serves nobody would turn an unreviewed blank into a Kill vote.
+      </p>
+      <div style="max-height:44vh;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
+        <table style="width:100%;border-collapse:collapse;">
+          <thead><tr style="text-align:left;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-surface);">
+            <th style="padding:6px 8px;font-size:11px;">Section</th>
+            <th style="padding:6px 8px;font-size:11px;">Evidence</th>
+            <th style="padding:6px 8px;font-size:11px;">Would apply</th>
+            <th style="padding:6px 8px;font-size:11px;text-align:right;">Fills</th>
+            <th style="padding:6px 8px;font-size:11px;">Apply</th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
+      ${eligible.length > 200 ? `<p style="font-size:11px;color:var(--text-muted);margin:6px 0 0;">Showing the 200 largest of ${eligible.length} sections.</p>` : ''}
+    `,
+    buttons: [
+      { label: 'Cancel', variant: 'ghost', value: false },
+      { label: 'Fill Audiences', variant: 'primary', primary: true, closeOnClick: false,
+        onClick: (m) => { applyAudienceInherit(eligible, m); m.close(); } }
+    ]
+  });
+  return api;
+}
+
+function applyAudienceInherit(eligible, api) {
+  const chosen = new Set();
+  api.body.querySelectorAll('._aif-apply').forEach(cb => { if (cb.checked) chosen.add(+cb.dataset.i); });
+
+  const undoItems = [];
+  let filled = 0, sections = 0;
+  eligible.forEach((p, i) => {
+    if (!chosen.has(i)) return;
+    sections++;
+    const audiences = p.dominant.map(d => d.name);
+    p.fillable.forEach(origIndex => {
+      // Re-check: a row could have been tagged between building the dialog and
+      // pressing the button (the AI run, another accept).
+      if (rowAudiences(state.editedRows[origIndex]).length) return;
+      if (writeAudienceDecision(origIndex, { audiences, primary: p.primary }, undoItems)) filled++;
+    });
+  });
+
+  if (!filled) { showToast('Nothing to fill — those pages are already tagged', 'info'); return; }
+  pushBulkEditUndo(undoItems, 'inherit audiences from section');
+  setDirty(true);
+  applyFilter();
+  if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+  showToast(`Filled ${filled.toLocaleString()} page${filled !== 1 ? 's' : ''} across ${sections} section${sections !== 1 ? 's' : ''} — Cmd+Z to undo`, 'success');
+}
+
+// ── AI suggestion (batch) ────────────────────────────────────────────────────
+
+const AUDIENCE_AI_BATCH_SIZE = 20;   // pages per request — the library prompt is sent once per batch, not per page
+const AUDIENCE_AI_CONCURRENCY = 3;   // in-flight requests; enough to be tolerable, low enough to stay off rate limits
+let _audienceAiAbort = false;
+
+async function openAudienceAiSuggestDialog() {
+  if (!state.editedRows.length) { showToast('Open a file first', 'error'); return; }
+  if (!(state.audienceLibrary || []).length) {
+    alertDialog({
+      title: 'No audience library',
+      message: 'AI suggestion tags pages against THIS project\'s audiences, so the library has to exist first.\n\nAdd them in Project → Audience Library… — pasting your prioritization workshop output takes a minute and makes every suggestion specific to the client rather than generic.'
+    });
+    return;
+  }
+  if (!state.claudeApiKey) {
+    alertDialog({
+      title: 'API key required',
+      message: 'Add a Claude API key in App Settings to use AI suggestion. Requests are billed to your own key.'
+    });
+    return;
+  }
+
+  const pendingCount = pendingAudienceSuggestions().length;
+  const models = await window.electronAPI.getClaudeModels();
+  const saved = String(state.projectSettings.audienceAiModel || '');
+  const filteredCount = audienceFillTargets({ onlyFiltered: true, skipSuggested: true }).length;
+  const allCount = audienceFillTargets({ skipSuggested: true }).length;
+  if (!allCount) {
+    if (pendingCount) { openAudienceSuggestionReview(); return; }
+    showToast('Every in-scope page already has an audience', 'info');
+    return;
+  }
+
+  const api = openModal({
+    title: 'Suggest Audiences with AI',
+    width: 640,
+    body: `
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px;">
+        Reads each page's title, H1, meta description, URL and section against this project's audience library and
+        proposes who it serves. Suggestions land in a review queue — <strong>your <code>Audiences</code> column is not
+        written</strong> until you accept them.
+      </p>
+      ${pendingCount ? `<div style="background:#fef3c7;border-left:3px solid #d97706;padding:8px 10px;font-size:12px;margin:0 0 12px;display:flex;align-items:center;gap:10px;">
+        <span style="flex:1;"><strong>${pendingCount.toLocaleString()}</strong> suggestion${pendingCount !== 1 ? 's are' : ' is'} already waiting to be reviewed. Those pages are excluded from the counts below.</span>
+        <button class="btn btn-sm" id="_aia-review">Review now</button>
+      </div>` : ''}
+      <div class="setting-row" style="align-items:flex-start;">
+        <label style="min-width:110px;font-size:12px;">Pages</label>
+        <div style="flex:1;">
+          <label style="display:block;font-size:12px;margin-bottom:4px;">
+            <input type="radio" name="_aia-scope" value="all" checked>
+            All untagged pages — <strong>${allCount.toLocaleString()}</strong>
+          </label>
+          <label style="display:block;font-size:12px;">
+            <input type="radio" name="_aia-scope" value="filtered"${filteredCount ? '' : ' disabled'}>
+            Only the current filter — <strong>${filteredCount.toLocaleString()}</strong>
+            <span style="color:var(--text-muted);">(pilot one section first)</span>
+          </label>
+        </div>
+      </div>
+      <div class="setting-row">
+        <label style="min-width:110px;font-size:12px;">Model</label>
+        <select id="_aia-model" style="flex:1;padding:4px 6px;font-size:12px;">
+          ${models.map(m => `<option value="${escapeHtml(m.id)}"${m.id === saved ? ' selected' : ''}>${escapeHtml(m.label)} — ${escapeHtml(m.hint)}</option>`).join('')}
+        </select>
+      </div>
+      <p id="_aia-estimate" style="font-size:11px;color:var(--text-muted);margin:10px 0 0;"></p>
+      <p style="font-size:11px;color:var(--text-muted);margin:8px 0 0;">
+        Billed to your own API key. Press <kbd>Esc</kbd> during the run to stop — everything suggested up to that
+        point is kept.
+      </p>
+    `,
+    buttons: [
+      { label: 'Cancel', variant: 'ghost', value: false },
+      { label: 'Suggest', variant: 'primary', primary: true, closeOnClick: false,
+        onClick: (m) => {
+          const scope = m.body.querySelector('input[name="_aia-scope"]:checked').value;
+          const model = m.body.querySelector('#_aia-model').value;
+          state.projectSettings.audienceAiModel = model;
+          setDirty(true);
+          m.close();
+          runAudienceAiSuggest({ onlyFiltered: scope === 'filtered', model });
+        } }
+    ]
+  });
+
+  const est = api.body.querySelector('#_aia-estimate');
+  const refreshEstimate = () => {
+    const scope = api.body.querySelector('input[name="_aia-scope"]:checked').value;
+    const n = scope === 'filtered' ? filteredCount : allCount;
+    const batches = Math.ceil(n / AUDIENCE_AI_BATCH_SIZE);
+    est.innerHTML = `<strong>${n.toLocaleString()}</strong> pages in <strong>${batches.toLocaleString()}</strong> request${batches !== 1 ? 's' : ''} `
+      + `(${AUDIENCE_AI_BATCH_SIZE} pages each, ${AUDIENCE_AI_CONCURRENCY} at a time). Cost scales with the model you pick.`;
+  };
+  api.body.querySelectorAll('input[name="_aia-scope"]').forEach(r => r.addEventListener('change', refreshEstimate));
+  refreshEstimate();
+  const reviewBtn = api.body.querySelector('#_aia-review');
+  if (reviewBtn) reviewBtn.addEventListener('click', () => { api.close(); openAudienceSuggestionReview(); });
+}
+
+/** Metadata handed to the model. Deliberately narrow: title/H1/meta/URL/section
+ *  is what a human reads to make this call, and sending the whole crawl row
+ *  would bury it in Screaming Frog columns nobody judges audience from. */
+function audienceAiPagePayload(row, origIndex, resolve) {
+  const first = (...keys) => {
+    for (const k of keys) { const v = String(row[k] || '').trim(); if (v) return v.slice(0, 300); }
+    return '';
+  };
+  return {
+    ref:     String(origIndex),
+    url:     String(row[state.urlColumn || 'Address'] || '').slice(0, 400),
+    title:   first('Title 1', 'Title'),
+    h1:      first('H1-1', 'H1'),
+    meta:    first('Meta Description 1', 'Meta Description'),
+    type:    first('Page_Type'),
+    section: resolve(row) || ''
+  };
+}
+
+async function runAudienceAiSuggest({ onlyFiltered, model }) {
+  const targets = audienceFillTargets({ onlyFiltered, skipSuggested: true });
+  if (!targets.length) { showToast('Nothing to suggest for', 'info'); return; }
+
+  const resolve = makeSectionResolver();
+  const batches = [];
+  for (let i = 0; i < targets.length; i += AUDIENCE_AI_BATCH_SIZE) {
+    batches.push(targets.slice(i, i + AUDIENCE_AI_BATCH_SIZE)
+      .map(t => audienceAiPagePayload(t.row, t.origIndex, resolve)));
+  }
+
+  const audiences = sortedAudienceLibrary().map(a => ({ name: a.name, tier: a.tier, description: a.description }));
+  const jobs = (state.jobLibrary || []).map(j => ({ job: j.label, statement: j.statement }));
+
+  _audienceAiAbort = false;
+  const onAbort = (e) => { if (e.key === 'Escape') _audienceAiAbort = true; };
+  document.addEventListener('keydown', onAbort);
+
+  let doneBatches = 0, suggested = 0, errors = 0, lastError = '';
+  let cursor = 0;
+
+  const worker = async () => {
+    while (true) {
+      if (_audienceAiAbort) return;
+      const idx = cursor++;
+      if (idx >= batches.length) return;
+      const pages = batches[idx];
+      try {
+        const res = await window.electronAPI.suggestAudiencesLLM({
+          pages, audiences, jobs, model, apiKey: state.claudeApiKey
+        });
+        if (res.error) { errors++; lastError = res.error; }
+        else suggested += ingestAudienceSuggestions(res.results || []);
+      } catch (e) { errors++; lastError = e.message; }
+      doneBatches++;
+      showToast(`Suggesting audiences… ${Math.min(doneBatches * AUDIENCE_AI_BATCH_SIZE, targets.length).toLocaleString()}/${targets.length.toLocaleString()}  (Esc to stop)`);
+    }
+  };
+
+  try {
+    await Promise.all(Array.from({ length: Math.min(AUDIENCE_AI_CONCURRENCY, batches.length) }, worker));
+  } finally {
+    document.removeEventListener('keydown', onAbort);
+  }
+
+  if (suggested) setDirty(true);
+  applyFilter();
+  if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+
+  if (!suggested) {
+    alertDialog({
+      title: 'No suggestions produced',
+      message: errors ? `Every request failed. Last error:\n\n${lastError}` : 'The model returned no usable results.'
+    });
+    return;
+  }
+  const stopped = _audienceAiAbort ? 'Stopped — ' : '';
+  showToast(`${stopped}${suggested.toLocaleString()} suggestion${suggested !== 1 ? 's' : ''} ready to review${errors ? `, ${errors} request${errors !== 1 ? 's' : ''} failed` : ''}`, 'success');
+  openAudienceSuggestionReview();
+}
+
+/** Store one batch's results on their rows. Nothing here touches `Audiences`. */
+function ingestAudienceSuggestions(results) {
+  const known = new Set((state.audienceLibrary || []).map(a => a.name));
+  const knownJobs = new Set((state.jobLibrary || []).map(j => j.label));
+  let n = 0;
+  results.forEach(r => {
+    const origIndex = Number(r.ref);
+    const row = state.editedRows[origIndex];
+    if (!row) return;
+    if (rowAudiences(row).length) return;                 // tagged in the meantime — don't queue over it
+    // The schema constrains these to the library, but a stale library between
+    // request and response would still get through; filter rather than trust.
+    const list = (r.audiences || []).filter(a => known.has(a));
+    if (!list.length) return;                             // an honest abstention — nothing to review
+    row[SUGGESTED_AUDIENCES_COL] = JSON.stringify({
+      audiences:  list,
+      primary:    known.has(r.primary) && list.includes(r.primary) ? r.primary : '',
+      jobs:       (r.jobs || []).filter(j => knownJobs.has(j)),
+      confidence: ['high', 'medium', 'low'].includes(r.confidence) ? r.confidence : 'low',
+      reasoning:  String(r.reasoning || '').slice(0, 400)
+    });
+    n++;
+  });
+  return n;
+}
+
+function pendingAudienceSuggestions() {
+  const out = [];
+  state.editedRows.forEach((row, origIndex) => {
+    const sug = rowAudienceSuggestion(row);
+    if (sug && !rowAudiences(row).length) out.push({ origIndex, row, sug });
+  });
+  return out;
+}
+
+/**
+ * Review queue, grouped by the suggested set.
+ *
+ * Grouping is what makes this reviewable at all: a few thousand suggestions
+ * collapse into a few dozen distinct answers, and "every page the model thinks
+ * is for Prospective Students" is a single judgement rather than 400.
+ */
+function openAudienceSuggestionReview() {
+  const pending = pendingAudienceSuggestions();
+  if (!pending.length) { showToast('No audience suggestions waiting', 'info'); return; }
+
+  const groups = new Map();
+  pending.forEach(p => {
+    const key = p.sug.audiences.join(' | ') + ' › ' + p.sug.primary;
+    if (!groups.has(key)) groups.set(key, { audiences: p.sug.audiences, primary: p.sug.primary, items: [], conf: { high: 0, medium: 0, low: 0 } });
+    const g = groups.get(key);
+    g.items.push(p);
+    g.conf[p.sug.confidence] = (g.conf[p.sug.confidence] || 0) + 1;
+  });
+  const ordered = [...groups.values()].sort((a, b) => b.items.length - a.items.length);
+
+  const shortUrl = (u) => { try { const p = new URL(u); return p.pathname || '/'; } catch (_) { return String(u || ''); } };
+  const rowsHtml = ordered.slice(0, 200).map((g, i) => {
+    const samples = g.items.slice(0, 3).map(p => shortUrl(p.row[state.urlColumn || 'Address']));
+    const lowShare = Math.round((g.conf.low || 0) / g.items.length * 100);
+    return `
+      <tr>
+        <td style="padding:6px 8px;font-size:11px;">
+          ${g.audiences.map(a => `<span class="tag-chip" style="display:inline-block;margin:1px 3px 1px 0;font-size:10px;padding:1px 6px;">${escapeHtml(a)}</span>`).join('')}
+          ${g.primary ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">primarily for ${escapeHtml(g.primary)}</div>` : ''}
+        </td>
+        <td style="padding:6px 8px;text-align:right;"><strong>${g.items.length.toLocaleString()}</strong></td>
+        <td style="padding:6px 8px;font-size:10px;color:${lowShare > 50 ? 'var(--kke-kill)' : 'var(--text-muted)'};white-space:nowrap;">
+          ${lowShare > 50 ? `${lowShare}% low confidence` : `${Math.round((g.conf.high || 0) / g.items.length * 100)}% high`}
+        </td>
+        <td style="padding:6px 8px;font-size:10px;color:var(--text-muted);word-break:break-all;">${samples.map(s => escapeHtml(s)).join('<br>')}</td>
+        <td style="padding:6px 8px;"><input type="checkbox" class="_asr-accept" data-i="${i}" checked></td>
+      </tr>`;
+  }).join('');
+
+  const api = openModal({
+    title: 'Review Audience Suggestions',
+    width: 900,
+    body: `
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px;">
+        <strong>${pending.length.toLocaleString()}</strong> pages have a proposed audience, grouped by the answer.
+        Accepting writes <code>Audiences</code> and <code>Primarily for</code>; declining leaves the page blank —
+        still unreviewed, which is the honest state.
+      </p>
+      <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px;">
+        Judge a whole group by its samples. Low-confidence groups are where the metadata was too thin to tell —
+        worth opening a few pages before accepting those.
+      </p>
+      <div style="max-height:46vh;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
+        <table style="width:100%;border-collapse:collapse;">
+          <thead><tr style="text-align:left;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-surface);">
+            <th style="padding:6px 8px;font-size:11px;">Suggested audiences</th>
+            <th style="padding:6px 8px;font-size:11px;text-align:right;">Pages</th>
+            <th style="padding:6px 8px;font-size:11px;">Confidence</th>
+            <th style="padding:6px 8px;font-size:11px;">Sample paths</th>
+            <th style="padding:6px 8px;font-size:11px;">Accept</th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
+      ${ordered.length > 200 ? `<p style="font-size:11px;color:var(--text-muted);margin:6px 0 0;">Showing the 200 largest of ${ordered.length} groups; the rest stay queued.</p>` : ''}
+    `,
+    buttons: [
+      { label: 'Select none', variant: 'ghost', closeOnClick: false,
+        onClick: (m) => m.body.querySelectorAll('._asr-accept').forEach(cb => { cb.checked = false; }) },
+      { label: 'Discard all', variant: 'ghost', closeOnClick: false,
+        onClick: async (m) => { if (await discardAudienceSuggestions()) m.close(); } },
+      { label: 'Close', variant: 'ghost', value: false },
+      { label: 'Accept Selected', variant: 'primary', primary: true, closeOnClick: false,
+        onClick: (m) => { applyAudienceSuggestions(ordered, m); m.close(); } }
+    ]
+  });
+  return api;
+}
+
+function applyAudienceSuggestions(ordered, api) {
+  const chosen = new Set();
+  api.body.querySelectorAll('._asr-accept').forEach(cb => { if (cb.checked) chosen.add(+cb.dataset.i); });
+
+  const undoItems = [];
+  let accepted = 0;
+  ordered.forEach((g, i) => {
+    if (!chosen.has(i)) return;
+    g.items.forEach(p => {
+      if (rowAudiences(state.editedRows[p.origIndex]).length) return;
+      if (writeAudienceDecision(p.origIndex, { audiences: g.audiences, primary: g.primary, jobs: p.sug.jobs }, undoItems)) accepted++;
+    });
+  });
+
+  if (!accepted) { showToast('Nothing accepted', 'info'); return; }
+  pushBulkEditUndo(undoItems, 'accept audience suggestions');
+  setDirty(true);
+  applyFilter();
+  if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+  showToast(`Accepted ${accepted.toLocaleString()} suggestion${accepted !== 1 ? 's' : ''} — Cmd+Z to undo`, 'success');
+}
+
+async function discardAudienceSuggestions() {
+  const pending = pendingAudienceSuggestions();
+  if (!pending.length) { showToast('No suggestions to discard', 'info'); return true; }
+  const ok = await confirmDialog({
+    title: 'Discard audience suggestions',
+    message: `Clear all ${pending.length.toLocaleString()} pending suggestions? The pages go back to untagged and you'd have to re-run (and re-pay for) the AI pass to get them back.`,
+    confirmLabel: 'Discard',
+    danger: true
+  });
+  if (!ok) return false;
+  const undoItems = [];
+  pending.forEach(p => {
+    const row = state.editedRows[p.origIndex];
+    const old = String(row[SUGGESTED_AUDIENCES_COL] || '');
+    row[SUGGESTED_AUDIENCES_COL] = '';
+    undoItems.push({ origIndex: p.origIndex, field: SUGGESTED_AUDIENCES_COL, oldValue: old, newValue: '' });
+  });
+  pushBulkEditUndo(undoItems, 'discard audience suggestions');
+  setDirty(true);
+  applyFilter();
+  if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+  showToast(`Discarded ${pending.length.toLocaleString()} suggestions — Cmd+Z to undo`, 'info');
+  return true;
+}
+
+/** Per-row ghost in the audience cluster: the same suggestion the review dialog
+ *  groups, offered inline so an auditor working page-by-page can take it without
+ *  opening a bulk tool. Mirrors the Migration Track ghost. */
+function renderAudienceSuggestionGhost(row) {
+  const host = $('audience-suggestion');
+  if (!host) return;
+  const sug = row ? rowAudienceSuggestion(row) : null;
+  if (!sug || rowAudiences(row).length) { host.classList.add('hidden'); host.innerHTML = ''; return; }
+  host.classList.remove('hidden');
+  host.innerHTML = `
+    <span class="aud-ghost-label" title="${escapeHtml(sug.reasoning)}">AI suggests: <strong>${escapeHtml(sug.audiences.join(', '))}</strong>
+      <span class="aud-ghost-conf">${escapeHtml(sug.confidence)}</span></span>
+    <button class="btn btn-sm btn-primary" id="aud-ghost-accept">Accept</button>
+    <button class="btn btn-sm btn-ghost" id="aud-ghost-dismiss">Dismiss</button>`;
+  host.querySelector('#aud-ghost-accept').addEventListener('click', () => {
+    const origIndex = state.selectedIndex;
+    if (origIndex === null) return;
+    const undoItems = [];
+    writeAudienceDecision(origIndex, sug, undoItems);
+    pushBulkEditUndo(undoItems, 'accept audience suggestion');
+    setDirty(true);
+    populateAuditFields(state.editedRows[origIndex]);
+    refreshRowInList(origIndex);
+  });
+  host.querySelector('#aud-ghost-dismiss').addEventListener('click', () => {
+    const origIndex = state.selectedIndex;
+    if (origIndex === null) return;
+    const row2 = state.editedRows[origIndex];
+    const old = String(row2[SUGGESTED_AUDIENCES_COL] || '');
+    row2[SUGGESTED_AUDIENCES_COL] = '';
+    pushBulkEditUndo([{ origIndex, field: SUGGESTED_AUDIENCES_COL, oldValue: old, newValue: '' }], 'dismiss audience suggestion');
+    setDirty(true);
+    renderAudienceSuggestionGhost(row2);
+  });
 }
 
 // ─── Design Pattern chip input ────────────────────────────────────────────────
@@ -4434,7 +5802,7 @@ function openDesignPatternLibraryEditor() {
 // ─── Design Pattern reports ───────────────────────────────────────────────────
 
 function reportDesignPatterns() {
-  const rows = state.editedRows;
+  const rows = reportRows();
   const urlCol = state.urlColumn || 'Address';
   const kkeColName = kkeCol();
 
@@ -4575,8 +5943,1119 @@ function reportDesignPatterns() {
 // (new-CMS) content type it maps to, its target spec + migration track, and the
 // page volume / KKE mix behind each. Flags current types with no crosswalk entry.
 
+// ─── Audience reports ────────────────────────────────────────────────────────
+
+const AUD_KKE_COLORS = { Keep: '#16a34a', Kill: '#dc2626', Evolve: '#d97706', Exclude: '#6b7280', Consolidate: '#7c3aed' };
+function audKkeStyle(v) {
+  return AUD_KKE_COLORS[v] ? `color:${AUD_KKE_COLORS[v]};font-weight:600;` : '';
+}
+const AUD_TIER_BADGE = {
+  'Primary':      'background:#dcfce7;color:#166534;',
+  'Secondary':    'background:#e0e7ff;color:#3730a3;',
+  'Tertiary':     'background:#fef3c7;color:#92400e;',
+  'Not a target': 'background:#f3f4f6;color:#4b5563;'
+};
+function audTierBadge(tier) {
+  return `<span style="font-size:10px;padding:1px 6px;border-radius:3px;white-space:nowrap;${AUD_TIER_BADGE[tier] || AUD_TIER_BADGE.Secondary}">${escapeHtml(tier)}</span>`;
+}
+
+/** Effective KKE for reporting — Final wins, else the auditor's call. */
+function audEffectiveKke(row) {
+  return String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
+}
+
+/** Shared denominator for every audience report.
+ *
+ *  Coverage is stated against Keep/Evolve rows, NOT the whole crawl. A crawl is
+ *  mostly things being killed or excluded, and nobody tags those for audience —
+ *  measuring against the full row count would report ~15% coverage on a fully
+ *  tagged audit and make the reports look like the work never happened.
+ */
+function audienceScopeRows() {
+  return reportRows().filter(r => {
+    const eff = audEffectiveKke(r);
+    return eff === 'Keep' || eff === 'Evolve' || eff === 'Consolidate' || !eff;
+  });
+}
+
+function audienceReportPreamble(scopeRows) {
+  const tagged = scopeRows.filter(r => rowAudiences(r).length).length;
+  const pct = scopeRows.length ? Math.round((tagged / scopeRows.length) * 100) : 0;
+  const lib = state.audienceLibrary || [];
+  if (!lib.length) {
+    return `<p style="background:#fef3c7;border-left:3px solid #d97706;padding:10px 12px;font-size:12px;margin:0 0 16px;">
+      No audiences are defined for this project yet. Add them in <strong>Project → Audience Library…</strong>
+      (or paste your prioritization workshop output) before this report can say anything useful.</p>`;
+  }
+  const untiered = lib.filter(a => a.tier === 'Secondary').length === lib.length;
+  return `
+    <div style="display:flex;gap:20px;margin-bottom:18px;flex-wrap:wrap;">
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Pages tagged</div>
+        <div style="font-size:28px;font-weight:700;">${tagged} <span style="font-size:14px;color:#888;">/ ${scopeRows.length}</span></div>
+        <div style="font-size:11px;color:#888;">${pct}% of in-scope pages</div>
+      </div>
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Audiences defined</div>
+        <div style="font-size:28px;font-weight:700;">${lib.length}</div>
+        <div style="font-size:11px;color:#888;">${lib.filter(a => a.tier === 'Primary').length} primary</div>
+      </div>
+    </div>
+    <p style="font-size:11px;color:#666;margin:0 0 16px;">
+      In scope = pages marked Keep, Evolve, Consolidate, or not yet reviewed. Kill and Exclude pages are
+      left out of the denominator — nobody tags content they are removing.
+    </p>
+    ${untiered ? `<p style="background:#fef3c7;border-left:3px solid #d97706;padding:10px 12px;font-size:12px;margin:0 0 16px;">
+      Every audience is still at the default <strong>Secondary</strong> tier, so no priority ranking has been
+      applied yet. Set tiers in <strong>Project Settings → Audience</strong> to make this report — and the
+      Suggested&nbsp;KKE audience vote — meaningful.</p>` : ''}
+  `;
+}
+
+/** Report A — Audience Coverage. Per audience, in tier order: how much content
+ *  serves them, what we're doing to it, and where it lives. */
+function reportAudienceCoverage() {
+  const title = 'Audience Coverage';
+  const scopeRows = audienceScopeRows();
+  const urlCol = state.urlColumn || 'Address';
+
+  // Per audience: pages, KKE mix, top sections
+  const stats = new Map();
+  const sectionOf = makeSectionResolver();
+  (state.audienceLibrary || []).forEach(a => stats.set(a.name, { pages: 0, primary: 0, kke: {}, sections: {} }));
+  scopeRows.forEach(r => {
+    const primary = String(r[PRIMARY_AUDIENCE_COL] || '').trim();
+    const eff = audEffectiveKke(r) || '(unreviewed)';
+    const section = sectionOf(r);
+    rowAudiences(r).forEach(a => {
+      if (!stats.has(a)) stats.set(a, { pages: 0, primary: 0, kke: {}, sections: {} });
+      const s = stats.get(a);
+      s.pages++;
+      if (a === primary) s.primary++;
+      s.kke[eff] = (s.kke[eff] || 0) + 1;
+      if (section) s.sections[section] = (s.sections[section] || 0) + 1;
+    });
+  });
+
+  const ordered = sortedAudienceLibrary();
+  // Anything used in the data but missing from the library still gets a line —
+  // silently dropping it would hide exactly the drift worth knowing about.
+  stats.forEach((_, name) => {
+    if (!ordered.some(a => a.name === name)) ordered.push({ name, tier: 'Secondary', description: '', _adhoc: true });
+  });
+
+  const rowsHtml = ordered.map(entry => {
+    const s = stats.get(entry.name) || { pages: 0, primary: 0, kke: {}, sections: {} };
+    const pct = scopeRows.length ? ((s.pages / scopeRows.length) * 100).toFixed(1) : '0.0';
+    const kkeHtml = Object.entries(s.kke).sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => `<span style="${audKkeStyle(k)}">${escapeHtml(k)}</span>×${n}`).join(' · ') || '—';
+    const topSections = Object.entries(s.sections).sort((a, b) => b[1] - a[1]).slice(0, 3)
+      .map(([sec, n]) => `${escapeHtml(sec)} (${n})`).join(', ') || '—';
+    // The finding that matters: a top-priority audience with almost nothing
+    // serving it. That is a content gap, not a tagging gap.
+    const starved = entry.tier === 'Primary' && s.pages < Math.max(5, Math.round(scopeRows.length * 0.02));
+    return `<tr${s.pages === 0 ? ' style="opacity:0.6;"' : ''}>
+      <td><strong>${escapeHtml(entry.name)}</strong>${entry._adhoc ? ' <span style="font-size:10px;color:#b45309;">not in library</span>' : ''}
+        ${entry.description ? `<div style="font-size:11px;color:#777;">${escapeHtml(entry.description)}</div>` : ''}</td>
+      <td>${audTierBadge(entry.tier || 'Secondary')}</td>
+      <td><strong>${s.pages}</strong> <span style="color:#888;font-size:11px;">(${pct}%)</span>
+        ${starved ? '<div style="font-size:10px;color:#dc2626;font-weight:600;">⚠ under-served priority audience</div>' : ''}</td>
+      <td>${s.primary}</td>
+      <td style="font-size:11px;">${kkeHtml}</td>
+      <td style="font-size:11px;">${topSections}</td>
+    </tr>`;
+  }).join('');
+
+  const body = `
+    ${audienceReportPreamble(scopeRows)}
+    <h2 style="font-size:14px;margin:0 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">Coverage by audience</h2>
+    <p style="font-size:12px;color:#666;margin:0 0 8px;">
+      Ordered by priority tier. <strong>Pages</strong> counts every page that serves the audience at all;
+      <strong>Primary</strong> counts the pages where they are the main audience. A Primary-tier audience
+      flagged in red has very little content aimed at it — usually the most actionable finding here.
+    </p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr style="text-align:left;border-bottom:2px solid #ddd;">
+        <th style="padding:6px 8px;">Audience</th>
+        <th style="padding:6px 8px;">Tier</th>
+        <th style="padding:6px 8px;">Pages</th>
+        <th style="padding:6px 8px;">Primary</th>
+        <th style="padding:6px 8px;">Disposition</th>
+        <th style="padding:6px 8px;">Top sections</th>
+      </tr></thead>
+      <tbody>${rowsHtml || '<tr><td colspan="6" style="padding:12px;color:#888;">No audiences defined.</td></tr>'}</tbody>
+    </table>
+    ${(() => {
+      const untagged = scopeRows.filter(r => !rowAudiences(r).length);
+      if (!untagged.length) return '';
+      return `<h2 style="font-size:14px;margin:24px 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">Not yet reviewed for audience</h2>
+        <p style="font-size:12px;color:#666;margin:0 0 8px;">${untagged.length} in-scope page${untagged.length !== 1 ? 's' : ''} carry no audience tag.
+        These are unreviewed, not "serves nobody" — filter the sidebar by <em>Needs audience</em> to work through them.</p>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+          <thead><tr style="text-align:left;border-bottom:2px solid #ddd;">
+            <th style="padding:6px 8px;">URL</th><th style="padding:6px 8px;">KKE</th></tr></thead>
+          <tbody>${untagged.slice(0, 100).map(r =>
+            `<tr><td style="padding:4px 8px;word-break:break-all;">${escapeHtml(String(r[urlCol] || ''))}</td>
+                 <td style="padding:4px 8px;${audKkeStyle(audEffectiveKke(r))}">${escapeHtml(audEffectiveKke(r) || '—')}</td></tr>`
+          ).join('')}</tbody>
+        </table>
+        ${untagged.length > 100 ? `<p style="font-size:11px;color:#888;margin-top:6px;">Showing the first 100 of ${untagged.length}.</p>` : ''}`;
+    })()}
+  `;
+
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
+}
+
+/** How many leading elements EVERY list shares, ignoring lists that simply end
+ *  earlier (those are pages sitting at that level, not disagreements).
+ *
+ *  Lists that stop short must NOT block the prefix from advancing: a sitemap
+ *  with one site-root node has the home page's breadcrumb as just ["Acadia"],
+ *  and letting that single row pin the depth at 0 puts every page in the site
+ *  into one "Acadia" bucket.
+ */
+function sharedPrefixDepth(lists) {
+  if (lists.length < 2) return 0;
+  let depth = 0;
+  while (depth < 8) {
+    const deeper = lists.filter(l => l.length > depth + 1);
+    // Needs TWO paths to be a shared prefix. With one, a lone page's own parent
+    // directory looks like a site-wide prefix and gets stripped, leaving that
+    // page with no section at all — which is what a small site folded into a
+    // consolidation crawl looks like.
+    if (deeper.length < 2) break;
+    const seg = deeper[0][depth];
+    if (seg === undefined) break;
+    if (!lists.every(l => l.length <= depth || l[depth] === seg)) break;
+    depth++;
+  }
+  return depth;
+}
+
+// `en`, `es`, `pt-br`, `zh-hans`, `en-US` — and, unavoidably, `it` and `hr`,
+// which are also perfectly good section names. The pattern alone is never
+// enough; hostUsesLocalePrefixes() is what decides.
+const LOCALE_SEGMENT_RE = /^[a-z]{2,3}(-[a-z0-9]{2,4})?$/i;
+
+/** Does this host put a locale in front of every path?
+ *
+ *  Pattern-matching alone would misread an intranet whose top sections are
+ *  `/it/`, `/hr/`, `/pl/` (IT, HR, Poland) as a translated site. The decisive
+ *  signal is *structural*: a translated site repeats the SAME sections under
+ *  each locale, so two or more locale-looking segments share a child. Real
+ *  sections that merely happen to look like language codes don't.
+ */
+function hostUsesLocalePrefixes(lists, depth) {
+  const childrenByCandidate = new Map();
+  lists.forEach(segs => {
+    const seg = (segs[depth] || '').toLowerCase();
+    if (!seg || !LOCALE_SEGMENT_RE.test(seg)) return;
+    if (!childrenByCandidate.has(seg)) childrenByCandidate.set(seg, new Set());
+    const child = (segs[depth + 1] || '').toLowerCase();
+    if (child) childrenByCandidate.get(seg).add(child);
+  });
+  if (childrenByCandidate.size < 3) return false;      // too few to be a locale scheme
+
+  const candidates = [...childrenByCandidate.entries()];
+  for (let i = 0; i < candidates.length; i++) {
+    for (let j = i + 1; j < candidates.length; j++) {
+      for (const child of candidates[i][1]) {
+        if (candidates[j][1].has(child)) return true;  // same section under two locales
+      }
+    }
+  }
+  return false;
+}
+
+/** Build a row → section resolver, computing the shared prefixes once.
+ *
+ *  Sections are read from the sitemap breadcrumb where a row has a nav home,
+ *  and from the URL path otherwise (so the cross-tab still works on an audit
+ *  that hasn't built its IA yet). Both axes get their shared prefix stripped:
+ *  a crawl rooted below the domain (`alpha.edu/college/…`, `university.edu/college/…`)
+ *  and a sitemap with a single site-root node BOTH collapse every page into one
+ *  bucket otherwise, which is exactly the case this was first run against.
+ */
+function makeSectionResolver() {
+  const byId = new Map((state.navNodes || []).map(n => [n.id, n]));
+  const crumbsOf = (row) => {
+    const node = byId.get(String(row['Sitemap_ID'] || '').trim());
+    if (!node) return null;
+    const c = String(node.breadcrumb || '').trim();
+    return c ? c.split('>').map(s => s.trim()).filter(Boolean) : (node.label ? [String(node.label).trim()] : null);
+  };
+  const urlOf = (row) => {
+    try { return new URL(String(row[state.urlColumn || 'Address'] || '')); }
+    catch (_) { return null; }
+  };
+  const segsOf = (row) => { const u = urlOf(row); return u ? u.pathname.split('/').filter(Boolean) : null; };
+  const hostOf = (row) => { const u = urlOf(row); return u ? normalizeSourceHost(u.host) : ''; };
+
+  const crumbLists = [];
+  const pathsByHost = new Map();
+  state.editedRows.forEach(r => {
+    const c = crumbsOf(r); if (c) crumbLists.push(c);
+    const s = segsOf(r);
+    if (s) {
+      const h = hostOf(r);
+      if (!pathsByHost.has(h)) pathsByHost.set(h, []);
+      pathsByHost.get(h).push(s);
+    }
+  });
+
+  const crumbDepth = sharedPrefixDepth(crumbLists);
+  // Per host, not globally: a consolidation crawl can hold one site rooted at
+  // `/` and another at `/en/`, and a single shared-prefix pass across both
+  // would find nothing and leave the second site's real sections buried.
+  const pathDepthByHost = new Map();
+  const localeHosts = new Set();
+  pathsByHost.forEach((lists, h) => {
+    const d = sharedPrefixDepth(lists);
+    pathDepthByHost.set(h, d);
+    if (hostUsesLocalePrefixes(lists, d)) localeHosts.add(h);
+  });
+
+  // Multiple SOURCE sites is the consolidation case. Without qualifying by host,
+  // `companyA.com/about` and `companyB.com/about` silently merge into one "About"
+  // row — the exact comparison a consolidation audit exists to make. www/non-www
+  // is normalized away first, so an ordinary single-site crawl (which routinely
+  // holds both) is unaffected.
+  const multiSite = pathsByHost.size > 1;
+
+  const resolve = (row) => {
+    const c = crumbsOf(row);
+    // A placed row's breadcrumb is the TARGET IA — already unambiguous across
+    // source sites, so it needs no host qualifier.
+    if (c) return c.length > crumbDepth ? c[crumbDepth] : '(root)';
+    const s = segsOf(row);
+    if (!s) return '';
+    const host = hostOf(row);
+    let depth = pathDepthByHost.get(host) || 0;
+    // On a translated site the first segment is the locale, so the "section"
+    // would come out as Es / De / Zh-Hans — language, not topic, with the same
+    // real sections repeated under each. Step past it.
+    if (localeHosts.has(host) && LOCALE_SEGMENT_RE.test(s[depth] || '')) depth++;
+    const label = s.length <= depth + 1 ? '' : titleCaseFromSlug(s[depth]);
+    if (!multiSite) return label || '(root)';
+    return label ? `${host} › ${label}` : host;
+  };
+  resolve.multiSite = multiSite;
+  resolve.hostCount = pathsByHost.size;
+  return resolve;
+}
+
+/** Compare source hosts at site level. Only `www.` is stripped: it is always the
+ *  same site, whereas `home.example.com` genuinely can be a different site being
+ *  folded in, which is precisely what a consolidation audit needs to keep apart. */
+function normalizeSourceHost(host) {
+  return String(host || '').toLowerCase().replace(/^www\./, '');
+}
+
+// ─── Source sites (consolidation audits) ─────────────────────────────────────
+// See docs/dev/SOURCE_SITE_PROPOSAL.md. The registry lives in
+// projectSettings.siteLibrary + the `Sites` sheet; `Source_Site` is a
+// derived-but-stored column, following the Page_Breadcrumb precedent so that
+// filtering, Table View, saved filters, sitemap colouring and every export get
+// the dimension for free instead of each re-parsing hosts.
+
+const SOURCE_SITE_COL = 'Source_Site';
+
+function rowHost(row) {
+  try { return normalizeSourceHost(new URL(String(row?.[state.urlColumn || 'Address'] || '')).host); }
+  catch (_) { return ''; }
+}
+
+/** The registry entry a row belongs to, or null when its host isn't covered. */
+function siteOfRow(row) {
+  const h = rowHost(row);
+  if (!h) return null;
+  return (state.siteLibrary || []).find(s => (s.hosts || []).includes(h)) || null;
+}
+
+function computeRowSourceSite(row) {
+  const site = siteOfRow(row);
+  if (site) return site.label;
+  // Un-registered host: fall back to the host itself rather than blank, so a
+  // row is never silently unattributed.
+  return rowHost(row);
+}
+
+/** Recompute `Source_Site` across every row. Runs on open and after any registry
+ *  edit (a rename has to cascade, since the column stores the label), so it
+ *  builds a host → label index once rather than scanning the registry per row —
+ *  the difference between O(rows) and O(rows × sites × hosts) on a crawl with
+ *  thousands of rows across several domains. */
+function recomputeAllSourceSites() {
+  if (!state.headers.includes(SOURCE_SITE_COL)) return 0;
+  const labelByHost = new Map();
+  (state.siteLibrary || []).forEach(s => (s.hosts || []).forEach(h => labelByHost.set(h, s.label)));
+  let changed = 0;
+  state.editedRows.forEach(r => {
+    const h = rowHost(r);
+    // Un-registered host falls back to the host itself, so a row is never
+    // silently unattributed (matches computeRowSourceSite).
+    const next = h ? (labelByHost.get(h) || h) : '';
+    if (String(r[SOURCE_SITE_COL] || '') !== next) { r[SOURCE_SITE_COL] = next; changed++; }
+  });
+  return changed;
+}
+
+/** Add a registry entry for every host in the data that isn't covered yet.
+ *  One site per host is the only safe default — merging `careers.` into `www.`
+ *  is a judgment call the tool can't make. Returns the number added. */
+function seedSiteLibraryFromData() {
+  const covered = new Set();
+  (state.siteLibrary || []).forEach(s => (s.hosts || []).forEach(h => covered.add(h)));
+  const found = new Map();   // host → page count, for a stable ordering
+  state.editedRows.forEach(r => {
+    const h = rowHost(r);
+    if (h && !covered.has(h)) found.set(h, (found.get(h) || 0) + 1);
+  });
+  if (!found.size) return 0;
+  [...found.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .forEach(([host]) => {
+      state.siteLibrary.push({
+        label: host, hosts: [host], cms: '', owner: '',
+        inScope: true, color: nextSiteColor(), notes: ''
+      });
+    });
+  state.projectSettings.siteLibrary = state.siteLibrary;
+  return found.size;
+}
+
+const SITE_AUTO_COLORS = ['#2563eb', '#ea580c', '#0d9488', '#7c3aed', '#ca8a04', '#db2777', '#65a30d', '#0891b2'];
+function nextSiteColor() {
+  const used = new Set((state.siteLibrary || []).map(s => (s.color || '').toLowerCase()));
+  return SITE_AUTO_COLORS.find(c => !used.has(c))
+    || shiftHexLightness(SITE_AUTO_COLORS[(state.siteLibrary || []).length % SITE_AUTO_COLORS.length], 0.3);
+}
+
+/** Is this row's source site in scope for the audit?
+ *  Anything not explicitly opted out counts — an unregistered host, a row with
+ *  no parseable URL, and every site on a single-domain project all pass. */
+function rowSiteInScope(row) {
+  const site = siteOfRow(row);
+  return !site || site.inScope !== false;
+}
+
+/** Canonical row set for reporting. Rows belonging to a site the auditor marked
+ *  out of scope are excluded from every report denominator — otherwise a site
+ *  that isn't being migrated still drags down every completion percentage. */
+function reportRows() {
+  if (!(state.siteLibrary || []).some(s => s.inScope === false)) return state.editedRows;
+  return state.editedRows.filter(rowSiteInScope);
+}
+
+/** With several source sites and no Site Domain set, getRedirectBaseUrl() falls
+ *  back to the origin of the first row that parses — so every derived redirect
+ *  destination gets built on whichever domain happened to sort first. Harmless
+ *  on a single-domain crawl (that origin IS the site); arbitrary here. */
+function maybeWarnMissingSiteDomain() {
+  const inScope = (state.siteLibrary || []).filter(s => s.inScope !== false);
+  if (inScope.length < 2) return;
+  if (String(state.projectSettings.siteDomain || '').trim()) return;
+  if (state.projectSettings.multiSiteDomainWarningDismissed) return;
+  showToast(`${inScope.length} source sites, no Site Domain set — redirect destinations would use whichever domain comes first. Set it in Project Settings → Identity.`, 'error');
+}
+
+/** How many rows are being held back, for the "N excluded" note reports show. */
+function outOfScopeSiteInfo() {
+  const out = (state.siteLibrary || []).filter(s => s.inScope === false);
+  if (!out.length) return null;
+  const rows = state.editedRows.length - reportRows().length;
+  return { sites: out.map(s => s.label), rows };
+}
+
+// ─── URL variant classification (canonical-driven) ───────────────────────────
+// See docs/dev/URL_VARIANT_TRIAGE_PROPOSAL.md. A crawl is not a content
+// inventory: on a CMS-driven site a large share of URLs are alternate views of
+// the same page (pagination, sorting, facets, tracking). The site itself says
+// which — via rel=canonical, which Screaming Frog exports and which the app
+// ingested but never read until now. That declaration is authoritative where a
+// parameter-name rule would only be a guess about someone else's CMS.
+
+const CANONICAL_COL_CANDIDATES = ['Canonical Link Element 1', 'Canonical Link Element', 'Canonical'];
+
+function canonicalCol() {
+  return CANONICAL_COL_CANDIDATES.find(c => state.headers.includes(c)) || null;
+}
+
+/** Strip the query while keeping everything else, for the query-only test. */
+function urlWithoutQuery(u) {
+  try { const p = new URL(u); return p.origin + p.pathname; } catch (_) { return String(u || ''); }
+}
+
+/** Classify every row against its declared canonical.
+ *
+ *  Skips rows on out-of-scope sites — a property nobody is migrating shouldn't
+ *  have decisions written into it by a bulk action.
+ *
+ *  Returns { groups, selfCanonical, undeclared, noCanonicalCol } where `groups`
+ *  is a Map keyed by canonical target:
+ *    { target, targetInCrawl, rows: [{row, origIndex, queryOnly}], queryOnly, total }
+ *  `queryOnly` on the group is true only when EVERY variant in it differs from
+ *  the target by query string alone — that is what decides the default action.
+ */
+function classifyUrlVariants() {
+  const canonCol = canonicalCol();
+  if (!canonCol) return { groups: new Map(), selfCanonical: 0, undeclared: 0, noCanonicalCol: true };
+
+  const urlCol = state.urlColumn || 'Address';
+  const rows = reportRows();
+  const addresses = new Set(rows.map(r => String(r[urlCol] || '').trim()).filter(Boolean));
+  // origIndex must come from the FULL row list — reportRows() may be a filtered
+  // copy, and every downstream write indexes into state.editedRows.
+  const indexOf = new Map();
+  state.editedRows.forEach((r, i) => { const a = String(r[urlCol] || '').trim(); if (a && !indexOf.has(a)) indexOf.set(a, i); });
+
+  const groups = new Map();
+  let selfCanonical = 0, undeclared = 0;
+
+  rows.forEach(row => {
+    const addr = String(row[urlCol] || '').trim();
+    if (!addr) return;
+    const canon = String(row[canonCol] || '').trim();
+    if (!canon) { undeclared++; return; }
+    if (canon === addr) { selfCanonical++; return; }
+
+    const origIndex = indexOf.get(addr);
+    if (origIndex === undefined) return;
+    const queryOnly = urlWithoutQuery(addr) === urlWithoutQuery(canon);
+
+    if (!groups.has(canon)) {
+      groups.set(canon, { target: canon, targetInCrawl: addresses.has(canon), rows: [], queryOnly: true, total: 0 });
+    }
+    const g = groups.get(canon);
+    g.rows.push({ row, origIndex, queryOnly });
+    g.total++;
+    if (!queryOnly) g.queryOnly = false;
+  });
+
+  return { groups, selfCanonical, undeclared, noCanonicalCol: false };
+}
+
+/** Default action for a group.
+ *
+ *  Query-only variants share their canonical's PATH, so the canonical's own
+ *  redirect already covers them — emitting a rule per `?page=N` would bury the
+ *  handful that matter under thousands of identical ones. They are simply not
+ *  distinct content: Exclude.
+ *
+ *  A variant on a different path is a URL that genuinely dies, so it needs a
+ *  rule: Consolidate into the canonical, which drops straight onto the existing
+ *  `_ConsolidateTargetId` model and lets the redirect resolver do the rest.
+ */
+function defaultVariantAction(group) {
+  if (!group.targetInCrawl) return 'skip';   // nothing to consolidate into
+  return group.queryOnly ? 'exclude' : 'consolidate';
+}
+
+/** Offer triage on open, the way non-200 does — never act unattended. */
+function maybeOfferUrlVariantTriage() {
+  if (state.projectSettings.urlVariantTriageDismissed) return;
+  if (!canonicalCol()) return;
+  const { groups } = classifyUrlVariants();
+  let undecided = 0;
+  groups.forEach(g => g.rows.forEach(({ row }) => { if (!String(row[kkeCol()] || '').trim()) undecided++; }));
+  if (undecided < 25) return;   // not worth interrupting for a handful
+  showToast(`${undecided.toLocaleString()} URLs are alternate views of another page (rel=canonical) — use Project → Triage URL Variants`, 'info');
+}
+
+function openUrlVariantTriageDialog() {
+  if (!state.headers.length) { showToast('Open a file first', 'error'); return; }
+  const canonCol = canonicalCol();
+  if (!canonCol) {
+    alertDialog({
+      title: 'No canonical column',
+      message: 'This crawl has no "Canonical Link Element 1" column, so there is nothing authoritative to group by.\n\n'
+        + 'Re-crawl with canonical extraction enabled, or triage these URLs by hand.'
+    });
+    return;
+  }
+
+  const { groups, selfCanonical, undeclared } = classifyUrlVariants();
+  if (groups.size === 0) {
+    showToast('No canonical variants found — every page is self-canonical or undeclared', 'info');
+    return;
+  }
+
+  const ordered = [...groups.values()].sort((a, b) => b.total - a.total);
+  const totalVariants = ordered.reduce((n, g) => n + g.total, 0);
+  const missingTarget = ordered.filter(g => !g.targetInCrawl).reduce((n, g) => n + g.total, 0);
+  const shortUrl = (u) => { try { const p = new URL(u); return p.host.replace(/^www\./, '') + p.pathname; } catch (_) { return String(u); } };
+
+  const rowsHtml = ordered.slice(0, 300).map((g, i) => `
+    <tr${g.targetInCrawl ? '' : ' style="opacity:0.6;"'}>
+      <td style="padding:4px 8px;word-break:break-all;font-size:11px;">${escapeHtml(shortUrl(g.target))}
+        ${g.targetInCrawl ? '' : '<div style="color:var(--kke-kill);font-size:10px;">canonical target not in this crawl</div>'}</td>
+      <td style="padding:4px 8px;text-align:right;"><strong>${g.total.toLocaleString()}</strong></td>
+      <td style="padding:4px 8px;font-size:11px;color:var(--text-muted);">${g.queryOnly ? 'query only' : 'different path'}</td>
+      <td style="padding:4px 8px;">
+        <select class="_uvt-action" data-i="${i}" style="font-size:11px;padding:2px 4px;">
+          <option value="exclude">Exclude — alternate view</option>
+          <option value="consolidate">Consolidate into canonical</option>
+          <option value="skip">Leave undecided</option>
+        </select>
+      </td>
+    </tr>`).join('');
+
+  const api = openModal({
+    title: 'Triage URL Variants',
+    width: 860,
+    body: `
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px;">
+        These URLs declare a <code>rel=canonical</code> pointing at another page — the site's own statement that they
+        are not distinct content. Grouped by the page they point to, largest first.
+      </p>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;margin-bottom:10px;">
+        <span><strong>${totalVariants.toLocaleString()}</strong> variants in <strong>${groups.size}</strong> groups</span>
+        <span style="color:var(--text-muted);"><strong>${selfCanonical.toLocaleString()}</strong> self-canonical (real content)</span>
+        <span style="color:var(--text-muted);"><strong>${undeclared.toLocaleString()}</strong> no canonical declared</span>
+        ${missingTarget ? `<span style="color:var(--kke-kill);"><strong>${missingTarget.toLocaleString()}</strong> whose target wasn't crawled</span>` : ''}
+      </div>
+      <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px;">
+        <strong>Query only</strong> means the variant differs from its canonical by query string alone — the path is the
+        same, so the canonical's redirect already covers it and it needs no rule of its own. <strong>Different path</strong>
+        means the URL itself dies, so it consolidates into the canonical and gets a redirect.
+        Nothing is hidden: every page keeps its row, and the decision is written onto it.
+      </p>
+      <div style="max-height:44vh;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
+        <table style="width:100%;border-collapse:collapse;">
+          <thead><tr style="text-align:left;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-surface);">
+            <th style="padding:6px 8px;font-size:11px;">Canonical target</th>
+            <th style="padding:6px 8px;font-size:11px;text-align:right;">Variants</th>
+            <th style="padding:6px 8px;font-size:11px;">Kind</th>
+            <th style="padding:6px 8px;font-size:11px;">Action</th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
+      ${ordered.length > 300 ? `<p style="font-size:11px;color:var(--text-muted);margin:6px 0 0;">Showing the 300 largest of ${ordered.length} groups; the rest keep their default action.</p>` : ''}
+      <label class="setting-row" style="margin-top:8px;">
+        <input type="checkbox" id="_uvt-skip-assigned" checked>
+        <span>Skip pages that already have a KKE decision</span>
+      </label>
+      <label class="setting-row">
+        <input type="checkbox" id="_uvt-dismiss">
+        <span>Don't offer this again for this project</span>
+      </label>
+    `,
+    buttons: [
+      { label: 'Cancel', variant: 'ghost', value: false },
+      { label: 'Apply Triage', variant: 'primary', primary: true, closeOnClick: false,
+        onClick: (m) => applyUrlVariantTriage(ordered, m) }
+    ]
+  });
+
+  // Pre-select defaults per group
+  api.body.querySelectorAll('._uvt-action').forEach(sel => {
+    sel.value = defaultVariantAction(ordered[+sel.dataset.i]);
+  });
+  api.body.querySelector('#_uvt-dismiss').addEventListener('change', (e) => {
+    if (e.target.checked) state.projectSettings.urlVariantTriageDismissed = true;
+    else delete state.projectSettings.urlVariantTriageDismissed;
+    setDirty(true);
+  });
+}
+
+async function applyUrlVariantTriage(ordered, api) {
+  const skipAssigned = api.body.querySelector('#_uvt-skip-assigned').checked;
+  const actions = new Map();
+  api.body.querySelectorAll('._uvt-action').forEach(sel => actions.set(+sel.dataset.i, sel.value));
+
+  // A canonical pointing at one page from most of the site is a known CMS
+  // misconfiguration, and collapsing a whole site on that basis would be a
+  // disaster. The shape alone can't tell it from a legitimately huge paginated
+  // list, so ask rather than guess or silently block.
+  const acting = ordered.filter((g, i) => (actions.get(i) ?? defaultVariantAction(g)) !== 'skip');
+  const total = acting.reduce((n, g) => n + g.total, 0);
+  const biggest = acting[0];
+  if (biggest && total > 200 && biggest.total / total > 0.5) {
+    const ok = await confirmDialog({
+      title: 'Check this canonical first',
+      message: `One page absorbs ${biggest.total.toLocaleString()} of the ${total.toLocaleString()} variants being triaged `
+        + `(${Math.round(biggest.total / total * 100)}%).\n\n`
+        + `That is normal for a large paginated list — and it is also what a misconfigured canonical looks like when a `
+        + `CMS points every page at one URL. Worth confirming that target is genuinely the canonical for all of them.\n\n`
+        + `Target: ${biggest.target}`,
+      confirmLabel: 'It is correct — apply',
+      cancelLabel: 'Let me check'
+    });
+    if (!ok) return;
+  }
+
+  const kCol = kkeCol();
+  const undoItems = [];
+  let excluded = 0, consolidated = 0;
+
+  ordered.forEach((g, i) => {
+    const action = actions.get(i) ?? defaultVariantAction(g);
+    if (action === 'skip') return;
+    g.rows.forEach(({ origIndex }) => {
+      const row = state.editedRows[origIndex];
+      if (!row) return;
+      const oldKke = String(row[kCol] || '').trim();
+      if (skipAssigned && oldKke) return;
+
+      if (action === 'exclude') {
+        if (oldKke === 'Exclude') return;
+        row[kCol] = 'Exclude';
+        logChange(origIndex, kCol, oldKke, 'Exclude');
+        undoItems.push({ origIndex, field: kCol, oldValue: oldKke, newValue: 'Exclude' });
+        excluded++;
+      } else if (action === 'consolidate') {
+        if (!g.targetInCrawl) return;           // nothing to point at
+        if (oldKke !== 'Consolidate') {
+          row[kCol] = 'Consolidate';
+          logChange(origIndex, kCol, oldKke, 'Consolidate');
+          undoItems.push({ origIndex, field: kCol, oldValue: oldKke, newValue: 'Consolidate' });
+        }
+        // The canonical's Address IS the consolidation identity — the same thing
+        // applyConsolidateTarget() writes, so the redirect resolver needs no help.
+        const oldId = String(row[CONSOLIDATE_ID_COL] || '');
+        if (oldId !== g.target) {
+          row[CONSOLIDATE_ID_COL] = g.target;
+          logChange(origIndex, CONSOLIDATE_ID_COL, oldId, g.target);
+          undoItems.push({ origIndex, field: CONSOLIDATE_ID_COL, oldValue: oldId, newValue: g.target });
+        }
+        consolidated++;
+      }
+    });
+  });
+
+  api.close();
+  if (!undoItems.length) { showToast('No pages were changed', 'info'); return; }
+
+  pushBulkEditUndo(undoItems, 'URL variant triage');
+  refreshAllConsolidateDisplays();
+  setDirty(true);
+  detectDuplicates();
+  applyFilter();
+  if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+  showToast(`${excluded.toLocaleString()} excluded · ${consolidated.toLocaleString()} consolidated — Cmd+Z undoes all of it`, 'success');
+}
+
+// ─── Consolidation reports ───────────────────────────────────────────────────
+
+/** Content fingerprints shared across two or more SOURCE SITES.
+ *  Reuses the same Title/H1/Meta fingerprint `detectDuplicates()` already
+ *  computes — the engine exists, it just never grouped by site, which is the
+ *  form the question takes in a merger ("what do these sites both have?").
+ *  Returns [{ fingerprint, sites: [...], rows: [...] }], biggest overlap first. */
+function crossSiteDuplicateGroups() {
+  const dupFields = ['Title 1', 'H1-1', 'Meta Description 1'].filter(f => state.headers.includes(f));
+  if (!dupFields.length) return [];
+  const groups = new Map();
+  reportRows().forEach(r => {
+    const fp = dupFields.map(f => String(r[f] || '').trim().toLowerCase()).join('||');
+    if (!fp.replace(/\|/g, '')) return;              // entirely blank — not a duplicate
+    if (!groups.has(fp)) groups.set(fp, []);
+    groups.get(fp).push(r);
+  });
+  const out = [];
+  groups.forEach((rows, fp) => {
+    const sites = [...new Set(rows.map(r => String(r[SOURCE_SITE_COL] || '').trim()).filter(Boolean))];
+    if (sites.length > 1) out.push({ fingerprint: fp, sites, rows });
+  });
+  return out.sort((a, b) => b.sites.length - a.sites.length || b.rows.length - a.rows.length);
+}
+
+/** Report — Site Consolidation Overview. What each source site contributes,
+ *  and what it would cost to keep. The readout table for a merger. */
+function reportSiteConsolidation() {
+  const title = 'Site Consolidation Overview';
+  const rows = reportRows();
+  const urlCol = state.urlColumn || 'Address';
+  const lib = (state.siteLibrary || []);
+
+  if (lib.length < 2) {
+    showToast('Only one source site in this project — nothing to consolidate', 'error');
+    return;
+  }
+
+  // Overlap counts per site, from the shared fingerprint engine
+  const overlap = new Map();
+  crossSiteDuplicateGroups().forEach(g => {
+    g.rows.forEach(r => {
+      const s = String(r[SOURCE_SITE_COL] || '').trim();
+      if (s) overlap.set(s, (overlap.get(s) || 0) + 1);
+    });
+  });
+
+  const stats = new Map();
+  // Out-of-scope sites are kept out of every TOTAL, but still get an honest page
+  // count on their own row — showing 0 would read as "this site is empty".
+  state.editedRows.forEach(r => {
+    const label = String(r[SOURCE_SITE_COL] || '').trim() || '(unattributed)';
+    if (!stats.has(label)) stats.set(label, { pages: 0, kke: {}, audiences: new Set(), redirects: 0 });
+    const st = stats.get(label);
+    st.pages++;
+    const eff = audEffectiveKke(r) || '(unreviewed)';
+    st.kke[eff] = (st.kke[eff] || 0) + 1;
+    rowAudiences(r).forEach(a => { if (a !== AUDIENCE_NONE) st.audiences.add(a); });
+    // The count that matters is "how many redirect rules does retiring this site
+    // require" — which includes rules still awaiting a destination. Counting only
+    // resolved destinations reports zero on exactly the project that hasn't
+    // written its redirects yet, i.e. every project when you most want the number.
+    if (redirectRuleForRow(r)) st.redirects++;
+  });
+
+  const ordered = lib.slice().sort((a, b) => (stats.get(b.label)?.pages || 0) - (stats.get(a.label)?.pages || 0));
+
+  const bodyRows = ordered.map(site => {
+    const st = stats.get(site.label) || { pages: 0, kke: {}, audiences: new Set(), redirects: 0 };
+    const kkeHtml = Object.entries(st.kke).sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => `<span style="${audKkeStyle(k)}">${escapeHtml(k)}</span>×${n}`).join(' · ') || '—';
+    const ov = overlap.get(site.label) || 0;
+    const out = site.inScope === false;
+    return `<tr${out ? ' style="opacity:0.55;"' : ''}>
+      <td><strong>${escapeHtml(site.label)}</strong>
+        ${out ? ' <span style="font-size:10px;background:#f3f4f6;color:#4b5563;padding:1px 5px;border-radius:3px;">out of scope</span>' : ''}
+        <div style="font-size:11px;color:#777;">${escapeHtml((site.hosts || []).join(', '))}</div>
+        ${site.cms || site.owner ? `<div style="font-size:11px;color:#999;">${
+          [site.cms, site.owner].filter(Boolean).map(escapeHtml).join(' · ')}</div>` : ''}</td>
+      <td><strong>${st.pages}</strong></td>
+      <td style="font-size:11px;">${kkeHtml}</td>
+      <td style="font-size:11px;">${st.audiences.size ? escapeHtml([...st.audiences].slice(0, 4).join(', ')) + (st.audiences.size > 4 ? ` +${st.audiences.size - 4}` : '') : '—'}</td>
+      <td>${ov ? `<strong>${ov}</strong> <span style="color:#888;font-size:11px;">(${Math.round((ov / Math.max(st.pages, 1)) * 100)}%)</span>` : '—'}</td>
+      <td>${st.redirects || '—'}</td>
+    </tr>`;
+  }).join('');
+
+  const body = `
+    <div style="display:flex;gap:20px;margin-bottom:18px;flex-wrap:wrap;">
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Source sites</div>
+        <div style="font-size:28px;font-weight:700;">${lib.length}</div>
+        <div style="font-size:11px;color:#888;">${lib.filter(s => s.inScope !== false).length} in scope</div>
+      </div>
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Pages in scope</div>
+        <div style="font-size:28px;font-weight:700;">${rows.length}</div>
+      </div>
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Pages duplicated across sites</div>
+        <div style="font-size:28px;font-weight:700;">${[...overlap.values()].reduce((a, b) => a + b, 0)}</div>
+      </div>
+    </div>
+
+    <h2 style="font-size:14px;margin:0 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">What each site contributes</h2>
+    <p style="font-size:12px;color:#666;margin:0 0 8px;">
+      <strong>Overlap</strong> counts pages whose title, H1 and meta description also appear on another site in this
+      set — the merge candidates. A site that is mostly overlap and serves no audience the others don't is a
+      candidate to retire wholesale rather than migrate page by page.
+    </p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr style="text-align:left;border-bottom:2px solid #ddd;">
+        <th style="padding:6px 8px;">Site</th>
+        <th style="padding:6px 8px;">Pages</th>
+        <th style="padding:6px 8px;">Disposition</th>
+        <th style="padding:6px 8px;">Audiences served</th>
+        <th style="padding:6px 8px;">Overlap</th>
+        <th style="padding:6px 8px;" title="Redirect rules required to retire this site, including those still awaiting a destination">Redirect rules</th>
+      </tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+  `;
+
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
+}
+
+/** Report — Cross-Site Duplicate Overlap. The Consolidate worklist for a merger. */
+function reportCrossSiteDuplicates() {
+  const title = 'Cross-Site Duplicate Overlap';
+  const groups = crossSiteDuplicateGroups();
+  const urlCol = state.urlColumn || 'Address';
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
+
+  const groupHtml = groups.slice(0, 200).map(g => {
+    const label = titleCol ? String(g.rows[0][titleCol] || '') : '(untitled)';
+    return `<div style="margin-bottom:14px;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
+      <div style="background:#f8f9fa;padding:6px 10px;font-size:12px;">
+        <strong>${escapeHtml(label || '(untitled)')}</strong>
+        <span style="color:#888;"> — same content on ${g.sites.length} sites</span>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <tbody>${g.rows.map(r => `<tr>
+          <td style="padding:4px 10px;width:22%;"><strong>${escapeHtml(String(r[SOURCE_SITE_COL] || ''))}</strong></td>
+          <td style="padding:4px 10px;word-break:break-all;">${escapeHtml(String(r[urlCol] || ''))}</td>
+          <td style="padding:4px 10px;width:14%;${audKkeStyle(audEffectiveKke(r))}">${escapeHtml(audEffectiveKke(r) || '—')}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+
+  const body = `
+    <div style="display:flex;gap:20px;margin-bottom:18px;flex-wrap:wrap;">
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Overlapping sets</div>
+        <div style="font-size:28px;font-weight:700;">${groups.length}</div>
+      </div>
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Pages involved</div>
+        <div style="font-size:28px;font-weight:700;">${groups.reduce((n, g) => n + g.rows.length, 0)}</div>
+      </div>
+    </div>
+    <p style="font-size:12px;color:#666;margin:0 0 12px;">
+      Pages whose <strong>title, H1 and meta description</strong> are identical across two or more source sites.
+      In a consolidation each set collapses to one surviving page — pick the master, mark the rest
+      <strong>Consolidate</strong> pointing at it, and the redirect map writes itself. Content that merely
+      overlaps in subject won't appear here; this is exact-match only, so treat it as a floor, not a ceiling.
+    </p>
+    ${groupHtml || '<p style="font-size:12px;color:#888;">No exact content duplicates across sites.</p>'}
+    ${groups.length > 200 ? `<p style="font-size:11px;color:#888;">Showing the first 200 of ${groups.length} sets.</p>` : ''}
+  `;
+
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
+}
+
+/** Report — Jobs Coverage. Per job: what serves it, and — the point — what
+ *  doesn't. An unserved job is the cleanest brief for net-new content there is,
+ *  because it traces a proposed page back to something the client said in their
+ *  own workshop rather than to an auditor's opinion. */
+function reportJobsCoverage() {
+  const title = 'Jobs Coverage';
+  const lib = sortedJobLibrary();
+  if (!lib.length) {
+    showToast('No jobs defined — add them in Project Settings → Audience', 'error');
+    return;
+  }
+  const scopeRows = audienceScopeRows();
+  const urlCol = state.urlColumn || 'Address';
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
+
+  const byJob = new Map(lib.map(j => [j.label, []]));
+  scopeRows.forEach(r => rowJobs(r).forEach(l => { if (byJob.has(l)) byJob.get(l).push(r); }));
+
+  const unserved = lib.filter(j => !byJob.get(j.label).length);
+  const tagged = scopeRows.filter(r => rowJobs(r).length).length;
+
+  const rowsHtml = lib.map(job => {
+    const pages = byJob.get(job.label);
+    const kke = {};
+    pages.forEach(r => { const k = audEffectiveKke(r) || '(unreviewed)'; kke[k] = (kke[k] || 0) + 1; });
+    const kkeHtml = Object.entries(kke).sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => `<span style="${audKkeStyle(k)}">${escapeHtml(k)}</span>×${n}`).join(' · ') || '—';
+    // "Best page" = the one you'd send someone to: a Keep beats an Evolve beats
+    // anything unreviewed. Deliberately not a quality judgement — just the page
+    // most likely to survive and answer the job.
+    const rank = (r) => { const e = audEffectiveKke(r); return e === 'Keep' ? 0 : e === 'Evolve' ? 1 : e ? 3 : 2; };
+    const best = pages.slice().sort((a, b) => rank(a) - rank(b))[0];
+    return `<tr${pages.length ? '' : ' style="background:#fef2f2;"'}>
+      <td><strong>${escapeHtml(job.label)}</strong>
+        ${job.statement ? `<div style="font-size:11px;color:#777;">${escapeHtml(job.statement)}</div>` : ''}
+        <div style="font-size:11px;color:#999;">${(job.audiences || []).length ? escapeHtml(job.audiences.join(' · ')) : 'any audience'}</div></td>
+      <td>${pages.length
+        ? `<strong>${pages.length}</strong>`
+        : '<strong style="color:#dc2626;">none</strong>'}</td>
+      <td style="font-size:11px;">${kkeHtml}</td>
+      <td style="font-size:11px;word-break:break-all;">${best
+        ? `${titleCol && best[titleCol] ? escapeHtml(String(best[titleCol])) + '<br>' : ''}<span style="color:#777;">${escapeHtml(String(best[urlCol] || ''))}</span>`
+        : '<em style="color:#dc2626;">nothing answers this</em>'}</td>
+    </tr>`;
+  }).join('');
+
+  const body = `
+    <div style="display:flex;gap:20px;margin-bottom:18px;flex-wrap:wrap;">
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Jobs defined</div>
+        <div style="font-size:28px;font-weight:700;">${lib.length}</div>
+      </div>
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Unserved</div>
+        <div style="font-size:28px;font-weight:700;${unserved.length ? 'color:#dc2626;' : ''}">${unserved.length}</div>
+        <div style="font-size:11px;color:#888;">no page answers ${unserved.length === 1 ? 'it' : 'them'}</div>
+      </div>
+      <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Pages tagged</div>
+        <div style="font-size:28px;font-weight:700;">${tagged} <span style="font-size:14px;color:#888;">/ ${scopeRows.length}</span></div>
+      </div>
+    </div>
+
+    ${unserved.length ? `
+    <h2 style="font-size:14px;margin:0 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">Jobs nothing answers</h2>
+    <p style="font-size:12px;color:#666;margin:0 0 8px;">
+      The client told you people come to do these, and the site has no page for them. This is the strongest
+      brief for net-new content available — each line traces back to the workshop rather than to an opinion.
+    </p>
+    <ul style="font-size:12px;margin:0 0 20px;padding-left:20px;">
+      ${unserved.map(j => `<li style="margin-bottom:4px;"><strong>${escapeHtml(j.label)}</strong>
+        ${j.statement ? `<br><span style="color:#666;">${escapeHtml(j.statement)}</span>` : ''}
+        ${(j.audiences || []).length ? `<br><span style="color:#999;font-size:11px;">${escapeHtml(j.audiences.join(' · '))}</span>` : ''}</li>`).join('')}
+    </ul>` : ''}
+
+    <h2 style="font-size:14px;margin:0 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">Coverage by job</h2>
+    <p style="font-size:12px;color:#666;margin:0 0 8px;">
+      Grouped by the audience each job belongs to. <strong>Best page</strong> is the one you'd send someone to —
+      a Keep outranks an Evolve outranks an unreviewed page. It is not a quality score.
+    </p>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr style="text-align:left;border-bottom:2px solid #ddd;">
+        <th style="padding:6px 8px;">Job</th>
+        <th style="padding:6px 8px;">Pages</th>
+        <th style="padding:6px 8px;">Disposition</th>
+        <th style="padding:6px 8px;">Best page</th>
+      </tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  `;
+
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
+}
+
+/** Report B — Audience × Section matrix. The artifact that makes "this whole
+ *  section is written for the wrong people" visible at a glance. */
+function reportAudienceMatrix() {
+  const title = 'Audience × Section Matrix';
+  const scopeRows = audienceScopeRows();
+
+  const sections = new Map();   // section → { total, byAudience: {name: n} }
+  const sectionOf = makeSectionResolver();
+  scopeRows.forEach(r => {
+    const sec = sectionOf(r) || '(unplaced)';
+    if (!sections.has(sec)) sections.set(sec, { total: 0, byAudience: {} });
+    const s = sections.get(sec);
+    s.total++;
+    rowAudiences(r).forEach(a => { s.byAudience[a] = (s.byAudience[a] || 0) + 1; });
+  });
+
+  // Only audiences actually in use get a column. An unused audience contributes
+  // a column of dots, and with a full library that pushes the real data off the
+  // page — the Coverage report is where a zero-page audience is the finding.
+  const inUse = new Set();
+  sections.forEach(s => Object.keys(s.byAudience).forEach(n => inUse.add(n)));
+  const audiences = sortedAudienceLibrary()
+    .filter(a => a.name !== AUDIENCE_NONE && inUse.has(a.name));
+  const sectionList = [...sections.entries()].sort((a, b) => b[1].total - a[1].total);
+
+  const headCells = audiences.map(a =>
+    `<th style="padding:6px 4px;font-size:10px;text-align:center;vertical-align:bottom;">
+       ${a.color ? `<div style="width:100%;height:3px;background:${escapeHtml(a.color)};margin-bottom:4px;"></div>` : ''}
+       ${escapeHtml(a.name)}</th>`).join('');
+
+  const bodyRows = sectionList.map(([sec, s]) => {
+    const cells = audiences.map(a => {
+      const n = s.byAudience[a.name] || 0;
+      if (!n) return '<td style="text-align:center;color:#ddd;">·</td>';
+      const share = s.total ? n / s.total : 0;
+      // Cell weight tracks the share of the section serving that audience, so
+      // the dominant audience of each section reads off the page directly.
+      const bg = a.color ? hexToRgba(a.color, 0.12 + share * 0.55) : `rgba(37,99,235,${0.12 + share * 0.55})`;
+      return `<td style="text-align:center;background:${bg};font-weight:${share > 0.5 ? 700 : 400};">${n}</td>`;
+    }).join('');
+    return `<tr><td style="white-space:nowrap;"><strong>${escapeHtml(sec)}</strong>
+      <span style="color:#888;font-size:11px;">${s.total}</span></td>${cells}</tr>`;
+  }).join('');
+
+  const body = `
+    ${audienceReportPreamble(scopeRows)}
+    <h2 style="font-size:14px;margin:0 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">Who each section serves</h2>
+    <p style="font-size:12px;color:#666;margin:0 0 10px;">
+      Rows are top-level site sections; columns are audiences in priority order. Cell shading is the share of
+      that section's pages serving that audience — a dark column far from where you'd expect it is the finding
+      (an Alumni section written mostly for prospective students, say). Counts overlap: one page serving three
+      audiences is counted in all three.
+    </p>
+    ${sectionOf.multiSite ? `<p style="background:#eff6ff;border-left:3px solid #2563eb;padding:8px 12px;font-size:12px;margin:0 0 10px;">
+      This audit spans <strong>${sectionOf.hostCount} source sites</strong>, so unplaced pages are grouped as
+      <em>domain › section</em> — otherwise two sites' <code>/about</code> pages would merge into one row and hide
+      the comparison this report exists to make. Pages already placed on the target sitemap are grouped by their
+      new section instead.</p>` : ''}
+    <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr style="text-align:left;border-bottom:2px solid #ddd;">
+        <th style="padding:6px 8px;">Section</th>${headCells}
+      </tr></thead>
+      <tbody>${bodyRows || `<tr><td colspan="${audiences.length + 1}" style="padding:12px;color:#888;">Nothing tagged yet.</td></tr>`}</tbody>
+    </table>
+    </div>
+  `;
+
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
+}
+
+function hexToRgba(hex, alpha) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(String(hex || '').trim());
+  if (!m) return `rgba(37,99,235,${alpha})`;
+  return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${alpha})`;
+}
+
+/** Report C — Audience Debt. Three worklists that translate straight into scope. */
+function reportAudienceDebt() {
+  const title = 'Audience Debt';
+  const scopeRows = audienceScopeRows();
+  const urlCol = state.urlColumn || 'Address';
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
+
+  const nameOf = r => titleCol ? String(r[titleCol] || '') : '';
+
+  // 1. Serves only non-priority audiences — maintenance cost, no strategic return.
+  const offStrategy = scopeRows.filter(r => {
+    const list = rowAudiences(r);
+    return list.length && list.every(a => a === AUDIENCE_NONE || audienceTier(a) === 'Tertiary' || audienceTier(a) === 'Not a target');
+  });
+
+  // 2. Priority-audience content being removed — usually a mistake worth a second look.
+  const killedPriority = state.editedRows.filter(r => {
+    const eff = audEffectiveKke(r);
+    if (eff !== 'Kill') return false;
+    return rowAudiences(r).some(a => audienceTier(a) === 'Primary');
+  });
+
+  // 3. Serving everybody = serving nobody.
+  const overTagged = scopeRows.filter(r => rowAudiences(r).filter(a => a !== AUDIENCE_NONE).length >= 4);
+
+  const tableOf = (rows, extraHead, extraCell) => rows.length
+    ? `<table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead><tr style="text-align:left;border-bottom:2px solid #ddd;">
+          <th style="padding:6px 8px;">URL</th>
+          ${titleCol ? '<th style="padding:6px 8px;">Title</th>' : ''}
+          <th style="padding:6px 8px;">KKE</th>
+          <th style="padding:6px 8px;">${extraHead}</th>
+        </tr></thead>
+        <tbody>${rows.slice(0, 150).map(r => `<tr>
+          <td style="padding:4px 8px;word-break:break-all;">${escapeHtml(String(r[urlCol] || ''))}</td>
+          ${titleCol ? `<td style="padding:4px 8px;">${escapeHtml(nameOf(r))}</td>` : ''}
+          <td style="padding:4px 8px;${audKkeStyle(audEffectiveKke(r))}">${escapeHtml(audEffectiveKke(r) || '—')}</td>
+          <td style="padding:4px 8px;">${extraCell(r)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+      ${rows.length > 150 ? `<p style="font-size:11px;color:#888;margin-top:6px;">Showing the first 150 of ${rows.length}.</p>` : ''}`
+    : '<p style="font-size:12px;color:#888;margin:0;">Nothing in this category.</p>';
+
+  const body = `
+    ${audienceReportPreamble(scopeRows)}
+
+    <h2 style="font-size:14px;margin:0 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">
+      Serves only non-priority audiences <span style="color:#888;font-weight:400;">(${offStrategy.length})</span></h2>
+    <p style="font-size:12px;color:#666;margin:0 0 8px;">
+      Reviewed for audience, and everything it serves is Tertiary or off-target. This is the carrying cost of the
+      site — content that has to be maintained, migrated, and QA'd without serving anyone your organization
+      ranked as a priority. Strong Kill / Consolidate candidates.</p>
+    ${tableOf(offStrategy, 'Audiences', r => escapeHtml(rowAudiences(r).join(', ')))}
+
+    <h2 style="font-size:14px;margin:24px 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">
+      Priority-audience content marked Kill <span style="color:#888;font-weight:400;">(${killedPriority.length})</span></h2>
+    <p style="font-size:12px;color:#666;margin:0 0 8px;">
+      These pages serve a Primary audience but are slated for removal. Sometimes correct (duplicated elsewhere,
+      genuinely obsolete) — but this is the list to re-read before the redirect map is signed off.</p>
+    ${tableOf(killedPriority, 'Primary audiences', r =>
+      escapeHtml(rowAudiences(r).filter(a => audienceTier(a) === 'Primary').join(', ')))}
+
+    <h2 style="font-size:14px;margin:24px 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">
+      Serving four or more audiences <span style="color:#888;font-weight:400;">(${overTagged.length})</span></h2>
+    <p style="font-size:12px;color:#666;margin:0 0 8px;">
+      A page written for everyone is usually written for no one. Either it is a genuine hub, or it is doing several
+      jobs at once and should be split — and occasionally it just means the audience library has grown too broad.</p>
+    ${tableOf(overTagged, 'Audiences', r => `${rowAudiences(r).length} — ${escapeHtml(rowAudiences(r).join(', '))}`)}
+  `;
+
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
+}
+
 function reportContentTypeCrosswalk() {
-  const rows = state.editedRows || [];
+  const rows = reportRows() || [];
   const NATURE_LABEL = { '': '—', 'Page': 'Page', 'Content Object': 'Fragment', 'Generated': 'Generated' };
   const registry = (state.projectSettings && Array.isArray(state.projectSettings.contentTypeRegistry))
     ? state.projectSettings.contentTypeRegistry : [];
@@ -6167,6 +8646,19 @@ function setupSettings() {
     });
   }
 
+  // Show Audience cluster toggle
+  const audToggle = $('pref-show-audience-fields');
+  if (audToggle) {
+    audToggle.checked = state.showAudienceFields;
+    applyAudienceFieldsVisibility();
+    audToggle.addEventListener('change', () => {
+      state.showAudienceFields = audToggle.checked;
+      window.electronAPI.savePrefs({ showAudienceFields: state.showAudienceFields });
+      applyAudienceFieldsVisibility();
+      if (window._refreshClusterQuickToggles) window._refreshClusterQuickToggles();
+    });
+  }
+
   els.btnPickRubricDir.addEventListener('click', async () => {
     const dir = await window.electronAPI.pickRubricDir();
     if (dir) els.prefRubricDir.value = dir;
@@ -6851,6 +9343,10 @@ function toggleProjectSettingsPopover() {
   renderRogueKkeList();
   // Suggestions tab
   refreshSuggestionsTab();
+  // Audience tab
+  renderAudienceTab();
+  // Sites tab
+  renderSitesTab();
   // Migration tab (Phase 2, Chunk γ)
   renderMigrationTab();
   // Saved Filters tab
@@ -6902,10 +9398,12 @@ function setupProjectSettingsDrag() {
   $('ps-btn-recompute-suggested')?.addEventListener('click', () => {
     const ga = parseFloat($('ps-weight-ga').value);
     const rubric = parseFloat($('ps-weight-rubric').value);
+    const audience = parseFloat($('ps-weight-audience')?.value);
     const cfg = suggestedKkeConfig();
     cfg.weights = {
       ga: isFinite(ga) && ga >= 0 ? ga : 1.0,
-      rubric: isFinite(rubric) && rubric >= 0 ? rubric : 1.0
+      rubric: isFinite(rubric) && rubric >= 0 ? rubric : 1.0,
+      audience: isFinite(audience) && audience >= 0 ? audience : 1.0
     };
     state.projectSettings.suggestedKkeConfig = cfg;
     setDirty(true);
@@ -6948,8 +9446,9 @@ function refreshSuggestionsTab() {
   // Suggested weights
   const sCfg = suggestedKkeConfig();
   const w = { ...defaultSourceWeights(), ...(sCfg.weights || {}) };
-  if ($('ps-weight-ga'))     $('ps-weight-ga').value = w.ga;
-  if ($('ps-weight-rubric')) $('ps-weight-rubric').value = w.rubric;
+  if ($('ps-weight-ga'))       $('ps-weight-ga').value = w.ga;
+  if ($('ps-weight-rubric'))   $('ps-weight-rubric').value = w.rubric;
+  if ($('ps-weight-audience')) $('ps-weight-audience').value = w.audience;
   const lastRun = $('ps-suggested-last-run');
   if (lastRun) {
     if (sCfg.lastRun) {
@@ -6959,6 +9458,798 @@ function refreshSuggestionsTab() {
       lastRun.textContent = 'Suggested_KKE has not been run yet.';
     }
   }
+}
+
+// ─── Project Settings: Sites tab ────────────────────────────────────────────
+
+/** Page counts per normalized host, for the merge decisions in the Sites tab. */
+function computeHostUsage() {
+  const usage = new Map();
+  state.editedRows.forEach(r => {
+    const h = rowHost(r);
+    if (h) usage.set(h, (usage.get(h) || 0) + 1);
+  });
+  return usage;
+}
+
+function renderSitesTab() {
+  renderSitesList();
+  const btn = document.getElementById('ps-sites-rescan');
+  if (btn && !btn._wired) {
+    btn._wired = true;
+    btn.addEventListener('click', () => {
+      const added = seedSiteLibraryFromData();
+      const changed = recomputeAllSourceSites();
+      if (added || changed) setDirty(true);
+      renderSitesList();
+      showToast(added
+        ? `Added ${added} site${added !== 1 ? 's' : ''} found in the crawl`
+        : 'No new domains found', added ? 'success' : 'info');
+    });
+  }
+}
+
+function renderSitesList() {
+  const list = document.getElementById('ps-sites-list');
+  if (!list) return;
+  const lib = (state.siteLibrary || []).slice().sort((a, b) => String(a.label).localeCompare(String(b.label)));
+  list.innerHTML = '';
+
+  const warn = document.getElementById('ps-sites-warn');
+  if (warn) {
+    const inScope = (state.siteLibrary || []).filter(s => s.inScope !== false);
+    const needsDomain = inScope.length > 1 && !String(state.projectSettings.siteDomain || '').trim();
+    warn.classList.toggle('hidden', !needsDomain);
+    if (needsDomain) {
+      warn.innerHTML = `<strong>Set a Site Domain.</strong> With ${inScope.length} source sites in scope and no target
+        domain, redirect destinations are built on whichever domain happens to come first in the crawl.
+        Set it on the <strong>Identity</strong> tab.`;
+    }
+  }
+
+  if (!lib.length) {
+    list.innerHTML = '<div class="ps-mig-empty">No sites yet — open a crawl, or click Rescan crawl.</div>';
+    const f = document.getElementById('ps-sites-footer');
+    if (f) f.textContent = '';
+    return;
+  }
+
+  const usage = computeHostUsage();
+  const allSiteLabels = lib.map(s => s.label);
+
+  lib.forEach(entry => {
+    const idx = state.siteLibrary.indexOf(entry);
+    const pages = (entry.hosts || []).reduce((n, h) => n + (usage.get(h) || 0), 0);
+    const row = document.createElement('div');
+    row.className = 'ps-mig-row';
+    row.style.cssText = 'flex-wrap:wrap;align-items:flex-start;';
+    row.innerHTML = `
+      <input type="color" value="${entry.color || '#94a3b8'}" data-idx="${idx}" class="ps-site-color" title="Site color (used in sitemap colouring)">
+      <span class="ps-mig-name" data-idx="${idx}" style="min-width:150px;">${escapeHtml(entry.label)}</span>
+      <span class="ps-mig-count">${pages} page${pages !== 1 ? 's' : ''}</span>
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted);cursor:pointer;">
+        <input type="checkbox" class="ps-site-scope" data-idx="${idx}"${entry.inScope !== false ? ' checked' : ''}> In scope
+      </label>
+      <span style="flex:1;"></span>
+      <button class="ps-site-rename btn btn-sm btn-ghost" data-idx="${idx}">Rename</button>
+      <button class="ps-site-meta btn btn-sm btn-ghost" data-idx="${idx}" title="CMS and owner">Details</button>
+      <div style="flex:1 1 100%;display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 0 26px;">
+        ${(entry.hosts || []).map(h => `
+          <span class="tag-chip" style="font-size:11px;">${escapeHtml(h)}
+            <span style="color:var(--text-muted);">· ${usage.get(h) || 0}</span>
+            ${allSiteLabels.length > 1 ? `<button class="ps-host-move tag-remove" data-idx="${idx}" data-host="${escapeHtml(h)}" title="Move this host to another site">⇄</button>` : ''}
+          </span>`).join('') || '<span style="font-size:11px;color:var(--text-muted);">no hosts</span>'}
+      </div>
+      ${entry.cms || entry.owner ? `<div style="flex:1 1 100%;font-size:11px;color:var(--text-muted);margin-left:26px;">${
+        [entry.cms && 'CMS: ' + escapeHtml(entry.cms), entry.owner && 'Owner: ' + escapeHtml(entry.owner)].filter(Boolean).join(' · ')}</div>` : ''}
+    `;
+    list.appendChild(row);
+  });
+
+  const f = document.getElementById('ps-sites-footer');
+  if (f) {
+    const inScope = lib.filter(s => s.inScope !== false).length;
+    const unregistered = [...usage.keys()].filter(h => !lib.some(s => (s.hosts || []).includes(h)));
+    f.textContent = `${lib.length} site${lib.length !== 1 ? 's' : ''} · ${inScope} in scope`
+      + (unregistered.length ? ` · ${unregistered.length} domain${unregistered.length !== 1 ? 's' : ''} in the data not listed — click Rescan crawl` : '');
+  }
+
+  const persist = (recompute) => {
+    state.projectSettings.siteLibrary = state.siteLibrary;
+    if (recompute) recomputeAllSourceSites();
+    setDirty(true);
+  };
+
+  list.querySelectorAll('.ps-site-color').forEach(inp => {
+    inp.addEventListener('change', () => { state.siteLibrary[+inp.dataset.idx].color = inp.value; persist(false); });
+  });
+
+  list.querySelectorAll('.ps-site-scope').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      const site = state.siteLibrary[+cb.dataset.idx];
+      site.inScope = cb.checked;
+      persist(false);
+      renderSitesList();
+      applyFilter();
+
+      // Narrowing report denominators is a reporting lens; it is NOT a decision
+      // about the content. The auditor still owes every one of these pages a
+      // call. Offer to record it as `Exclude` — the KKE state that already
+      // means exactly this — so the judgement lives on the row, shows up in the
+      // audit and the change log, and survives into every export, rather than
+      // existing only as a filter someone has to remember.
+      if (cb.checked) return;
+      const rows = state.editedRows
+        .map((r, i) => ({ r, i }))
+        .filter(x => siteOfRow(x.r) === site && String(x.r[kkeCol()] || '').trim() !== 'Exclude');
+      if (!rows.length) return;
+
+      const ok = await confirmDialog({
+        title: 'Record the decision on these pages?',
+        message: `"${site.label}" is now out of scope for reporting, but its ${rows.length.toLocaleString()} `
+          + `page${rows.length !== 1 ? 's' : ''} still have no decision recorded.\n\n`
+          + `Mark them all KKE = Exclude? That puts the call on the row itself — visible in the audit, in the `
+          + `change log, and in every export — instead of leaving it as a reporting setting.\n\n`
+          + `Skip this if you intend to review them individually.`,
+        confirmLabel: 'Mark them Exclude',
+        cancelLabel: 'Leave undecided'
+      });
+      if (!ok) return;
+
+      const kCol = kkeCol();
+      rows.forEach(({ r, i }) => {
+        const old = String(r[kCol] || '');
+        r[kCol] = 'Exclude';
+        logChange(i, kCol, old, 'Exclude');
+      });
+      setDirty(true);
+      applyFilter();
+      if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+      showToast(`Marked ${rows.length.toLocaleString()} page${rows.length !== 1 ? 's' : ''} Exclude`, 'success');
+    });
+  });
+
+  list.querySelectorAll('.ps-site-rename').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = +btn.dataset.idx;
+      const old = state.siteLibrary[i].label;
+      const v = await showPrompt('Rename site', 'Label shown in reports', old);
+      if (!v) return;
+      const trimmed = sanitizeText(v).trim();
+      if (!trimmed || trimmed === old) return;
+      if (state.siteLibrary.some(s => s.label.toLowerCase() === trimmed.toLowerCase())) {
+        showToast('That label is already in use', 'error');
+        return;
+      }
+      state.siteLibrary[i].label = trimmed;
+      persist(true);           // Source_Site stores the label, so it must follow
+      renderSitesList();
+      applyFilter();
+    });
+  });
+
+  list.querySelectorAll('.ps-site-meta').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = +btn.dataset.idx;
+      const cms = await showPrompt(`CMS for "${state.siteLibrary[i].label}"`, 'e.g. Sitecore 9, WordPress', state.siteLibrary[i].cms || '');
+      if (cms === null) return;
+      state.siteLibrary[i].cms = sanitizeText(cms).trim();
+      const owner = await showPrompt(`Owner for "${state.siteLibrary[i].label}"`, 'Team or person', state.siteLibrary[i].owner || '');
+      if (owner !== null) state.siteLibrary[i].owner = sanitizeText(owner).trim();
+      persist(false);
+      renderSitesList();
+    });
+  });
+
+  // Moving a host between sites IS the merge operation — `careers.company.com`
+  // joining the main corporate site rather than standing alone.
+  list.querySelectorAll('.ps-host-move').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const from = +btn.dataset.idx;
+      const host = btn.dataset.host;
+      const choices = state.siteLibrary.map((s, i) => ({ s, i })).filter(x => x.i !== from);
+      const picked = await pickFromList(`Move ${host} to…`, choices.map(x => x.s.label));
+      if (!picked) return;
+      const to = state.siteLibrary.findIndex(s => s.label === picked);
+      if (to < 0) return;
+      state.siteLibrary[from].hosts = (state.siteLibrary[from].hosts || []).filter(h => h !== host);
+      if (!state.siteLibrary[to].hosts.includes(host)) state.siteLibrary[to].hosts.push(host);
+      // A site with no hosts left has been fully merged away.
+      if (!state.siteLibrary[from].hosts.length) state.siteLibrary.splice(from, 1);
+      persist(true);
+      renderSitesList();
+      applyFilter();
+    });
+  });
+}
+
+/** Minimal single-choice picker — the Sites tab needs one and the app has no
+ *  generic list-select dialog. Resolves to the chosen label, or null. */
+function pickFromList(title, options) {
+  return new Promise(resolve => {
+    let settled = false;
+    const body = `<div class="modal-message">${options.map((o, i) =>
+      `<label style="display:flex;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:4px;cursor:pointer;">
+         <input type="radio" name="_pfl" value="${escapeHtml(o)}"${i === 0 ? ' checked' : ''}><span>${escapeHtml(o)}</span>
+       </label>`).join('')}</div>`;
+    openModal({
+      title, width: 420, body, escapeValue: null,
+      buttons: [
+        { label: 'Cancel', variant: 'ghost', value: null },
+        { label: 'Move', variant: 'primary', primary: true,
+          onClick: (api) => api.body.querySelector('input[name="_pfl"]:checked')?.value || null }
+      ],
+      onClose: (val) => { if (!settled) { settled = true; resolve(val); } }
+    });
+  });
+}
+
+// ─── Project Settings: Audience tab ─────────────────────────────────────────
+
+/** Pages using each audience, counted across the whole set (not just primary). */
+function computeAudienceUsage() {
+  const usage = new Map();
+  state.editedRows.forEach(r => {
+    rowAudiences(r).forEach(a => usage.set(a, (usage.get(a) || 0) + 1));
+  });
+  return usage;
+}
+
+function renderAudienceTab() {
+  renderAudienceLibList();
+  renderJobsSection();
+
+  const wire = (id, handler) => {
+    const btn = document.getElementById(id);
+    if (btn && !btn._wired) { btn._wired = true; btn.addEventListener('click', handler); }
+  };
+
+  wire('ps-aud-add', async () => {
+    const name = await showPrompt('New audience', 'Audience name', '');
+    if (!name) return;
+    const trimmed = sanitizeText(name).trim();
+    if (!trimmed) return;
+    if ((state.audienceLibrary || []).find(a => a.name.toLowerCase() === trimmed.toLowerCase())) {
+      showToast('That audience already exists', 'error');
+      return;
+    }
+    state.audienceLibrary.push({ name: trimmed, tier: 'Secondary', color: nextAudienceColor(), description: '', notes: '' });
+    state.projectSettings.audienceLibrary = state.audienceLibrary;
+    setDirty(true);
+    renderAudienceLibList();
+  });
+
+  wire('ps-aud-seed', () => openAudienceSeedChooser());
+
+  wire('ps-aud-import', () => openAudiencePasteImport());
+}
+
+// ─── Project Settings: Jobs section (inside the Audience tab) ───────────────
+
+function computeJobUsage() {
+  const usage = new Map();
+  state.editedRows.forEach(r => rowJobs(r).forEach(l => usage.set(l, (usage.get(l) || 0) + 1)));
+  return usage;
+}
+
+function renderJobsSection() {
+  renderJobLibList();
+  const wire = (id, handler) => {
+    const b = document.getElementById(id);
+    if (b && !b._wired) { b._wired = true; b.addEventListener('click', handler); }
+  };
+  wire('ps-job-add', async () => {
+    const label = await showPrompt('New job', 'Short label, e.g. "Compare programs"', '');
+    if (!label) return;
+    const clean = sanitizeJobLabel(label);
+    if (!clean) return;
+    if ((state.jobLibrary || []).some(j => j.label.toLowerCase() === clean.toLowerCase())) {
+      showToast('That job already exists', 'error'); return;
+    }
+    const statement = await showPrompt(`Statement for "${clean}"`, 'When I… I want… so I can…', '');
+    state.jobLibrary.push({ label: clean, statement: sanitizeText(statement || '').trim(), audiences: [], notes: '' });
+    state.projectSettings.jobLibrary = state.jobLibrary;
+    setDirty(true);
+    applyJobsFieldVisibility();
+    renderJobLibList();
+  });
+  wire('ps-job-import', () => openJobPasteImport());
+}
+
+function renderJobLibList() {
+  const list = document.getElementById('ps-job-list');
+  if (!list) return;
+  const lib = sortedJobLibrary();
+  list.innerHTML = '';
+  const foot = document.getElementById('ps-job-footer');
+
+  if (!lib.length) {
+    list.innerHTML = '<div class="ps-mig-empty">No jobs yet. Paste your JTBD workshop output, or add them one at a time.</div>';
+    if (foot) foot.textContent = '';
+    return;
+  }
+
+  const usage = computeJobUsage();
+  lib.forEach(entry => {
+    const idx = state.jobLibrary.indexOf(entry);
+    const n = usage.get(entry.label) || 0;
+    const row = document.createElement('div');
+    row.className = 'ps-mig-row';
+    row.style.cssText = 'flex-wrap:wrap;align-items:flex-start;';
+    row.innerHTML = `
+      <span class="ps-mig-name" data-idx="${idx}" style="min-width:170px;">${escapeHtml(entry.label)}</span>
+      <span class="ps-mig-count">${n ? `${n} page${n !== 1 ? 's' : ''}` : '<span style="color:var(--kke-kill);">no pages</span>'}</span>
+      <span style="flex:1;"></span>
+      <button class="ps-job-auds btn btn-sm btn-ghost" data-idx="${idx}">Audiences</button>
+      <button class="ps-job-edit btn btn-sm btn-ghost" data-idx="${idx}">Edit</button>
+      <button class="ps-job-del btn btn-sm btn-ghost" data-idx="${idx}" style="color:var(--kke-kill);">Delete</button>
+      ${entry.statement ? `<div style="flex:1 1 100%;font-size:11px;color:var(--text-muted);margin-top:2px;">${escapeHtml(entry.statement)}</div>` : ''}
+      <div style="flex:1 1 100%;font-size:11px;color:var(--text-muted);">${
+        (entry.audiences || []).length ? escapeHtml(entry.audiences.join(' · ')) : '<em>any audience</em>'}</div>
+    `;
+    list.appendChild(row);
+  });
+
+  if (foot) {
+    const unserved = lib.filter(j => !(usage.get(j.label) || 0)).length;
+    foot.textContent = `${lib.length} job${lib.length !== 1 ? 's' : ''}`
+      + (unserved ? ` · ${unserved} with no page serving ${unserved === 1 ? 'it' : 'them'} — see Reports → Jobs Coverage` : ' · all served');
+  }
+
+  const persist = () => { state.projectSettings.jobLibrary = state.jobLibrary; setDirty(true); };
+
+  list.querySelectorAll('.ps-job-edit').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = +btn.dataset.idx, cur = state.jobLibrary[i];
+      const label = await showPrompt('Rename job', 'Short label', cur.label);
+      if (label !== null) {
+        const clean = sanitizeJobLabel(label);
+        if (clean && clean !== cur.label) {
+          if (state.jobLibrary.some(j => j.label.toLowerCase() === clean.toLowerCase())) {
+            showToast('That label is already in use', 'error'); return;
+          }
+          const touched = renameJobAcrossRows(cur.label, clean);
+          cur.label = clean;
+          if (touched) showToast(`Renamed · ${touched} page${touched !== 1 ? 's' : ''} updated`, 'success');
+        }
+      }
+      const st = await showPrompt(`Statement for "${cur.label}"`, 'When I… I want… so I can…', cur.statement || '');
+      if (st !== null) cur.statement = sanitizeText(st).trim();
+      persist();
+      renderJobLibList();
+      if (state.selectedIndex !== null) populateJobs(state.editedRows[state.selectedIndex]);
+    });
+  });
+
+  list.querySelectorAll('.ps-job-auds').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = +btn.dataset.idx, cur = state.jobLibrary[i];
+      const picked = await pickAudiencesForJob(cur);
+      if (picked === null) return;
+      cur.audiences = picked;
+      persist();
+      renderJobLibList();
+    });
+  });
+
+  list.querySelectorAll('.ps-job-del').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = +btn.dataset.idx, cur = state.jobLibrary[i];
+      const used = usage.get(cur.label) || 0;
+      const ok = await confirmDialog({
+        title: 'Delete job',
+        message: used
+          ? `Delete "${cur.label}"? ${used} page${used !== 1 ? 's' : ''} tagged with it will have the tag removed.`
+          : `Delete "${cur.label}"?`,
+        confirmLabel: 'Delete', danger: true
+      });
+      if (!ok) return;
+      if (used) renameJobAcrossRows(cur.label, null);
+      state.jobLibrary.splice(i, 1);
+      persist();
+      applyJobsFieldVisibility();
+      renderJobLibList();
+      if (state.selectedIndex !== null) populateJobs(state.editedRows[state.selectedIndex]);
+    });
+  });
+}
+
+/** Rename (or, with `next === null`, remove) a job across every row. */
+function renameJobAcrossRows(old, next) {
+  let touched = 0;
+  state.editedRows.forEach((r, i) => {
+    const list = rowJobs(r);
+    if (!list.includes(old)) return;
+    const updated = next === null ? list.filter(j => j !== old) : list.map(j => (j === old ? next : j));
+    const before = String(r[JOBS_COL] || '');
+    r[JOBS_COL] = updated.join(', ');
+    logChange(i, JOBS_COL, before, r[JOBS_COL]);
+    touched++;
+  });
+  return touched;
+}
+
+/** Multi-select of audiences for one job. Resolves to an array, or null on cancel. */
+function pickAudiencesForJob(job) {
+  return new Promise(resolve => {
+    let settled = false;
+    const lib = sortedAudienceLibrary().filter(a => a.name !== AUDIENCE_NONE);
+    const chosen = new Set(job.audiences || []);
+    const body = `<div class="modal-message">
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px;">
+        Which audiences have this job? Leave everything unticked for a job that any audience might have.</p>
+      ${lib.map(a => `<label style="display:flex;gap:8px;align-items:center;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:4px;cursor:pointer;">
+        <input type="checkbox" value="${escapeHtml(a.name)}"${chosen.has(a.name) ? ' checked' : ''}>
+        <span>${escapeHtml(a.name)} <span style="color:var(--text-muted);font-size:11px;">${escapeHtml(a.tier)}</span></span>
+      </label>`).join('') || '<em style="font-size:12px;color:var(--text-muted);">No audiences defined yet.</em>'}
+    </div>`;
+    openModal({
+      title: `Audiences for "${job.label}"`, width: 460, body, escapeValue: null,
+      buttons: [
+        { label: 'Cancel', variant: 'ghost', value: null },
+        { label: 'Save', variant: 'primary', primary: true,
+          onClick: (api) => [...api.body.querySelectorAll('input[type="checkbox"]:checked')].map(c => c.value) }
+      ],
+      onClose: (val) => { if (!settled) { settled = true; resolve(val); } }
+    });
+  });
+}
+
+/** JTBD workshops produce a table; accept it as one. */
+function openJobPasteImport() {
+  const body = `
+    <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px;">
+      One job per line: a short label, then the full statement, then the audiences it belongs to —
+      separated by tabs or commas.<br>
+      <code style="font-size:11px;">Compare programs&#9;When I'm comparing options, I want outcomes data, so I can justify the cost&#9;Prospective Students</code><br>
+      Label only is fine too. Existing jobs are skipped, never overwritten.
+    </p>
+    <textarea id="_jobimp-text" rows="10" style="width:100%;font-family:var(--font-mono);font-size:12px;padding:8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-base);color:var(--text-primary);"></textarea>
+    <div id="_jobimp-status" style="font-size:11px;color:var(--text-muted);margin-top:6px;"></div>
+  `;
+  openModal({
+    title: 'Paste jobs from workshop', width: 620, body,
+    buttons: [
+      { label: 'Cancel', variant: 'ghost', value: false },
+      { label: 'Import', variant: 'primary', primary: true, closeOnClick: false,
+        onClick: (api) => {
+          const raw = api.body.querySelector('#_jobimp-text').value || '';
+          const known = new Set((state.jobLibrary || []).map(j => j.label.toLowerCase()));
+          const audByLower = new Map((state.audienceLibrary || []).map(a => [a.name.toLowerCase(), a.name]));
+          let added = 0, skipped = 0;
+          raw.split('\n').forEach(line => {
+            if (!line.trim()) return;
+            // Tabs win when present — that's what a spreadsheet paste gives, and a
+            // JTBD statement is full of commas by construction ("When I…, I want…").
+            const sep = line.includes('\t') ? '\t' : ',';
+            const parts = line.split(sep);
+            const label = sanitizeJobLabel(parts[0]);
+            if (!label) return;
+            if (known.has(label.toLowerCase())) { skipped++; return; }
+            const statement = sanitizeText(parts[1] || '').trim();
+            // Everything after the statement is audience names; keep only ones we know.
+            const auds = parts.slice(2).join(sep).split(/[,;]/).map(a => sanitizeText(a).trim())
+              .map(a => audByLower.get(a.toLowerCase())).filter(Boolean);
+            state.jobLibrary.push({ label, statement, audiences: auds, notes: '' });
+            known.add(label.toLowerCase());
+            added++;
+          });
+          if (!added) {
+            api.body.querySelector('#_jobimp-status').textContent = skipped
+              ? `Nothing added — all ${skipped} are already in the library.`
+              : 'Nothing recognized in that text.';
+            return;
+          }
+          state.projectSettings.jobLibrary = state.jobLibrary;
+          setDirty(true);
+          api.close();
+          applyJobsFieldVisibility();
+          renderJobLibList();
+          showToast(`Added ${added} job${added !== 1 ? 's' : ''}${skipped ? ` · ${skipped} already present` : ''}`, 'success');
+        } }
+    ]
+  });
+}
+
+/** Cycle a distinct colour for each new audience so sitemap colouring works
+ *  without the user having to pick one per entry. */
+const AUDIENCE_AUTO_COLORS = ['#2563eb', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#ea580c', '#ca8a04', '#0d9488', '#4f46e5', '#78716c'];
+
+/** A colour no other audience is already using.
+ *
+ *  Past the base palette this shifts lightness per cycle rather than wrapping
+ *  around to a duplicate. Two audiences sharing a colour isn't cosmetic — the
+ *  Visual Sitemap and Treemap colour by Primary Audience, so a collision makes
+ *  two different audiences render identically. A library of 11+ (very ordinary
+ *  once the seed set is combined with a client's own) hit this immediately.
+ */
+function nextAudienceColor() {
+  const used = new Set((state.audienceLibrary || []).map(a => (a.color || '').toLowerCase()));
+  const fresh = AUDIENCE_AUTO_COLORS.find(c => !used.has(c));
+  if (fresh) return fresh;
+  for (let cycle = 1; cycle < 8; cycle++) {
+    for (const base of AUDIENCE_AUTO_COLORS) {
+      // Alternate lighter / darker so successive cycles stay distinguishable
+      // from each other as well as from the base palette.
+      const cand = shiftHexLightness(base, cycle % 2 ? 0.28 * Math.ceil(cycle / 2) : -0.22 * (cycle / 2));
+      if (!used.has(cand.toLowerCase())) return cand;
+    }
+  }
+  return '#94a3b8';
+}
+
+/** Lighten (amount > 0) or darken (amount < 0) a #rrggbb colour toward white/black. */
+function shiftHexLightness(hex, amount) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(String(hex || '').trim());
+  if (!m) return hex;
+  const ch = [1, 2, 3].map(i => {
+    const v = parseInt(m[i], 16);
+    const out = amount >= 0 ? v + (255 - v) * amount : v * (1 + amount);
+    return Math.max(0, Math.min(255, Math.round(out))).toString(16).padStart(2, '0');
+  });
+  return '#' + ch.join('');
+}
+
+function renderAudienceLibList() {
+  const list = document.getElementById('ps-aud-list');
+  if (!list) return;
+  const lib = sortedAudienceLibrary();
+  list.innerHTML = '';
+  if (!lib.length) {
+    list.innerHTML = '<div class="ps-mig-empty">No audiences yet. Seed the defaults, paste your workshop output, or add them one at a time.</div>';
+    const foot = document.getElementById('ps-aud-footer');
+    if (foot) foot.textContent = '';
+    return;
+  }
+
+  const usage = computeAudienceUsage();
+  lib.forEach(entry => {
+    // Index into the LIVE array, not the sorted copy — sorting is presentation
+    // only and an index from the sorted view would edit the wrong entry.
+    const idx = state.audienceLibrary.indexOf(entry);
+    const row = document.createElement('div');
+    row.className = 'ps-mig-row';
+    const n = usage.get(entry.name) || 0;
+    row.innerHTML = `
+      <input type="color" value="${entry.color || '#94a3b8'}" data-idx="${idx}" class="ps-aud-color" title="Audience color (used in sitemap colouring)">
+      <span class="ps-mig-name" data-idx="${idx}">${escapeHtml(entry.name)}</span>
+      <select class="ps-aud-tier" data-idx="${idx}" title="Priority tier from the audience prioritization workshop">
+        ${AUDIENCE_TIERS.map(t => `<option value="${t}"${entry.tier === t ? ' selected' : ''}>${t}</option>`).join('')}
+      </select>
+      <span class="ps-mig-count">${n > 0 ? `${n} page${n !== 1 ? 's' : ''}` : ''}</span>
+      <span style="flex:1;"></span>
+      <button class="ps-aud-desc btn btn-sm btn-ghost" data-idx="${idx}" title="Edit description">Describe</button>
+      <button class="ps-aud-rename btn btn-sm btn-ghost" data-idx="${idx}">Rename</button>
+      <button class="ps-aud-delete btn btn-sm btn-ghost" data-idx="${idx}" style="color:var(--kke-kill);">Delete</button>
+    `;
+    list.appendChild(row);
+  });
+
+  const foot = document.getElementById('ps-aud-footer');
+  if (foot) {
+    const byTier = AUDIENCE_TIERS.map(t => `${lib.filter(a => a.tier === t).length} ${t.toLowerCase()}`);
+    const tagged = state.editedRows.filter(r => rowAudiences(r).length).length;
+    foot.textContent = `${lib.length} audience${lib.length !== 1 ? 's' : ''} · ${byTier.join(' · ')} — ${tagged} of ${state.editedRows.length} pages tagged`;
+  }
+
+  const persist = () => { state.projectSettings.audienceLibrary = state.audienceLibrary; setDirty(true); };
+
+  list.querySelectorAll('.ps-aud-color').forEach(inp => {
+    inp.addEventListener('change', () => {
+      state.audienceLibrary[+inp.dataset.idx].color = inp.value;
+      persist();
+    });
+  });
+
+  list.querySelectorAll('.ps-aud-tier').forEach(sel => {
+    sel.addEventListener('change', () => {
+      state.audienceLibrary[+sel.dataset.idx].tier = sel.value;
+      persist();
+      renderAudienceLibList();
+      // Re-ranking changes the vote, so the standing suggestion is now stale.
+      if (state.editedRows.some(r => rowAudiences(r).length)) computeSuggestedKke();
+    });
+  });
+
+  list.querySelectorAll('.ps-aud-desc').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = +btn.dataset.idx;
+      const cur = state.audienceLibrary[i];
+      const v = await showPrompt(`Describe "${cur.name}"`, 'Who they are, what they need', cur.description || '');
+      if (v === null) return;
+      cur.description = sanitizeText(v).trim();
+      persist();
+      renderAudienceLibList();
+    });
+  });
+
+  list.querySelectorAll('.ps-aud-rename').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = +btn.dataset.idx;
+      const old = state.audienceLibrary[i].name;
+      const v = await showPrompt('Rename audience', 'New name', old);
+      if (!v) return;
+      const trimmed = sanitizeText(v).trim();
+      if (!trimmed || trimmed === old) return;
+      if (state.audienceLibrary.find(a => a.name.toLowerCase() === trimmed.toLowerCase())) {
+        showToast('That name is already in use', 'error');
+        return;
+      }
+      const cascaded = renameAudienceAcrossRows(old, trimmed);
+      state.audienceLibrary[i].name = trimmed;
+      persist();
+      renderAudienceLibList();
+      if (state.selectedIndex !== null) populateAudiences(state.editedRows[state.selectedIndex]);
+      showToast(cascaded > 0
+        ? `Renamed · ${cascaded} page${cascaded !== 1 ? 's' : ''} updated`
+        : 'Renamed audience', 'success');
+    });
+  });
+
+  list.querySelectorAll('.ps-aud-delete').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const i = +btn.dataset.idx;
+      const target = state.audienceLibrary[i];
+      const used = usage.get(target.name) || 0;
+      const ok = await confirmDialog({
+        title: 'Delete audience',
+        message: used > 0
+          ? `Delete "${target.name}"? ${used} page${used !== 1 ? 's' : ''} currently tagged with it will have the tag removed.`
+          : `Delete "${target.name}"?`,
+        confirmLabel: 'Delete',
+        danger: true
+      });
+      if (!ok) return;
+      if (used > 0) renameAudienceAcrossRows(target.name, null);
+      state.audienceLibrary.splice(i, 1);
+      persist();
+      renderAudienceLibList();
+      if (state.selectedIndex !== null) populateAudiences(state.editedRows[state.selectedIndex]);
+      applyFilter();
+    });
+  });
+}
+
+/** Rename (or, with `next === null`, remove) one audience across every row.
+ *  Keeps Primary_Audience in step so it can never point at a name that no
+ *  longer exists in the row's own set. Returns the number of rows touched. */
+function renameAudienceAcrossRows(old, next) {
+  let touched = 0;
+  state.editedRows.forEach((r, i) => {
+    const list = rowAudiences(r);
+    if (!list.includes(old)) return;
+    const updated = next === null
+      ? list.filter(a => a !== old)
+      : list.map(a => (a === old ? next : a));
+    r[AUDIENCES_COL] = updated.join(', ');
+    if (String(r[PRIMARY_AUDIENCE_COL] || '').trim() === old) {
+      r[PRIMARY_AUDIENCE_COL] = next === null ? '' : next;
+    }
+    touched++;
+  });
+  return touched;
+}
+
+/** Pick a starter list. "Who is this site for" has no universal answer, so the
+ *  app ships more than one and makes the choice explicit rather than quietly
+ *  loading higher-ed audiences into a company audit. */
+async function openAudienceSeedChooser() {
+  const sets = await window.electronAPI.getAudienceStarterSets();
+  if (!Array.isArray(sets) || !sets.length) return;
+
+  const body = `
+    <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px;">
+      A generic list to start from when there's no workshop output yet. If you have the client's own
+      prioritization, <strong>Paste from workshop…</strong> is always the better path — these are only
+      scaffolding, and every entry lands at <strong>Secondary</strong> until you set the real tiers.
+    </p>
+    ${sets.map((s, i) => `
+      <label style="display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px;cursor:pointer;">
+        <input type="radio" name="_audseed" value="${escapeHtml(s.kind)}"${i === 0 ? ' checked' : ''} style="margin-top:2px;">
+        <span>
+          <span style="font-weight:600;font-size:13px;">${escapeHtml(s.label)}</span>
+          <span style="color:var(--text-muted);font-size:11px;"> · ${s.count} audiences</span>
+          <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(s.hint)}</div>
+        </span>
+      </label>`).join('')}
+    <div id="_audseed-status" style="font-size:11px;color:var(--text-muted);margin-top:4px;"></div>
+  `;
+
+  openModal({
+    title: 'Seed a starter audience list',
+    width: 500,
+    body,
+    buttons: [
+      { label: 'Cancel', variant: 'ghost', value: false },
+      {
+        label: 'Add them', variant: 'primary', primary: true, closeOnClick: false,
+        onClick: async (api) => {
+          const kind = api.body.querySelector('input[name="_audseed"]:checked')?.value;
+          const defaults = await window.electronAPI.getDefaultAudienceLibrary({ kind });
+          if (!Array.isArray(defaults) || !defaults.length) return;
+          const existing = new Set((state.audienceLibrary || []).map(a => a.name.toLowerCase()));
+          const added = defaults.filter(d => !existing.has(d.name.toLowerCase()));
+          if (!added.length) {
+            api.body.querySelector('#_audseed-status').textContent = 'Every audience in that list is already in the library.';
+            return;
+          }
+          // Re-colour on the way in: the two starter lists reuse the same base
+          // palette, so seeding one on top of the other (or on top of pasted
+          // audiences) would otherwise hand out a duplicate colour, and the
+          // sitemap colours by audience.
+          added.forEach(d => state.audienceLibrary.push({ ...d, color: nextAudienceColor() }));
+          state.projectSettings.audienceLibrary = state.audienceLibrary;
+          setDirty(true);
+          api.close();
+          renderAudienceLibList();
+          showToast(`Added ${added.length} audience${added.length !== 1 ? 's' : ''} — set their tiers next`, 'success');
+        }
+      }
+    ]
+  });
+}
+
+/** Paste-import: the workshop output arrives as a table, so accept it as one
+ *  rather than making the user retype ten names through a prompt. */
+function openAudiencePasteImport() {
+  const body = `
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px;">
+        One audience per line. Optionally add a tier and description, separated by tabs or commas:<br>
+        <code style="font-size:11px;">Prospective Undergraduates, Primary, High-school students choosing where to apply</code><br>
+        Recognized tiers: ${AUDIENCE_TIERS.join(' · ')} (anything else falls back to Secondary).
+        Audiences already in the library are skipped, never overwritten.
+      </p>
+      <textarea id="_audimp-text" rows="10" style="width:100%;font-family:var(--font-mono);font-size:12px;padding:8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-base);color:var(--text-primary);"></textarea>
+      <div id="_audimp-status" style="font-size:11px;color:var(--text-muted);margin-top:6px;"></div>
+  `;
+
+  openModal({
+    title: 'Paste audiences from workshop',
+    width: 560,
+    body,
+    buttons: [
+      { label: 'Cancel', variant: 'ghost', value: false },
+      {
+        label: 'Import', variant: 'primary', primary: true, closeOnClick: false,
+        onClick: (api) => {
+          const raw = api.body.querySelector('#_audimp-text').value || '';
+          const existing = new Set((state.audienceLibrary || []).map(a => a.name.toLowerCase()));
+          let added = 0, skipped = 0;
+          raw.split('\n').forEach(line => {
+            if (!line.trim()) return;
+            // Tab-separated wins when present — that's what a spreadsheet paste
+            // produces, and descriptions in it routinely contain commas.
+            const sep = line.includes('\t') ? '\t' : ',';
+            const parts = line.split(sep);
+            const name = sanitizeText(String(parts[0] || '')).trim();
+            if (!name) return;
+            if (existing.has(name.toLowerCase())) { skipped++; return; }
+            const rawTier = sanitizeText(String(parts[1] || '')).trim();
+            const tier = AUDIENCE_TIERS.find(t => t.toLowerCase() === rawTier.toLowerCase()) || 'Secondary';
+            // Rejoin the remainder with the same separator: a description
+            // legitimately contains commas, and dropping the tail would
+            // silently truncate it at the first one.
+            const description = sanitizeText(parts.slice(2).join(sep)).trim();
+            state.audienceLibrary.push({ name, tier, color: nextAudienceColor(), description, notes: '' });
+            existing.add(name.toLowerCase());
+            added++;
+          });
+          if (!added) {
+            api.body.querySelector('#_audimp-status').textContent = skipped
+              ? `Nothing added — all ${skipped} are already in the library.`
+              : 'Nothing recognized in that text.';
+            return;
+          }
+          state.projectSettings.audienceLibrary = state.audienceLibrary;
+          setDirty(true);
+          api.close();
+          renderAudienceLibList();
+          showToast(`Added ${added} audience${added !== 1 ? 's' : ''}${skipped ? ` · ${skipped} already present` : ''}`, 'success');
+        }
+      }
+    ]
+  });
 }
 
 /** Render the Saved Filters tab list with delete actions. */
@@ -7884,7 +11175,7 @@ const ASSESSMENT_RESULT_COL = '_AssessmentResult';
 
 /** Default source weights — higher = preferred when sources disagree. */
 function defaultSourceWeights() {
-  return { ga: 1.0, rubric: 1.0 };
+  return { ga: 1.0, rubric: 1.0, audience: 1.0 };
 }
 
 function suggestedKkeConfig() {
@@ -7910,7 +11201,40 @@ function gatherRowSources(row) {
   if (rubricRec) {
     out.push({ source: 'Rubric', rec: rubricRec, detail: null });
   }
+  // Audience source — turns the prioritization workshop into an actual vote.
+  const aud = audienceSourceVote(row);
+  if (aud) out.push(aud);
   return out;
+}
+
+/** The audience vote for one row, or null to abstain.
+ *
+ *  Abstaining matters as much as voting here. An untagged row contributes
+ *  nothing (blank means unreviewed, so a project that hasn't started tagging is
+ *  completely unaffected), and a row serving only Secondary audiences has said
+ *  nothing decisive either way — forcing a Keep out of "well, somebody reads it"
+ *  would drown out GA and the rubric on the bulk of a site.
+ */
+function audienceSourceVote(row) {
+  const list = rowAudiences(row);
+  if (!list.length) return null;
+
+  if (list.length === 1 && list[0] === AUDIENCE_NONE) {
+    return { source: 'Audience', rec: 'Kill', detail: 'no target audience' };
+  }
+
+  const real = list.filter(a => a !== AUDIENCE_NONE);
+  if (!real.length) return null;
+
+  const tiers = real.map(audienceTier);
+  if (tiers.includes('Primary')) {
+    const names = real.filter(a => audienceTier(a) === 'Primary');
+    return { source: 'Audience', rec: 'Keep', detail: `serves ${names.join(', ')}` };
+  }
+  if (tiers.every(t => t === 'Tertiary' || t === 'Not a target')) {
+    return { source: 'Audience', rec: 'Evolve', detail: 'only non-priority audiences' };
+  }
+  return null; // Secondary-only — reviewed, but not decisive.
 }
 
 /** Pick the winning recommendation given sources + weights.
@@ -7960,6 +11284,36 @@ function ensureSuggestedKkeColumns() {
   addCol(SUGGESTED_KKE_SOURCES_COL, headers.indexOf(SUGGESTED_KKE_COL));
 }
 
+/** Write the two Suggested_KKE columns for ONE row. Returns the winner, or null
+ *  when no source had anything to say (columns cleared). */
+function writeSuggestedKkeForRow(row, weights) {
+  const sources = gatherRowSources(row);
+  if (sources.length === 0) {
+    row[SUGGESTED_KKE_COL] = '';
+    row[SUGGESTED_KKE_SOURCES_COL] = '';
+    return null;
+  }
+  const winner = pickWinner(sources, weights);
+  row[SUGGESTED_KKE_COL] = winner.winningRec;
+  row[SUGGESTED_KKE_SOURCES_COL] = JSON.stringify({
+    winner: winner.winningSource,
+    sources,
+    disagreement: winner.disagreement
+  });
+  return winner;
+}
+
+/** Refresh one row's suggestion after an edit that feeds it (audience tagging).
+ *  Deliberately not a full `computeSuggestedKke()`: that re-runs every row and
+ *  calls applyFilter(), which is far too much work to hang off a chip click. */
+function refreshSuggestedKkeForRow(origIndex) {
+  if (!state.headers.includes(SUGGESTED_KKE_COL)) return;
+  const row = state.editedRows[origIndex];
+  if (!row) return;
+  writeSuggestedKkeForRow(row, suggestedKkeConfig().weights || defaultSourceWeights());
+  if (origIndex === state.selectedIndex) updateSuggestedKkeBadge(row);
+}
+
 /** Recompute Suggested_KKE + Suggested_KKE_Sources for every row.
  *  Reads from GA_KKE_Recommendation, GA_Score, and _AssessmentResult.
  *  Does not invoke GA or Rubric computes — those are run separately.
@@ -7972,23 +11326,10 @@ function computeSuggestedKke() {
 
   let computed = 0, blank = 0, disagreements = 0;
   for (let i = 0; i < state.editedRows.length; i++) {
-    const row = state.editedRows[i];
-    const sources = gatherRowSources(row);
-    if (sources.length === 0) {
-      row[SUGGESTED_KKE_COL] = '';
-      row[SUGGESTED_KKE_SOURCES_COL] = '';
-      blank++;
-      continue;
-    }
-    const winner = pickWinner(sources, weights);
-    row[SUGGESTED_KKE_COL] = winner.winningRec;
-    row[SUGGESTED_KKE_SOURCES_COL] = JSON.stringify({
-      winner: winner.winningSource,
-      sources,
-      disagreement: winner.disagreement
-    });
+    const r = writeSuggestedKkeForRow(state.editedRows[i], weights);
+    if (!r) { blank++; continue; }
     computed++;
-    if (winner.disagreement) disagreements++;
+    if (r.disagreement) disagreements++;
   }
 
   cfg.computedAt = new Date().toISOString();
@@ -8838,6 +12179,8 @@ function openNon200TriageDialog() {
     const skipAssigned = modal.querySelector('#_non200-skip-assigned').checked;
     const actions = getActions();
     let touched = 0;
+    // Collected so the whole triage reverses as ONE Cmd+Z, not one per row.
+    const undoItems = [];
     groups.forEach((g, code) => {
       const action = actions.get(code) || 'skip';
       if (action === 'skip') return;
@@ -8860,6 +12203,7 @@ function openNon200TriageDialog() {
               if (redirectUrl) {
                 editedRow['Redirect_Destination'] = redirectUrl;
                 logChange(origIndex, 'Redirect_Destination', '', redirectUrl);
+                undoItems.push({ origIndex, field: 'Redirect_Destination', oldValue: '', newValue: redirectUrl });
               }
             }
           }
@@ -8869,6 +12213,7 @@ function openNon200TriageDialog() {
           if (!existingDest) {
             editedRow['Redirect_Destination'] = '404';
             logChange(origIndex, 'Redirect_Destination', '', '404');
+            undoItems.push({ origIndex, field: 'Redirect_Destination', oldValue: '', newValue: '404' });
           }
         } else if (action === 'kill') {
           newKke = 'Kill';
@@ -8881,6 +12226,7 @@ function openNon200TriageDialog() {
         if (newKke && newKke !== oldKke) {
           editedRow[kkeCol()] = newKke;
           logChange(origIndex, kkeCol(), oldKke, newKke);
+          undoItems.push({ origIndex, field: kkeCol(), oldValue: oldKke, newValue: newKke });
           touched++;
         }
       });
@@ -8891,6 +12237,7 @@ function openNon200TriageDialog() {
       showToast('No pages were changed', 'info');
       return;
     }
+    pushBulkEditUndo(undoItems, 'non-200 triage');
     setDirty(true);
     applyFilter();
     if (state.selectedIndex !== null) refreshRowInList(state.selectedIndex);
@@ -14384,6 +17731,11 @@ const SITEMAP_ROW_FIELDS = [
   { col: 'Content_Nature',       key: 'row.contentNature',   label: 'Renders as' },
   { col: 'Migration_Track',      key: 'row.migrationTrack',  label: 'Migration Track' },
   { col: 'Content_Theme',        key: 'row.contentTheme',    label: 'Content Theme' },
+  // Primary_Audience only — NOT the multi-value Audiences column. The aggregate
+  // below treats each cell as ONE value, so a CSV cell would become its own
+  // opaque "Alumni, Donors" pseudo-value rather than two audiences.
+  { col: 'Primary_Audience',     key: 'row.primaryAudience', label: 'Primary Audience' },
+  { col: 'Source_Site',          key: 'row.sourceSite',      label: 'Source Site' },
   { col: 'Published_Status',     key: 'row.published',       label: 'Published Status' },
   { col: 'Target_Content_Type',  key: 'row.targetType',      label: 'Target Content Type' },
 ];
@@ -14406,11 +17758,17 @@ function navSitemapFieldDefs() {
   // dimension with nothing behind it is worse than no dimension.
   const kkeColors = {};
   allKkeStates().forEach(st => { const c = resolvedKkeColor && resolvedKkeColor(st); if (c) kkeColors[st] = c; });
+  // Each audience carries its own colour, so the sitemap and the rest of the app
+  // agree on what "Prospective Undergraduates" looks like — same reasoning as
+  // pageStatus pulling from state.pageStatusLibrary.
+  const audienceColors = {};
+  (state.audienceLibrary || []).forEach(a => { if (a && a.name && a.color) audienceColors[a.name] = a.color; });
   const rowDefs = SITEMAP_ROW_FIELDS
     .filter(f => state.headers.includes(f.col))
     .map(f => Object.assign(
       { key: f.key, label: f.label, source: 'row' },
-      /KKE/i.test(f.col) && Object.keys(kkeColors).length ? { valueColors: kkeColors } : {}
+      /KKE/i.test(f.col) && Object.keys(kkeColors).length ? { valueColors: kkeColors } : {},
+      f.col === 'Primary_Audience' && Object.keys(audienceColors).length ? { valueColors: audienceColors } : {}
     ));
 
   return nodeDefs.concat(rowDefs);
@@ -17746,7 +21104,15 @@ function urlPathSegments(url) {
  *  "about_us" → "About Us". Used for auto-derived sitemap sections, which have
  *  no title of their own to borrow (unlike leaf pages, which use extractPageTitle). */
 function titleCaseFromSlug(slug) {
-  return String(slug || '')
+  // Percent-decode first: a non-Latin slug arrives from the crawl as
+  // `%E4%BA%A7%E5%93%81%E7%BA%BF`, and title-casing that yields an unreadable
+  // label in section reports and auto-derived sitemap buckets alike. Malformed
+  // escapes throw, so fall back to the raw text rather than losing the label.
+  let s = String(slug || '');
+  if (s.includes('%')) {
+    try { s = decodeURIComponent(s); } catch (_) { /* keep raw */ }
+  }
+  return s
     .split(/[-_]+/)
     .filter(Boolean)
     .map(w => w.charAt(0).toUpperCase() + w.slice(1))
@@ -18445,7 +21811,14 @@ function renderKkeFilterOptions() {
     { value: '_shared-nav', text: 'Shared sitemap node (2+ pages)' },
     { value: '_needs-placement', text: 'Needs sitemap placement (Keep/Evolve, no node)' },
     { value: '_suggested-disagree', text: 'Suggested KKE: sources disagree' },
-    { value: '_suggested-mismatch', text: 'Suggested KKE: differs from my KKE' }
+    { value: '_suggested-mismatch', text: 'Suggested KKE: differs from my KKE' },
+    { value: '_needs-audience', text: 'Needs audience (Keep/Evolve, untagged)' },
+    { value: '_audience-orphan', text: 'Serves no priority audience' },
+    { value: '_audience-suggested', text: 'Audience suggested by AI (awaiting review)' },
+    { value: '_cross-site-duplicate', text: 'Duplicated on another source site' },
+    { value: '_needs-job', text: 'Needs a job (Keep/Evolve, untagged)' },
+    { value: '_url-variant', text: 'Alternate view of another page (canonical)' },
+    { value: '_variant-target-missing', text: 'Canonical target not in this crawl' }
   ];
 
   // Status checkboxes
@@ -18760,6 +22133,37 @@ function pushUndo(action) {
   _redoStack.length = 0; // clear redo on new action
 }
 
+/** One undo entry covering many field writes at once.
+ *
+ *  A bulk action that touches thousands of rows must be reversible as ONE step —
+ *  pushing an entry per row would blow the 100-action stack (and mean 6,000
+ *  presses of Cmd+Z). `items` is `[{origIndex, field, oldValue, newValue}]`; a
+ *  single row may appear more than once when an action writes several columns.
+ */
+function pushBulkEditUndo(items, label) {
+  if (!items || !items.length) return;
+  pushUndo({ type: 'bulk-edit', label: label || 'bulk edit', items });
+}
+
+function applyBulkEditUndo(action, isUndo) {
+  const items = action.items || [];
+  // Reverse order on undo so a row written twice in one action unwinds to the
+  // value it genuinely started with, rather than to an intermediate one.
+  const ordered = isUndo ? items.slice().reverse() : items;
+  ordered.forEach(it => {
+    const row = state.editedRows[it.origIndex];
+    if (!row) return;
+    const val = isUndo ? it.oldValue : it.newValue;
+    const prev = isUndo ? it.newValue : it.oldValue;
+    logChange(it.origIndex, it.field, prev, val);
+    row[it.field] = val;
+  });
+  setDirty(true);
+  applyFilter();
+  if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+  showToast(`${isUndo ? 'Undid' : 'Redid'} ${action.label} — ${items.length.toLocaleString()} change${items.length !== 1 ? 's' : ''}`, 'success');
+}
+
 function undo() {
   if (_undoStack.length === 0) { showToast('Nothing to undo — only KKE changes are undoable', 'info'); return; }
   const action = _undoStack.pop();
@@ -18778,6 +22182,10 @@ function applyUndoAction(action, isUndo) {
   if (action.type === 'nav-delete') {
     if (isUndo) undoNavDelete(action);
     else redoNavDelete(action);
+    return;
+  }
+  if (action.type === 'bulk-edit') {
+    applyBulkEditUndo(action, isUndo);
     return;
   }
   const val = isUndo ? action.oldValue : action.newValue;
@@ -19977,7 +23385,28 @@ function reportDefaultName(suffix) {
   return [ps.clientName, ps.projectName, suffix].filter(Boolean).join(' - ');
 }
 
+/** A banner naming any content this report is NOT counting.
+ *
+ *  Marking a site out of scope narrows report denominators, and a reader has no
+ *  way to know that from the numbers alone — a summary reading "1,888 pages"
+ *  with 11,328 quietly dropped is worse than no summary. Applied centrally in
+ *  showReport()/exportReport() rather than per report, so a new report cannot
+ *  forget to disclose it. Out of scope is a decision to state, not a filter to
+ *  hide behind.
+ */
+function scopeDisclosureHtml() {
+  const info = outOfScopeSiteInfo();
+  if (!info || !info.rows) return '';
+  return `<div style="background:#fffbeb;border-left:3px solid #d97706;padding:9px 12px;font-size:12px;margin:0 0 14px;">
+    <strong>${info.rows.toLocaleString()} page${info.rows !== 1 ? 's are' : ' is'} excluded from every figure below.</strong>
+    ${escapeHtml(info.sites.join(', '))} ${info.sites.length !== 1 ? 'are' : 'is'} marked out of scope in
+    Project Settings → Sites. Those pages are still in the audit and still need a decision — they are only
+    left out of these totals.
+  </div>`;
+}
+
 function showReport(title, bodyHtml, exporterFn) {
+  bodyHtml = scopeDisclosureHtml() + bodyHtml;
   // Report bodies are built with colors hardcoded for a white background
   // (they're designed to double as the exported HTML/PDF, which always
   // renders on white regardless of the app's theme) — so the live in-app
@@ -20006,6 +23435,9 @@ function buildReportShellRaw(title, bodyHtml) {
 }
 
 async function exportReport(title, bodyHtml, defaultName, format, opts = {}) {
+  // The exported PDF/HTML is what actually reaches the client, so the same
+  // disclosure has to travel with it.
+  if (!opts.noScopeBanner) bodyHtml = scopeDisclosureHtml() + bodyHtml;
   const html = opts.rawShell ? buildReportShellRaw(title, bodyHtml) : buildReportShell(title, bodyHtml);
   if (format === 'html') {
     const result = await window.electronAPI.exportReportHtml({ html, defaultName: defaultName + '.html' });
@@ -20064,7 +23496,7 @@ function reportExecutiveSummary() {
 
   // Check for low-link pages
   if (state.headers.includes('Unique Inlinks')) {
-    const noLinks = state.editedRows.filter(r => parseInt(r['Unique Inlinks'] || '0') === 0).length;
+    const noLinks = reportRows().filter(r => parseInt(r['Unique Inlinks'] || '0') === 0).length;
     if (noLinks > 0) findings.push(`${noLinks} pages have no internal links (orphan pages)`);
   }
 
@@ -20110,7 +23542,7 @@ function reportContentInventory() {
   // Group rows
   const groups = {};
   const ungrouped = [];
-  state.editedRows.forEach(row => {
+  reportRows().forEach(row => {
     const g = String(row[groupCol()] || '').trim();
     if (g) {
       if (!groups[g]) groups[g] = [];
@@ -20121,7 +23553,7 @@ function reportContentInventory() {
   });
 
   let body = `<h2>Summary</h2>
-    <div class="stat-row"><span class="stat-label">Total pages</span><span class="stat-value">${state.editedRows.length}</span></div>
+    <div class="stat-row"><span class="stat-label">Total pages</span><span class="stat-value">${reportRows().length}</span></div>
     <div class="stat-row"><span class="stat-label">Groups</span><span class="stat-value">${Object.keys(groups).length}</span></div>
     <div class="stat-row"><span class="stat-label">Ungrouped pages</span><span class="stat-value">${ungrouped.length}</span></div>
   `;
@@ -20180,7 +23612,7 @@ function reportSmeStatus() {
 
   // Per-owner breakdown
   const byOwner = {};
-  state.editedRows.forEach(row => {
+  reportRows().forEach(row => {
     const owner = String(row[contentOwnerCol()] || '').trim() || 'Unassigned';
     if (!byOwner[owner]) byOwner[owner] = { assigned: 0, reviewed: 0, approved: 0, changed: 0, conflicts: 0 };
     const kke = String(row[kkeCol()] || '').trim();
@@ -20218,7 +23650,7 @@ function reportSmeStatus() {
   body += `</table>`;
 
   // Unresolved conflicts
-  const conflicts = state.editedRows.filter(r => {
+  const conflicts = reportRows().filter(r => {
     const final_ = String(r[finalKkeCol()] || '').trim();
     return !final_ && parseSmeDecision(r[smeDecisionCol()], r[kkeCol()]).changed;
   });
@@ -20253,12 +23685,12 @@ function reportRedirectMap() {
   const chains = [];
 
   const urlMap = new Map();
-  state.editedRows.forEach((row, i) => {
+  reportRows().forEach((row, i) => {
     const url = String(row[urlCol] || '').trim().toLowerCase();
     if (url) urlMap.set(url, row);
   });
 
-  state.editedRows.forEach(row => {
+  reportRows().forEach(row => {
     const kke = String(row[kkeCol()] || '').trim();
     const url = String(row[urlCol] || '').trim();
     const dest = String(row[destCol] || '').trim();
@@ -20353,6 +23785,18 @@ function reportNetNewBrief() {
   const urlCol = state.urlColumn || 'Address';
   const titleCol = state.headers.includes('Title 1') ? 'Title 1' : 'Title';
 
+  // Index rows by their sitemap node once. This used to re-scan every row for
+  // every node in every net-new subtree — O(nodes × rows), which on a
+  // multi-thousand-row crawl with a few hundred nodes is millions of comparisons
+  // (and, once reportRows() filtered, an array allocation per node too).
+  const rowsByNodeId = new Map();
+  reportRows().forEach(r => {
+    const id = r['Sitemap_ID'];
+    if (!id) return;
+    if (!rowsByNodeId.has(id)) rowsByNodeId.set(id, []);
+    rowsByNodeId.get(id).push(r);
+  });
+
   // Find net new nodes (have descendant pages but no direct pages)
   const netNew = [];
   state.navNodes.forEach(node => {
@@ -20362,9 +23806,8 @@ function reportNetNewBrief() {
       // Find child pages
       const childPages = [];
       function collectChildPages(n) {
-        state.editedRows.forEach(r => {
-          if (r['Sitemap_ID'] === n.id) childPages.push(r);
-        });
+        const hit = rowsByNodeId.get(n.id);
+        if (hit) childPages.push(...hit);
         (n.children || []).forEach(collectChildPages);
       }
       node.children.forEach(collectChildPages);
@@ -20394,6 +23837,31 @@ function reportNetNewBrief() {
 
   if (netNew.length === 0) {
     body += `<p style="color:#228b22;">No net new pages needed — all sitemap nodes have content assigned.</p>`;
+  }
+
+  // Unserved jobs are the other half of "what's missing". The IA-derived list
+  // above finds gaps in the *structure* you've drawn; this finds gaps in what
+  // the client said people come to do — and that argument is stronger, because
+  // it traces back to their own workshop rather than to our sitemap.
+  const jobLib = sortedJobLibrary();
+  if (jobLib.length) {
+    const served = new Set();
+    audienceScopeRows().forEach(r => rowJobs(r).forEach(l => served.add(l)));
+    const unserved = jobLib.filter(j => !served.has(j.label));
+    body += `<h2 style="margin-top:24px;">Jobs nothing answers</h2>`;
+    if (unserved.length) {
+      body += `<p style="font-size:13px;color:#666;">The client's jobs-to-be-done workshop named these, and no page on the site serves them. Each is a brief for new content that traces back to something they said themselves.</p>`;
+      body += `<ul style="font-size:12px;">`;
+      unserved.forEach(j => {
+        body += `<li style="margin-bottom:6px;"><strong>${escapeHtml(j.label)}</strong>`;
+        if (j.statement) body += `<br><span style="color:#666;">${escapeHtml(j.statement)}</span>`;
+        if ((j.audiences || []).length) body += `<br><span style="color:#999;font-size:11px;">${escapeHtml(j.audiences.join(' · '))}</span>`;
+        body += `</li>`;
+      });
+      body += `</ul>`;
+    } else {
+      body += `<p style="color:#228b22;font-size:13px;">Every job in the library has at least one page serving it.</p>`;
+    }
   }
 
   const title = 'Net New Content Brief';
@@ -20539,7 +24007,7 @@ async function runMigrationTrackerExport(opts) {
   sheets.push(buildNavPlanSheet(opts.plan));
 
   if (opts.sheets.sources) sheets.push(buildSourcePagesSheet(opts.sources));
-  if (opts.sheets.redirects) sheets.push(buildRedirectsSheet());
+  if (opts.sheets.redirects) sheets.push(...buildRedirectsSheets());
   if (opts.sheets.archive) sheets.push(buildArchiveSheet());
 
   // Default file name from project settings
@@ -20818,10 +24286,14 @@ function buildSourcePagesSheet(sourceOpts) {
     'Source URL', 'Title', 'KKE', 'Final KKE', 'Suggested KKE',
     'Content Type', 'Renders As', 'Target Content Type',
     'Group', 'Primary Tag',
+    'Primary Audience', 'Audiences', 'Source Site',
     'Target Sitemap Breadcrumb', 'Target Computed Path', 'Target Pattern', 'Target Status',
     'Notes'
   ]];
 
+  // Every row, including out-of-scope sites: this is the content INVENTORY, and
+  // a deliverable that quietly omits pages is worse than one that includes them
+  // with a Source Site column the recipient can filter on.
   state.editedRows.forEach(r => {
     const kke = String(r[kkeCol()] || '').trim();
     const finalK = String(r[finalKkeCol()] || '').trim();
@@ -20841,6 +24313,9 @@ function buildSourcePagesSheet(sourceOpts) {
       r['Target_Content_Type'] || '',
       r[groupCol()] || '',
       r[primaryTagCol()] || '',
+      r[PRIMARY_AUDIENCE_COL] || '',
+      r[AUDIENCES_COL] || '',
+      r[SOURCE_SITE_COL] || '',
       node?.breadcrumb || '',
       node?.computedPath || '',
       node?.buildPattern || '',
@@ -20852,49 +24327,96 @@ function buildSourcePagesSheet(sourceOpts) {
   return {
     name: 'Source Pages',
     aoa,
-    cols: [{ wch: 50 }, { wch: 35 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 18 }, { wch: 14 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 40 }, { wch: 30 }, { wch: 18 }, { wch: 14 }, { wch: 50 }]
+    cols: [{ wch: 50 }, { wch: 35 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 18 }, { wch: 14 }, { wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 24 }, { wch: 36 }, { wch: 24 }, { wch: 40 }, { wch: 30 }, { wch: 18 }, { wch: 14 }, { wch: 50 }]
   };
 }
 
-function buildRedirectsSheet() {
-  // Reuse the resolver to ensure consistency with the Redirect Editor view
+/** The redirect rule for one row, or null when it needs none.
+ *  Extracted so the tracker sheets and the CSV export can't drift apart. */
+function redirectRuleForRow(r) {
+  const urlCol = state.urlColumn || 'Address';
+  const source = String(r[urlCol] || '').trim();
+  if (!source) return null;
+  if (isFragmentRow(r)) return null;   // fragments have no public URL
+  const kke = String(r[finalKkeCol()] || r[kkeCol()] || '').trim();
+  const dest = String(r['Redirect_Destination'] || '').trim();
+  if (kke === 'Kill') {
+    if (dest === '404') return [source, '(404)', '404 — intentional deindex', 'Kill'];
+    if (dest) return [source, dest, '301', 'Kill'];
+    return [source, '', '(TBD)', 'Kill, no destination set'];
+  }
+  if (dest && dest !== '404') return [source, dest, '301', 'URL changed'];
+  return null;
+}
+
+const REDIRECT_SHEET_HEADER = ['Source URL', 'Destination', 'Disposition', 'Reason'];
+const REDIRECT_SHEET_COLS = [{ wch: 50 }, { wch: 50 }, { wch: 24 }, { wch: 30 }];
+
+/** Redirect sheets for the Migration Tracker — an ARRAY, because each retiring
+ *  domain is deployed as its own redirect configuration on its own host. A
+ *  single merged list has to be split by hand by whoever implements it, which
+ *  is exactly the re-derivation the tracker exists to remove.
+ *
+ *  Single-site projects get one sheet named "Redirects", byte-identical to what
+ *  this returned before it learned about sites. */
+function buildRedirectsSheets() {
   if (typeof resolveRedirectDestinations === 'function') {
     try { resolveRedirectDestinations(); } catch (_) { /* ignore */ }
   }
-  const urlCol = state.urlColumn || 'Address';
-  const aoa = [['Source URL', 'Destination', 'Disposition', 'Reason']];
 
-  state.editedRows.forEach(r => {
-    const source = String(r[urlCol] || '').trim();
-    if (!source) return;
-    if (isFragmentRow(r)) return; // fragments have no public URL — no redirect row
-    const kke = String(r[finalKkeCol()] || r[kkeCol()] || '').trim();
-    const dest = String(r['Redirect_Destination'] || '').trim();
-    if (kke === 'Kill') {
-      if (dest === '404') {
-        aoa.push([source, '(404)', '404 — intentional deindex', 'Kill']);
-      } else if (dest) {
-        aoa.push([source, dest, '301', 'Kill']);
-      } else {
-        aoa.push([source, '', '(TBD)', 'Kill, no destination set']);
-      }
-    } else if (dest && dest !== '404') {
-      // Non-Kill row with explicit dest (URL-changed via nav, etc.)
-      aoa.push([source, dest, '301', 'URL changed']);
-    }
+  const bySite = new Map();
+  reportRows().forEach(r => {
+    const rule = redirectRuleForRow(r);
+    if (!rule) return;
+    const label = String(r[SOURCE_SITE_COL] || '').trim() || 'Redirects';
+    if (!bySite.has(label)) bySite.set(label, []);
+    bySite.get(label).push(rule);
   });
 
-  return {
-    name: 'Redirects',
-    aoa,
-    cols: [{ wch: 50 }, { wch: 50 }, { wch: 24 }, { wch: 30 }]
-  };
+  const inScopeSites = (state.siteLibrary || []).filter(s => s.inScope !== false);
+  if (inScopeSites.length < 2) {
+    const rules = [...bySite.values()].flat();
+    return [{ name: 'Redirects', aoa: [REDIRECT_SHEET_HEADER, ...rules], cols: REDIRECT_SHEET_COLS }];
+  }
+
+  const used = new Set();
+  return [...bySite.entries()]
+    .sort((a, b) => b[1].length - a[1].length)
+    .map(([label, rules]) => ({
+      name: redirectSheetName(label, used),
+      aoa: [REDIRECT_SHEET_HEADER, ...rules],
+      cols: REDIRECT_SHEET_COLS
+    }));
+}
+
+/** Excel caps sheet names at 31 chars and forbids : \ / ? * [ ]. A domain can
+ *  breach both, an invalid name makes the whole workbook write throw, and two
+ *  long domains truncating to the same string would collide silently — so drop
+ *  the prefix before truncating, and disambiguate whatever is left. */
+function redirectSheetName(label, used = new Set()) {
+  const clean = String(label).replace(/[:\\/?*\[\]]/g, '-').trim() || 'Redirects';
+  const candidates = [`Redirects ${clean}`, clean, clean.slice(0, 31)];
+  let name = candidates.find(c => c.length <= 31 && !used.has(c.toLowerCase()));
+  if (!name) {
+    const base = clean.slice(0, 27);
+    let n = 2;
+    name = `${base} ${n}`;
+    while (used.has(name.toLowerCase())) { n++; name = `${base} ${n}`; }
+  }
+  used.add(name.toLowerCase());
+  return name;
+}
+
+// Kept as a shim: older call sites expect a single sheet object.
+function buildRedirectsSheet() {
+  return buildRedirectsSheets()[0];
 }
 
 function buildArchiveSheet() {
   const urlCol = state.urlColumn || 'Address';
   const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
   const aoa = [['Source URL', 'Title', 'KKE', 'Notes', 'Tags']];
+  // Same reasoning as Source Pages — the archive record must be complete.
   state.editedRows.forEach(r => {
     const kke = String(r[finalKkeCol()] || r[kkeCol()] || '').trim();
     if (kke !== 'Kill') return;
@@ -20923,7 +24445,7 @@ function reportMigrationChecklist() {
   const redirects = [];
   const urlChanged = [];
 
-  state.editedRows.forEach(row => {
+  reportRows().forEach(row => {
     const kke = String(row[kkeCol()] || '').trim();
     const url = String(row[urlCol] || '').trim();
     const computed = String(row['Computed Path'] || '').trim();
@@ -20968,7 +24490,7 @@ function reportMigrationChecklist() {
 
   let body = `
     <h2>Migration Summary</h2>
-    <div class="stat-row"><span class="stat-label">Total pages audited</span><span class="stat-value">${state.editedRows.length}</span></div>
+    <div class="stat-row"><span class="stat-label">Total pages audited</span><span class="stat-value">${reportRows().length}</span></div>
     <div class="stat-row"><span class="stat-label">Pages to retain</span><span class="stat-value">${keep.length}</span></div>
     <div class="stat-row"><span class="stat-label">Pages to remove</span><span class="stat-value">${kill.length}</span></div>
     <div class="stat-row"><span class="stat-label">Pages to update</span><span class="stat-value">${evolve.length}</span></div>
@@ -22133,7 +25655,12 @@ function showSmeExportModal() {
 
     const urlCol = state.urlColumn || 'Address';
     const titleCol = state.headers.includes('Title 1') ? 'Title 1' : 'Title';
-    const exportHeaders = [urlCol, titleCol, kkeCol(), notesCol(), smeDecisionCol(), smeNotesCol(), contentOwnerCol()].filter(h => state.headers.includes(h));
+    // Audience columns ride along read-only: the SME is very often the only
+    // person who actually knows who reads a given page, so showing them our
+    // tagging is the cheapest correction loop available.
+    const exportHeaders = [urlCol, titleCol, kkeCol(), PRIMARY_AUDIENCE_COL, AUDIENCES_COL,
+                           notesCol(), smeDecisionCol(), smeNotesCol(), contentOwnerCol()]
+      .filter(h => state.headers.includes(h));
     const splitByOwner = $('sme-export-split-owner').checked;
 
     // Build export rows — keep Content_Owner for splitting, blank SME decision/notes
@@ -22542,7 +26069,8 @@ const TV_HIDDEN_BY_DEFAULT = new Set([
   'Suggested_KKE_Sources',
   'Source_CMS_URL',
   'New_CMS_URL',
-  'Design_Patterns'
+  'Design_Patterns',
+  '_Suggested_Audiences'
 ]);
 
 // Plain-language explanations surfaced as column-header tooltips (Table View) so non-experts
@@ -23846,7 +27374,7 @@ async function exportRedirectMap() {
   const urlCol = state.urlColumn || 'Address';
   const redirectRows = [];
 
-  for (const row of state.editedRows) {
+  for (const row of reportRows()) {
     const sourceUrl = String(row[urlCol] || '').trim();
     if (!sourceUrl) continue;
     // Fragments / embeddable content objects have no public URL — never need a redirect.
@@ -23858,6 +27386,7 @@ async function exportRedirectMap() {
     if (kke === 'Kill') {
       if (dest === '404') {
         redirectRows.push({
+        '_site': String(row[SOURCE_SITE_COL] || ''),
           'Source URL': sourceUrl,
           'Destination URL': '(404)',
           'Status Code': '404',
@@ -23865,6 +27394,7 @@ async function exportRedirectMap() {
         });
       } else if (dest) {
         redirectRows.push({
+        '_site': String(row[SOURCE_SITE_COL] || ''),
           'Source URL': sourceUrl,
           'Destination URL': dest,
           'Status Code': '301',
@@ -23872,6 +27402,7 @@ async function exportRedirectMap() {
         });
       } else {
         redirectRows.push({
+        '_site': String(row[SOURCE_SITE_COL] || ''),
           'Source URL': sourceUrl,
           'Destination URL': '',
           'Status Code': '(TBD)',
@@ -23884,6 +27415,7 @@ async function exportRedirectMap() {
     // Consolidate, or a non-Kill page whose URL moved via nav mapping
     if (dest === '404') {
       redirectRows.push({
+        '_site': String(row[SOURCE_SITE_COL] || ''),
         'Source URL': sourceUrl,
         'Destination URL': '(404)',
         'Status Code': '404',
@@ -23891,6 +27423,7 @@ async function exportRedirectMap() {
       });
     } else if (dest) {
       redirectRows.push({
+        '_site': String(row[SOURCE_SITE_COL] || ''),
         'Source URL': sourceUrl,
         'Destination URL': dest,
         'Status Code': '301',
@@ -23902,6 +27435,36 @@ async function exportRedirectMap() {
   if (redirectRows.length === 0) {
     showToast('No redirects needed — no Kill pages or URL mismatches found', 'error');
     return;
+  }
+
+  // With several source sites, offer one file per retiring domain — each is
+  // deployed as its own redirect config, so a merged list has to be split by
+  // hand downstream.
+  const bySite = new Map();
+  redirectRows.forEach(rr => {
+    const label = rr._site || 'redirects';
+    if (!bySite.has(label)) bySite.set(label, []);
+    bySite.get(label).push(rr);
+  });
+  redirectRows.forEach(rr => { delete rr._site; });
+
+  if (bySite.size > 1) {
+    const perSite = await confirmDialog({
+      title: 'Split by source site?',
+      message: `This audit covers ${bySite.size} source sites. Write one redirect map per site (${[...bySite.keys()].join(', ')}), or a single combined file?`,
+      confirmLabel: 'One file per site',
+      cancelLabel: 'Single file'
+    });
+    if (perSite) {
+      const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const files = [...bySite.entries()].map(([label, rows]) => ({
+        fileName: `redirect-map-${slug(label)}.csv`, rows
+      }));
+      const res = await window.electronAPI.exportRedirectsMulti({ files });
+      if (res.success) showToast(`Exported ${res.count} redirects across ${res.files} files to ${res.dir}`, 'success');
+      else if (res.error !== 'Cancelled') showToast('Export failed: ' + res.error, 'error');
+      return;
+    }
   }
 
   const result = await window.electronAPI.exportRedirects({ rows: redirectRows });
@@ -24185,6 +27748,14 @@ function setupMultiBar() {
       addOpts((state.tagLibrary || []).slice().sort(), { blank: true });
     } else if (a === 'add-tag') {
       addOpts((state.tagLibrary || []).slice().sort());
+    } else if (a === 'add-audience' || a === 'remove-audience') {
+      // Library order (tier, then name) — the same ranking the picker shows, so
+      // bulk tagging a whole section stays anchored to the priority list.
+      addOpts(sortedAudienceLibrary().map(e => e.name));
+    } else if (a === 'add-job' || a === 'remove-job') {
+      addOpts(sortedJobLibrary().map(j => j.label));
+    } else if (a === 'primary-audience') {
+      addOpts(sortedAudienceLibrary().filter(e => e.name !== AUDIENCE_NONE).map(e => e.name), { blank: true });
     } else if (a === 'assign-nav') {
       // No value select — Apply opens the bucket picker/creator dialog directly.
       applyBtn.classList.remove('hidden');
@@ -24217,7 +27788,12 @@ function setupMultiBar() {
       return;
     }
     const using = state.multiSelected.size > 0 ? 'selected' : 'filtered';
-    const verb = a === 'add-tag' ? 'Add tag' : (v ? 'Set' : 'Clear');
+    const verb = a === 'add-tag' ? 'Add tag'
+      : a === 'add-audience' ? 'Add audience'
+      : a === 'remove-audience' ? 'Remove audience'
+      : a === 'add-job' ? 'Add job'
+      : a === 'remove-job' ? 'Remove job'
+      : (v ? 'Set' : 'Clear');
     const valLabel = v || '(blank)';
     if (!(await confirmDialog({ title: 'Apply to rows', message: `${verb} "${valLabel}" — apply to ${targets.length} ${using} row${targets.length !== 1 ? 's' : ''}?`, confirmLabel: verb }))) return;
     // Bulk-setting Kill offers the same sitemap/redirect cleanup every other Kill
@@ -24266,6 +27842,55 @@ function getMultiBarTargets() {
 }
 
 async function applyMultiAction(row, origIndex, action, value) {
+  // Bulk audience tagging is how a real crawl gets tagged at all — filter to a
+  // section, select all, apply. Hand-tagging thousands of rows through the chip
+  // input is not a workflow anyone completes.
+  if (action === 'add-audience' || action === 'remove-audience') {
+    const current = rowAudiences(row);
+    const has = current.includes(value);
+    if (action === 'add-audience' && has) return false;
+    if (action === 'remove-audience' && !has) return false;
+    const updated = action === 'add-audience'
+      ? toggleAudience(current, value)   // also clears a stale "serves nobody"
+      : current.filter(a => a !== value);
+    const old = String(row[AUDIENCES_COL] || '');
+    row[AUDIENCES_COL] = updated.join(', ');
+    logChange(origIndex, AUDIENCES_COL, old, row[AUDIENCES_COL]);
+    syncPrimaryAudience(origIndex, updated);
+    refreshSuggestedKkeForRow(origIndex);
+    return true;
+  }
+  if (action === 'add-job' || action === 'remove-job') {
+    const current = rowJobs(row);
+    const has = current.includes(value);
+    if (action === 'add-job' && has) return false;
+    if (action === 'remove-job' && !has) return false;
+    const updated = action === 'add-job' ? [...current, value] : current.filter(j => j !== value);
+    const old = String(row[JOBS_COL] || '');
+    row[JOBS_COL] = updated.join(', ');
+    logChange(origIndex, JOBS_COL, old, row[JOBS_COL]);
+    return true;
+  }
+  if (action === 'primary-audience') {
+    const old = String(row[PRIMARY_AUDIENCE_COL] || '');
+    if (old === value) return false;
+    row[PRIMARY_AUDIENCE_COL] = value;
+    logChange(origIndex, PRIMARY_AUDIENCE_COL, old, value);
+    // Naming a primary implies serving them — otherwise a bulk "set primary"
+    // leaves rows claiming a lead audience they aren't tagged with, and every
+    // set-based report disagrees with the primary-based one.
+    if (value && !rowAudiences(row).includes(value)) {
+      const merged = toggleAudience(rowAudiences(row), value);
+      const oldSet = String(row[AUDIENCES_COL] || '');
+      row[AUDIENCES_COL] = merged.join(', ');
+      logChange(origIndex, AUDIENCES_COL, oldSet, row[AUDIENCES_COL]);
+    }
+    // Naming a primary can pull a new audience into the set, which changes the
+    // row's vote — so the suggestion has to be refreshed here too, not just on
+    // the add/remove-audience path.
+    refreshSuggestedKkeForRow(origIndex);
+    return true;
+  }
   if (action === 'kke') {
     const old = String(row[kkeCol()] || '');
     if (old === value) return false;
@@ -24368,8 +27993,17 @@ function detectDuplicates() {
   if (dupFields.length === 0) return;
 
   // Build fingerprints: concat of all dup fields
+  //
+  // Rows already dispositioned Kill or Exclude are left out. The duplicates
+  // filter is a worklist of duplicate content still needing a decision, and on
+  // a CMS-driven crawl the alternate views (pagination, facets) share their
+  // parent's title and would otherwise flood it — ~9,000 of ~13,000 rows on the
+  // crawl this was measured against, which is a filter that answers nothing.
+  // Same reasoning as _navPageCountsCache() excluding Kill/Consolidate.
   const fingerprints = new Map(); // fingerprint → [origIndex, ...]
   state.editedRows.forEach((row, i) => {
+    const eff = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
+    if (eff === 'Kill' || eff === 'Exclude') return;
     const fp = dupFields.map(f => String(row[f] || '').trim().toLowerCase()).join('||');
     if (!fp || fp === dupFields.map(() => '').join('||')) return; // skip empty
     if (!fingerprints.has(fp)) fingerprints.set(fp, []);
@@ -24380,6 +28014,29 @@ function detectDuplicates() {
     if (indices.length > 1) {
       indices.forEach(i => _duplicateSet.add(i));
     }
+  });
+
+  // Same fingerprints, split by source site. In a consolidation "duplicated on
+  // ANOTHER site" is the actionable subset — within one site it's a tidy-up, but
+  // across sites it's a merge decision with a redirect attached.
+  // Canonical-variant sets, refreshed in the same pass so the filters can never
+  // disagree with what the triage dialog would show.
+  _urlVariantSet.clear();
+  _variantTargetMissingSet.clear();
+  if (canonicalCol()) {
+    const { groups } = classifyUrlVariants();
+    groups.forEach(g => g.rows.forEach(({ origIndex }) => {
+      _urlVariantSet.add(origIndex);
+      if (!g.targetInCrawl) _variantTargetMissingSet.add(origIndex);
+    }));
+  }
+
+  _crossSiteDupSet.clear();
+  if (!state.headers.includes(SOURCE_SITE_COL)) return;
+  fingerprints.forEach((indices) => {
+    if (indices.length < 2) return;
+    const sites = new Set(indices.map(i => String(state.editedRows[i][SOURCE_SITE_COL] || '').trim()).filter(Boolean));
+    if (sites.size > 1) indices.forEach(i => _crossSiteDupSet.add(i));
   });
 }
 
