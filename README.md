@@ -2,13 +2,17 @@
 
 A macOS desktop app for auditing website content. Load a Screaming Frog crawl export (or any spreadsheet with URLs), review each page in an embedded browser, and record Keep/Kill/Evolve decisions directly in the file.
 
-**Version 2.5.2** — "How Soon Is Now?"
+**Version 2.10.0** — "How Soon Is Now?"
 
 ---
 
 ## Documentation
 
-All documentation lives in **[`docs/`](docs/)**. New to the tool? Start with the **[User Guide](docs/USER_GUIDE.md)** — it follows the real lifecycle of an audit (Set up → Audit → Classify → Review → Architect → Ship), each section opening with a task walkthrough and followed by reference detail.
+All documentation lives in **[`docs/`](docs/)**.
+
+- **[Running an Audit](docs/RUNNING_AN_AUDIT.md)** — start here for a real engagement. The opinionated order to do things in, why that order matters, and the assumptions the tool makes that will otherwise catch you out.
+- **[User Guide](docs/USER_GUIDE.md)** — the full reference, feature by feature, following the lifecycle of an audit (Set up → Audit → Classify → Review → Architect → Ship).
+- **[Quick Start](docs/QUICK_START.md)** — the five-minute tour of the core loop.
 
 The individual **[walkthroughs](docs/walkthroughs/)** are also shippable as standalone hand-outs (see [`docs/walkthroughs/README.md`](docs/walkthroughs/README.md) for the reading path). Architecture and developer notes live in [`CLAUDE.md`](CLAUDE.md); the content-type / roles rationale in [`docs/CONTENT_TYPE_MODEL.md`](docs/CONTENT_TYPE_MODEL.md).
 
