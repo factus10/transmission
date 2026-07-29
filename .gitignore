@@ -31,3 +31,6 @@ dist-unsigned/
 
 # Locally generated app prefs
 prefs.json
+
+# Claude Code session memory (local notes, not project source)
+/memory/
