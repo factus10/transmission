@@ -162,6 +162,38 @@ Useful checks while you're here: **Sitemap Coverage Report** (empty nodes, overl
 
 > Skip menus if the engagement stops at the content audit. But if you're handing over an IA, the sitemap alone doesn't tell anyone what the navigation should say.
 
+### Showing the current state — do it in a copy
+
+Clients often ask for *"here's your site today"* before they'll engage with where it's going, and **Create Sitemap from Audit…** produces that picture in one pass, since it builds the tree straight from the live URL structure.
+
+**Build it in a separate copy of the project, and archive that copy.** Not in your working file.
+
+The reason is that a sitemap in Transmission is never purely descriptive. Placing a page on a node writes derived fields onto its row — `Computed Path`, `Sitemap_Destination`, `Page_Breadcrumb` — and on the next save the redirect resolver reads `Computed Path`, sees it differs from the page's live URL, and writes a `Redirect_Destination`. That is correct behavior for a *future-state* tree, where a page really is moving. For a *current-state* tree it manufactures redirects for pages that aren't going anywhere.
+
+Transmission now records which redirects it derived, so deleting a node takes its derived redirects with it and the fossils no longer outlive the tree. Redirects written *before* that record existed are still ambiguous, though — the app can't tell them from something you typed — so an older file can still be carrying them.
+
+So:
+
+1. **Copy the project first** — `File → Save As Project…` to a new name, or duplicate the file in Finder. The Create Sitemap from Audit dialog asks what the tree is for; answering *where pages are today* offers **Save a copy first…**, which does this for you.
+2. Build the URL-derived tree **in the copy**, export the Visual Sitemap (HTML / PDF / Miro) and the Treemap from there, and keep that copy as the archived deliverable.
+3. Go back to your working file, untouched, and build the future state there.
+
+### Resetting a file where it already happened
+
+Symptoms, in rough order of how obvious they are:
+
+- A page whose redirect destination is **its own URL** — a loop, and always wrong.
+- A redirect whose path corresponds to **no node in the current tree** (a fossil of the deleted one).
+- A **Keep or Evolve page with no sitemap placement that still carries a redirect**. It isn't moving, so it shouldn't have one at all. This is usually the largest group and the easiest to miss.
+
+To find them, use sidebar field filters — `Redirect_Destination is-not-blank` combined with `Sitemap_ID is-blank`, with the KKE filter on Keep + Evolve, isolates that last group exactly.
+
+To fix them, run **Migration → Redirect Health Check…**. It finds all three classes, groups them, shows every affected page, and repairs the groups you tick in a single undoable step. Anything whose destination still resolves to a real node in your sitemap is reported but never changed automatically — that may be a deliberate "send this to the parent", and only you know.
+
+The Redirect Editor's **Re-derive from sitemap** is the blunter alternative: it re-points every *placed* row at its current node, skips unplaced rows entirely, and overwrites hand-set destinations (everything except a literal `404`). Prefer the health check.
+
+> The cleanest habit remains the one above: a descriptive tree lives in its own archived copy, and the working file only ever holds the future state.
+
 **Show it.** The Sitemap toolbar's **Visual Sitemap** renders the tree as an interactive box diagram — this is the artifact clients actually react to. Color it by KKE, section, phase, page status, or an audit field; export a shareable standalone HTML for the client, a PDF for the deck, or push it to a **Miro** board if the client works there (connect once in App Settings). **Treemap** answers a different question — where the content actually *is*, sized by page count — and is usually the more uncomfortable picture.
 
 ---
@@ -244,6 +276,8 @@ This is what feeds **Reports → Migration Direction Brief…**, which prints on
 **Leaving AI suggestions unreviewed.** A pending suggestion is not a tagged page — it's an unanswered question, and every audience report still counts that page as untagged. Drain the queue before you run the readout.
 
 **Leaving Site Domain unset with several sites in scope.** Redirect destinations get built on an arbitrary domain. The tool warns; heed it.
+
+**Building a "current state" sitemap in the working file.** Placing pages writes redirects, and deleting the tree afterwards doesn't take them back — they survive to contradict the future-state tree you build next. Do it in an archived copy: [Showing the current state](#showing-the-current-state--do-it-in-a-copy).
 
 ---
 
