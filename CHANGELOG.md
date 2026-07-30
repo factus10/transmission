@@ -6,6 +6,16 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.11.1] — "Please, Please, Please, Let Me Get What I Want"
+
+### Fixed
+
+- **Coloring a sitemap section no longer applies the color to a different one.** In the Visual Sitemap's color rules, choosing a section under **Top-level section** could save the rule against another section — usually the level above — and reopening the rule showed a third one, as though the choice hadn't committed. It had: the list was offering the wrong values behind the right names. On a sitemap whose sections all sit beneath a single top node, every entry in that list quietly carried the same value, the root's. Sections now identify themselves correctly, so the section you pick is the section that gets colored, and it still reads correctly when you reopen the rule.
+- **Color by top-level section now has more than one section to offer.** On a sitemap built under a single root page, the entire tree counted as one section — so coloring by section colored everything alike, in the **Visual Sitemap** and the **Treemap** both. The sections beneath a lone root are now treated as the sections, which is what they look like on screen anyway.
+- A color rule now reads the way you built it — *Top-level section is Admissions*, rather than the internal field name.
+
+**If you already have a section color rule** in a sitemap with a single root page, it was matching the whole tree. It now matches just that root, so re-point it at the section you actually meant.
+
 ## [2.11.0] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Added
