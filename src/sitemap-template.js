@@ -744,8 +744,11 @@
     function condSummary(c) {
       if (!c) return '';
       if (c.source) {
+        // Prefer the dimension's own label so a rule reads the way it was built
+        // ("Top-level section is Blogs"), not as its internal key.
+        var dim = ruleDimensions().filter(function (o) { return o.v === c.source + ':' + c.key; })[0];
         var d = fieldDefOf(c.key);
-        var name = d ? d.label : (c.key === 'depth' ? 'Depth' : c.key);
+        var name = dim ? dim.label : (d ? d.label : (c.key === 'depth' ? 'Depth' : c.key));
         var opDef = OPS.filter(function (o) { return o.op === c.op; })[0];
         var opLabel = opDef ? opDef.label : c.op;
         if (opDef && opDef.noValue) return name + ' ' + opLabel;
@@ -935,11 +938,8 @@
       // section node AND its descendants share one color.
       var pal = DATA.palette || ['#2d6a9f', '#1e7a4e', '#7a3a9f', '#9f6a1e', '#2d7a7a', '#7a2d2d'];
       var rules = [{ id: 'r-root', label: 'Homepage / root', when: [{ source: 'tree', key: 'depth', op: 'is', value: 0 }], style: styleFor(DATA.rootColor || '#1a3a6b') }];
-      var seen = {};
-      topLevelSections().forEach(function (sec, i) {
-        var val = sec.colorValue || sec.label;
-        if (seen[val]) return; seen[val] = 1;
-        rules.push({ id: 'r-sec-' + sec.id, label: sec.label, when: [{ source: 'tree', key: 'colorValue', op: 'is', value: val }], style: styleFor(pal[i % pal.length]) });
+      sectionValues().forEach(function (val, i) {
+        rules.push({ id: 'r-sec-' + i, label: val, when: [{ source: 'tree', key: 'colorValue', op: 'is', value: val }], style: styleFor(pal[i % pal.length]) });
       });
       rules.push({ id: 'r-fallback', label: 'Everything else', when: [], style: styleFor(FALLBACK_COLOR) });
       return rules;
@@ -959,10 +959,23 @@
       rules.push({ id: 'r-fallback', label: 'Everything else', when: [], style: styleFor(FALLBACK_COLOR) });
       return rules;
     }
-    function topLevelSections() {
-      // depth-1 nodes across all roots
-      var out = [];
-      ROOTS.forEach(function (root) { (root.children || []).forEach(function (c) { out.push(c); }); });
+    // Every distinct top-level-section value present in the tree, in tree order.
+    // Deliberately NOT "the depth-1 nodes": `colorValue` is the node's top-level
+    // SECTION label, which the host stamps onto that section's whole subtree, so
+    // which depth carries distinct values depends on whether the sitemap wraps
+    // the tree in a synthetic site root. Reading the values themselves is right
+    // either way. Taking depth-1 nodes was not: with a single top-level node,
+    // every option got that shared ancestor's label as its value, so picking any
+    // section saved (and then re-displayed) a different one.
+    function sectionValues() {
+      var seen = {}, out = [];
+      (function walk(nodes) {
+        (nodes || []).forEach(function (n) {
+          var v = n.colorValue;
+          if (v && !(v in seen)) { seen[v] = 1; out.push(v); }
+          walk(n.children);
+        });
+      })(ROOTS);
       return out;
     }
 
@@ -1039,9 +1052,13 @@
         if (c.op === 'is-true' || (opDef && opDef.noValue)) return '<span class="re-val-none">—</span>';
         if (dim && dim.kind === 'number') return '<input type="number" class="re-val" data-i="' + idx + '" value="' + esc(String(c.value == null ? 0 : c.value)) + '" min="0">';
         if (dim && dim.kind === 'section') {
-          return '<select class="re-val" data-i="' + idx + '">' + topLevelSections().map(function (sc) {
-            var v = sc.colorValue || sc.label;
-            return '<option value="' + esc(v) + '"' + (v === c.value ? ' selected' : '') + '>' + esc(sc.label) + '</option>';
+          var secs = sectionValues();
+          // Keep a value no longer present in the tree (a since-renamed or
+          // deleted section) as its own option, or the browser would fall back
+          // to the first option and silently re-point the rule on next save.
+          if (c.value != null && c.value !== '' && secs.indexOf(c.value) < 0) secs = secs.concat([c.value]);
+          return '<select class="re-val" data-i="' + idx + '">' + secs.map(function (v) {
+            return '<option value="' + esc(v) + '"' + (v === c.value ? ' selected' : '') + '>' + esc(v) + '</option>';
           }).join('') + '</select>';
         }
         if (dim && dim.kind === 'field') {
@@ -1137,7 +1154,7 @@
           if (c.value !== undefined || c.op === 'is-true') return;
           var dim = dims.filter(function (d) { return d.v === c.source + ':' + c.key; })[0];
           if (dim && dim.kind === 'field') c.value = distinctFieldValues(dim.key)[0] || '';
-          else if (dim && dim.kind === 'section') { var t = topLevelSections()[0]; c.value = t ? (t.colorValue || t.label) : ''; }
+          else if (dim && dim.kind === 'section') c.value = sectionValues()[0] || '';
           else if (dim && dim.kind === 'number') c.value = 0;
           else c.value = '';
         });
