@@ -1371,6 +1371,22 @@ Destinations also resolve automatically on **Save**, so the editor is for review
 
 **Migration → Redirect Chain Check…** flags any redirect that points at another page being killed (a redirect into a redirect, or into a 404). Repoint those to a live destination. The same check runs as part of the [Pre-flight check](#18-pre-flight--hand-off).
 
+### Check the redirects still agree with the sitemap
+
+**Migration → Redirect Health Check…** answers a different question: not "does this destination work" but "does it still match where the sitemap says the page is going". Redirects are derived from the sitemap, but the app can't tell a destination *it* wrote from one *you* typed — so once a value exists on a Keep or Evolve page it is never revisited. Reorganize the tree, or build a sitemap and delete it, and the old destinations quietly survive.
+
+It sorts what it finds into groups, each with the full list of affected pages:
+
+- **Pages redirecting to themselves** — a loop. Always wrong, whatever the page's decision.
+- **Not on the sitemap, but carrying a redirect** — a Keep/Evolve page with no placement isn't moving, so it needs no redirect. Usually the largest group, and the one nothing else finds.
+- **Redirect disagrees with the page's sitemap node** — re-pointed at the node.
+- **Placed where it already lives** — the node's path *is* the page's current URL, so the redirect is cleared.
+- **Worth a look — left alone** — the destination is a real node in your sitemap, so it may well be a deliberate choice (sending a page to its parent, say). Reported, never changed.
+
+Tick the groups you want repaired and apply: the whole repair is a **single Cmd+Z**. Blank destinations and intentional **404**s are never touched, and pages on sites you've marked out of scope are skipped.
+
+> **If your file went through a "current state" sitemap**, this is the tool that cleans up after it — and [Showing the current state](./RUNNING_AN_AUDIT.md#showing-the-current-state--do-it-in-a-copy) is how to avoid needing it next time. A per-class count also appears in the Pre-Handoff Check.
+
 ### Export the map
 
 - **Migration → Export Redirect Map (CSV)…** writes the rules as CSV for engineering.
@@ -1381,6 +1397,7 @@ Destinations also resolve automatically on **Save**, so the editor is for review
 - [ ] Every Kill / URL-changed page has a destination (or an intentional **404**)
 - [ ] You ran **Re-derive from sitemap** after the tree was finalized
 - [ ] The **Redirect Chain Check** is clean — no redirects into Kill/404 pages
+- [ ] The **Redirect Health Check** is clean — no loops, orphans, or destinations that contradict the sitemap
 - [ ] Intentional 404s are marked, not left blank
 - [ ] The redirect map is exported
 

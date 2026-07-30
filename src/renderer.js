@@ -553,6 +553,7 @@ function bindIPCListeners() {
   window.electronAPI.onMenuSmeImport(() => smeImport());
   window.electronAPI.onMenuSmeResolve(() => openSmeResolveDialog());
   window.electronAPI.onMenuRedirectChainCheck(() => checkRedirectChains());
+  if (window.electronAPI.onMenuRedirectHealthCheck) window.electronAPI.onMenuRedirectHealthCheck(() => openRedirectHealthCheck());
   window.electronAPI.onMenuNavCoverage(() => showNavCoverageReport());
   window.electronAPI.onMenuReportExecSummary(() => reportExecutiveSummary());
   window.electronAPI.onMenuReportContentInv(() => reportContentInventory());
@@ -2429,6 +2430,30 @@ function clearNavAssignment(row, origIndex, opts = {}) {
     if (old) logChange(origIndex, c, old, '');
     row[c] = '';
   });
+
+  // A redirect the app derived FROM this assignment is meaningless once the
+  // assignment is gone — leaving it is how a deleted sitemap's redirects
+  // outlived it and went on to contradict the tree that replaced it.
+  //
+  // Only ours: a recorded human destination is untouched, and unknown
+  // provenance (any pre-_RedirectSource file) is left for the Redirect Health
+  // Check rather than silently deleted here. Kill and Consolidate rows are
+  // exempt because their destination comes from the consolidate target or the
+  // project default, not from where the page sat in the tree.
+  //
+  // opts.keepRedirect is for callers that ask the user about the redirect
+  // SEPARATELY and act on the answer themselves — promptKillCleanup and its
+  // bulk twin. Those run before the row's KKE is written, so the Kill guard
+  // below hasn't taken effect yet, and clearing here would quietly override an
+  // explicit "no, keep the redirect".
+  const kke = String(row[finalKkeCol()] || row[kkeCol()] || '').trim().toLowerCase();
+  if (!opts.keepRedirect
+      && kke !== 'kill' && kke !== 'consolidate'
+      && String(row[REDIRECT_SRC_COL] || '').trim() === 'auto'
+      && String(row[REDIRECT_DEST_COL] || '').trim()) {
+    clearRedirectDestination(row, origIndex);
+  }
+
   // Refresh the Nav button badge if this is the currently-selected row
   if (state.selectedIndex === origIndex) updateNavBadge(row);
   // Invalidate the page-count cache so nav tree counts are up to date
@@ -2440,7 +2465,7 @@ function clearNavAssignment(row, origIndex, opts = {}) {
 function clearRedirectDestination(row, origIndex) {
   const old = row['Redirect_Destination'];
   if (old) logChange(origIndex, 'Redirect_Destination', old, '');
-  row['Redirect_Destination'] = '';
+  writeRedirectDestination(row, '', '');
 }
 
 async function promptKillCleanup(origIndex, targetStateLabel = 'Kill') {
@@ -2452,7 +2477,8 @@ async function promptKillCleanup(origIndex, targetStateLabel = 'Kill') {
   if (result === null) return false;
   if (result.clearNav) {
     const oldSitemapId = String(row['Sitemap_ID'] || '').trim();
-    clearNavAssignment(row, origIndex);
+    // This dialog asks about the redirect separately, below — don't pre-empt that answer.
+    clearNavAssignment(row, origIndex, { keepRedirect: true });
     // Consistency with the manual clearNav(): if the page's sitemap node is now an orphan leaf
     // (no children, no other pages assigned), offer to remove it from the tree too — otherwise
     // killing/consolidating a page leaves its empty node behind in the IA.
@@ -2481,7 +2507,7 @@ async function promptBulkKillCleanup(origIndexes) {
   if (result === null) return false;
   if (result.clearNav) {
     origIndexes.forEach(i => {
-      if (String(state.editedRows[i]['Sitemap_ID'] || '').trim()) clearNavAssignment(state.editedRows[i], i);
+      if (String(state.editedRows[i]['Sitemap_ID'] || '').trim()) clearNavAssignment(state.editedRows[i], i, { keepRedirect: true });
     });
   }
   if (result.clearRedirect) {
@@ -8785,7 +8811,7 @@ function setupSettings() {
         if (matching.length > 0) {
           const action = await confirmDialog({ title: 'Update existing redirects?', message: `${matching.length} page${matching.length !== 1 ? 's' : ''} currently redirect to "${oldVal}".\n\nUpdate them to "${newVal || '(blank)'}"?`, confirmLabel: 'Update' });
           if (action) {
-            matching.forEach(r => { r[destCol] = newVal; });
+            matching.forEach(r => { writeRedirectDestination(r, newVal, 'keep'); });
             showToast(`Updated ${matching.length} redirect destinations`, 'success');
           }
         }
@@ -12201,7 +12227,7 @@ function openNon200TriageDialog() {
             if (!existingDest) {
               const redirectUrl = String(editedRow[redirectUrlColName] || '').trim();
               if (redirectUrl) {
-                editedRow['Redirect_Destination'] = redirectUrl;
+                writeRedirectDestination(editedRow, redirectUrl, 'manual');
                 logChange(origIndex, 'Redirect_Destination', '', redirectUrl);
                 undoItems.push({ origIndex, field: 'Redirect_Destination', oldValue: '', newValue: redirectUrl });
               }
@@ -12211,7 +12237,7 @@ function openNon200TriageDialog() {
           newKke = 'Kill';
           const existingDest = String(editedRow['Redirect_Destination'] || '').trim();
           if (!existingDest) {
-            editedRow['Redirect_Destination'] = '404';
+            writeRedirectDestination(editedRow, '404', 'manual');
             logChange(origIndex, 'Redirect_Destination', '', '404');
             undoItems.push({ origIndex, field: 'Redirect_Destination', oldValue: '', newValue: '404' });
           }
@@ -13284,7 +13310,7 @@ function applyConsolidationGroup(group, targetOrigIndex) {
     // Clear any explicit redirect destination — let the resolver chase the consolidate target
     const oldRedirect = String(row['Redirect_Destination'] || '');
     if (oldRedirect) {
-      row['Redirect_Destination'] = '';
+      writeRedirectDestination(row, '', '');
       logChange(origIndex, 'Redirect_Destination', oldRedirect, '');
     }
   });
@@ -14329,12 +14355,39 @@ function openCreateSitemapFromAuditDialog() {
       <input type="checkbox" id="_csa-include-all" />
       Include Kill / Exclude / unreviewed pages too
     </label>
+    <div style="border-top:1px solid var(--border-light);padding-top:12px;display:flex;flex-direction:column;gap:6px;">
+      <div style="color:var(--text-secondary);font-weight:600;">What is this tree for?</div>
+      <label style="display:flex;align-items:flex-start;gap:8px;">
+        <input type="radio" name="_csa-purpose" value="future" checked style="margin-top:2px;" />
+        <span><b>Where pages are going</b> — the future state you're designing</span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:8px;">
+        <input type="radio" name="_csa-purpose" value="current" style="margin-top:2px;" />
+        <span><b>Where pages are today</b> — a current-state snapshot to show a client</span>
+      </label>
+      <div id="_csa-snapshot-note" class="hidden" style="background:var(--kke-evolve-bg);border:1px solid var(--border);border-left:3px solid var(--kke-evolve);border-radius:6px;padding:10px 12px;color:var(--text-secondary);line-height:1.5;">
+        Build a snapshot in <b>a copy of the project</b>, not this one. Placing a page writes where it's going, and Transmission derives a redirect from that for any page whose new path differs from its current URL — right for a tree describing where pages are <i>going</i>, meaningless for one describing where they already <i>are</i>.
+        <div style="margin-top:8px;">
+          <button type="button" id="_csa-copy" class="btn btn-sm btn-ghost">Save a copy first…</button>
+        </div>
+      </div>
+    </div>
   `;
 
   const countEl = body.querySelector('#_csa-count');
   const includeAllCb = body.querySelector('#_csa-include-all');
   includeAllCb.addEventListener('change', () => {
     countEl.textContent = countEligible(includeAllCb.checked);
+  });
+
+  // Asking what the tree is FOR beats warning about what it does: the answer is
+  // exactly what decides whether deriving redirects from it makes any sense.
+  // A snapshot belongs in its own copy — see docs/RUNNING_AN_AUDIT.md.
+  const snapshotNote = body.querySelector('#_csa-snapshot-note');
+  body.querySelectorAll('input[name="_csa-purpose"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      snapshotNote.classList.toggle('hidden', body.querySelector('input[name="_csa-purpose"]:checked').value !== 'current');
+    });
   });
 
   const footer = document.createElement('div');
@@ -14349,6 +14402,14 @@ function openCreateSitemapFromAuditDialog() {
 
   const modal = openModal({ title: 'Create Sitemap from Audit', body, width: 480, buttons: [] });
   cancelBtn.addEventListener('click', () => modal.close());
+
+  // Save As Project switches the session to the copy, which is what you want
+  // here: build the snapshot there, export from it, then reopen the original.
+  body.querySelector('#_csa-copy').addEventListener('click', async () => {
+    modal.close();
+    await saveAsProject();
+    showToast('Working in the copy now — build the snapshot here, then reopen the original', 'info');
+  });
 
   genBtn.addEventListener('click', () => {
     const maxDepth = parseInt(body.querySelector('#_csa-depth').value, 10) || 2;
@@ -14716,7 +14777,7 @@ function populateRedirectIndicator(row) {
     const r = state.editedRows[state.selectedIndex];
     const old = String(r['Redirect_Destination'] || '');
     if (!old) return;
-    r['Redirect_Destination'] = '';
+    writeRedirectDestination(r, '', '');
     logChange(state.selectedIndex, 'Redirect_Destination', old, '');
     setDirty(true);
     populateRedirectIndicator(r);
@@ -19176,7 +19237,7 @@ function cascadeNavChangesToRows(oldPaths) {
           const newRedirect = pathToRedirectUrl(newBase);
           if (newRedirect !== existing) {
             logChange(i, 'Redirect_Destination', existing, newRedirect);
-            row['Redirect_Destination'] = newRedirect;
+            writeRedirectDestination(row, newRedirect, 'auto');
           }
         }
       }
@@ -23330,16 +23391,21 @@ function resolveRedirectDestinations() {
     // silently gets no auto-derived redirect at all.
     const kke = String(row[finalKkeCol()] || row[kkeCol()] || '').trim().toLowerCase();
     const existing = String(row[REDIRECT_DEST_COL] || '').trim();
+    // Recorded provenance beats every heuristic below. Blank means unknown —
+    // which is every file written before _RedirectSource existed — so unknown
+    // keeps the old, cautious behavior rather than being read as either.
+    const src = String(row[REDIRECT_SRC_COL] || '').trim();
+    if (src === 'manual') return;   // a person chose this; nothing derived may overwrite it
 
     if (kke === 'consolidate') {
       const targetId = consolidateTargetAddr(row);
-      if (!targetId) { row[REDIRECT_DEST_COL] = ''; return; }
+      if (!targetId) { writeRedirectDestination(row, '', ''); return; }
       // Auto-derive the absolute destination from the master's identity. Preserve a genuine manual
       // override (a value unrelated to the master); re-derive blanks, prior auto values, and the
       // bare identity (the latter covers "linked before the master had a nav home, now it does").
       const auto = ctx.computeAutoDestination(row, 'consolidate');
       const looksAutoDerived = !existing || existing === auto || existing === targetId;
-      if (looksAutoDerived) row[REDIRECT_DEST_COL] = auto;
+      if (looksAutoDerived) writeRedirectDestination(row, auto, 'auto');
       return;
     }
 
@@ -23352,14 +23418,27 @@ function resolveRedirectDestinations() {
       // default keeps redirecting to the default forever.
       const auto = ctx.computeAutoDestination(row, 'kill'); // blank if nothing resolved (retired/404)
       const looksAutoDerived = !existing || existing === auto || existing === ctx.defaultRedirectUrl;
-      if (looksAutoDerived) row[REDIRECT_DEST_COL] = auto;
+      if (looksAutoDerived) writeRedirectDestination(row, auto, 'auto');
       return;
     }
 
-    // Non-kill/consolidate pages with URL changes via nav mapping
-    if (existing) return;
+    // Non-kill/consolidate pages, whose redirect exists only because the page is
+    // moving via its sitemap node. This branch used to bail on ANY existing value
+    // — the asymmetry with the two branches above, and the reason a redirect
+    // derived from a since-deleted sitemap outlived it. Now:
     const auto = ctx.computeAutoDestination(row, kke);
-    if (auto) row[REDIRECT_DEST_COL] = auto;
+
+    // We wrote it, so we keep it current — including clearing it when the page
+    // stops moving (unplaced, or placed where it already lives), which is the
+    // orphan class the health check has to clean up in older files.
+    if (src === 'auto') { writeRedirectDestination(row, auto, 'auto'); return; }
+
+    // Unknown provenance: a pre-provenance file, where the value could equally be
+    // a fossil or a deliberate hand edit. Silently rewriting those is exactly the
+    // failure this whole change is repairing, so fill blanks only and leave the
+    // ambiguous ones to the Redirect Health Check, where a human confirms.
+    if (existing) return;
+    if (auto) writeRedirectDestination(row, auto, 'auto');
   });
 }
 
@@ -24963,6 +25042,260 @@ function checkRedirectChains() {
   alertDialog({ title: 'Redirect chains found', message: msg, width: 560 });
 }
 
+// ─── Redirect Health Check ───────────────────────────────────────────────────
+//
+// A redirect is *derived* from the sitemap, but nothing records whether a given
+// destination was written by the app or typed by a person — so the resolver
+// plays it safe and treats any existing value on a Keep/Evolve page as a human
+// decision, forever (see resolveRedirectDestinations). That is the right call
+// in isolation and the wrong one in aggregate: a tree that gets built, used,
+// and deleted leaves its derived redirects behind, and they then contradict the
+// tree that replaces them.
+//
+// The pattern that produces this at scale is building a "current state" sitemap
+// in the working file — placing pages writes their Computed Path, the next save
+// derives redirects from it, and deleting the tree afterwards clears the
+// sitemap fields but not the redirects. Found on a real 3k-row audit where 967
+// of 1291 redirect values were fossils of a deleted tree, including pages
+// redirecting to themselves.
+//
+// This check finds that damage in any file, however it got there. It is the
+// recovery half of the fix; _RedirectSource provenance is the prevention half,
+// and once that lands the heuristics here stay useful only for legacy files.
+//
+// Deliberately conservative: a destination that still resolves to a live node
+// might be a genuine "send this to the parent" decision, so it is reported and
+// never auto-changed. Only values that resolve to nothing — or point at the
+// page itself — are treated as machine-written.
+
+/** Path portion of a URL, trailing slash stripped. Falls back to the raw string
+ *  for relative values, which the redirect field also accepts. */
+function redirectPathOf(u) {
+  const s = String(u || '').trim();
+  try { return new URL(s).pathname.replace(/\/+$/, ''); }
+  catch (_) { return s.replace(/\/+$/, ''); }
+}
+
+const REDIRECT_HEALTH_CATEGORIES = [
+  { key: 'self', fixable: true, title: 'Pages redirecting to themselves',
+    why: 'A page pointing at its own URL is a redirect loop. This is always wrong.',
+    action: 'Clear it, or re-point at the page’s sitemap node' },
+  { key: 'orphan', fixable: true, title: 'Not on the sitemap, but carrying a redirect',
+    why: 'A Keep or Evolve page with no sitemap placement is not moving, so it needs no redirect. These are usually left over from a sitemap that was built and then deleted.',
+    action: 'Clear the redirect' },
+  { key: 'stale', fixable: true, title: 'Redirect disagrees with the page’s sitemap node',
+    why: 'The page is placed on the sitemap, but its redirect points somewhere the sitemap does not.',
+    action: 'Re-point at the node' },
+  { key: 'settled', fixable: true, title: 'Placed where it already lives',
+    why: 'The node’s path is the page’s current URL — nothing is moving, so no redirect is needed.',
+    action: 'Clear the redirect' },
+  { key: 'review', fixable: false, title: 'Worth a look — left alone',
+    why: 'The destination is a real node in your sitemap, so it may well be a deliberate choice (sending a page to its parent, for instance). Nothing here is changed automatically.',
+    action: 'Review by hand in the Redirect Editor' },
+];
+
+/** Classify every in-scope row's redirect against the sitemap.
+ *  Returns { self, orphan, stale, settled, review } → [{origIndex, url, current, proposed, note}] */
+function computeRedirectHealth() {
+  const urlCol = state.urlColumn || 'Address';
+  const base = getRedirectBaseUrl();
+  const toUrl = (p) => base ? base + '/' + p.replace(/^\//, '') : '/' + p.replace(/^\//, '');
+  const nodePathOf = (n) => '/' + String(n.computedPath || '').replace(/^\//, '').replace(/\/+$/, '');
+
+  const nodeById = new Map();
+  const livePaths = new Set();
+  (state.navNodes || []).forEach(n => {
+    if (n.id) nodeById.set(n.id, n);
+    const p = nodePathOf(n);
+    if (p !== '/') livePaths.add(p);
+  });
+
+  // Out-of-scope sites are never written to by a bulk action — same rule the
+  // URL-variant triage follows. Identity comparison: reportRows() returns the
+  // live row objects, not copies.
+  const inScope = new Set(reportRows());
+
+  const out = { self: [], orphan: [], stale: [], settled: [], review: [] };
+
+  state.editedRows.forEach((row, origIndex) => {
+    if (!inScope.has(row)) return;
+    if (isFragmentRow(row)) return;              // no public URL, never a redirect
+    const dest = String(row[REDIRECT_DEST_COL] || '').trim();
+    if (!dest || dest === '404') return;         // blank = undecided, 404 = deliberate
+    const addr = String(row[urlCol] || '').trim();
+    if (!addr) return;
+
+    const kke = String(row[finalKkeCol()] || row[kkeCol()] || '').trim().toLowerCase();
+    const own = redirectPathOf(addr);
+    const dp = redirectPathOf(dest);
+    const node = nodeById.get(String(row['Sitemap_ID'] || '').trim()) || null;
+    const nodeUrl = node && nodePathOf(node) !== '/' && nodePathOf(node) !== own ? toUrl(nodePathOf(node)) : '';
+    const entry = { origIndex, url: addr, current: dest, proposed: '', note: '' };
+
+    // A loop is wrong regardless of decision — including on Kill/Consolidate,
+    // where it usually means a consolidate target resolved back to its own page.
+    if (dp === own) {
+      entry.proposed = nodeUrl;
+      entry.note = node ? 'on "' + (node.label || node.id) + '"' : 'not on the sitemap';
+      out.self.push(entry);
+      return;
+    }
+
+    // Kill and Consolidate destinations are theirs to own — the resolver already
+    // re-derives them, and the chain check covers their other failure mode.
+    if (kke === 'kill' || kke === 'consolidate') return;
+
+    if (!node) {
+      // Could a person have meant this? If it still resolves to a live node, assume so.
+      if (livePaths.has(dp)) { entry.note = 'not on the sitemap'; out.review.push(entry); return; }
+      out.orphan.push(entry);
+      return;
+    }
+
+    const want = nodeUrl;
+    // Already agrees with the sitemap. This has to be tested BEFORE the
+    // live-node check below — a correct destination is by definition a live
+    // node path, so testing in the other order reports every healthy row as
+    // needing review.
+    if (dest === want) return;
+
+    if (livePaths.has(dp)) {
+      entry.note = 'placed on "' + (node.label || node.id) + '"';
+      out.review.push(entry);
+      return;
+    }
+
+    entry.proposed = want;
+    entry.note = 'node: "' + (node.label || node.id) + '"';
+    (want ? out.stale : out.settled).push(entry);
+  });
+
+  return out;
+}
+
+function openRedirectHealthCheck() {
+  if (!state.editedRows.length) { showToast('Open a file first', 'error'); return; }
+
+  const found = computeRedirectHealth();
+  const cats = REDIRECT_HEALTH_CATEGORIES
+    .map(c => Object.assign({}, c, { rows: found[c.key] || [] }))
+    .filter(c => c.rows.length);
+
+  if (!cats.length) {
+    alertDialog({
+      title: 'Redirect health check',
+      message: 'Every redirect agrees with the sitemap.\n\nNo loops, no orphaned destinations, and no page placed where it already lives.',
+      width: 460,
+    });
+    return;
+  }
+
+  const fixableTotal = cats.filter(c => c.fixable).reduce((s, c) => s + c.rows.length, 0);
+  const reviewTotal = cats.filter(c => !c.fixable).reduce((s, c) => s + c.rows.length, 0);
+
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:14px;max-height:66vh;overflow:auto;';
+
+  const summary = document.createElement('div');
+  summary.style.cssText = 'padding:10px 12px;border-radius:8px;background:var(--bg-field-bar);border:1px solid var(--border);flex-shrink:0;';
+  summary.innerHTML =
+    '<div style="font-weight:600;font-size:13px;">&#9888; ' + fixableTotal + ' redirect' + (fixableTotal !== 1 ? 's' : '') + ' disagree with your sitemap</div>' +
+    '<div style="font-size:12px;color:var(--text-muted);margin-top:3px;">' +
+      'Tick the groups you want repaired. Everything applied here undoes with a single Cmd+Z.' +
+      (reviewTotal ? ' ' + reviewTotal + ' more need a human eye and are never changed automatically.' : '') +
+    '</div>';
+  body.appendChild(summary);
+
+  cats.forEach(c => {
+    const block = document.createElement('div');
+    const accent = c.fixable ? 'var(--kke-evolve)' : 'var(--text-muted)';
+    block.style.cssText = 'border-left:3px solid ' + accent + ';padding-left:10px;';
+
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:baseline;gap:6px;';
+    if (c.fixable) {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;
+      cb.className = 'rhc-cat';
+      cb.dataset.key = c.key;
+      cb.style.cssText = 'margin:0;flex-shrink:0;position:relative;top:1px;';
+      head.appendChild(cb);
+    }
+    const label = document.createElement('label');
+    label.style.cssText = 'font-weight:600;font-size:13px;cursor:' + (c.fixable ? 'pointer' : 'default') + ';';
+    label.textContent = c.title + ' — ' + c.rows.length;
+    if (c.fixable) label.addEventListener('click', () => { const cb = head.querySelector('.rhc-cat'); cb.checked = !cb.checked; });
+    head.appendChild(label);
+    block.appendChild(head);
+
+    const why = document.createElement('div');
+    why.style.cssText = 'font-size:12px;color:var(--text-muted);margin:3px 0 5px;';
+    why.textContent = c.why + ' ' + (c.fixable ? 'Fix: ' + c.action + '.' : '');
+    block.appendChild(why);
+
+    const list = document.createElement('div');
+    list.style.cssText = 'font-size:11.5px;font-family:var(--font-mono);line-height:1.5;max-height:150px;overflow:auto;border:1px solid var(--border-light);border-radius:4px;padding:6px 8px;';
+    // Only a fixable group shows what it would become. Showing "→ (cleared)" on
+    // the review group would promise a change that is never made.
+    list.innerHTML = c.rows.map(r =>
+      '<div style="word-break:break-all;margin-bottom:4px;">' + escapeHtml(r.url) +
+      '<div style="color:var(--text-muted);">' + escapeHtml(r.current) +
+        (c.fixable ? ' &rarr; ' + (r.proposed ? escapeHtml(r.proposed) : '<em>(cleared)</em>') : '') +
+        (r.note ? ' &middot; ' + escapeHtml(r.note) : '') +
+      '</div></div>'
+    ).join('');
+    block.appendChild(list);
+
+    body.appendChild(block);
+  });
+
+  openModal({
+    title: 'Redirect health check',
+    body,
+    width: 720,
+    buttons: [
+      { label: 'Cancel', variant: 'ghost' },
+      {
+        label: 'Fix selected', variant: 'primary', primary: true,
+        onClick: (api) => {
+          const keys = Array.from(api.dialog.querySelectorAll('.rhc-cat'))
+            .filter(cb => cb.checked).map(cb => cb.dataset.key);
+          applyRedirectHealthFixes(cats.filter(c => keys.includes(c.key)));
+        },
+      },
+    ],
+  });
+}
+
+/** Write the chosen categories' proposed destinations, as ONE undo entry. */
+function applyRedirectHealthFixes(cats) {
+  const items = [];
+  cats.forEach(c => c.rows.forEach(r => {
+    const row = state.editedRows[r.origIndex];
+    if (!row) return;
+    const oldValue = String(row[REDIRECT_DEST_COL] || '');
+    if (oldValue === r.proposed) return;
+    writeRedirectDestination(row, r.proposed, 'auto');
+    logChange(r.origIndex, REDIRECT_DEST_COL, oldValue, r.proposed);
+    items.push({ origIndex: r.origIndex, field: REDIRECT_DEST_COL, oldValue, newValue: r.proposed });
+  }));
+
+  if (!items.length) { showToast('Nothing to change', 'info'); return; }
+
+  pushBulkEditUndo(items, 'redirect health fix');
+  setDirty(true);
+  applyFilter();
+  if (typeof _redirectEditorOpen !== 'undefined' && _redirectEditorOpen) renderRedirectEditor();
+
+  const cleared = items.filter(i => !i.newValue).length;
+  showToast(
+    items.length + ' redirect' + (items.length !== 1 ? 's' : '') + ' fixed — ' +
+    cleared + ' cleared, ' + (items.length - cleared) + ' re-pointed. Cmd+Z undoes all of it.',
+    'success'
+  );
+}
+
 // ─── Pre-Handoff Check ───────────────────────────────────────────────────────
 // One command that runs every pre-flight check the app already knows how to do
 // and rolls them into a single pass/issue report you can export before handoff.
@@ -25001,6 +25334,20 @@ function runPreHandoffCheck() {
     title: 'No redirect chains (Kill redirecting to a Kill page)',
     items: chains.map(c => `${escapeHtml(c.sourceUrl)} &rarr; ${escapeHtml(c.destUrl)} <span style="color:var(--text-muted);">(${escapeHtml(c.issue)})</span>`),
     fix: `Open the Redirect Editor and repoint these to a live destination.`,
+  });
+
+  // Redirects that contradict the sitemap. Reported here as a count per class —
+  // the fixing lives in Migration → Redirect Health Check, which can apply them.
+  const health = computeRedirectHealth();
+  const healthItems = [];
+  REDIRECT_HEALTH_CATEGORIES.forEach(c => {
+    const n = (health[c.key] || []).length;
+    if (n) healthItems.push(`${escapeHtml(c.title)} <span style="color:var(--text-muted);">&mdash; ${n} page${n !== 1 ? 's' : ''}</span>`);
+  });
+  checks.push({
+    title: 'Redirects agree with the sitemap',
+    items: healthItems,
+    fix: `Run Migration → Redirect Health Check… to review each group and repair them in one undoable step.`,
   });
 
   if (hasNav) {
@@ -26691,6 +27038,40 @@ let _navLastCheckedNodeId = null; // last node id toggled via the bulk-select ch
 
 let _redirectEditorOpen = false;
 const REDIRECT_DEST_COL = 'Redirect_Destination';
+
+// ─── Redirect provenance ─────────────────────────────────────────────────────
+//
+// Who wrote this destination — 'auto' (the app derived it from the sitemap) or
+// 'manual' (a person typed or picked it). Blank means unknown, which is what
+// every pre-existing file has.
+//
+// This is the fact whose absence causes the whole family of redirect bugs the
+// Redirect Health Check exists to clean up: resolveRedirectDestinations() has
+// to guess from the value alone whether it may re-derive, so on Keep/Evolve
+// pages it guesses "human, never touch" and a redirect derived from a sitemap
+// that has since been deleted survives forever. With provenance recorded the
+// guessing goes away: auto values follow the sitemap, manual ones are never
+// touched, and clearing an assignment can safely clear the redirect it derived.
+//
+// `_`-prefixed, so it is filtered out of Table View, the field pickers and the
+// export profiles by the existing generic rules — same as _ConsolidateTargetId.
+const REDIRECT_SRC_COL = '_RedirectSource';
+
+/** The single write path for a redirect destination, so the value and its
+ *  provenance can never drift apart. `source` is 'auto', 'manual', or 'keep'
+ *  to rewrite the value while leaving provenance alone (used where a domain or
+ *  default changes and every destination is rewritten in place — that edits an
+ *  existing decision rather than making a new one).
+ *
+ *  Deliberately does NOT log, dirty, or re-render: call sites already do those
+ *  in their own way and this is meant to slot in without changing behavior. */
+function writeRedirectDestination(row, value, source) {
+  if (!row) return;
+  row[REDIRECT_DEST_COL] = value;
+  if (source === 'keep') return;
+  // Clearing a destination clears its provenance — an empty cell has no author.
+  row[REDIRECT_SRC_COL] = value ? (source || '') : '';
+}
 let _redirectSort = { col: '', dir: '' }; // col: 'status'|'title'|'source'|'dest', dir: ''|'asc'|'desc'
 
 function resyncNavBasedRedirects() {
@@ -26735,7 +27116,7 @@ function resyncNavBasedRedirects() {
 
     if (!newUrl || newUrl === existing) return;
     logChange(origIndex, 'Redirect_Destination', existing, newUrl);
-    row['Redirect_Destination'] = newUrl;
+    writeRedirectDestination(row, newUrl, 'auto');
     updated++;
   });
 
@@ -26832,7 +27213,7 @@ function setupRedirectEditor() {
     const destInput = rows[_frCurrent].querySelector('input[type="text"]');
     const resolved = destInput ? destInput.value : (row[REDIRECT_DEST_COL] || '');
     const newDest = exact ? replaceVal : resolved.split(findVal).join(replaceVal);
-    row[REDIRECT_DEST_COL] = newDest;
+    writeRedirectDestination(row, newDest, 'manual');
     setDirty(true);
 
     // Re-render and adjust position
@@ -26863,7 +27244,7 @@ function setupRedirectEditor() {
       const row = state.editedRows[origIndex];
       const destInput = el.querySelector('input[type="text"]');
       const resolved = destInput ? destInput.value : (row[REDIRECT_DEST_COL] || '');
-      row[REDIRECT_DEST_COL] = exact ? replaceVal : resolved.split(findVal).join(replaceVal);
+      writeRedirectDestination(row, exact ? replaceVal : resolved.split(findVal).join(replaceVal), 'manual');
     });
 
     setDirty(true);
@@ -26937,7 +27318,7 @@ function onSiteDomainChange() {
     if (!dest) continue;
     if (autoBase && dest.startsWith(autoBase + '/')) {
       const pathPart = dest.slice(autoBase.length);
-      row[REDIRECT_DEST_COL] = newBase ? newBase + pathPart : pathPart;
+      writeRedirectDestination(row, newBase ? newBase + pathPart : pathPart, 'keep');
       setDirty(true);
     }
   }
@@ -26960,10 +27341,15 @@ function openRedirectEditor(scrollToOrigIndex) {
     return;
   }
 
-  // Ensure Redirect_Destination column exists
+  // Ensure Redirect_Destination and its provenance column exist. (Column init,
+  // not a decision — writeRedirectDestination is for the latter.)
   if (!state.headers.includes(REDIRECT_DEST_COL)) {
     state.headers.push(REDIRECT_DEST_COL);
     state.editedRows.forEach(r => { if (!(REDIRECT_DEST_COL in r)) r[REDIRECT_DEST_COL] = ''; });
+  }
+  if (!state.headers.includes(REDIRECT_SRC_COL)) {
+    state.headers.push(REDIRECT_SRC_COL);
+    state.editedRows.forEach(r => { if (!(REDIRECT_SRC_COL in r)) r[REDIRECT_SRC_COL] = ''; });
   }
 
   // Close other full-panel views
@@ -27286,7 +27672,7 @@ function renderRedirectRow(entry, baseUrl) {
   }
   destInput.addEventListener('input', () => {
     const val = destInput.value.trim();
-    entry.row[REDIRECT_DEST_COL] = val;
+    writeRedirectDestination(entry.row, val, 'manual');
     destInput.classList.toggle('has-value', val && val !== entry.defaultDest);
     destInput.classList.toggle('redirect-dest-404', val === '404');
     setDirty(true);
@@ -27316,7 +27702,7 @@ function renderRedirectRow(entry, baseUrl) {
     const isCurrently404 = destInput.value.trim() === '404';
     const newVal = isCurrently404 ? '' : '404';
     destInput.value = newVal;
-    entry.row[REDIRECT_DEST_COL] = newVal;
+    writeRedirectDestination(entry.row, newVal, 'manual');
     destInput.classList.toggle('has-value', newVal && newVal !== entry.defaultDest);
     destInput.classList.toggle('redirect-dest-404', newVal === '404');
     fourBtn.classList.toggle('active', newVal === '404');
@@ -27368,7 +27754,7 @@ function showRedirectNavPicker(entry, destInput, baseUrl) {
           ? (baseUrl ? baseUrl + '/' + node.computedPath.replace(/^\//, '') : '/' + node.computedPath.replace(/^\//, ''))
           : '';
         destInput.value = destUrl;
-        entry.row[REDIRECT_DEST_COL] = destUrl;
+        writeRedirectDestination(entry.row, destUrl, 'manual');
         destInput.classList.toggle('has-value', destUrl !== entry.defaultDest);
         setDirty(true);
         dropdown.remove();
