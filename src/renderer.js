@@ -16231,8 +16231,25 @@ function sitemapAppDefaults() {
   return Object.assign({
     vertDepth: 2, childThresh: 3, cardWidth: 148, cardHeight: 70,
     hGap: 40, vRow: 60, vlGap: 12, vlDrop: 32, vlHgap: 20, pad: 72,
-    showNumbers: true, showCounts: true
+    showNumbers: true, showCounts: true, countMode: 'collapsed'
   }, state.sitemapDefaults || {});
+}
+
+// What the sitemap card's sub-label reports — see the engine's `countMode`.
+// It supersedes the older `showCounts` boolean, which could only say "the
+// node's own assigned pages" or nothing. Resolved from the most specific tier
+// that actually expresses a preference, because every project that has ever
+// opened the sitemap carries a `showCounts:true` — honoring that as "assigned
+// pages" would pin every existing project to the legacy mode forever. An
+// explicit `false` IS honored: someone who turned the sub-label off shouldn't
+// have text reappear on their diagram.
+function sitemapCountMode(...tiers) {
+  for (const t of tiers) {
+    if (!t) continue;
+    if (t.countMode) return t.countMode;
+    if (t.showCounts === false) return 'off';
+  }
+  return 'collapsed';
 }
 
 // Effective settings for a context: app defaults < saved project overrides.
@@ -16245,6 +16262,7 @@ function sitemapEffectiveSettings(context, defaultColorRules) {
   eff.legendLabels = ctx.legendLabels || (state.sitemapDefaults && state.sitemapDefaults.legendLabels) || {};
   eff.nodeOverrides = ctx.nodeOverrides || {};
   eff.collapsed = Array.isArray(ctx.collapsed) ? ctx.collapsed : null;
+  eff.countMode = sitemapCountMode(ctx, state.sitemapDefaults);
   return eff;
 }
 
@@ -16308,7 +16326,8 @@ function openSitemapView(opts) {
       vertDepth: eff.vertDepth, childThresh: eff.childThresh,
       cardWidth: eff.cardWidth, cardHeight: eff.cardHeight,
       hGap: eff.hGap, vRow: eff.vRow, vlGap: eff.vlGap, vlDrop: eff.vlDrop,
-      vlHgap: eff.vlHgap, pad: eff.pad, showNumbers: eff.showNumbers !== false, showCounts: eff.showCounts !== false,
+      vlHgap: eff.vlHgap, pad: eff.pad, showNumbers: eff.showNumbers !== false,
+      showCounts: eff.countMode !== 'off', countMode: eff.countMode,
       colorRules: eff.colorRules, baseCardStyle: eff.baseCardStyle, legendLabels: eff.legendLabels, nodeOverrides: eff.nodeOverrides
     },
     // Nav uses node.collapse (the Nav Tree checkbox / Sitemap sheet's Collapse column) as the
@@ -16318,7 +16337,7 @@ function openSitemapView(opts) {
     initialCollapsed: opts.collapseToNavNodes ? (opts.initialCollapsed || []) : (eff.collapsed || opts.initialCollapsed || [])
   };
 
-  let lastState = { collapsed: baseData.initialCollapsed, showNumbers: baseData.settings.showNumbers, showCounts: baseData.settings.showCounts, settings: baseData.settings };
+  let lastState = { collapsed: baseData.initialCollapsed, showNumbers: baseData.settings.showNumbers, showCounts: baseData.settings.showCounts, countMode: baseData.settings.countMode, settings: baseData.settings };
 
   const persist = () => {
     const all = state.projectSettings.sitemapSettings || (state.projectSettings.sitemapSettings = {});
@@ -16424,12 +16443,13 @@ function countMiroHidden(roots, collapsed) {
 // opts.expandAll — ignore the collapse state and export the whole tree.
 function buildMiroSitemapPlan(baseData, st, opts = {}) {
   const settings = (st && st.settings) || baseData.settings;
-  // The "Page counts" toggle (per-project, mirrored from the Visual Sitemap
-  // toolbar) makes the exported board label-only when off: it suppresses BOTH
-  // each card's "N pages" tally AND the collapsed-section "+N hidden" marker, so
-  // a node is just its text. (A folded section then reads like a leaf on the
-  // static board — a user asking for label-only cards is accepting that.)
-  const showCounts = settings.showCounts !== false;
+  // The "Counts" mode (per-project, mirrored from the Visual Sitemap toolbar)
+  // decides each card's sub-label here exactly as it does on screen. 'off'
+  // makes the exported board label-only: it suppresses BOTH each card's tally
+  // AND the collapsed-section "+N hidden" marker, so a node is just its text.
+  // (A folded section then reads like a leaf on the static board — a user
+  // asking for label-only cards is accepting that.)
+  const countMode = sitemapCountMode(settings);
   const collapsed = opts.expandAll
     ? new Set()
     : new Set((st && st.collapsed) || baseData.initialCollapsed || []);
@@ -16503,11 +16523,14 @@ function buildMiroSitemapPlan(baseData, st, opts = {}) {
     // review, where knowing the size of what's folded away matters. On a static
     // board a bare '+' is cryptic (nothing to expand), so 'plus' carries the
     // count too — '+3' — staying compact while still saying how much is folded.
-    const subVal = !showCounts
-      ? ''
-      : (hidden
-          ? (opts.hiddenLabel === 'plus' ? '+' + hidden : hidden + (hidden === 1 ? ' page hidden' : ' pages hidden'))
-          : (node.sub || ''));
+    const subVal = countMode === 'off' ? ''
+      : hidden ? (opts.hiddenLabel === 'plus' ? '+' + hidden : hidden + (hidden === 1 ? ' page hidden' : ' pages hidden'))
+      : countMode === 'subpages' ? (() => {
+          const below = countMiroDescendants(node);
+          return below ? below + (below === 1 ? ' sub-page' : ' sub-pages') : '';
+        })()
+      : countMode === 'pages' ? (node.sub || '')
+      : '';                                  // 'collapsed' — only folded nodes speak
     shapes.push({
       nodeId: node.id,
       text: node.label || '',
