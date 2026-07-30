@@ -6,6 +6,17 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Changed
+
+- **Create Sitemap from Audit now asks what the tree is for.** *Where pages are going* (the default, and what the tool has always assumed) or *where pages are today* — a snapshot to show a client. Pick the snapshot and it says plainly that a snapshot belongs in **a copy** of the project, with a **Save a copy first…** button that makes one and switches you to it. Placing pages writes where they're going and Transmission derives redirects from that, which is right for a tree describing the future and meaningless for one describing the present.
+- **Redirects you didn't write now follow the sitemap on their own.** Previously a destination on a Keep or Evolve page was never revisited once it existed — so reorganizing the tree, or building a sitemap and deleting it, left the old destinations behind to contradict the new tree. Now a redirect **Transmission derived** is kept current: it follows the page's node when the tree moves, and is cleared when the page stops moving (taken off the sitemap, or placed where it already lives). A destination **you** typed or picked is never touched — including on Kill pages, where a hand-set destination that happened to match the project default could previously be overwritten. Clearing a page's sitemap assignment now also clears the redirect that was derived from it (the Kill/Consolidate cleanup prompt still asks separately and honors your answer).
+- **Redirects already in your file are left exactly as they are.** They predate the record of who wrote them, so the app treats them as ambiguous rather than guessing — use **Migration → Redirect Health Check…** to review and repair those, which is what it's for.
+- **Transmission now records how each redirect destination was set** — derived from the sitemap, or entered by a person. Nothing acted on this yet, but it is the fact whose absence lets a redirect derived from a sitemap you have since deleted survive forever: without it the app has to guess from the value alone whether it may update a destination, and on Keep/Evolve pages it guesses "leave it alone". Redirects set from now on are recorded; ones already in your file read as unknown and keep being treated cautiously.
+
+### Added
+
+- **Migration → Redirect Health Check…** — finds redirects that no longer agree with your sitemap and repairs them in one undoable step. Redirects are derived from the sitemap, but the app cannot tell a destination *it* wrote from one *you* typed, so once a value exists on a Keep or Evolve page it is never revisited — reorganize the tree, or build a sitemap and delete it, and the old destinations quietly survive to contradict the new tree. The check sorts what it finds into groups, each listing every affected page: pages **redirecting to themselves** (a loop), Keep/Evolve pages **carrying a redirect while not on the sitemap at all** (they aren't moving, so they need none — usually the largest group and the one nothing else finds), destinations that **disagree with the page's sitemap node**, and pages **placed where they already live**. Tick the groups to repair; the whole fix is a single **Cmd+Z**. Anything whose destination still resolves to a real node in your sitemap is reported but *never* changed automatically, since that may well be a deliberate choice. Blank destinations, intentional **404**s, and out-of-scope sites are left alone. A per-class count also appears in the Pre-Handoff Check.
+
 ## [2.12.0] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Changed
