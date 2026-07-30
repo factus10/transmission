@@ -553,6 +553,7 @@ function bindIPCListeners() {
   window.electronAPI.onMenuSmeImport(() => smeImport());
   window.electronAPI.onMenuSmeResolve(() => openSmeResolveDialog());
   window.electronAPI.onMenuRedirectChainCheck(() => checkRedirectChains());
+  if (window.electronAPI.onMenuRedirectHealthCheck) window.electronAPI.onMenuRedirectHealthCheck(() => openRedirectHealthCheck());
   window.electronAPI.onMenuNavCoverage(() => showNavCoverageReport());
   window.electronAPI.onMenuReportExecSummary(() => reportExecutiveSummary());
   window.electronAPI.onMenuReportContentInv(() => reportContentInventory());
@@ -24940,6 +24941,260 @@ function checkRedirectChains() {
   alertDialog({ title: 'Redirect chains found', message: msg, width: 560 });
 }
 
+// ─── Redirect Health Check ───────────────────────────────────────────────────
+//
+// A redirect is *derived* from the sitemap, but nothing records whether a given
+// destination was written by the app or typed by a person — so the resolver
+// plays it safe and treats any existing value on a Keep/Evolve page as a human
+// decision, forever (see resolveRedirectDestinations). That is the right call
+// in isolation and the wrong one in aggregate: a tree that gets built, used,
+// and deleted leaves its derived redirects behind, and they then contradict the
+// tree that replaces them.
+//
+// The pattern that produces this at scale is building a "current state" sitemap
+// in the working file — placing pages writes their Computed Path, the next save
+// derives redirects from it, and deleting the tree afterwards clears the
+// sitemap fields but not the redirects. Found on a real 3k-row audit where 967
+// of 1291 redirect values were fossils of a deleted tree, including pages
+// redirecting to themselves.
+//
+// This check finds that damage in any file, however it got there. It is the
+// recovery half of the fix; _RedirectSource provenance is the prevention half,
+// and once that lands the heuristics here stay useful only for legacy files.
+//
+// Deliberately conservative: a destination that still resolves to a live node
+// might be a genuine "send this to the parent" decision, so it is reported and
+// never auto-changed. Only values that resolve to nothing — or point at the
+// page itself — are treated as machine-written.
+
+/** Path portion of a URL, trailing slash stripped. Falls back to the raw string
+ *  for relative values, which the redirect field also accepts. */
+function redirectPathOf(u) {
+  const s = String(u || '').trim();
+  try { return new URL(s).pathname.replace(/\/+$/, ''); }
+  catch (_) { return s.replace(/\/+$/, ''); }
+}
+
+const REDIRECT_HEALTH_CATEGORIES = [
+  { key: 'self', fixable: true, title: 'Pages redirecting to themselves',
+    why: 'A page pointing at its own URL is a redirect loop. This is always wrong.',
+    action: 'Clear it, or re-point at the page’s sitemap node' },
+  { key: 'orphan', fixable: true, title: 'Not on the sitemap, but carrying a redirect',
+    why: 'A Keep or Evolve page with no sitemap placement is not moving, so it needs no redirect. These are usually left over from a sitemap that was built and then deleted.',
+    action: 'Clear the redirect' },
+  { key: 'stale', fixable: true, title: 'Redirect disagrees with the page’s sitemap node',
+    why: 'The page is placed on the sitemap, but its redirect points somewhere the sitemap does not.',
+    action: 'Re-point at the node' },
+  { key: 'settled', fixable: true, title: 'Placed where it already lives',
+    why: 'The node’s path is the page’s current URL — nothing is moving, so no redirect is needed.',
+    action: 'Clear the redirect' },
+  { key: 'review', fixable: false, title: 'Worth a look — left alone',
+    why: 'The destination is a real node in your sitemap, so it may well be a deliberate choice (sending a page to its parent, for instance). Nothing here is changed automatically.',
+    action: 'Review by hand in the Redirect Editor' },
+];
+
+/** Classify every in-scope row's redirect against the sitemap.
+ *  Returns { self, orphan, stale, settled, review } → [{origIndex, url, current, proposed, note}] */
+function computeRedirectHealth() {
+  const urlCol = state.urlColumn || 'Address';
+  const base = getRedirectBaseUrl();
+  const toUrl = (p) => base ? base + '/' + p.replace(/^\//, '') : '/' + p.replace(/^\//, '');
+  const nodePathOf = (n) => '/' + String(n.computedPath || '').replace(/^\//, '').replace(/\/+$/, '');
+
+  const nodeById = new Map();
+  const livePaths = new Set();
+  (state.navNodes || []).forEach(n => {
+    if (n.id) nodeById.set(n.id, n);
+    const p = nodePathOf(n);
+    if (p !== '/') livePaths.add(p);
+  });
+
+  // Out-of-scope sites are never written to by a bulk action — same rule the
+  // URL-variant triage follows. Identity comparison: reportRows() returns the
+  // live row objects, not copies.
+  const inScope = new Set(reportRows());
+
+  const out = { self: [], orphan: [], stale: [], settled: [], review: [] };
+
+  state.editedRows.forEach((row, origIndex) => {
+    if (!inScope.has(row)) return;
+    if (isFragmentRow(row)) return;              // no public URL, never a redirect
+    const dest = String(row[REDIRECT_DEST_COL] || '').trim();
+    if (!dest || dest === '404') return;         // blank = undecided, 404 = deliberate
+    const addr = String(row[urlCol] || '').trim();
+    if (!addr) return;
+
+    const kke = String(row[finalKkeCol()] || row[kkeCol()] || '').trim().toLowerCase();
+    const own = redirectPathOf(addr);
+    const dp = redirectPathOf(dest);
+    const node = nodeById.get(String(row['Sitemap_ID'] || '').trim()) || null;
+    const nodeUrl = node && nodePathOf(node) !== '/' && nodePathOf(node) !== own ? toUrl(nodePathOf(node)) : '';
+    const entry = { origIndex, url: addr, current: dest, proposed: '', note: '' };
+
+    // A loop is wrong regardless of decision — including on Kill/Consolidate,
+    // where it usually means a consolidate target resolved back to its own page.
+    if (dp === own) {
+      entry.proposed = nodeUrl;
+      entry.note = node ? 'on "' + (node.label || node.id) + '"' : 'not on the sitemap';
+      out.self.push(entry);
+      return;
+    }
+
+    // Kill and Consolidate destinations are theirs to own — the resolver already
+    // re-derives them, and the chain check covers their other failure mode.
+    if (kke === 'kill' || kke === 'consolidate') return;
+
+    if (!node) {
+      // Could a person have meant this? If it still resolves to a live node, assume so.
+      if (livePaths.has(dp)) { entry.note = 'not on the sitemap'; out.review.push(entry); return; }
+      out.orphan.push(entry);
+      return;
+    }
+
+    const want = nodeUrl;
+    // Already agrees with the sitemap. This has to be tested BEFORE the
+    // live-node check below — a correct destination is by definition a live
+    // node path, so testing in the other order reports every healthy row as
+    // needing review.
+    if (dest === want) return;
+
+    if (livePaths.has(dp)) {
+      entry.note = 'placed on "' + (node.label || node.id) + '"';
+      out.review.push(entry);
+      return;
+    }
+
+    entry.proposed = want;
+    entry.note = 'node: "' + (node.label || node.id) + '"';
+    (want ? out.stale : out.settled).push(entry);
+  });
+
+  return out;
+}
+
+function openRedirectHealthCheck() {
+  if (!state.editedRows.length) { showToast('Open a file first', 'error'); return; }
+
+  const found = computeRedirectHealth();
+  const cats = REDIRECT_HEALTH_CATEGORIES
+    .map(c => Object.assign({}, c, { rows: found[c.key] || [] }))
+    .filter(c => c.rows.length);
+
+  if (!cats.length) {
+    alertDialog({
+      title: 'Redirect health check',
+      message: 'Every redirect agrees with the sitemap.\n\nNo loops, no orphaned destinations, and no page placed where it already lives.',
+      width: 460,
+    });
+    return;
+  }
+
+  const fixableTotal = cats.filter(c => c.fixable).reduce((s, c) => s + c.rows.length, 0);
+  const reviewTotal = cats.filter(c => !c.fixable).reduce((s, c) => s + c.rows.length, 0);
+
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:14px;max-height:66vh;overflow:auto;';
+
+  const summary = document.createElement('div');
+  summary.style.cssText = 'padding:10px 12px;border-radius:8px;background:var(--bg-field-bar);border:1px solid var(--border);flex-shrink:0;';
+  summary.innerHTML =
+    '<div style="font-weight:600;font-size:13px;">&#9888; ' + fixableTotal + ' redirect' + (fixableTotal !== 1 ? 's' : '') + ' disagree with your sitemap</div>' +
+    '<div style="font-size:12px;color:var(--text-muted);margin-top:3px;">' +
+      'Tick the groups you want repaired. Everything applied here undoes with a single Cmd+Z.' +
+      (reviewTotal ? ' ' + reviewTotal + ' more need a human eye and are never changed automatically.' : '') +
+    '</div>';
+  body.appendChild(summary);
+
+  cats.forEach(c => {
+    const block = document.createElement('div');
+    const accent = c.fixable ? 'var(--kke-evolve)' : 'var(--text-muted)';
+    block.style.cssText = 'border-left:3px solid ' + accent + ';padding-left:10px;';
+
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:baseline;gap:6px;';
+    if (c.fixable) {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;
+      cb.className = 'rhc-cat';
+      cb.dataset.key = c.key;
+      cb.style.cssText = 'margin:0;flex-shrink:0;position:relative;top:1px;';
+      head.appendChild(cb);
+    }
+    const label = document.createElement('label');
+    label.style.cssText = 'font-weight:600;font-size:13px;cursor:' + (c.fixable ? 'pointer' : 'default') + ';';
+    label.textContent = c.title + ' — ' + c.rows.length;
+    if (c.fixable) label.addEventListener('click', () => { const cb = head.querySelector('.rhc-cat'); cb.checked = !cb.checked; });
+    head.appendChild(label);
+    block.appendChild(head);
+
+    const why = document.createElement('div');
+    why.style.cssText = 'font-size:12px;color:var(--text-muted);margin:3px 0 5px;';
+    why.textContent = c.why + ' ' + (c.fixable ? 'Fix: ' + c.action + '.' : '');
+    block.appendChild(why);
+
+    const list = document.createElement('div');
+    list.style.cssText = 'font-size:11.5px;font-family:var(--font-mono);line-height:1.5;max-height:150px;overflow:auto;border:1px solid var(--border-light);border-radius:4px;padding:6px 8px;';
+    // Only a fixable group shows what it would become. Showing "→ (cleared)" on
+    // the review group would promise a change that is never made.
+    list.innerHTML = c.rows.map(r =>
+      '<div style="word-break:break-all;margin-bottom:4px;">' + escapeHtml(r.url) +
+      '<div style="color:var(--text-muted);">' + escapeHtml(r.current) +
+        (c.fixable ? ' &rarr; ' + (r.proposed ? escapeHtml(r.proposed) : '<em>(cleared)</em>') : '') +
+        (r.note ? ' &middot; ' + escapeHtml(r.note) : '') +
+      '</div></div>'
+    ).join('');
+    block.appendChild(list);
+
+    body.appendChild(block);
+  });
+
+  openModal({
+    title: 'Redirect health check',
+    body,
+    width: 720,
+    buttons: [
+      { label: 'Cancel', variant: 'ghost' },
+      {
+        label: 'Fix selected', variant: 'primary', primary: true,
+        onClick: (api) => {
+          const keys = Array.from(api.dialog.querySelectorAll('.rhc-cat'))
+            .filter(cb => cb.checked).map(cb => cb.dataset.key);
+          applyRedirectHealthFixes(cats.filter(c => keys.includes(c.key)));
+        },
+      },
+    ],
+  });
+}
+
+/** Write the chosen categories' proposed destinations, as ONE undo entry. */
+function applyRedirectHealthFixes(cats) {
+  const items = [];
+  cats.forEach(c => c.rows.forEach(r => {
+    const row = state.editedRows[r.origIndex];
+    if (!row) return;
+    const oldValue = String(row[REDIRECT_DEST_COL] || '');
+    if (oldValue === r.proposed) return;
+    row[REDIRECT_DEST_COL] = r.proposed;
+    logChange(r.origIndex, REDIRECT_DEST_COL, oldValue, r.proposed);
+    items.push({ origIndex: r.origIndex, field: REDIRECT_DEST_COL, oldValue, newValue: r.proposed });
+  }));
+
+  if (!items.length) { showToast('Nothing to change', 'info'); return; }
+
+  pushBulkEditUndo(items, 'redirect health fix');
+  setDirty(true);
+  applyFilter();
+  if (typeof _redirectEditorOpen !== 'undefined' && _redirectEditorOpen) renderRedirectEditor();
+
+  const cleared = items.filter(i => !i.newValue).length;
+  showToast(
+    items.length + ' redirect' + (items.length !== 1 ? 's' : '') + ' fixed — ' +
+    cleared + ' cleared, ' + (items.length - cleared) + ' re-pointed. Cmd+Z undoes all of it.',
+    'success'
+  );
+}
+
 // ─── Pre-Handoff Check ───────────────────────────────────────────────────────
 // One command that runs every pre-flight check the app already knows how to do
 // and rolls them into a single pass/issue report you can export before handoff.
@@ -24978,6 +25233,20 @@ function runPreHandoffCheck() {
     title: 'No redirect chains (Kill redirecting to a Kill page)',
     items: chains.map(c => `${escapeHtml(c.sourceUrl)} &rarr; ${escapeHtml(c.destUrl)} <span style="color:var(--text-muted);">(${escapeHtml(c.issue)})</span>`),
     fix: `Open the Redirect Editor and repoint these to a live destination.`,
+  });
+
+  // Redirects that contradict the sitemap. Reported here as a count per class —
+  // the fixing lives in Migration → Redirect Health Check, which can apply them.
+  const health = computeRedirectHealth();
+  const healthItems = [];
+  REDIRECT_HEALTH_CATEGORIES.forEach(c => {
+    const n = (health[c.key] || []).length;
+    if (n) healthItems.push(`${escapeHtml(c.title)} <span style="color:var(--text-muted);">&mdash; ${n} page${n !== 1 ? 's' : ''}</span>`);
+  });
+  checks.push({
+    title: 'Redirects agree with the sitemap',
+    items: healthItems,
+    fix: `Run Migration → Redirect Health Check… to review each group and repair them in one undoable step.`,
   });
 
   if (hasNav) {

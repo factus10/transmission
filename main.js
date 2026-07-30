@@ -461,7 +461,8 @@ function buildMenu() {
         { label: 'Migration Tracker…', click: send('menu-export-migration-tracker') },
         { label: 'Export Redirect Map (CSV)…', click: send('menu-export-redirects') },
         { type: 'separator' },
-        { label: 'Redirect Chain Check…',   click: send('menu-redirect-chain-check') }
+        { label: 'Redirect Chain Check…',   click: send('menu-redirect-chain-check') },
+        { label: 'Redirect Health Check…',  click: send('menu-redirect-health-check') }
       ]
     },
 

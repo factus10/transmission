@@ -44,7 +44,7 @@ Note: **Table View** (Cmd+T), **Sitemap** (Cmd+Shift+T), and **Redirect Editor**
 - **Edit** — standard
 - **View** — Audit (Cmd+1) · Table (Cmd+T) · Sitemap (Cmd+Shift+T) · Redirects (Cmd+Shift+R) · Menus (Cmd+Shift+M) · Audit Progress (Cmd+P) · zoom · fullscreen · (dev items in source builds)
 - **Project** — Project Settings · Triage Non-200 Pages · Triage URL Variants · Create Sitemap from Audit · Glossary · Audience Library · Fill Audiences from Section · Suggest Audiences with AI · Content Type Registry · Target Spec Library · Component Library · AI Suggest for Unreviewed · Run Rubric · Refresh GA KKE · Recompute Suggested KKE
-- **Migration** — Pre-Handoff Check · Migration Tracker · Export Redirect Map (CSV) · Redirect Chain Check
+- **Migration** — Pre-Handoff Check · Migration Tracker · Export Redirect Map (CSV) · Redirect Chain Check · Redirect Health Check
 - **Reports** — Executive Summary · Content Inventory by Section · SME Review Status · Menu Report · Sitemap Coverage Report · Component Inventory · Content Type Crosswalk · Audience Coverage · Audience × Section Matrix · Audience Debt · Site Consolidation Overview · Cross-Site Duplicate Overlap · Migration Direction Brief · Migration Checklist · Net New Content Brief · Redirect Map Report
 - **SME** — Export / Import / Compare KKE vs SME / Resolve
 - **Help** — Getting Started · Product Tour · Keyboard Shortcuts · Transmission Help · Check for Updates…
@@ -170,6 +170,7 @@ A `.transmission` file is a **SQLite database** (better-sqlite3, WAL mode) that 
 | main → renderer | `menu-progress` | none — opens progress dashboard |
 | main → renderer | `menu-export-redirects` | none — export redirect map CSV |
 | main → renderer | `menu-redirect-chain-check` | none — run redirect chain check |
+| main → renderer | `menu-redirect-health-check` | none — opens the Redirect Health Check |
 | main → renderer | `menu-nav-coverage` | none — run nav coverage report |
 | main → renderer | `menu-glossary` | none — opens tag/group glossary editor |
 | main → renderer | `menu-content-type-registry` | none — opens ContentTypeRegistry editor |
@@ -481,6 +482,13 @@ Columns are injected into every file if not already present:
 **Nature-aware downstream (`isFragmentRow(row)` = `Content_Nature === 'Content Object'`):** rows that render as a Fragment have no public URL, so they're skipped in `resolveRedirectDestinations()`, the Redirect Editor list (`renderRedirectEditor`), the tracker `buildRedirectsSheet()`, the need-placement count + `_needs-placement` filter, and Sitemap Coverage (`showNavCoverageReport()` also skips Header/Fragment nodes). `isFragmentRow` is a hoisted function declaration so earlier call sites resolve.
 
 **Content type crosswalk:** `Page_Type` (UI label **Content Type**) is the key into `state.projectSettings.contentTypeRegistry` (entries: `{contentType, defaultContentNature, targetContentType, targetSpec, defaultMigrationTrack, notes}`). `applyContentTypeRegistryDefaults()` fills blank `Content_Nature` (UI **Renders as**), `Migration_Track`, and `Target_Content_Type`; `updateTargetContentTypeHint(row)` drives the `#target-ct-hint` `→ Target` readout in the audit bar. `Content_Nature` UI label is **Renders as** (Page / "Fragment (embeddable)" = stored `Content Object` / Generated). Crosswalk report: `reportContentTypeCrosswalk()` (`menu-report-content-crosswalk`).
+
+**Redirect Health Check (`computeRedirectHealth()` / `openRedirectHealthCheck()`, Migration menu):** the recovery tool for redirects that contradict the sitemap. It exists because nothing records *who wrote a redirect* — so `resolveRedirectDestinations()` treats any existing value on a Keep/Evolve page as a human decision and never revisits it (unlike its Kill/Consolidate branches, which re-derive anything `looksAutoDerived`). A sitemap that is built, used, and deleted therefore leaves its derived redirects behind to contradict the tree that replaces it; `clearNavAssignment()` clears the five Sitemap fields but not `Redirect_Destination`. The pattern that produces this at scale is building a **current-state** sitemap in the working file (see `docs/RUNNING_AN_AUDIT.md`). Found on a real 3k-row audit: roughly three-quarters of ~1,300 redirect values were fossils of a deleted tree, including 22 pages redirecting to themselves.
+
+- Five buckets, one row each, in `REDIRECT_HEALTH_CATEGORIES` order: `self` (destination = the page's own URL — a loop, checked first and for **every** decision including Kill/Consolidate, where it means a consolidate target resolved back to its own page), `orphan` (Keep/Evolve, unplaced, still carrying a redirect), `stale` (placed, destination ≠ the node's URL), `settled` (placed on a node whose path already *is* the page's URL — nothing is moving), and `review` (**not fixable**).
+- **The confidence heuristic is the whole design.** A destination that still resolves to a live node might be a deliberate "send this to the parent" call, so it goes to `review` and is never auto-changed; only values that resolve to nothing — or point at the page itself — are treated as machine-written. This is a stand-in for provenance: once `_RedirectSource` exists the guessing goes away and this stays useful only for legacy files.
+- **Check order is load-bearing:** `dest === want` must be tested *before* `livePaths.has(dp)`, because a correct destination is by definition a live node path — testing the other way round reported every healthy row as needing review (190 of them on the file above).
+- Skips out-of-scope sites (`reportRows()`) and fragments; blank means undecided and `'404'` is deliberate, so neither is touched. `applyRedirectHealthFixes()` writes the chosen groups as ONE `pushBulkEditUndo` entry, so a thousand-row repair is a single Cmd+Z. Also reported (counts only, no fixing) as a check inside `runPreHandoffCheck()`.
 
 **Redirect_Destination = "404" sentinel:** literal string `"404"` means "let this URL return 404 — do not write a redirect rule." Distinct from blank (TBD). Recognized by:
 - `resolveRedirectDestinations()` — propagates 404 through consolidate chains; preserves explicit 404 values
