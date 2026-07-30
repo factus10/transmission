@@ -81,7 +81,25 @@
     // ── Local interaction state
     var collapsed = new Set();
     var showNumbers = S.showNumbers !== false;
-    var showCounts = S.showCounts !== false;
+    // What the small line under each card's label reports. The historical
+    // boolean `showCounts` only chose between "the node's own assigned audit
+    // pages" and nothing; `countMode` widens that to the more useful question a
+    // folded diagram actually raises — how much is under this closed node.
+    //   'collapsed' — sub-page count, on collapsed nodes only (default)
+    //   'subpages'  — sub-page count on every parent
+    //   'pages'     — the node's directly-assigned audit pages (legacy)
+    //   'off'       — nothing
+    // A collapsed node always reports what it hides, whatever the mode (bar
+    // 'off') — matching the Miro export, which has done this from the start.
+    var COUNT_MODES = { collapsed: 1, subpages: 1, pages: 1, off: 1 };
+    function normalizeCountMode(mode, legacyShowCounts) {
+      if (mode && COUNT_MODES[mode]) return mode;
+      if (legacyShowCounts === false) return 'off';   // pre-countMode projects
+      return 'collapsed';
+    }
+    // Read from the RAW host settings, not the defaults-merged S — a merged
+    // `showCounts:true` default would otherwise mask a project's stored `false`.
+    var countMode = normalizeCountMode((DATA.settings || {}).countMode, (DATA.settings || {}).showCounts);
 
     // In client mode, restore the viewer's last session (overrides their start state).
     if (MODE === 'client') {
@@ -90,7 +108,9 @@
         if (saved) {
           (saved.collapsed || []).forEach(function (id) { collapsed.add(id); });
           if (typeof saved.showNumbers === 'boolean') showNumbers = saved.showNumbers;
-          if (typeof saved.showCounts === 'boolean') showCounts = saved.showCounts;
+          if (saved.countMode || typeof saved.showCounts === 'boolean') {
+            countMode = normalizeCountMode(saved.countMode, saved.showCounts);
+          }
         } else if (DATA.initialCollapsed) {
           DATA.initialCollapsed.forEach(function (id) { collapsed.add(id); });
         }
@@ -113,7 +133,8 @@
       return {
         collapsed: [].concat.apply([], [Array.from(collapsed)]),
         showNumbers: showNumbers,
-        showCounts: showCounts,
+        showCounts: countMode !== 'off',
+        countMode: countMode,
         settings: serializableSettings()
       };
     }
@@ -124,7 +145,11 @@
         hGap: S.hGap, vRow: S.vRow, vlGap: S.vlGap, vlDrop: S.vlDrop,
         vlHgap: S.vlHgap, pad: S.pad,
         showNumbers: showNumbers,
-        showCounts: showCounts,
+        // `showCounts` is still written so a project saved here stays readable
+        // by an older build (and by anything reading the boolean); `countMode`
+        // is the real setting.
+        showCounts: countMode !== 'off',
+        countMode: countMode,
         cardRadius: S.cardRadius, cardPadX: S.cardPadX, cardPadY: S.cardPadY,
         colorRules: S.colorRules,
         baseCardStyle: S.baseCardStyle,
@@ -135,7 +160,7 @@
     function pushState() {
       if (MODE === 'app') emit({ type: 'state', state: currentState() });
       else if (MODE === 'client') {
-        try { localStorage.setItem(LS_KEY, JSON.stringify({ collapsed: Array.from(collapsed), showNumbers: showNumbers, showCounts: showCounts })); } catch (e) {}
+        try { localStorage.setItem(LS_KEY, JSON.stringify({ collapsed: Array.from(collapsed), showNumbers: showNumbers, showCounts: countMode !== 'off', countMode: countMode })); } catch (e) {}
       }
     }
 
@@ -385,10 +410,11 @@
       lbl.className = 'node-label';
       lbl.textContent = node.label;
       card.appendChild(lbl);
-      if (showCounts && node.sub) {
+      var subTxt = subTextFor(node);
+      if (subTxt) {
         var s = document.createElement('span');
         s.className = 'node-sub';
-        s.textContent = node.sub;
+        s.textContent = subTxt;
         card.appendChild(s);
       }
       if (node.collapsible) {
@@ -427,7 +453,36 @@
     }
 
     function updateCountsVisibility() {
-      document.body.classList.toggle('hide-counts', !showCounts);
+      document.body.classList.toggle('hide-counts', countMode === 'off');
+    }
+
+    // Every node below this one, all levels — what a collapsed card is hiding.
+    // Memoized for the life of the view: ROOTS is static here (collapse only
+    // changes what's drawn, never the tree), so one walk per node is enough
+    // however many times the user collapses, expands, or re-renders.
+    var _descCache = {};
+    function descendantCount(node) {
+      if (node.id in _descCache) return _descCache[node.id];
+      var n = 0;
+      (node.children || []).forEach(function (c) { n += 1 + descendantCount(c); });
+      _descCache[node.id] = n;
+      return n;
+    }
+
+    // The line under a card's label. See countMode's declaration for the modes.
+    function subTextFor(node) {
+      if (countMode === 'off') return '';
+      var kids = node.children || [];
+      if (kids.length && collapsed.has(node.id)) {
+        var hidden = descendantCount(node);
+        return hidden ? (hidden + (hidden === 1 ? ' page hidden' : ' pages hidden')) : '';
+      }
+      if (countMode === 'collapsed') return '';
+      if (countMode === 'subpages') {
+        var below = descendantCount(node);
+        return below ? (below + (below === 1 ? ' sub-page' : ' sub-pages')) : '';
+      }
+      return node.sub || '';    // 'pages' — the host's directly-assigned tally
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -575,10 +630,13 @@
         sn.checked = showNumbers;
         sn.addEventListener('change', function (e) { showNumbers = e.target.checked; updateNumbersVisibility(); render(); pushState(); });
       }
-      var sc = $('show-counts');
-      if (sc) {
-        sc.checked = showCounts;
-        sc.addEventListener('change', function (e) { showCounts = e.target.checked; updateCountsVisibility(); render(); pushState(); });
+      var cm = $('count-mode');
+      if (cm) {
+        cm.value = countMode;
+        cm.addEventListener('change', function (e) {
+          countMode = normalizeCountMode(e.target.value);
+          updateCountsVisibility(); render(); pushState();
+        });
       }
       var vd = $('vd-select');
       if (vd) { vd.value = String(S.vertDepth); vd.addEventListener('change', function () { S.vertDepth = parseInt(this.value, 10); render(); pushState(); fitToScreen(); }); }
@@ -1261,7 +1319,7 @@ body{display:flex;flex-direction:column;}
 .tb-sep{width:1px;height:18px;background:var(--border);flex-shrink:0;}
 .tb-label{font-size:11px;color:var(--text-mid);display:flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;}
 #vd-wrap{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-mid);white-space:nowrap;}
-#vd-wrap select{font-size:11px;font-family:inherit;border:1px solid var(--border-dk);border-radius:4px;padding:2px 6px;background:var(--white);color:var(--text);cursor:pointer;}
+#vd-wrap select,.tb-label select{font-size:11px;font-family:inherit;border:1px solid var(--border-dk);border-radius:4px;padding:2px 6px;background:var(--white);color:var(--text);cursor:pointer;}
 #legend-btn{position:relative;cursor:pointer;}
 /* Fixed, not absolute, and JS-anchored on open: the toolbar now wraps to extra
    rows on narrow windows, so its height (and the Legend button's position) is
@@ -1399,7 +1457,13 @@ body.hide-counts .node-sub{display:none;}
           + '</div><div class="tb-sep"></div>';
       }
       toolbar += '<label class="tb-label"><input type="checkbox" id="show-numbers" checked style="accent-color:#1a1d23"> Numbers</label>';
-      toolbar += '<label class="tb-label"><input type="checkbox" id="show-counts" checked style="accent-color:#1a1d23"> Page counts</label>';
+      toolbar += '<label class="tb-label">Counts '
+        + '<select id="count-mode">'
+        + '<option value="collapsed">Hidden sub-pages (collapsed only)</option>'
+        + '<option value="subpages">Sub-pages on every branch</option>'
+        + '<option value="pages">Assigned audit pages</option>'
+        + '<option value="off">None</option>'
+        + '</select></label>';
       toolbar += '<div class="tb-sep"></div>';
       toolbar += '<button class="tb-btn" id="btn-expand">Expand all</button>';
       toolbar += '<button class="tb-btn" id="btn-collapse">Collapse all</button>';
