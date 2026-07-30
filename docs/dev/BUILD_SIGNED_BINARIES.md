@@ -124,7 +124,37 @@ APP=$(mktemp -d) && ditto *.zip "$APP" 2>/dev/null || hdiutil attach *.dmg -moun
 codesign --verify --deep --strict "$APP"/*.app   # should print nothing (success)
 spctl -a -vvv "$APP"/*.app                        # should say: accepted, source=Notarized Developer ID
 xcrun stapler validate "$APP"/*.app                # should say: The validate action worked!
+xcrun stapler validate *.dmg                       # ditto — the CONTAINER, see below
 ```
+
+### The .dmg needs its own ticket
+
+electron-builder notarizes and staples the **app**, then wraps it in a disk
+image — so the container itself carries no ticket. The app inside is stapled
+either way, which is why this went unnoticed for years: Gatekeeper is happy
+when the app launches. The gap only shows on a machine with **no network**,
+where macOS can't reach Apple to assess the unnotarized container and opening
+the image fails.
+
+`build:signed:sandboxed` now submits the `.dmg` separately and staples it,
+after copying the artifacts back. It adds a few minutes (a real notarization
+round trip) and is skipped with a warning if `APPLE_API_KEY` / `APPLE_API_KEY_ID`
+/ `APPLE_API_ISSUER` aren't set.
+
+Doing it by hand, if you built some other way:
+
+```bash
+xcrun notarytool submit dist/Transmission-X.Y.Z-universal.dmg \
+  --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
+xcrun stapler staple dist/Transmission-X.Y.Z-universal.dmg
+```
+
+`stapler staple` on a dmg that was never *submitted* fails with `Could not find
+base64 encoded ticket in response` / `Error 65` — that means the container has
+no ticket of its own, not that the app is unsigned. Submit first.
+
+The `.zip` needs nothing extra: it contains the already-stapled `.app`, and a
+zip can't carry a ticket itself.
 
 ## Other gotchas already worked through
 
