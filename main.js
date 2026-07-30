@@ -136,7 +136,11 @@ function injectAndOrderAuditColumns(headers, rows, columnMap) {
                      // Internal: stable identity (master page's current Address) backing Consolidate_Into
                      '_ConsolidateTargetId',
                      // Internal: pending audience suggestion (JSON) awaiting the auditor's accept/reject
-                     '_Suggested_Audiences'];
+                     '_Suggested_Audiences',
+                     // Internal: who wrote Redirect_Destination — 'auto' (derived from the sitemap)
+                     // or 'manual' (a person typed or picked it). Blank = unknown, which is what
+                     // every file predating this column has; consumers must fall back to heuristics.
+                     '_RedirectSource'];
   auditCols.forEach(col => {
     if (!headers.includes(col)) {
       headers.push(col);

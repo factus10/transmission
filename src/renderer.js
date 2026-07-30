@@ -2441,7 +2441,7 @@ function clearNavAssignment(row, origIndex, opts = {}) {
 function clearRedirectDestination(row, origIndex) {
   const old = row['Redirect_Destination'];
   if (old) logChange(origIndex, 'Redirect_Destination', old, '');
-  row['Redirect_Destination'] = '';
+  writeRedirectDestination(row, '', '');
 }
 
 async function promptKillCleanup(origIndex, targetStateLabel = 'Kill') {
@@ -8786,7 +8786,7 @@ function setupSettings() {
         if (matching.length > 0) {
           const action = await confirmDialog({ title: 'Update existing redirects?', message: `${matching.length} page${matching.length !== 1 ? 's' : ''} currently redirect to "${oldVal}".\n\nUpdate them to "${newVal || '(blank)'}"?`, confirmLabel: 'Update' });
           if (action) {
-            matching.forEach(r => { r[destCol] = newVal; });
+            matching.forEach(r => { writeRedirectDestination(r, newVal, 'keep'); });
             showToast(`Updated ${matching.length} redirect destinations`, 'success');
           }
         }
@@ -12202,7 +12202,7 @@ function openNon200TriageDialog() {
             if (!existingDest) {
               const redirectUrl = String(editedRow[redirectUrlColName] || '').trim();
               if (redirectUrl) {
-                editedRow['Redirect_Destination'] = redirectUrl;
+                writeRedirectDestination(editedRow, redirectUrl, 'manual');
                 logChange(origIndex, 'Redirect_Destination', '', redirectUrl);
                 undoItems.push({ origIndex, field: 'Redirect_Destination', oldValue: '', newValue: redirectUrl });
               }
@@ -12212,7 +12212,7 @@ function openNon200TriageDialog() {
           newKke = 'Kill';
           const existingDest = String(editedRow['Redirect_Destination'] || '').trim();
           if (!existingDest) {
-            editedRow['Redirect_Destination'] = '404';
+            writeRedirectDestination(editedRow, '404', 'manual');
             logChange(origIndex, 'Redirect_Destination', '', '404');
             undoItems.push({ origIndex, field: 'Redirect_Destination', oldValue: '', newValue: '404' });
           }
@@ -13285,7 +13285,7 @@ function applyConsolidationGroup(group, targetOrigIndex) {
     // Clear any explicit redirect destination — let the resolver chase the consolidate target
     const oldRedirect = String(row['Redirect_Destination'] || '');
     if (oldRedirect) {
-      row['Redirect_Destination'] = '';
+      writeRedirectDestination(row, '', '');
       logChange(origIndex, 'Redirect_Destination', oldRedirect, '');
     }
   });
@@ -14717,7 +14717,7 @@ function populateRedirectIndicator(row) {
     const r = state.editedRows[state.selectedIndex];
     const old = String(r['Redirect_Destination'] || '');
     if (!old) return;
-    r['Redirect_Destination'] = '';
+    writeRedirectDestination(r, '', '');
     logChange(state.selectedIndex, 'Redirect_Destination', old, '');
     setDirty(true);
     populateRedirectIndicator(r);
@@ -19154,7 +19154,7 @@ function cascadeNavChangesToRows(oldPaths) {
           const newRedirect = pathToRedirectUrl(newBase);
           if (newRedirect !== existing) {
             logChange(i, 'Redirect_Destination', existing, newRedirect);
-            row['Redirect_Destination'] = newRedirect;
+            writeRedirectDestination(row, newRedirect, 'auto');
           }
         }
       }
@@ -23311,13 +23311,13 @@ function resolveRedirectDestinations() {
 
     if (kke === 'consolidate') {
       const targetId = consolidateTargetAddr(row);
-      if (!targetId) { row[REDIRECT_DEST_COL] = ''; return; }
+      if (!targetId) { writeRedirectDestination(row, '', ''); return; }
       // Auto-derive the absolute destination from the master's identity. Preserve a genuine manual
       // override (a value unrelated to the master); re-derive blanks, prior auto values, and the
       // bare identity (the latter covers "linked before the master had a nav home, now it does").
       const auto = ctx.computeAutoDestination(row, 'consolidate');
       const looksAutoDerived = !existing || existing === auto || existing === targetId;
-      if (looksAutoDerived) row[REDIRECT_DEST_COL] = auto;
+      if (looksAutoDerived) writeRedirectDestination(row, auto, 'auto');
       return;
     }
 
@@ -23330,14 +23330,14 @@ function resolveRedirectDestinations() {
       // default keeps redirecting to the default forever.
       const auto = ctx.computeAutoDestination(row, 'kill'); // blank if nothing resolved (retired/404)
       const looksAutoDerived = !existing || existing === auto || existing === ctx.defaultRedirectUrl;
-      if (looksAutoDerived) row[REDIRECT_DEST_COL] = auto;
+      if (looksAutoDerived) writeRedirectDestination(row, auto, 'auto');
       return;
     }
 
     // Non-kill/consolidate pages with URL changes via nav mapping
     if (existing) return;
     const auto = ctx.computeAutoDestination(row, kke);
-    if (auto) row[REDIRECT_DEST_COL] = auto;
+    if (auto) writeRedirectDestination(row, auto, 'auto');
   });
 }
 
@@ -25175,7 +25175,7 @@ function applyRedirectHealthFixes(cats) {
     if (!row) return;
     const oldValue = String(row[REDIRECT_DEST_COL] || '');
     if (oldValue === r.proposed) return;
-    row[REDIRECT_DEST_COL] = r.proposed;
+    writeRedirectDestination(row, r.proposed, 'auto');
     logChange(r.origIndex, REDIRECT_DEST_COL, oldValue, r.proposed);
     items.push({ origIndex: r.origIndex, field: REDIRECT_DEST_COL, oldValue, newValue: r.proposed });
   }));
@@ -26937,6 +26937,40 @@ let _navLastCheckedNodeId = null; // last node id toggled via the bulk-select ch
 
 let _redirectEditorOpen = false;
 const REDIRECT_DEST_COL = 'Redirect_Destination';
+
+// ─── Redirect provenance ─────────────────────────────────────────────────────
+//
+// Who wrote this destination — 'auto' (the app derived it from the sitemap) or
+// 'manual' (a person typed or picked it). Blank means unknown, which is what
+// every pre-existing file has.
+//
+// This is the fact whose absence causes the whole family of redirect bugs the
+// Redirect Health Check exists to clean up: resolveRedirectDestinations() has
+// to guess from the value alone whether it may re-derive, so on Keep/Evolve
+// pages it guesses "human, never touch" and a redirect derived from a sitemap
+// that has since been deleted survives forever. With provenance recorded the
+// guessing goes away: auto values follow the sitemap, manual ones are never
+// touched, and clearing an assignment can safely clear the redirect it derived.
+//
+// `_`-prefixed, so it is filtered out of Table View, the field pickers and the
+// export profiles by the existing generic rules — same as _ConsolidateTargetId.
+const REDIRECT_SRC_COL = '_RedirectSource';
+
+/** The single write path for a redirect destination, so the value and its
+ *  provenance can never drift apart. `source` is 'auto', 'manual', or 'keep'
+ *  to rewrite the value while leaving provenance alone (used where a domain or
+ *  default changes and every destination is rewritten in place — that edits an
+ *  existing decision rather than making a new one).
+ *
+ *  Deliberately does NOT log, dirty, or re-render: call sites already do those
+ *  in their own way and this is meant to slot in without changing behavior. */
+function writeRedirectDestination(row, value, source) {
+  if (!row) return;
+  row[REDIRECT_DEST_COL] = value;
+  if (source === 'keep') return;
+  // Clearing a destination clears its provenance — an empty cell has no author.
+  row[REDIRECT_SRC_COL] = value ? (source || '') : '';
+}
 let _redirectSort = { col: '', dir: '' }; // col: 'status'|'title'|'source'|'dest', dir: ''|'asc'|'desc'
 
 function resyncNavBasedRedirects() {
@@ -26981,7 +27015,7 @@ function resyncNavBasedRedirects() {
 
     if (!newUrl || newUrl === existing) return;
     logChange(origIndex, 'Redirect_Destination', existing, newUrl);
-    row['Redirect_Destination'] = newUrl;
+    writeRedirectDestination(row, newUrl, 'auto');
     updated++;
   });
 
@@ -27078,7 +27112,7 @@ function setupRedirectEditor() {
     const destInput = rows[_frCurrent].querySelector('input[type="text"]');
     const resolved = destInput ? destInput.value : (row[REDIRECT_DEST_COL] || '');
     const newDest = exact ? replaceVal : resolved.split(findVal).join(replaceVal);
-    row[REDIRECT_DEST_COL] = newDest;
+    writeRedirectDestination(row, newDest, 'manual');
     setDirty(true);
 
     // Re-render and adjust position
@@ -27109,7 +27143,7 @@ function setupRedirectEditor() {
       const row = state.editedRows[origIndex];
       const destInput = el.querySelector('input[type="text"]');
       const resolved = destInput ? destInput.value : (row[REDIRECT_DEST_COL] || '');
-      row[REDIRECT_DEST_COL] = exact ? replaceVal : resolved.split(findVal).join(replaceVal);
+      writeRedirectDestination(row, exact ? replaceVal : resolved.split(findVal).join(replaceVal), 'manual');
     });
 
     setDirty(true);
@@ -27183,7 +27217,7 @@ function onSiteDomainChange() {
     if (!dest) continue;
     if (autoBase && dest.startsWith(autoBase + '/')) {
       const pathPart = dest.slice(autoBase.length);
-      row[REDIRECT_DEST_COL] = newBase ? newBase + pathPart : pathPart;
+      writeRedirectDestination(row, newBase ? newBase + pathPart : pathPart, 'keep');
       setDirty(true);
     }
   }
@@ -27206,10 +27240,15 @@ function openRedirectEditor(scrollToOrigIndex) {
     return;
   }
 
-  // Ensure Redirect_Destination column exists
+  // Ensure Redirect_Destination and its provenance column exist. (Column init,
+  // not a decision — writeRedirectDestination is for the latter.)
   if (!state.headers.includes(REDIRECT_DEST_COL)) {
     state.headers.push(REDIRECT_DEST_COL);
     state.editedRows.forEach(r => { if (!(REDIRECT_DEST_COL in r)) r[REDIRECT_DEST_COL] = ''; });
+  }
+  if (!state.headers.includes(REDIRECT_SRC_COL)) {
+    state.headers.push(REDIRECT_SRC_COL);
+    state.editedRows.forEach(r => { if (!(REDIRECT_SRC_COL in r)) r[REDIRECT_SRC_COL] = ''; });
   }
 
   // Close other full-panel views
@@ -27532,7 +27571,7 @@ function renderRedirectRow(entry, baseUrl) {
   }
   destInput.addEventListener('input', () => {
     const val = destInput.value.trim();
-    entry.row[REDIRECT_DEST_COL] = val;
+    writeRedirectDestination(entry.row, val, 'manual');
     destInput.classList.toggle('has-value', val && val !== entry.defaultDest);
     destInput.classList.toggle('redirect-dest-404', val === '404');
     setDirty(true);
@@ -27562,7 +27601,7 @@ function renderRedirectRow(entry, baseUrl) {
     const isCurrently404 = destInput.value.trim() === '404';
     const newVal = isCurrently404 ? '' : '404';
     destInput.value = newVal;
-    entry.row[REDIRECT_DEST_COL] = newVal;
+    writeRedirectDestination(entry.row, newVal, 'manual');
     destInput.classList.toggle('has-value', newVal && newVal !== entry.defaultDest);
     destInput.classList.toggle('redirect-dest-404', newVal === '404');
     fourBtn.classList.toggle('active', newVal === '404');
@@ -27614,7 +27653,7 @@ function showRedirectNavPicker(entry, destInput, baseUrl) {
           ? (baseUrl ? baseUrl + '/' + node.computedPath.replace(/^\//, '') : '/' + node.computedPath.replace(/^\//, ''))
           : '';
         destInput.value = destUrl;
-        entry.row[REDIRECT_DEST_COL] = destUrl;
+        writeRedirectDestination(entry.row, destUrl, 'manual');
         destInput.classList.toggle('has-value', destUrl !== entry.defaultDest);
         setDirty(true);
         dropdown.remove();
