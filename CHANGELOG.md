@@ -6,6 +6,12 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.12.0] — "Please, Please, Please, Let Me Get What I Want"
+
+### Changed
+
+- **A collapsed section in the Visual Sitemap now tells you how much it's hiding.** Folding a branch used to hide the answer along with the pages — the card kept reporting its own assigned page count, which is rarely the number you want from a box you just closed. A collapsed card now reads *"6 pages hidden"*: the sub-pages folded away underneath it. The **Counts** dropdown in the sitemap toolbar (where the **Page counts** checkbox used to be) picks what that line reports — **Hidden sub-pages (collapsed only)**, the new default, which leaves expanded cards clean; **Sub-pages on every branch**, for sizing sections at a glance; **Assigned audit pages**, the original per-node tally, unchanged for anyone who works that way; or **None**. Your choice saves with the project and carries into the HTML, PDF, and Miro exports. If you had page counts switched off, they stay off.
+
 ## [2.11.1] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Fixed
