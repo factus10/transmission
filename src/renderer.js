@@ -14355,12 +14355,39 @@ function openCreateSitemapFromAuditDialog() {
       <input type="checkbox" id="_csa-include-all" />
       Include Kill / Exclude / unreviewed pages too
     </label>
+    <div style="border-top:1px solid var(--border-light);padding-top:12px;display:flex;flex-direction:column;gap:6px;">
+      <div style="color:var(--text-secondary);font-weight:600;">What is this tree for?</div>
+      <label style="display:flex;align-items:flex-start;gap:8px;">
+        <input type="radio" name="_csa-purpose" value="future" checked style="margin-top:2px;" />
+        <span><b>Where pages are going</b> — the future state you're designing</span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:8px;">
+        <input type="radio" name="_csa-purpose" value="current" style="margin-top:2px;" />
+        <span><b>Where pages are today</b> — a current-state snapshot to show a client</span>
+      </label>
+      <div id="_csa-snapshot-note" class="hidden" style="background:var(--kke-evolve-bg);border:1px solid var(--border);border-left:3px solid var(--kke-evolve);border-radius:6px;padding:10px 12px;color:var(--text-secondary);line-height:1.5;">
+        Build a snapshot in <b>a copy of the project</b>, not this one. Placing a page writes where it's going, and Transmission derives a redirect from that for any page whose new path differs from its current URL — right for a tree describing where pages are <i>going</i>, meaningless for one describing where they already <i>are</i>.
+        <div style="margin-top:8px;">
+          <button type="button" id="_csa-copy" class="btn btn-sm btn-ghost">Save a copy first…</button>
+        </div>
+      </div>
+    </div>
   `;
 
   const countEl = body.querySelector('#_csa-count');
   const includeAllCb = body.querySelector('#_csa-include-all');
   includeAllCb.addEventListener('change', () => {
     countEl.textContent = countEligible(includeAllCb.checked);
+  });
+
+  // Asking what the tree is FOR beats warning about what it does: the answer is
+  // exactly what decides whether deriving redirects from it makes any sense.
+  // A snapshot belongs in its own copy — see docs/RUNNING_AN_AUDIT.md.
+  const snapshotNote = body.querySelector('#_csa-snapshot-note');
+  body.querySelectorAll('input[name="_csa-purpose"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      snapshotNote.classList.toggle('hidden', body.querySelector('input[name="_csa-purpose"]:checked').value !== 'current');
+    });
   });
 
   const footer = document.createElement('div');
@@ -14375,6 +14402,14 @@ function openCreateSitemapFromAuditDialog() {
 
   const modal = openModal({ title: 'Create Sitemap from Audit', body, width: 480, buttons: [] });
   cancelBtn.addEventListener('click', () => modal.close());
+
+  // Save As Project switches the session to the copy, which is what you want
+  // here: build the snapshot there, export from it, then reopen the original.
+  body.querySelector('#_csa-copy').addEventListener('click', async () => {
+    modal.close();
+    await saveAsProject();
+    showToast('Working in the copy now — build the snapshot here, then reopen the original', 'info');
+  });
 
   genBtn.addEventListener('click', () => {
     const maxDepth = parseInt(body.querySelector('#_csa-depth').value, 10) || 2;
