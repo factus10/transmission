@@ -8,6 +8,8 @@ major-version codenames drawn from The Smiths.
 
 ### Changed
 
+- **Redirects you didn't write now follow the sitemap on their own.** Previously a destination on a Keep or Evolve page was never revisited once it existed — so reorganizing the tree, or building a sitemap and deleting it, left the old destinations behind to contradict the new tree. Now a redirect **Transmission derived** is kept current: it follows the page's node when the tree moves, and is cleared when the page stops moving (taken off the sitemap, or placed where it already lives). A destination **you** typed or picked is never touched — including on Kill pages, where a hand-set destination that happened to match the project default could previously be overwritten. Clearing a page's sitemap assignment now also clears the redirect that was derived from it (the Kill/Consolidate cleanup prompt still asks separately and honors your answer).
+- **Redirects already in your file are left exactly as they are.** They predate the record of who wrote them, so the app treats them as ambiguous rather than guessing — use **Migration → Redirect Health Check…** to review and repair those, which is what it's for.
 - **Transmission now records how each redirect destination was set** — derived from the sitemap, or entered by a person. Nothing acted on this yet, but it is the fact whose absence lets a redirect derived from a sitemap you have since deleted survive forever: without it the app has to guess from the value alone whether it may update a destination, and on Keep/Evolve pages it guesses "leave it alone". Redirects set from now on are recorded; ones already in your file read as unknown and keep being treated cautiously.
 
 ### Added
