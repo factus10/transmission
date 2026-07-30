@@ -17119,6 +17119,8 @@ function generateNavTreemap(opts) {
     kkeBreakdown: kkeBreakdowns.totals,
     directKkeBreakdown: kkeBreakdowns.direct,
     sectionColors: computeSectionColorMap(),
+    // Which nodes start a new section — see navSectionRoots().
+    sectionIds: new Set(navSectionRoots().map(n => n.id)),
     fieldDefs: navSitemapFieldDefs(),
     fieldColorMaps: {},
   };
@@ -17628,9 +17630,14 @@ async function generateNavSitemap() {
   // over every audit row, and navToSitemap runs once per node.
   const rowAgg = computeNavRowFieldAggregates();
 
+  // Which nodes start a new section — see navSectionRoots() for why this isn't
+  // simply the tree's top level.
+  const sectionIds = new Set(navSectionRoots().map(n => n.id));
+
   // Map one sitemap node → a SitemapNode. `topLabel` is the node's top-level section
   // label, stamped onto colorValue so "color by section" tints the whole subtree.
   function navToSitemap(node, topLabel) {
+    if (sectionIds.has(node.id)) topLabel = node.label || '(section)';
     const kids = (node.children || []);
     const count = pageCounts[node.id] || 0;
     if (node.collapse === 'Y' || node.collapse === true) initialCollapsed.push(node.id);
@@ -17818,10 +17825,26 @@ function computeNavRowFieldAggregates() {
 
 // ─── Treemap data builder ──────────────────────────────────────────────────
 
+/** The nav nodes that count as "top-level sections" for colour-by-section, in
+ *  the Visual Sitemap and the Treemap alike.
+ *
+ *  Normally that's the tree's own top level. The exception is a tree rooted at a
+ *  SINGLE site node — every section nested under one "Home" — where taking the
+ *  top level would stamp one and the same section label onto every node in the
+ *  file, collapsing "colour by section" into "colour everything alike" and
+ *  leaving the section dimension with exactly one value to offer. That's the
+ *  same single-bucket problem `makeSectionResolver()` strips a shared prefix to
+ *  avoid on the reporting side. Treat the lone root's children as the sections
+ *  instead; the root keeps its own label and its own depth-0 rule. */
+function navSectionRoots() {
+  const tree = state.navTree || [];
+  return (tree.length === 1 && (tree[0].children || []).length) ? tree[0].children : tree;
+}
+
 function computeSectionColorMap() {
   const palette = SITEMAP_DEFAULT_PALETTE;
   const map = {};
-  (state.navTree || []).forEach((sec, i) => { map[sec.label || '(section)'] = palette[i % palette.length]; });
+  navSectionRoots().forEach((sec, i) => { map[sec.label || '(section)'] = palette[i % palette.length]; });
   return map;
 }
 
@@ -17891,6 +17914,7 @@ function treemapSubtitle(node, value, ctx, breakdownOverride) {
  *  no subtitle — reading as "no data" to a client when it might mean "Kill"
  *  or "Published". */
 function buildTreemapNode(node, topLabel, depthLimit, currentDepth, ctx) {
+  if (ctx.sectionIds && ctx.sectionIds.has(node.id)) topLabel = node.label || '(section)';
   const value = ctx.subtreeCounts[node.id] || 0;
   const isRolledUp = depthLimit != null && currentDepth >= depthLimit;
   const kids = (!isRolledUp && node.children && node.children.length) ? node.children : [];
