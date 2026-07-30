@@ -41,3 +41,34 @@ cp "$BUILD_DIR"/dist/*.dmg "$BUILD_DIR"/dist/*.zip "$PROJECT_DIR/dist/"
 
 echo "Signed artifacts copied to $PROJECT_DIR/dist/"
 rm -rf "$BUILD_DIR"
+
+# ── Notarize the .dmg itself ────────────────────────────────────────────────
+#
+# electron-builder notarizes and staples the .app, then wraps it — so the
+# CONTAINER carries no ticket of its own. The app inside is stapled either way,
+# which is why this was never noticed: Gatekeeper accepts the app on launch.
+# But opening the disk image on a machine with no network fails, because macOS
+# has to reach Apple to assess an unnotarized container.
+#
+# So submit the .dmg separately and staple the result. This runs on the copy in
+# the project's dist/ — the one that actually ships — and stapling only appends
+# a ticket, so it doesn't disturb the signed bytes sealed inside.
+#
+# Skipped with a warning if the notarization credentials aren't set, matching
+# how electron-builder treats them: the build still produces working artifacts,
+# they just need the network on first open.
+if [ -n "${APPLE_API_KEY:-}" ] && [ -n "${APPLE_API_KEY_ID:-}" ] && [ -n "${APPLE_API_ISSUER:-}" ]; then
+  for dmg in "$PROJECT_DIR"/dist/*.dmg; do
+    [ -e "$dmg" ] || continue
+    echo "Notarizing $(basename "$dmg") (the container — the app inside is already stapled) ..."
+    xcrun notarytool submit "$dmg" \
+      --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" \
+      --wait
+    xcrun stapler staple "$dmg"
+    xcrun stapler validate "$dmg"
+  done
+else
+  echo "WARNING: APPLE_API_KEY/_ID/_ISSUER not set — skipping .dmg notarization."
+  echo "         The app inside is still signed and stapled, but the disk image"
+  echo "         will need network access the first time it is opened."
+fi

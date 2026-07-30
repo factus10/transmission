@@ -11,7 +11,8 @@
     "build": "electron-builder --mac --universal",
     "build:arm": "electron-builder --mac --arm64",
     "build:intel": "electron-builder --mac --x64",
-    "build:signed:sandboxed": "bash scripts/build-signed-mac.sh"
+    "build:signed:sandboxed": "bash scripts/build-signed-mac.sh",
+    "changelog:html": "node scripts/generate-changelog-html.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0",
