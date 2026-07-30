@@ -170,11 +170,11 @@ Clients often ask for *"here's your site today"* before they'll engage with wher
 
 The reason is that a sitemap in Transmission is never purely descriptive. Placing a page on a node writes derived fields onto its row — `Computed Path`, `Sitemap_Destination`, `Page_Breadcrumb` — and on the next save the redirect resolver reads `Computed Path`, sees it differs from the page's live URL, and writes a `Redirect_Destination`. That is correct behavior for a *future-state* tree, where a page really is moving. For a *current-state* tree it manufactures redirects for pages that aren't going anywhere.
 
-Worse, they outlive the tree. Deleting a node clears its pages' sitemap fields but **not** their redirects, so the fossils survive into the future-state work, where the resolver treats any existing value as a deliberate human choice and never revisits it.
+Transmission now records which redirects it derived, so deleting a node takes its derived redirects with it and the fossils no longer outlive the tree. Redirects written *before* that record existed are still ambiguous, though — the app can't tell them from something you typed — so an older file can still be carrying them.
 
 So:
 
-1. **Copy the project first** — `File → Save As Project…` to a new name, or duplicate the file in Finder.
+1. **Copy the project first** — `File → Save As Project…` to a new name, or duplicate the file in Finder. The Create Sitemap from Audit dialog asks what the tree is for; answering *where pages are today* offers **Save a copy first…**, which does this for you.
 2. Build the URL-derived tree **in the copy**, export the Visual Sitemap (HTML / PDF / Miro) and the Treemap from there, and keep that copy as the archived deliverable.
 3. Go back to your working file, untouched, and build the future state there.
 
@@ -188,10 +188,9 @@ Symptoms, in rough order of how obvious they are:
 
 To find them, use sidebar field filters — `Redirect_Destination is-not-blank` combined with `Sitemap_ID is-blank`, with the KKE filter on Keep + Evolve, isolates that last group exactly.
 
-To fix them:
+To fix them, run **Migration → Redirect Health Check…**. It finds all three classes, groups them, shows every affected page, and repairs the groups you tick in a single undoable step. Anything whose destination still resolves to a real node in your sitemap is reported but never changed automatically — that may be a deliberate "send this to the parent", and only you know.
 
-- **Placed pages:** the Redirect Editor's **Re-derive from sitemap** re-points every placed row at its current node. Note it overwrites genuinely hand-set destinations too (everything except a literal `404`), so scan the list first.
-- **Unplaced pages:** these need clearing, and *Re-derive from sitemap* skips them — it only touches rows that have a `Sitemap_ID`. There is no bulk-clear for them today; on a large file this is worth a scripted repair rather than a manual pass.
+The Redirect Editor's **Re-derive from sitemap** is the blunter alternative: it re-points every *placed* row at its current node, skips unplaced rows entirely, and overwrites hand-set destinations (everything except a literal `404`). Prefer the health check.
 
 > The cleanest habit remains the one above: a descriptive tree lives in its own archived copy, and the working file only ever holds the future state.
 

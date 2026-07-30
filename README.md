@@ -71,7 +71,7 @@ The View menu mirrors these and adds **Audit Progress…** (`Cmd+P`), zoom contr
 - **File** — Open · Open Recent · Save · **Save As Project…** (`Cmd+Shift+S`) · Import/Merge · Merge Auditor Decisions · Save/Load Template · **Export…** (unified Cmd+Shift+E) · **Export Full Workbook (.xlsx)…**
 - **View** — view switcher mirrors + Audit Progress + zoom
 - **Project** — Project Settings · Glossary · **Audience Library** · Content Type Registry · Target Spec Library · Component Library · **AI Suggest for Unreviewed** · Run Rubric · Refresh GA KKE · Recompute Suggested KKE · Triage Non-200 Pages
-- **Migration** (export & validation tools) — **Pre-Handoff Check** · Migration Tracker · Export Redirect Map (CSV) · Redirect Chain Check
+- **Migration** (export & validation tools) — **Pre-Handoff Check** · Migration Tracker · Export Redirect Map (CSV) · Redirect Chain Check · **Redirect Health Check**
 - **Reports** (all reports, grouped) — Executive Summary · Content Inventory · SME Review Status · Menu Report · Sitemap Coverage · Component Inventory · **Audience Coverage · Audience × Section Matrix · Audience Debt · Site Consolidation Overview · Cross-Site Duplicate Overlap** · Migration Checklist · Net New Content Brief · Redirect Map Report
 - **SME** — Export · Import · **Compare KKE vs SME** · Resolve Conflicts
 - **Help** — Getting Started · Product Tour · Keyboard Shortcuts (`Cmd+/`) · Help
@@ -473,6 +473,7 @@ All settings are stored in the `KKE_Settings` sheet and travel with the file.
 
 ### Reports & Analysis
 - **Redirect Chain Detection** — Reports > Redirect Chain Check scans Kill pages and flags any whose redirect destination is itself a Kill page, catching redirect chains before implementation. Results shown in a dialog.
+- **Redirect Health Check** — Migration > Redirect Health Check finds redirects that no longer agree with the sitemap: pages redirecting to themselves, Keep/Evolve pages carrying a redirect while not on the sitemap at all, and destinations left behind by a tree that has since been rebuilt. Groups them, shows every affected page, and repairs the ones you tick in a single undoable step. Destinations that still resolve to a real node are reported but never changed automatically.
 - **Sitemap Coverage Report** — Reports > Sitemap Coverage Report analyzes the sitemap: empty leaf nodes (no pages, no children), hub nodes (children but no direct pages), overloaded nodes (5+ pages), and path mismatches (page URL doesn't match computed sitemap path).
 
 ### Client Reports
