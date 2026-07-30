@@ -2430,6 +2430,30 @@ function clearNavAssignment(row, origIndex, opts = {}) {
     if (old) logChange(origIndex, c, old, '');
     row[c] = '';
   });
+
+  // A redirect the app derived FROM this assignment is meaningless once the
+  // assignment is gone — leaving it is how a deleted sitemap's redirects
+  // outlived it and went on to contradict the tree that replaced it.
+  //
+  // Only ours: a recorded human destination is untouched, and unknown
+  // provenance (any pre-_RedirectSource file) is left for the Redirect Health
+  // Check rather than silently deleted here. Kill and Consolidate rows are
+  // exempt because their destination comes from the consolidate target or the
+  // project default, not from where the page sat in the tree.
+  //
+  // opts.keepRedirect is for callers that ask the user about the redirect
+  // SEPARATELY and act on the answer themselves — promptKillCleanup and its
+  // bulk twin. Those run before the row's KKE is written, so the Kill guard
+  // below hasn't taken effect yet, and clearing here would quietly override an
+  // explicit "no, keep the redirect".
+  const kke = String(row[finalKkeCol()] || row[kkeCol()] || '').trim().toLowerCase();
+  if (!opts.keepRedirect
+      && kke !== 'kill' && kke !== 'consolidate'
+      && String(row[REDIRECT_SRC_COL] || '').trim() === 'auto'
+      && String(row[REDIRECT_DEST_COL] || '').trim()) {
+    clearRedirectDestination(row, origIndex);
+  }
+
   // Refresh the Nav button badge if this is the currently-selected row
   if (state.selectedIndex === origIndex) updateNavBadge(row);
   // Invalidate the page-count cache so nav tree counts are up to date
@@ -2453,7 +2477,8 @@ async function promptKillCleanup(origIndex, targetStateLabel = 'Kill') {
   if (result === null) return false;
   if (result.clearNav) {
     const oldSitemapId = String(row['Sitemap_ID'] || '').trim();
-    clearNavAssignment(row, origIndex);
+    // This dialog asks about the redirect separately, below — don't pre-empt that answer.
+    clearNavAssignment(row, origIndex, { keepRedirect: true });
     // Consistency with the manual clearNav(): if the page's sitemap node is now an orphan leaf
     // (no children, no other pages assigned), offer to remove it from the tree too — otherwise
     // killing/consolidating a page leaves its empty node behind in the IA.
@@ -2482,7 +2507,7 @@ async function promptBulkKillCleanup(origIndexes) {
   if (result === null) return false;
   if (result.clearNav) {
     origIndexes.forEach(i => {
-      if (String(state.editedRows[i]['Sitemap_ID'] || '').trim()) clearNavAssignment(state.editedRows[i], i);
+      if (String(state.editedRows[i]['Sitemap_ID'] || '').trim()) clearNavAssignment(state.editedRows[i], i, { keepRedirect: true });
     });
   }
   if (result.clearRedirect) {
@@ -23308,6 +23333,11 @@ function resolveRedirectDestinations() {
     // silently gets no auto-derived redirect at all.
     const kke = String(row[finalKkeCol()] || row[kkeCol()] || '').trim().toLowerCase();
     const existing = String(row[REDIRECT_DEST_COL] || '').trim();
+    // Recorded provenance beats every heuristic below. Blank means unknown —
+    // which is every file written before _RedirectSource existed — so unknown
+    // keeps the old, cautious behavior rather than being read as either.
+    const src = String(row[REDIRECT_SRC_COL] || '').trim();
+    if (src === 'manual') return;   // a person chose this; nothing derived may overwrite it
 
     if (kke === 'consolidate') {
       const targetId = consolidateTargetAddr(row);
@@ -23334,9 +23364,22 @@ function resolveRedirectDestinations() {
       return;
     }
 
-    // Non-kill/consolidate pages with URL changes via nav mapping
-    if (existing) return;
+    // Non-kill/consolidate pages, whose redirect exists only because the page is
+    // moving via its sitemap node. This branch used to bail on ANY existing value
+    // — the asymmetry with the two branches above, and the reason a redirect
+    // derived from a since-deleted sitemap outlived it. Now:
     const auto = ctx.computeAutoDestination(row, kke);
+
+    // We wrote it, so we keep it current — including clearing it when the page
+    // stops moving (unplaced, or placed where it already lives), which is the
+    // orphan class the health check has to clean up in older files.
+    if (src === 'auto') { writeRedirectDestination(row, auto, 'auto'); return; }
+
+    // Unknown provenance: a pre-provenance file, where the value could equally be
+    // a fossil or a deliberate hand edit. Silently rewriting those is exactly the
+    // failure this whole change is repairing, so fill blanks only and leave the
+    // ambiguous ones to the Redirect Health Check, where a human confirms.
+    if (existing) return;
     if (auto) writeRedirectDestination(row, auto, 'auto');
   });
 }
