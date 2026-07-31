@@ -4,6 +4,7 @@
   "description": "Content audit, IA, and migration workspace for website replatforms — assess every page, architect the new site, and direct the build",
   "main": "main.js",
   "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
     "start": "electron .",
     "dev": "electron . --dev",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
