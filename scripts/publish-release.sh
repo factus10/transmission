@@ -153,7 +153,11 @@ cleanup; trap - EXIT
 
 # ── Release notes ───────────────────────────────────────────────────────────
 if [ -z "$NOTES_FILE" ]; then
-  NOTES_FILE="$(mktemp /tmp/transmission-notes-XXXXXX.md)"
+  # No .md suffix: BSD mktemp (macOS) requires the X's to be the LAST characters
+  # of the template and fails with a misleading "File exists" otherwise — only
+  # GNU mktemp accepts a trailing suffix. Nothing downstream cares about the
+  # extension. (Caught on the script's first real run, 2.14.0.)
+  NOTES_FILE="$(mktemp /tmp/transmission-notes-XXXXXX)"
   awk -v v="^## \\\\[$VERSION\\\\]" '
     $0 ~ v {f=1; next}
     /^## \[/ {f=0}
