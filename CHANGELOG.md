@@ -6,9 +6,22 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Added
+
+- **Export PNG** — every visualization (Visual Sitemap, Treemap, Content Flow) now exports a plain image alongside HTML and PDF, for slides and documents that can't place a PDF. The image is the whole diagram at the size it lays out at, not a screenshot of what happens to be on screen, rendered at 2× where it fits so text stays crisp.
+- **Recolor the Treemap.** Open the **Legend** and every entry has a color well: change **Keep**, or a section, or a Page Status, and every box in that category follows. **Right-click any box** to override just that one — useful for calling out a single section in a client deck. **Reset colors** puts everything back. Your palette saves with the project, per coloring mode (the colors you chose for the section view don't disturb the KKE view), and carries into the HTML, PDF, PNG and Miro exports.
+- **Export the Treemap and Content Flow to Miro**, the way the Visual Sitemap already could — same board picker, same "export again to the last board", same optional color key. The Treemap goes across as its own rectangle packing. The Content Flow becomes blocks and weighted connectors, since Miro has no ribbon: the reading survives (what exists, how big, what connects to what, in what color), but band thickness is Miro's 1–24 stroke scale rather than the exact proportion drawn on screen.
+- **A "Consolidate: no target" chip in the sidebar**, showing how many pages are marked Consolidate without a page to consolidate *into* — the one KKE value that isn't a finished decision, since it says the page goes away without saying where its content and its redirect go. Click it to filter to exactly those. It appears only when there are any. (The same filter has always been available under the KKE filter dropdown, and the Pre-Handoff Check has always counted them; this puts the number where you'll see it.)
+
 ### Changed
 
+- **Consolidating now nudges the target page to Evolve.** Merging another page's content into a page is work, and Evolve is how this audit says there's work to do here — so choosing a target marked **Keep** (which claims the page is unchanged) or **Kill/Exclude** (a destination that is itself being removed) now asks whether to set it to Evolve. You can decline; the consolidation stands either way.
+- **A page can no longer consolidate into itself**, or into a page that consolidates back into it. Either one is a redirect loop and a page whose content never lands anywhere.
 - **Releases are published by a script now** (`npm run release:publish`), instead of four commands run by hand. It verifies the signed artifacts before uploading anything, uploads each asset on its own, checks every byte count against the local file, and confirms that `releases/latest` actually resolves to the new version on both repos before the update manifest — the thing that tells running copies an update exists — is published. Developer-facing only; nothing changes in the app.
+
+### Fixed
+
+- **Content Flow exports now match what you're looking at.** Switching the left column, the shape, or the coloring and then exporting produced the view the diagram *opened* with, not the one on screen — so a PDF could show a completely different reading than the one you meant to hand over. The exported HTML also opens on that view now, with its toggles set to match.
 
 ## [2.13.1] — "Please, Please, Please, Let Me Get What I Want"
 

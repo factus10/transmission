@@ -206,6 +206,7 @@ A `.transmission` file is a **SQLite database** (better-sqlite3, WAL mode) that 
 | renderer → main | `export-redirects-multi` | `{files:[{fileName, rows}]}` → `{success, dir?, files?, count?, error?}` — folder picker, one redirect CSV per source site (mirrors `sme-export-multi`) |
 | renderer → main | `export-report-html` | `{ html, defaultName }` → `{ success, filePath?, error? }` — saves HTML report file |
 | renderer → main | `export-sitemap-pdf` | `{ html, defaultName }` → `{ success, filePath?, error? }` — loads a print-mode sitemap HTML (from `SitemapTemplate.build`) in a hidden window, waits for `document.title==='READY'`, then `printToPDF({ preferCSSPageSize:true })` to one page sized to the tree |
+| renderer → main | `export-viz-png` | `{ html, defaultName }` → `{ success, filePath?, error? }` — same hidden-window print-mode HTML, screenshotted instead of printed (`capturePage`); sizes the window to `window.__EXPORT_SIZE__` and re-fits if the OS clamps it |
 | main → renderer | `menu-non200-triage` | none — opens non-200 triage dialog |
 | main → renderer | `menu-url-variant-triage` | none — opens the URL Variant Triage dialog |
 | main → renderer | `menu-create-sitemap-from-audit` | none — opens the Create Sitemap from Audit dialog |
@@ -518,6 +519,33 @@ Classification worth knowing: the Redirect Editor's **nav picker** counts as `'m
 - `_ConsolidateTargetId` (internal, `_`-prefixed) = the master page's **current Address** — the stable *identity*. This is what every engine consumer keys off (`consolidateTargetAddr(row)` reads it, falling back to a legacy `Consolidate_Into` literal for pre-migration / off-inventory rows; `findConsolidateTargetRow(row)` resolves it to the master row). It never changes when the master later gains or overrides its new-site path, so the link survives nav assignment and URL overrides — **no retroactive sweep needed.**
 - `Consolidate_Into` (user-facing) = the master's clean **relative new path** — a *derived display* (`consolidateDisplayPath(master)` = master's `Computed Path`, or its current path as a stand-in until placed in the nav tree). `refreshConsolidateDisplay(row)` / `refreshAllConsolidateDisplays()` recompute it from the identity; `resolveConsolidateIntoUrls()` (run before every save) and `cascadeNavChangesToRows()` (once, post-cascade) keep it fresh. **Never authoritative.**
 
+**Consolidate guardrails.** `Consolidate` is the one KKE value that isn't a
+finished decision — it says the page goes away without saying where its content
+and its redirect go — so three checks sit on the write path:
+- **Self-consolidation and cycles are blocked** in `applyConsolidateTarget()`.
+  `sameConsolidateUrl(a,b)` is a loose compare (trailing slash / case) used *only*
+  by the guards — the stored identity stays the Address verbatim.
+  `consolidateChainReaches(startUrl, backToUrl)` walks the chain (cycle-safe) so
+  `A→B→A` is refused as well: it is the same defect one step removed, a redirect
+  loop plus content that lands nowhere. `openConsolidatePicker()` also excludes
+  candidates **by URL**, not just by index, since a crawl can list one Address
+  twice and picking the twin would consolidate a page into itself.
+- **The target is nudged to Evolve** (`maybeUpgradeConsolidateTargetToEvolve()`,
+  run *after* the source row is written so declining leaves the consolidation
+  exactly as asked). Receiving another page's content is work, and Evolve is how
+  this audit signals work; `Keep` claims the page is unchanged when it no longer
+  is, and `Kill`/`Exclude` is a destination being removed. Overridable — an
+  auditor may have a reason. It writes `Final_KKE` too when one is already set,
+  or "Set to Evolve" would silently do nothing on an SME-resolved row. Skipped
+  when the target is already `Evolve`, or is itself `Consolidate` (a chain — the
+  cycle and dead-target checks already speak to that).
+- **Finding the unfinished ones**: the `_consolidate-no-target` filter and the
+  Pre-Handoff Check's "Consolidate pages point to a target" check both predate
+  this, but a filter buried in a checkbox list is only found by someone who
+  already suspects the problem — so `refreshConsolidateTodoButton()` puts the
+  live count in the sidebar (`#btn-consolidate-todo`, hidden at zero, click to
+  toggle the filter; same active-state contract as `refreshUnclassifiedButton`).
+
 `effectiveConsolidateUrl(master)` resolves the master's **absolute new-site URL** — used only to write `Redirect_Destination` (redirects always stay absolute). One-time migration in `loadData()` converts legacy projects: for consolidating rows with a `Consolidate_Into` value but no identity, it resolves the stored URL back to its inventory master, stores that master's Address as `_ConsolidateTargetId`, and rewrites `Consolidate_Into` to the relative path (toast + dirty flag; idempotent; off-inventory targets keep their legacy literal). Table View shows a plain-language `COLUMN_HELP` tooltip explaining the `Consolidate_Into` column.
 
 **Consolidation Candidates workflow:** `openConsolidationCandidates()` is a Nav Editor toolbar action (`btn-nav-consolidate-candidates`) that opens a modal listing every nav node with 2+ assigned pages. `buildConsolidationCandidates()` groups rows by `Sitemap_ID`, returns groups sorted by size desc. Each group renders with radio buttons; `applyConsolidationGroup(group, targetOrigIndex)` sets the target to Evolve (preserving Keep/Evolve), the rest to Consolidate pointing at the master (identity `_ConsolidateTargetId` = master Address + derived `Consolidate_Into` display) and clears their nav + explicit redirect. Skipped groups are session-only (a `Set` inside the modal closure).
@@ -690,12 +718,14 @@ A collapsed card reports what it hides in *every* mode but `'off'` — matching 
 - **Sizing (`computeSubtreePageCounts()`):** counts *every* audit row assigned to a node's subtree via `Sitemap_ID`, regardless of KKE outcome — deliberately not `_navPageCountsCache()` (which excludes Kill/Consolidate for the Sitemap editor's "how many pages will still be live" badge). A section that's entirely being killed should still show up sized by how much content is there, not shrink to nothing. This also keeps the KKE-breakdown subtitle's percentage from exceeding 100% — box size and breakdown total are the same row count.
 - **KKE composition (`computeSubtreeKkeBreakdown()`):** bottom-up tally of every row's effective KKE (`Final_KKE` else `KKE_Recommendation`) per subtree; `dominantKke()` picks the most frequent value for a box's fill color (`treemapKkeColor()`, resolved via `getComputedStyle` since the webview has no access to the host's `:root` custom properties — includes Consolidate, which the older `kkeColor()`/`resolvedKkeColor()` helpers omit) and its subtitle (e.g. "62% Keep").
 - **Color-by-field constraint:** the full field registry (`navSitemapFieldDefs()` — Phase, Node Type, Page Status, Build Pattern, and the three assignee roles, the same registry the Visual Sitemap's generic field-coloring uses) is only offered when depth is **Unlimited** — a rolled-up box has no single field value to report, so limited depths only offer **Top-level section** and **KKE composition**, both of which have well-defined "dominant value across a subtree" semantics. `openTreemapConfigDialog()` enforces this by re-populating the color-by `<select>` on the depth `<select>`'s `change` event.
-- **Export reuse:** `sitemapExportClient`/`sitemapExportPdf` gained an optional 4th `templateModule` param (default `window.SitemapTemplate`) so the treemap path can pass `window.TreemapTemplate` through the exact same HTML/PDF export IPC plumbing without forking it. Existing box-tree call sites are unchanged (still 3 args).
-- **Only leaves carry a semantic fill color** — a container (has visible children) box renders as neutral structural chrome (border + label strip) in the engine; only leaf/rolled-up boxes get the resolved KKE/section/field color, so "what does a two-tone nested box mean" is never ambiguous.
+- **Export reuse:** `sitemapExportClient`/`sitemapExportPdf`/`sitemapExportPng` take an optional 4th `templateModule` param (default `window.SitemapTemplate`) so the treemap and Sankey paths pass `window.TreemapTemplate` / `window.SankeyTemplate` through the exact same export IPC plumbing without forking it. Existing box-tree call sites are unchanged (still 3 args).
+- **Only leaves carry a semantic fill color** — a container (has visible children) box renders as neutral structural chrome (border + label strip) in the engine; only leaf/rolled-up boxes get the resolved KKE/section/field color, so "what does a two-tone nested box mean" is never ambiguous. It's also why only leaves accept a right-click color override.
+- **Colors ARE in the engine, unlike depth/color-by.** What is drawn stays host-side (changing it re-rolls the aggregation); *which colors* are used is pure presentation and round-trips like the box-tree engine's settings. Two layers, resolved by `colorOf(node)` as `nodeOverrides[node.id]` > `colorOverrides[node.colorKey]` > `node.color`. **`node.colorKey`** is the join: `treemapColorKey()` stamps each box with its legend category (section label / dominant KKE / raw field value) and must stay in lockstep with `resolveTreemapNodeColor()`'s branches and `buildTreemapLegend()`'s `key`s, or recoloring a legend entry silently repaints nothing. A blank key (`''` — no Page Status set) is a real category, so both maps are probed with `hasOwnProperty`, never truthiness. Persisted in `projectSettings.treemapSettings[colorBy]` — **keyed by color-by mode**, because the same key space means different things in each ("Keep" the decision vs a section named Keep) and a palette chosen for one view has no bearing on the other.
 
 **Content Flow / Sankey (engine in `src/treemap-template.js`'s sibling `src/sankey-template.js`):** how pages move from the **current site's** organization into the **new sitemap** — reached via the Sitemap toolbar's **Content Flow** button (`#btn-nav-sankey`), next to Treemap. Same standalone-HTML / `app`-`client`-`print` contract as the other two engines, and reuses `sitemapExportClient`/`sitemapExportPdf`'s optional `templateModule` param for export. Layered Sankey layout (barycentre relaxation for crossing reduction), written from scratch — d3-sankey is not an option, see the Dependencies table.
 
 - **All toggles live in the ENGINE, not the host** — unlike the treemap, where depth/color-by are host-side because changing them re-rolls the aggregation, these are pure re-reads of data already sent. The host ships every graph up front and the **client export keeps every reading** — the person handed the file gets what you had, with no app. Only the source-axis depth (which changes the tally) is chosen host-side in `openSankeyConfigDialog()`.
+- **Because the engine owns the toggles, it owns the only record of what's on screen** — so every export emit carries `currentState()` (`{from, shape, colorBy}`) and the host folds it back through **`sankeyDataForState()`** before rebuilding the document. Without that step each export renders `baseData`'s `default*` keys, i.e. whatever view the config dialog opened with, and a PDF silently shows a different reading than the one the user meant to hand over. `build()` must therefore also honor `defaultColorBy` when emitting the `#colorby` select's `selected` attribute (the From select and Shape buttons already did).
 - **Two orthogonal controls, keyed `from|shape` in `DATA.views`.** `from` is what the LEFT column is — `section` (URL-derived current-site section) or `site` (which source site, offered only when the audit spans more than one). `shape` is what follows, from `SANKEY_SHAPES`: `dec` (→ Decision), `new` (→ New sitemap), `both` (→ Decision → New). `buildSankeySankeyGraph()` is generic over layer count and the engine derives layer count from the data, so **adding a shape is one entry in `SANKEY_SHAPES`** — no engine change. Links are always split by decision even in the `new` shape, so a band keeps its decision color and its tooltip can still say why that content moved.
 - **Every KKE value reaches the diagram verbatim** — `effectiveKke()` is read as-is, so user-added states (and even a rogue value typed into the sheet) each get their own block; `treemapKkeColor()` already resolves custom states from `state.customKkeStates`. Only the synthetic `(unreviewed)` bucket needs its own neutral. Legend order follows `allKkeStates()` so custom states sit where the user put them, with `(unreviewed)` last — it's the absence of a decision, not one of them.
 - **Multi-site is the case that breaks a naive build, in two ways.** (1) The **section axis explodes**: 5 sites × 12 sections = 60 blocks, at which point the engine's height budget leaves ~22px for every band put together (measured, not estimated). Two defenses — `sankeyCapSources()` folds the tail past `SANKEY_MAX_SOURCES` (20) into one `Other (N sections)` block, re-tallying so totals still conserve, and the engine caps total inter-node gap at 35% of the column instead of a fixed 10px. Each axis is capped independently, since the site axis is naturally small and capping globally would fold the one that was fine. (2) The **Source-site axis** exists because in a consolidation the unit of work IS the site — "which site contributes what, and where does it go" is the question, and it's 4 blocks instead of 60. It leads by default whenever it's offered.
@@ -894,6 +924,41 @@ numeric "Rounded corners" field reads 0 (not a bug).
 - **Collapsed marker carries a count.** The compact `hiddenLabel:'plus'` option
   renders `+N` (e.g. `+3`), not a bare `+` — a lone `+` is cryptic on a static
   board where nothing expands. `'count'` still gives the full "N pages hidden".
+
+**The treemap and Content Flow export to Miro too**, reusing the whole pipeline —
+`miroBoardChooserHtml()` / `wireMiroBoardChooser()` / `miroResolveChosenBoard()`
+(the board-choosing half, extracted out of `pickMiroBoard` so the three dialogs
+can't drift on remembered/new/search/paste), the `{frame, shapes, edges}` plan
+shape, `miro.js`'s `exportSitemap`, and one shared `runMiroExport()` for the
+progress modal / result toast / remembering the board. Only plan-building
+differs: `buildMiroTreemapPlan()` and `buildMiroSankeyPlan()`. Their lighter
+dialog is `pickMiroBoardSimple()` — board choice plus a colour-key toggle;
+the sitemap keeps its extra appearance controls because those describe a box
+*tree* and have no counterpart in either of the others.
+
+**Neither re-implements its engine's layout.** The engines emit the geometry
+they just drew alongside the export message — the treemap's `exportBoxes()`
+(`{boxes:[{id,label,subtitle,color,container,x,y,w,h}], width, height, legend}`)
+and the Sankey's `exportGraph()` (`{nodes:[{id,label,value,color,layer,order}],
+links, columns, legend}`). This is the same principle `src/sitemap-layout.js`
+achieves by being shared: the board matches the screen by construction. It also
+means a plan is only buildable **after** a render, hence `miroExportPreflight()`.
+
+**The Sankey's board is an approximation, and deliberately so.** Miro has no
+ribbon primitive, so a band becomes a **connector whose stroke width is the page
+count** — clamped into Miro's 1–24 range (`createConnector` gained an optional
+`strokeWidth`), which is a scaled clamp, not the proportion drawn on screen.
+Block *heights* are recomputed host-side rather than scaled from the engine's,
+because a Miro shape must be tall enough to hold its label while the engine
+routinely draws a 3px block and simply omits the text; enforcing that floor
+means re-stacking each column, which is exactly why `exportGraph()` ships each
+node's settled `order` (the crossing-minimised one) instead of its `y`. Columns
+run left→right, so plan edges may set `startSnap`/`endSnap` themselves — the
+sitemap's own vertical-gutter routing only applies when they don't.
+
+**Treemap shapes carry a `nodeId` even though a treemap has no connectors**:
+`exportSitemap` reports its item count as the number of nodeId-bearing shapes it
+mapped, so an all-null plan would report "0 blocks exported" on a full board.
 
 **Miro constraints worth knowing before extending this:**
 - **No collapse for shapes.** Only mind maps collapse, and `MindmapCreateRequest`
