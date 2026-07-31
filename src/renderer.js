@@ -6368,6 +6368,43 @@ function rowSiteInScope(row) {
 /** Canonical row set for reporting. Rows belonging to a site the auditor marked
  *  out of scope are excluded from every report denominator — otherwise a site
  *  that isn't being migrated still drags down every completion percentage. */
+/** Rename a source site, with the validation and the cascade a rename needs.
+ *
+ *  `Source_Site` stores the LABEL, not a site id, so a rename has to recompute
+ *  every row. Shared by Project Settings → Sites and the Content Flow dialog so
+ *  two rename paths can't drift apart. Returns a result rather than toasting, so
+ *  each caller reports failure in its own idiom.
+ */
+function renameSourceSite(index, rawLabel) {
+  const entry = (state.siteLibrary || [])[index];
+  if (!entry) return { ok: false, error: 'No such site' };
+  const label = sanitizeText(String(rawLabel || '')).trim();
+  if (!label) return { ok: false, error: 'A site needs a label' };
+  if (label === entry.label) return { ok: false, unchanged: true };
+  // Excludes self, so changing only the CASE of a label is allowed.
+  if (state.siteLibrary.some((s, i) => i !== index && String(s.label || '').toLowerCase() === label.toLowerCase())) {
+    return { ok: false, error: 'That label is already in use' };
+  }
+  entry.label = label;
+  state.projectSettings.siteLibrary = state.siteLibrary;
+  recomputeAllSourceSites();
+  setDirty(true);
+  return { ok: true, label };
+}
+
+/** In-scope sites still carrying their auto-seeded label — i.e. the bare host.
+ *
+ *  seedSiteLibraryFromData() names a new site after its domain, which is the
+ *  only thing it can know. That was invisible while the label only reached
+ *  reports; it is now an axis of a client-facing diagram, so it's worth asking
+ *  about at the point where it starts to show. */
+function sourceSitesNeedingLabels() {
+  return (state.siteLibrary || [])
+    .map((s, i) => ({ site: s, index: i }))
+    .filter(({ site }) => site.inScope !== false
+      && (site.hosts || []).some(h => String(h).toLowerCase() === String(site.label || '').toLowerCase()));
+}
+
 function reportRows() {
   if (!(state.siteLibrary || []).some(s => s.inScope === false)) return state.editedRows;
   return state.editedRows.filter(rowSiteInScope);
@@ -9638,17 +9675,13 @@ function renderSitesList() {
   list.querySelectorAll('.ps-site-rename').forEach(btn => {
     btn.addEventListener('click', async () => {
       const i = +btn.dataset.idx;
-      const old = state.siteLibrary[i].label;
-      const v = await showPrompt('Rename site', 'Label shown in reports', old);
-      if (!v) return;
-      const trimmed = sanitizeText(v).trim();
-      if (!trimmed || trimmed === old) return;
-      if (state.siteLibrary.some(s => s.label.toLowerCase() === trimmed.toLowerCase())) {
-        showToast('That label is already in use', 'error');
-        return;
-      }
-      state.siteLibrary[i].label = trimmed;
-      persist(true);           // Source_Site stores the label, so it must follow
+      const v = await showPrompt('Rename site', 'Label shown in reports and the Content Flow diagram', state.siteLibrary[i].label);
+      if (v === null) return;
+      // renameSourceSite() owns the validation and the Source_Site cascade, and
+      // is shared with the Content Flow dialog so the two can't drift.
+      const r = renameSourceSite(i, v);
+      if (r.error) { showToast(r.error, 'error'); return; }
+      if (!r.ok) return;
       renderSitesList();
       applyFilter();
     });
@@ -14951,6 +14984,7 @@ function setupNavTree() {
   // Sitemap generator
   $('btn-nav-sitemap').addEventListener('click', generateNavSitemap);
   $('btn-nav-treemap').addEventListener('click', openTreemapConfigDialog);
+  $('btn-nav-sankey').addEventListener('click', openSankeyConfigDialog);
 
   // (The IA / Menu Report moved to the Menus view — Menus → Report.)
 
@@ -17284,6 +17318,489 @@ function openTreemapConfigDialog() {
           const depthVal = body.querySelector('#_tmc-depth').value;
           const colorBy = body.querySelector('#_tmc-colorby').value;
           generateNavTreemap({ depth: depthVal ? parseInt(depthVal, 10) : null, colorBy });
+        } },
+    ],
+  });
+}
+
+// ─── Content Flow (Sankey) ──────────────────────────────────────────────────
+// How the audit's pages move from the CURRENT site's organization into the NEW
+// sitemap — including the ones that arrive nowhere. Engine: src/sankey-template.js.
+//
+// The three terminal buckets are the point of the diagram as much as the flows
+// are: a migration deck that shows only what lands somewhere is quietly hiding
+// the largest number in most audits.
+
+const SANKEY_RETIRED = '— Retired';
+const SANKEY_OUT_OF_SCOPE = '— Out of scope';
+const SANKEY_UNPLACED = '— Not yet placed';
+const SANKEY_UNREVIEWED = '(unreviewed)';
+const SANKEY_TERMINAL_COLORS = {
+  [SANKEY_RETIRED]: '#b91c1c',       // matches --kke-kill
+  [SANKEY_OUT_OF_SCOPE]: '#636363',  // matches --kke-exclude
+  [SANKEY_UNPLACED]: '#8890a0',
+};
+const SANKEY_MSG_PREFIX = '@@SANKEY@@';   // must match MSG_PREFIX in the sankey engine
+
+/** Row → current-site section, read from the URL path ALONE.
+ *
+ *  Deliberately NOT makeSectionResolver(): that one prefers a placed row's
+ *  breadcrumb, which is the TARGET IA — every placed page would then flow from
+ *  `Academics` to `Academics` by construction and the diagram would show
+ *  nothing. What it does share is that function's two corrections, both of
+ *  which matter at least as much here: the per-host shared-prefix strip (a
+ *  crawl rooted at `nps.gov/acad/…` otherwise puts the whole site in one
+ *  bucket) and the locale-prefix step-past (otherwise the "current site"
+ *  columns come out as Es / De / Zh-Hans — language, not organization).
+ *
+ *  `depth` is how many path segments make up a bucket label, so depth 2 splits
+ *  `/academics/programs` from `/academics/advising`.
+ */
+function makeSourceSectionResolver(depth) {
+  const d = Math.max(1, depth || 1);
+  const urlCol = state.urlColumn || 'Address';
+  const urlOf = (row) => { try { return new URL(String(row[urlCol] || '')); } catch (_) { return null; } };
+  const segsOf = (row) => { const u = urlOf(row); return u ? u.pathname.split('/').filter(Boolean) : null; };
+  const hostOf = (row) => { const u = urlOf(row); return u ? normalizeSourceHost(u.host) : ''; };
+
+  const pathsByHost = new Map();
+  reportRows().forEach(r => {
+    const s = segsOf(r);
+    if (!s) return;
+    const h = hostOf(r);
+    if (!pathsByHost.has(h)) pathsByHost.set(h, []);
+    pathsByHost.get(h).push(s);
+  });
+
+  const baseByHost = new Map();
+  const localeHosts = new Set();
+  pathsByHost.forEach((lists, h) => {
+    const base = sharedPrefixDepth(lists);
+    baseByHost.set(h, base);
+    if (hostUsesLocalePrefixes(lists, base)) localeHosts.add(h);
+  });
+
+  // Same reasoning as makeSectionResolver(): without a qualifier,
+  // companyA.com/about and companyB.com/about merge into one bucket — the very
+  // comparison a consolidation audit exists to make. Two differences from that
+  // function, both because the Sites registry exists and is authoritative:
+  // the qualifier is the SITE LABEL (`Beta College › About`, not
+  // `beta.edu › About`), and whether to qualify at all is decided by the number
+  // of distinct SITES — one site served from `www.` plus a subdomain is still
+  // one site and shouldn't have every section prefixed. Prefix stripping stays
+  // per HOST, since separate subdomains genuinely have separate path roots.
+  const siteOf = (row) => computeRowSourceSite(row) || hostOf(row);
+  const multiSite = new Set(reportRows().map(siteOf).filter(Boolean)).size > 1;
+
+  const resolve = (row) => {
+    const s = segsOf(row);
+    if (!s) return '';
+    const host = hostOf(row);
+    let base = baseByHost.get(host) || 0;
+    if (localeHosts.has(host) && LOCALE_SEGMENT_RE.test(s[base] || '')) base++;
+    const parts = [];
+    for (let i = 0; i < d; i++) {
+      // A path that ends at this level is the section's own landing page, not a
+      // child bucket — stop rather than inventing a deeper label for it.
+      if (s.length <= base + i + 1) break;
+      parts.push(titleCaseFromSlug(s[base + i]));
+    }
+    const label = parts.join(' / ');
+    if (!multiSite) return label || '(root)';
+    const site = siteOf(row);
+    return label ? `${site} › ${label}` : site;
+  };
+  resolve.multiSite = multiSite;
+  return resolve;
+}
+
+/** nodeId → its top-level section label, stamped down each subtree.
+ *
+ *  Built by walking state.navTree rather than following parent pointers: that's
+ *  how navToSitemap()/buildTreemapNode() already stamp `topLabel`, and it side-
+ *  steps the stale-`parentNumber` class of bug that _findNavNodeLocation()
+ *  exists to work around. Sections come from navSectionRoots(), so a tree
+ *  rooted at one site node reports its children — not one label for every page.
+ */
+function navSectionLabelMap() {
+  const map = new Map();
+  const walk = (node, label) => {
+    map.set(node.id, label);
+    (node.children || []).forEach(c => walk(c, label));
+  };
+  navSectionRoots().forEach(sec => walk(sec, sec.label || '(section)'));
+  const tree = state.navTree || [];
+  if (tree.length === 1 && (tree[0].children || []).length && !map.has(tree[0].id)) {
+    map.set(tree[0].id, tree[0].label || '(site root)');   // the lone root above the sections
+  }
+  return map;
+}
+
+/** Where a row's content ends up: a new-sitemap section, or a terminal bucket.
+ *
+ *  Consolidate resolves THROUGH to the master's destination (chained masters
+ *  included, cycle-safe via `seen` — the same guard resolveRedirectDestinations()
+ *  uses) because consolidation preserves the content even though the URL dies.
+ *  The band is still colored as Consolidate, so the merge stays legible.
+ */
+function sankeyTargetOf(row, sectionByNodeId, seen) {
+  const kke = effectiveKke(row).toLowerCase();
+  if (kke === 'kill') return SANKEY_RETIRED;
+  if (kke === 'exclude') return SANKEY_OUT_OF_SCOPE;
+  if (kke === 'consolidate') {
+    const urlCol = state.urlColumn || 'Address';
+    const visited = seen || new Set();
+    const self = String(row[urlCol] || '').trim();
+    if (self) visited.add(self);
+    const master = findConsolidateTargetRow(row);
+    if (!master) return SANKEY_UNPLACED;                       // off-inventory or missing target
+    const mUrl = String(master[urlCol] || '').trim();
+    if (mUrl && visited.has(mUrl)) return SANKEY_UNPLACED;     // cycle
+    return sankeyTargetOf(master, sectionByNodeId, visited);
+  }
+  const nodeId = String(row['Sitemap_ID'] || '').trim();
+  return (nodeId && sectionByNodeId.get(nodeId)) || SANKEY_UNPLACED;
+}
+
+/** Beyond this many blocks a column stops being a diagram. A 5-site × 12-section
+ *  consolidation makes 60 source labels; at that count the engine's own height
+ *  budget leaves ~22px for every band put together. The tail rolls into one
+ *  "Other" block instead — and the Source-site axis exists so that isn't the
+ *  only answer available. */
+const SANKEY_MAX_SOURCES = 20;
+
+/** Tally every in-scope row into {section, site, decision, target} records.
+ *
+ *  BOTH source axes are tallied in one pass so the engine can toggle between
+ *  them without a round trip: `section` is the URL-derived current-site section,
+ *  `site` is which source site the page came from (the registry label via
+ *  computeRowSourceSite(), not the raw host — host ≠ site, which is the whole
+ *  reason the Sites registry exists).
+ */
+function computeSankeyFlows(depth) {
+  const srcOf = makeSourceSectionResolver(depth);
+  const sectionByNodeId = navSectionLabelMap();
+  const tally = new Map();   // NUL-joined section/site/decision/target → {…, value}
+  let skipped = 0;
+
+  reportRows().forEach(row => {
+    const source = srcOf(row);
+    if (!source) { skipped++; return; }            // no parseable URL — nothing to flow from
+    const site = computeRowSourceSite(row) || '(unknown site)';
+    const decision = effectiveKke(row) || SANKEY_UNREVIEWED;
+    const target = sankeyTargetOf(row, sectionByNodeId);
+    // Keyed on a NUL join, and the parts are carried as the VALUE rather than
+    // parsed back out of the key. Labels routinely contain spaces ("News &
+    // Events"), " / " at depth 2+, and "›" when the crawl spans several
+    // source sites — so no printable separator is safe to split on.
+    const key = [source, site, decision, target].join('\u0000');
+    const hit = tally.get(key);
+    if (hit) hit.value++;
+    else tally.set(key, { section: source, site, decision, target, value: 1 });
+  });
+
+  return { flows: [...tally.values()], skipped };
+}
+
+/** Roll every source label past the top N (by volume) into one "Other" block,
+ *  re-tallying so the totals still conserve. Returns what was folded too, so
+ *  the caller can say so rather than silently under-reporting a section. */
+function sankeyCapSources(flows, axis, max) {
+  const volume = new Map();
+  flows.forEach(f => volume.set(f[axis], (volume.get(f[axis]) || 0) + f.value));
+  if (volume.size <= max) return { flows, folded: 0 };
+
+  const keep = new Set([...volume.entries()].sort((a, b) => b[1] - a[1]).slice(0, max - 1).map(e => e[0]));
+  const folded = volume.size - keep.size;
+  const noun = axis === 'site' ? 'site' : 'section';
+  const label = `Other (${folded} ${noun}${folded === 1 ? '' : 's'})`;
+
+  const tally = new Map();
+  flows.forEach(f => {
+    const merged = Object.assign({}, f, { [axis]: keep.has(f[axis]) ? f[axis] : label });
+    const key = [merged.section, merged.site, merged.decision, merged.target].join('\u0000');
+    const hit = tally.get(key);
+    if (hit) hit.value += merged.value;
+    else tally.set(key, merged);
+  });
+  return { flows: [...tally.values()], folded };
+}
+
+/** One color per label on either horizontal axis, shared BETWEEN them so a
+ *  section that survives the migration keeps its identity left-to-right.
+ *  Terminal buckets get their semantic color instead. `axis` is which field of
+ *  a flow record supplies the left-column label. */
+function sankeySectionColors(flows, axis) {
+  const ps = state.projectSettings || {};
+  const palette = (Array.isArray(ps.brandPalette) && ps.brandPalette.length) ? ps.brandPalette : SITEMAP_DEFAULT_PALETTE;
+  const volume = new Map();
+  flows.forEach(f => {
+    volume.set(f[axis], (volume.get(f[axis]) || 0) + f.value);
+    if (!SANKEY_TERMINAL_COLORS[f.target]) volume.set(f.target, (volume.get(f.target) || 0) + f.value);
+  });
+  const colors = {};
+  [...volume.entries()].sort((a, b) => b[1] - a[1]).forEach(([label], i) => {
+    colors[label] = palette[i % palette.length];
+  });
+  Object.assign(colors, SANKEY_TERMINAL_COLORS);
+  return colors;
+}
+
+/** Any KKE value the project defines — including user-added states, and even a
+ *  rogue value typed straight into the sheet — reaches here verbatim from
+ *  effectiveKke(), so every decision gets its own block. treemapKkeColor()
+ *  already resolves custom states from state.customKkeStates; only the
+ *  synthetic "unreviewed" bucket needs its own neutral. */
+function sankeyDecisionColor(decision) {
+  return decision === SANKEY_UNREVIEWED ? '#9aa0ab' : treemapKkeColor(decision);
+}
+
+/** The column shapes on offer. `layers` names which field of a flow record
+ *  supplies each column after the first; the first is always the chosen axis. */
+const SANKEY_SHAPES = [
+  { key: 'dec', label: '→ Decision', layers: ['decision'] },
+  { key: 'new', label: '→ New sitemap', layers: ['target'] },
+  { key: 'both', label: '→ Decision → New', layers: ['decision', 'target'] },
+];
+
+/** Build one graph: `axis` (section|site) on the left, then the shape's layers.
+ *
+ *  Generic over layer count so a new shape is one entry in SANKEY_SHAPES. Links
+ *  are always split by decision — even in the 'new' shape, where the decision
+ *  isn't a column — so a band keeps its decision color and its tooltip stays
+ *  able to say WHY that content moved.
+ */
+function buildSankeySankeyGraph(flows, axis, shape, colors) {
+  const fields = [axis].concat(shape.layers);
+  const columns = fields.map(f => (
+    f === 'section' ? 'Current section' : f === 'site' ? 'Source site'
+      : f === 'decision' ? 'Decision' : 'New sitemap'));
+
+  const nodes = new Map(), links = new Map();
+  const nodeFor = (field, label, layer) => {
+    const id = layer + '|' + label;
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        id, label, layer,
+        color: field === 'decision' ? sankeyDecisionColor(label) : (colors[label] || '#9aa0ab'),
+        terminal: !!SANKEY_TERMINAL_COLORS[label],
+      });
+    }
+    return id;
+  };
+
+  flows.forEach(f => {
+    const ids = fields.map((field, i) => nodeFor(field, f[field], i));
+    const linkColors = { decision: sankeyDecisionColor(f.decision), source: colors[f[axis]] || '#9aa0ab' };
+    for (let i = 0; i < ids.length - 1; i++) {
+      // The source label is part of the key even where it isn't an endpoint:
+      // colour-by-source has to be able to tint each strand of a shared middle
+      // column by where it came from.
+      const key = [ids[i], ids[i + 1], f.decision, f[axis]].join('\u0000');
+      const hit = links.get(key);
+      if (hit) hit.value += f.value;
+      else links.set(key, { s: ids[i], t: ids[i + 1], value: f.value, decision: f.decision, section: f[axis], colors: linkColors });
+    }
+  });
+
+  return { columns, nodes: [...nodes.values()], links: [...links.values()] };
+}
+
+/** Build every from × shape combination the engine can toggle between, all from
+ *  the same flow tally so no two can disagree about a total. */
+function buildSankeyViews(flows, opts) {
+  const axes = (opts && opts.axes) || ['section'];
+  const views = {};
+  const legends = {};
+
+  axes.forEach(axis => {
+    const colors = sankeySectionColors(flows, axis);
+    SANKEY_SHAPES.forEach(shape => {
+      views[axis + '|' + shape.key] = buildSankeySankeyGraph(flows, axis, shape, colors);
+    });
+    legends[axis] = [...new Set(flows.map(f => f[axis]))]
+      .sort((a, b) => a.localeCompare(b))
+      .map(l => ({ color: colors[l] || '#9aa0ab', label: l }));
+  });
+
+  // Decision order follows the project's own KKE vocabulary (so custom states
+  // sit where the user put them), with anything else appended and "unreviewed"
+  // last — it is the absence of a decision, not one of them.
+  const present = new Set(flows.map(f => f.decision));
+  const defined = (typeof allKkeStates === 'function' ? allKkeStates() : []).filter(d => present.has(d));
+  const rest = [...present].filter(d => !defined.includes(d) && d !== SANKEY_UNREVIEWED).sort();
+  const decisions = defined.concat(rest, present.has(SANKEY_UNREVIEWED) ? [SANKEY_UNREVIEWED] : []);
+  legends.decision = decisions.map(d => ({ color: sankeyDecisionColor(d), label: d }));
+
+  return { views, legends };
+}
+
+/** Opens the interactive content-flow modal. Both toggles live in the engine
+ *  (see its header comment), so unlike the treemap there is nothing to send
+ *  back — this is a pure one-way handoff plus the two export buttons. */
+function openSankeyView(opts) {
+  if (!window.SankeyTemplate) { showToast('Content Flow engine unavailable', 'error'); return; }
+
+  const baseData = {
+    title: opts.title,
+    views: opts.views,
+    legends: opts.legends,
+    froms: opts.froms,
+    shapes: SANKEY_SHAPES.map(sh => ({ key: sh.key, label: sh.label })),
+    defaultFrom: opts.defaultFrom,
+    defaultShape: opts.defaultShape || 'both',
+    defaultColorBy: 'decision',
+  };
+
+  const html = window.SankeyTemplate.build(Object.assign({ mode: 'app' }, baseData));
+  const wv = document.createElement('webview');
+  wv.setAttribute('src', 'data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  wv.style.cssText = 'width:100%;height:100%;border:0;flex:1;';
+
+  const container = document.createElement('div');
+  container.style.cssText = 'width:100%;height:80vh;display:flex;';
+  container.appendChild(wv);
+
+  wv.addEventListener('console-message', (e) => {
+    if (!e || !e.message || e.message.indexOf(SANKEY_MSG_PREFIX) !== 0) return;
+    let msg; try { msg = JSON.parse(e.message.slice(SANKEY_MSG_PREFIX.length)); } catch (_) { return; }
+    if (msg.type === 'export') {
+      if (msg.format === 'client') sitemapExportClient(baseData, null, opts.slug, window.SankeyTemplate);
+      else if (msg.format === 'pdf') sitemapExportPdf(baseData, null, opts.slug, window.SankeyTemplate);
+    }
+  });
+
+  openModal({ title: opts.title, body: container, width: '94vw', buttons: [{ label: 'Done', variant: 'primary' }] });
+}
+
+/** Builds the content flow from the audit + sitemap and opens the view.
+ *  opts: { depth: number, defaultShape: 'dec'|'new'|'both' } */
+function generateNavSankey(opts) {
+  if (!state.navTree || state.navTree.length === 0) { showToast('No sitemap loaded', 'error'); return; }
+
+  let { flows, skipped } = computeSankeyFlows(opts.depth || 1);
+  if (!flows.length) { showToast('No pages with a usable URL to chart', 'error'); return; }
+
+  // Offer the Source-site axis only when there IS more than one source site —
+  // on a single-site audit it would be one block with everything flowing out of
+  // it, which answers nothing.
+  const siteCount = new Set(flows.map(f => f.site)).size;
+  const axes = siteCount > 1 ? ['section', 'site'] : ['section'];
+
+  // Cap each axis independently: on a 5-site × 12-section consolidation the
+  // section axis has 60 blocks and the site axis 5, so capping globally would
+  // needlessly fold the one that was fine.
+  const notes = [];
+  axes.forEach(axis => {
+    const capped = sankeyCapSources(flows, axis, SANKEY_MAX_SOURCES);
+    flows = capped.flows;
+    if (capped.folded) notes.push(`${capped.folded} small ${axis === 'site' ? 'site' : 'section'}s grouped as "Other"`);
+  });
+
+  const { views, legends } = buildSankeyViews(flows, { axes });
+  const ps = state.projectSettings || {};
+  const title = [ps.clientName, ps.projectName].filter(Boolean).join(' \u2014 ');
+
+  if (skipped) notes.push(`${skipped} row${skipped === 1 ? '' : 's'} skipped (no usable URL)`);
+  const excluded = outOfScopeSiteInfo();
+  if (excluded && excluded.rows) notes.push(`${excluded.rows} rows on out-of-scope sites excluded`);
+  if (notes.length) showToast(notes.join(' \u00b7 '));
+
+  openSankeyView({
+    title: (title ? title + ' \u2014 ' : '') + 'Content Flow',
+    views,
+    legends,
+    froms: axes.map(a => ({ key: a, label: a === 'site' ? 'Source site' : 'Current section' })),
+    // On a consolidation the question is which SITE contributes what, so that
+    // axis leads; on a single-site audit there is only the one.
+    defaultFrom: axes.includes('site') ? 'site' : 'section',
+    defaultShape: opts.defaultShape || 'both',
+    slug: sitemapProjectSlug() + '-content-flow',
+  });
+}
+
+/** Pre-render config dialog. Only the source-axis depth needs deciding up front
+ *  — it changes the tally itself. The 2-vs-3 column and colour toggles are pure
+ *  re-reads and so live in the engine, where they also survive into the client
+ *  export. */
+function openSankeyConfigDialog() {
+  if (!state.navTree || state.navTree.length === 0) { showToast('No sitemap loaded', 'error'); return; }
+
+  const depthOptions = [
+    { value: '1', label: '1 — top-level sections (recommended)' },
+    { value: '2', label: '2 — e.g. Academics / Programs' },
+    { value: '3', label: '3' },
+  ];
+  const viewOptions = SANKEY_SHAPES.map(sh => ({ value: sh.key, label: sh.label }));
+
+  // Naming the sites only matters where the site axis is actually offered, and
+  // it is offered only when there are several. On a single-site audit the site
+  // never appears as a block, so asking would be busywork — that project's name
+  // comes from Project Settings → Identity, which titles the diagram.
+  const inScopeSites = (state.siteLibrary || []).filter(s => s.inScope !== false);
+  const unnamed = inScopeSites.length > 1 ? sourceSitesNeedingLabels() : [];
+  const namesHtml = !unnamed.length ? '' : `
+    <div style="margin-bottom:14px;padding:10px 12px;background:var(--bg-subtle,rgba(0,0,0,0.03));border-left:3px solid var(--kke-evolve);border-radius:var(--radius);">
+      <div style="font-size:12px;font-weight:600;margin-bottom:2px;">Name these sites?</div>
+      <div style="font-size:11px;color:var(--text-muted);line-height:1.5;margin-bottom:8px;">
+        ${unnamed.length} of your ${inScopeSites.length} source sites ${unnamed.length === 1 ? 'is' : 'are'} still named
+        after ${unnamed.length === 1 ? 'its' : 'their'} web address. That name labels a whole column of this diagram, so
+        it's worth a real one. Optional &mdash; and editable any time in <b>Project Settings &rarr; Sites</b>.
+      </div>
+      ${unnamed.map(({ site, index }) => `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+          <code style="font-size:10.5px;color:var(--text-muted);min-width:120px;">${escapeHtml((site.hosts || []).join(', '))}</code>
+          <input type="text" class="_skc-site-name" data-idx="${index}" value="${escapeHtml(site.label)}"
+            placeholder="e.g. Beta College"
+            style="flex:1;padding:4px 7px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg-surface);">
+        </div>`).join('')}
+    </div>`;
+
+  const body = document.createElement('div');
+  body.innerHTML = `
+    ${namesHtml}
+    <label style="display:block;margin-bottom:12px;">
+      <span style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px;">Current-site detail</span>
+      <select id="_skc-depth" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-surface);">
+        ${depthOptions.map(o => `<option value="${o.value}"${o.value === '1' ? ' selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
+      </select>
+    </label>
+    <label style="display:block;">
+      <span style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px;">Open with</span>
+      <select id="_skc-view" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-surface);">
+        ${viewOptions.map(o => `<option value="${o.value}"${o.value === 'both' ? ' selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
+      </select>
+    </label>
+    <p style="font-size:11px;color:var(--text-muted);margin-top:12px;line-height:1.5;">
+      Current-site sections are read from the URL path; new-sitemap sections from where each page is placed in the tree.
+      Pages that arrive nowhere are shown as <b>Retired</b>, <b>Out of scope</b>, or <b>Not yet placed</b>.
+      You can switch columns and coloring inside the view &mdash; and, when the audit covers more than one
+      source site, swap the left column between <b>current section</b> and <b>source site</b>.
+    </p>
+  `;
+
+  openModal({
+    title: 'Content Flow',
+    body,
+    width: 420,
+    buttons: [
+      { label: 'Cancel', variant: 'ghost' },
+      { label: 'Generate', variant: 'primary', primary: true, onClick: () => {
+          // Apply any renames BEFORE building, since Source_Site (and so the
+          // site axis) is derived from the label. Highest index first: the
+          // stored indices are into state.siteLibrary, which renameSourceSite
+          // does not reorder — but recomputing per rename is wasted work only,
+          // never wrong, so failures here are reported and skipped, not fatal.
+          const failed = [];
+          body.querySelectorAll('._skc-site-name').forEach(inp => {
+            const r = renameSourceSite(+inp.dataset.idx, inp.value);
+            if (r.error) failed.push(r.error);
+          });
+          if (failed.length) showToast([...new Set(failed)].join(' · '), 'error');
+          generateNavSankey({
+            depth: parseInt(body.querySelector('#_skc-depth').value, 10) || 1,
+            defaultShape: body.querySelector('#_skc-view').value,
+          });
         } },
     ],
   });
