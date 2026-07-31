@@ -6,6 +6,11 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Redirect loops now actually clear.** The Redirect Health Check would report a page redirecting to itself, you'd tick the group and hit **Fix selected**, and the loop would be back the moment the file next auto-saved. The check and the redirect resolver disagreed about what a loop is: the resolver, walking a consolidation chain that circles back on itself, gives up and returns the last URL it saw — which is the page's own URL — and nothing stopped it writing that. So the check cleared the loop and the very next save derived it straight back. On a two-page consolidation cycle the "fix" made things *worse*, turning one loop into two. Both halves now share one definition of a self-redirect, a derived destination that lands back on its own page is treated as no destination at all, and loops already sitting in a file heal themselves on the next save without the health check being run at all. A redirect you typed by hand is still never touched, and `404` still means a deliberate deindex.
+- **A cross-site redirect is no longer mistaken for a loop.** On a consolidation, `alpha.edu/about` → `beta.edu/about` was read as a page redirecting to itself, because only the URL path was compared. Hosts are now compared too, whenever both sides carry one.
+
 ## [2.14.0] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Added
