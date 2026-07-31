@@ -6,6 +6,8 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.14.0] — "Please, Please, Please, Let Me Get What I Want"
+
 ### Added
 
 - **Export PNG** — every visualization (Visual Sitemap, Treemap, Content Flow) now exports a plain image alongside HTML and PDF, for slides and documents that can't place a PDF. The image is the whole diagram at the size it lays out at, not a screenshot of what happens to be on screen, rendered at 2× where it fits so text stays crisp.
