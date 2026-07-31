@@ -6,6 +6,8 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.13.1] — "Please, Please, Please, Let Me Get What I Want"
+
 ### Fixed
 
 - **The legend opens in front of the diagram again** in Content Flow and the Treemap. It was being clipped to a sliver at the bottom edge of the toolbar, so it read as hidden behind the visualization.
