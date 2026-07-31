@@ -303,6 +303,17 @@ Content inventory as a squarified treemap — boxes sized by page count, colored
 - **Color by KKE decision** — each box shows its dominant Keep/Kill/Evolve/Consolidate/Exclude outcome and the composition percentage. **Color by top-level section**, or — only when Depth is Unlimited, since a rolled-up box has no single value to report — **Phase, Node Type, Page Status, Build Pattern, or any assignee role** (Page Status reuses the colors you've already assigned it in Project Settings).
 - Pan/zoom/Fit, a legend, and **Export HTML** / **Export PDF**, same as the Visual Sitemap.
 
+### Content Flow
+Where the current site's content ends up in the new sitemap, as a flow diagram — band thickness is page count. Sitemap toolbar → **Content Flow**, next to Treemap.
+- **Three readings, toggled in the view** — **→ Decision** maps the current site straight onto its Keep/Kill/Evolve/Consolidate/Exclude calls (including any states you've added yourself, each with its own block and color); **→ New sitemap** answers "where did this section's content go"; **→ Decision → New** shows both at once, which is the version to put in front of a client. Color the bands by decision or by source.
+- **Name your sites** — source sites start out named after their domain, which is all the app can infer. Since that name labels a whole column of the diagram, the setup dialog offers to rename any that are still bare domains, right there. They're editable any time in **Project Settings → Sites** (where you also set which hosts belong to which site, the CMS, the owner, and whether a site is in scope at all), and the names travel with the project.
+- **On a multi-site consolidation the left column can be the source site** — usually the better read, since the unit of work in a consolidation is the site: which site contributes what, and where does it go. Offered automatically whenever the audit spans more than one source site, and it leads by default. Section labels are qualified by site name (`Beta College › About`) so two sites' `/about` can't silently merge, and a site served from both `www.` and a subdomain still counts as one site.
+- **Pages that arrive nowhere are shown, not dropped** — **Retired** (Kill), **Out of scope** (Exclude), and **Not yet placed** (no sitemap home yet). In most audits that's the largest number on the diagram, and a flow chart that omits it is misleading.
+- **Consolidated pages flow through to their master's destination** — the URL dies but the content survives, so it's counted as arriving, with the band still colored as Consolidate. Chained consolidations resolve all the way through.
+- **Current-site sections are read from the URL path** (shared path prefixes and locale prefixes stripped, per host); new-sitemap sections from where each page is placed in the tree. A small dialog picks how deep the current-site axis goes — top-level by default, or split `/academics/programs` from `/academics/advising`.
+- **It stays readable at consolidation scale** — a five-site audit can produce sixty current-site sections, enough to leave the diagram no room to draw itself. Small sections past the top 20 group into one **Other** block (page totals still add up, and the count is reported), and labels are dropped rather than overlapped where blocks get thin — every block keeps its color and its hover detail regardless.
+- Hover any band or block to isolate its flow. Pan/zoom/Fit, a legend, and **Export HTML** / **Export PDF** — the exported HTML keeps every toggle, so a client gets all the readings with no app.
+
 ### Rubrics & Assessment
 - Define Keep/Kill/Evolve/Exclude criteria as markdown rubric files
 - **Field rules** — auto-evaluated against spreadsheet data (12+ operators)
@@ -534,6 +545,9 @@ npm run dev
 
 # Run normally
 npm start
+
+# Unit tests (no dependencies — uses Node's built-in test runner)
+npm test
 ```
 
 ---
