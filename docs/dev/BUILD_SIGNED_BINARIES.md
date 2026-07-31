@@ -51,6 +51,35 @@ already sign automatically whenever a matching identity is found via
 `APPLE_SIGNING_IDENTITY`. There's no separate signed/unsigned script split
 here the way PCL has `dist:mac` vs `dist:mac:signed`.
 
+## After the build: publishing
+
+`scripts/publish-release.sh` (`npm run release:publish`) takes it from here —
+both GitHub releases and the update manifest. Run it from the project dir after
+a successful build:
+
+```bash
+npm run release:publish -- --manifest-notes /path/to/notes.txt
+```
+
+Omit `--manifest-notes` to create and verify the releases but leave the manifest
+alone; `--dry-run` runs every check and publishes nothing. Re-running is safe:
+an existing release is reused and its assets re-uploaded with `--clobber`, which
+is the recovery path for an interrupted upload.
+
+It refuses to publish artifacts that are not shippable (unstapled dmg or app,
+Gatekeeper rejection, a bundle whose version does not match the one being
+released, a non-universal binary, or a `dist/` still holding other versions'
+files), uploads each asset separately, verifies byte counts against the local
+files before publishing the draft, and asserts `releases/latest` resolves to the
+new tag on both repos before the manifest is touched. See the release section of
+CLAUDE.md for why each of those exists — every one traces to a release that
+broke.
+
+**Clear `dist/` before building.** The notarization loop below globs
+`dist/*.dmg`, so artifacts left from earlier versions get submitted to Apple
+again — one wasted round trip each, and a stale file sitting where a glob might
+pick it up.
+
 ## Which build command to run
 
 `cd ~/Documents/github/transmission` (or whichever worktree) first.
