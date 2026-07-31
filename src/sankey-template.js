@@ -74,6 +74,10 @@
       if (MODE !== 'app') return;
       try { console.log(MSG_PREFIX + JSON.stringify(obj)); } catch (e) {}
     }
+    // What the viewer is looking at RIGHT NOW. Every export must carry this or
+    // the host rebuilds the document from DATA's defaults — i.e. whatever view
+    // the config dialog opened with, not the one the user switched to.
+    function currentState() { return { from: from, shape: shape, colorBy: colorBy }; }
     function $(id) { return document.getElementById(id); }
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
     function plural(n) { return n + (n === 1 ? ' page' : ' pages'); }
@@ -314,6 +318,26 @@
       fillLegend();
     }
 
+    /** The laid-out graph as plain data: nodes grouped by column and carrying
+     *  their settled within-column order, plus every link with the colour the
+     *  current "Color by" is painting it. Valid only after render(). */
+    function exportGraph() {
+      if (!G || !byLayer) return null;
+      var nodes = [], links = [];
+      byLayer.forEach(function (l, li) {
+        l.forEach(function (n, oi) {
+          nodes.push({ id: n.id, label: n.label, value: n.value, color: n.color || '#9aa0ab', layer: li, order: oi });
+        });
+      });
+      G.links.forEach(function (l) {
+        links.push({ s: l.s.id, t: l.t.id, value: l.value, color: l.colors[colorBy] || '#9aa0ab', decision: l.decision || '' });
+      });
+      var legend = (LEGENDS[colorBy === 'decision' ? 'decision' : from] || []).map(function (e) {
+        return { label: e.label, color: e.color };
+      });
+      return { nodes: nodes, links: links, columns: (G.columns || []).slice(), legend: legend };
+    }
+
     // ── Hover isolation ─────────────────────────────────────────────────────
     function nodeEls() { return $('canvas').querySelectorAll('.sk-node'); }
     function focusLink(l, p, e) {
@@ -440,8 +464,16 @@
       // two toggles per Legend click (panel never opens), two emits per Export.
       if ($('btn-fit')) $('btn-fit').addEventListener('click', fitToScreen);
       if ($('legend-btn')) $('legend-btn').addEventListener('click', function (e) { e.stopPropagation(); this.classList.toggle('open'); });
-      if ($('btn-export-client')) $('btn-export-client').addEventListener('click', function () { emit({ type: 'export', format: 'client' }); });
-      if ($('btn-export-pdf')) $('btn-export-pdf').addEventListener('click', function () { emit({ type: 'export', format: 'pdf' }); });
+      if ($('btn-export-client')) $('btn-export-client').addEventListener('click', function () { emit({ type: 'export', format: 'client', state: currentState() }); });
+      if ($('btn-export-pdf')) $('btn-export-pdf').addEventListener('click', function () { emit({ type: 'export', format: 'pdf', state: currentState() }); });
+      if ($('btn-export-png')) $('btn-export-png').addEventListener('click', function () { emit({ type: 'export', format: 'png', state: currentState() }); });
+      // Miro has no ribbon primitive, so the board is nodes + weighted
+      // connectors. What it takes from here is the part a host-side rebuild
+      // could not reproduce: the per-column ORDER that barycentre relaxation
+      // settled on, which is what keeps the flows from crossing.
+      if ($('btn-export-miro')) $('btn-export-miro').addEventListener('click', function () {
+        emit({ type: 'export', format: 'miro', state: currentState(), graph: exportGraph() });
+      });
       document.addEventListener('click', function () {
         var lb = $('legend-btn'); if (lb) lb.classList.remove('open');
       });
@@ -482,6 +514,9 @@
       st.textContent = '@page { size: ' + (totalW + 96) + 'px ' + (CANVAS_H + 96) + 'px; margin: 48px; }';
       document.head.appendChild(st);
       document.body.classList.add('print-ready');
+      // Bare content box, for the PNG exporter: it sizes an offscreen window to
+      // this and screenshots it, so unlike @page there is no margin to add.
+      window.__EXPORT_SIZE__ = { w: Math.ceil(totalW), h: Math.ceil(CANVAS_H) };
       document.title = 'READY';
     }
 
@@ -516,7 +551,13 @@ select.tb-btn{padding:3px 6px;}
 .tb-sep{width:1px;height:18px;background:var(--border);flex-shrink:0;}
 #viewport{position:absolute;top:41px;left:0;right:0;bottom:0;overflow:hidden;cursor:grab;background:var(--bg);}
 #viewport.panning{cursor:grabbing;}
+/* Print mode must lay out flush at 0,0 ON SCREEN too — the PNG exporter
+   screenshots this document in a window sized to the canvas, and a screen
+   capture never sees the print stylesheet. */
+body.printing{background:#fff;overflow:visible;height:auto;}
 body.printing #viewport{position:static;top:0;overflow:visible;}
+body.printing #canvas{transform:none!important;position:static;}
+body.printing #hint,body.printing #tip{display:none!important;}
 #canvas{position:relative;transform-origin:0 0;background:var(--white);}
 svg#links{position:absolute;top:0;left:0;overflow:visible;}
 svg#links path{fill:none;transition:stroke-opacity .12s;}
@@ -566,6 +607,7 @@ body.focused .sk-node.hot{opacity:1;}
     var shapes = (data && data.shapes) || [{ key: 'both', label: 'Decision → New' }];
     var defaultFrom = (data && data.defaultFrom) || froms[0].key;
     var defaultShape = (data && data.defaultShape) || shapes[0].key;
+    var defaultColorBy = (data && data.defaultColorBy) || 'decision';
     var dataJson = JSON.stringify(data || {}).replace(/<\//g, '<\\/');
     var engineSrc = sankeyEngine.toString();
 
@@ -591,8 +633,8 @@ body.focused .sk-node.hot{opacity:1;}
         toolbar += '<div class="tb-sep"></div>';
       }
       toolbar += '<select class="tb-btn" id="colorby">'
-        + '<option value="decision">Color by decision</option>'
-        + '<option value="source">Color by source</option>'
+        + '<option value="decision"' + (defaultColorBy === 'decision' ? ' selected' : '') + '>Color by decision</option>'
+        + '<option value="source"' + (defaultColorBy === 'source' ? ' selected' : '') + '>Color by source</option>'
         + '</select>';
       toolbar += '<div class="tb-sep"></div>';
       toolbar += '<button class="tb-btn" id="btn-fit">Fit</button>';
@@ -603,6 +645,8 @@ body.focused .sk-node.hot{opacity:1;}
         toolbar += '<div class="tb-sep"></div>';
         toolbar += '<button class="tb-btn" id="btn-export-client">Export HTML</button>';
         toolbar += '<button class="tb-btn" id="btn-export-pdf">Export PDF</button>';
+        toolbar += '<button class="tb-btn" id="btn-export-png">Export PNG</button>';
+        toolbar += '<button class="tb-btn" id="btn-export-miro">Export to Miro</button>';
       }
       toolbar += '</div>';
     }
