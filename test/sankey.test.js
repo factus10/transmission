@@ -584,4 +584,46 @@ describe('engine template', () => {
     }));
     assert.ok(two.includes('id="fromsel"'));
   });
+
+  // Regression: the Fit/Legend/Export listeners were once wired inside
+  // syncColorByLabels(), which re-runs on every axis change — so each switch
+  // stacked another listener. Two toggles per Legend click meant the panel
+  // never opened, and Export fired twice. Anything called repeatedly must stay
+  // free of side effects.
+  test('per-render helpers do not wire persistent chrome', () => {
+    const src = fs.readFileSync(path.join(SRC_DIR, 'sankey-template.js'), 'utf8');
+    const bodyOf = (fn) => {
+      const start = src.indexOf('function ' + fn + '(');
+      assert.ok(start > 0, `${fn}() not found — renamed?`);
+      const end = src.indexOf('\n    }\n', start);
+      assert.ok(end > start, `could not delimit ${fn}()`);
+      return src.slice(start, end);
+    };
+
+    // These touch only long-lived elements, so ANY listener they add stacks.
+    for (const fn of ['syncColorByLabels', 'fillLegend']) {
+      assert.ok(!bodyOf(fn).includes('addEventListener'),
+        `${fn}() registers a listener; it re-runs, so listeners would stack. Wire it in wireToolbar() instead.`);
+    }
+
+    // render() may bind nodes and links — it creates and destroys those each
+    // pass, so their listeners go with them. What it must never bind is
+    // something that outlives the render: document, or a toolbar control.
+    const render = bodyOf('render');
+    assert.ok(!/document\.addEventListener/.test(render),
+      'render() binds document; that listener outlives the render and would stack');
+    assert.ok(!/\$\('(btn-|legend-btn|colorby|fromsel)[^']*'\)\.addEventListener/.test(render),
+      'render() binds a toolbar control; those persist across renders and would stack');
+  });
+
+  test('the legend panel escapes the toolbar\'s overflow clip', () => {
+    // #toolbar sets overflow-x:auto, which per spec forces overflow-y to auto —
+    // an absolutely-positioned panel hanging below the bar gets clipped to a sliver.
+    const html = SankeyTemplate.build(Object.assign({ mode: 'app' }, data));
+    const rule = /#legend-panel\{([^}]*)\}/.exec(html);
+    assert.ok(rule, '#legend-panel rule missing');
+    assert.match(rule[1], /position:fixed/, 'must be fixed, not absolute');
+    const z = /z-index:(\d+)/.exec(rule[1]);
+    assert.ok(z && Number(z[1]) > 100, 'must sit above the toolbar (z-index 100)');
+  });
 });
