@@ -6,6 +6,8 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.13.0] — "Please, Please, Please, Let Me Get What I Want"
+
 ### Added
 
 - **`npm test`** — the project now has automated tests, using Node's built-in runner, with no new dependencies (this is a signed, notarized universal binary; its dependency budget is not spent on a test framework). 32 tests cover the Content Flow's host-side logic. See `docs/dev/TESTING.md`.
