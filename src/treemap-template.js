@@ -9,13 +9,23 @@
 // rationale) — reused here so the treemap gets the same in-app view /
 // client-shareable export / print-PDF trio for free.
 //
-// Unlike the box-tree sitemap engine, this one has NO in-webview settings
-// panel, no collapse/expand, no per-node color overrides — depth and coloring
-// are chosen once, host-side, before the view opens (see
-// openTreemapConfigDialog() in renderer.js). The engine just lays out and
-// renders whatever tree it's handed; deeper levels the host chose not to show
-// have already been rolled up into aggregate leaf values before the data ever
-// reaches here.
+// Unlike the box-tree sitemap engine, this one has no collapse/expand and no
+// layout settings: WHAT is drawn (depth, and which dimension decides colour) is
+// chosen once host-side before the view opens, because changing either re-rolls
+// the aggregation (see openTreemapConfigDialog() in renderer.js). The engine
+// just lays out and renders whatever tree it's handed; deeper levels the host
+// chose not to show have already been rolled up into aggregate leaf values
+// before the data ever reaches here.
+//
+// WHICH colours are used, though, is pure presentation, so it lives here and
+// round-trips to the host like the sitemap engine's settings do:
+//   • Legend colours   — recolour a whole category (a section, a KKE decision,
+//                        a Page Status) from the Legend panel. Keyed by
+//                        node.colorKey, which the host stamps on every node.
+//   • Per-box override — right-click one box. Keyed by node id, and it wins.
+// Both are reported back as {type:'state'} and persisted per project, so a
+// client's palette survives closing the view — and both are baked into the
+// data blob of every export, so the HTML/PDF/PNG match what's on screen.
 //
 // Run modes (data.mode): same contract as sitemap-template.js — 'app' (full
 // toolbar + export), 'client' (view-only, no export), 'print' (static,
@@ -37,14 +47,54 @@
     var HEADER_H = 22;   // reserved label strip on a container (has-children) box
     var PAD = 3;         // inset padding between a container's header and its children
 
+    // Colour overrides. COLOR_OV recolours a whole legend category; NODE_OV
+    // recolours one box and wins over it. Copied out of DATA so a re-render
+    // never mutates the shipped blob.
+    var COLOR_OV = Object.assign({}, DATA.colorOverrides || {});
+    var NODE_OV = Object.assign({}, DATA.nodeOverrides || {});
+    var DEFAULT_COLOR = '#9aa0ab';
+
     var MSG_PREFIX = '@@TREEMAP@@';
     function emit(obj) {
       if (MODE !== 'app') return;
       try { console.log(MSG_PREFIX + JSON.stringify(obj)); } catch (e) {}
     }
+    function currentState() { return { colorOverrides: COLOR_OV, nodeOverrides: NODE_OV }; }
+    function pushState() { emit({ type: 'state', state: currentState() }); }
 
     function $(id) { return document.getElementById(id); }
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+
+    /** A box's fill: its own override, else its category's, else what the host
+     *  computed. `colorKey` may legitimately be '' (a blank Page Status is a
+     *  real category), so membership is tested rather than truthiness. */
+    function colorOf(node) {
+      if (node.id && Object.prototype.hasOwnProperty.call(NODE_OV, node.id)) return NODE_OV[node.id];
+      var k = node.colorKey;
+      if (k !== undefined && Object.prototype.hasOwnProperty.call(COLOR_OV, k)) return COLOR_OV[k];
+      return node.color || DEFAULT_COLOR;
+    }
+    /** Legend swatch for a category — the override if one is set. */
+    function legendColorOf(entry) {
+      var k = (entry.key !== undefined ? entry.key : entry.label);
+      if (Object.prototype.hasOwnProperty.call(COLOR_OV, k)) return COLOR_OV[k];
+      return entry.color || DEFAULT_COLOR;
+    }
+    // <input type="color"> only accepts #rrggbb, so anything else (a named
+    // colour, an rgb()) has to be normalized or the swatch silently shows black.
+    function toHex(c) {
+      var s = String(c || '').trim();
+      if (/^#[0-9a-f]{6}$/i.test(s)) return s.toLowerCase();
+      if (/^#[0-9a-f]{3}$/i.test(s)) return ('#' + s[1] + s[1] + s[2] + s[2] + s[3] + s[3]).toLowerCase();
+      var m = s.match(/^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i);
+      if (m) {
+        return '#' + [1, 2, 3].map(function (i) {
+          var v = Math.max(0, Math.min(255, parseInt(m[i], 10))).toString(16);
+          return v.length === 1 ? '0' + v : v;
+        }).join('');
+      }
+      return DEFAULT_COLOR;
+    }
 
     // ════════════════════════════════════════════════════════════════════════
     // Squarified treemap layout — Bruls/Huizing/van Wijk. Mutates each node
@@ -129,7 +179,13 @@
       box.style.top = node._y + 'px';
       box.style.width = Math.max(0, node._w) + 'px';
       box.style.height = Math.max(0, node._h) + 'px';
-      if (!isContainer) box.style.background = node.color || '#9aa0ab';
+      if (!isContainer) box.style.background = colorOf(node);
+      // A container is structural chrome, not a semantic colour, so it isn't
+      // recolourable — right-click only offers the leaves that carry meaning.
+      if (!isContainer && MODE === 'app') {
+        box.__node = node;
+        box.addEventListener('contextmenu', function (e) { e.preventDefault(); openBoxMenu(node, e); });
+      }
       var titleParts = [node.label];
       if (node.subtitle) titleParts.push(node.subtitle);
       box.title = titleParts.join(' — ');
@@ -149,6 +205,29 @@
       $('canvas').appendChild(box);
       if (isContainer) node.children.forEach(renderBox);
     }
+    /** Flattened, laid-out boxes in draw order (containers before their
+     *  children, so a board that honours creation order stacks them the same
+     *  way the DOM does). Valid only after render(). */
+    function exportBoxes() {
+      var out = [];
+      (function walk(nodes) {
+        (nodes || []).forEach(function (n) {
+          if (!(n._w > 0) || !(n._h > 0)) return;
+          var isContainer = !!(n.children && n.children.length && n._w >= MIN_CONTAINER_W && n._h >= MIN_CONTAINER_H);
+          out.push({
+            id: n.id, label: n.label || '', subtitle: n.subtitle || '',
+            color: isContainer ? '' : colorOf(n),
+            container: isContainer,
+            x: n._x, y: n._y, w: n._w, h: n._h,
+          });
+          if (isContainer) walk(n.children);
+        });
+      })(ROOTS);
+      return { boxes: out, width: CANVAS_W, height: CANVAS_H, legend: (DATA.legend || []).map(function (e) {
+        return { label: e.label, color: legendColorOf(e) };
+      }) };
+    }
+
     function render() {
       $('canvas').innerHTML = '';
       $('canvas').style.width = CANVAS_W + 'px';
@@ -208,21 +287,87 @@
     // ════════════════════════════════════════════════════════════════════════
     function wireToolbar() {
       if ($('btn-fit')) $('btn-fit').addEventListener('click', fitToScreen);
+      // The legend panel is also the colour editor in app mode, so a click
+      // inside it (on a swatch) must not close it.
       if ($('legend-btn')) $('legend-btn').addEventListener('click', function (e) { e.stopPropagation(); this.classList.toggle('open'); });
-      if ($('btn-export-client')) $('btn-export-client').addEventListener('click', function () { emit({ type: 'export', format: 'client' }); });
-      if ($('btn-export-pdf')) $('btn-export-pdf').addEventListener('click', function () { emit({ type: 'export', format: 'pdf' }); });
+      if ($('legend-panel')) $('legend-panel').addEventListener('click', function (e) { e.stopPropagation(); });
+      if ($('btn-export-client')) $('btn-export-client').addEventListener('click', function () { emit({ type: 'export', format: 'client', state: currentState() }); });
+      if ($('btn-export-pdf')) $('btn-export-pdf').addEventListener('click', function () { emit({ type: 'export', format: 'pdf', state: currentState() }); });
+      if ($('btn-export-png')) $('btn-export-png').addEventListener('click', function () { emit({ type: 'export', format: 'png', state: currentState() }); });
+      // Miro gets the geometry this engine just computed rather than a
+      // host-side re-implementation of squarify() — the board is then the same
+      // picture as the screen by construction, the way the box-tree sitemap
+      // achieves it by sharing src/sitemap-layout.js.
+      if ($('btn-export-miro')) $('btn-export-miro').addEventListener('click', function () {
+        emit({ type: 'export', format: 'miro', state: currentState(), geometry: exportBoxes() });
+      });
       document.addEventListener('click', function () {
         var lb = $('legend-btn'); if (lb) lb.classList.remove('open');
+        closeBoxMenu();
       });
     }
+
     function fillLegend() {
       var el = $('legend-body');
       if (!el) return;
       var entries = DATA.legend || [];
       if (!entries.length) { el.innerHTML = '<div class="legend-note">No legend for this view.</div>'; return; }
-      el.innerHTML = entries.map(function (e) {
-        return '<div class="legend-row"><div class="l-sw" style="background:' + esc(e.color) + '"></div> ' + esc(e.label) + '</div>';
-      }).join('');
+      var editable = MODE === 'app';
+      el.innerHTML = entries.map(function (e, i) {
+        var c = legendColorOf(e);
+        var sw = editable
+          ? '<input type="color" class="l-sw l-pick" data-i="' + i + '" value="' + esc(toHex(c)) + '">'
+          : '<div class="l-sw" style="background:' + esc(c) + '"></div>';
+        return '<div class="legend-row">' + sw + ' <span class="l-name">' + esc(e.label) + '</span></div>';
+      }).join('')
+        + (editable ? '<div class="legend-foot">'
+            + '<button type="button" class="l-reset" id="btn-color-reset">Reset colors</button>'
+            + '<span class="legend-note">Right-click a box to recolor just it.</span></div>' : '');
+      if (!editable) return;
+
+      var picks = el.querySelectorAll('.l-pick');
+      for (var p = 0; p < picks.length; p++) {
+        picks[p].addEventListener('input', function () {
+          var e2 = entries[parseInt(this.getAttribute('data-i'), 10)];
+          if (!e2) return;
+          COLOR_OV[e2.key !== undefined ? e2.key : e2.label] = this.value;
+          render(); pushState();
+        });
+      }
+      var rst = $('btn-color-reset');
+      if (rst) rst.addEventListener('click', function () {
+        COLOR_OV = {}; NODE_OV = {};
+        render(); fillLegend(); pushState();
+      });
+    }
+
+    // ── Per-box override ────────────────────────────────────────────────────
+    function closeBoxMenu() { var m = $('box-menu'); if (m) m.remove(); }
+    function openBoxMenu(node, e) {
+      closeBoxMenu();
+      var m = document.createElement('div');
+      m.id = 'box-menu';
+      m.className = 'ctx-menu';
+      m.innerHTML =
+        '<div class="ctx-title">' + esc(node.label) + '</div>' +
+        '<label class="ctx-row"><span>Color</span>' +
+          '<input type="color" id="ctx-color" value="' + esc(toHex(colorOf(node))) + '"></label>' +
+        '<button type="button" class="ctx-btn" id="ctx-reset">Reset to category color</button>';
+      document.body.appendChild(m);
+      // Keep the menu on screen when the box is near the right/bottom edge.
+      var mw = m.offsetWidth, mh = m.offsetHeight;
+      m.style.left = Math.max(4, Math.min(e.clientX, window.innerWidth - mw - 6)) + 'px';
+      m.style.top = Math.max(4, Math.min(e.clientY, window.innerHeight - mh - 6)) + 'px';
+      m.addEventListener('click', function (ev) { ev.stopPropagation(); });
+      m.addEventListener('contextmenu', function (ev) { ev.preventDefault(); ev.stopPropagation(); });
+      $('ctx-color').addEventListener('input', function () {
+        NODE_OV[node.id] = this.value;
+        render(); pushState();
+      });
+      $('ctx-reset').addEventListener('click', function () {
+        delete NODE_OV[node.id];
+        render(); pushState(); closeBoxMenu();
+      });
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -237,6 +382,9 @@
       st.textContent = '@page { size: ' + (CANVAS_W + 96) + 'px ' + (CANVAS_H + 96) + 'px; margin: 48px; }';
       document.head.appendChild(st);
       document.body.classList.add('print-ready');
+      // Bare content box, for the PNG exporter: it sizes an offscreen window to
+      // this and screenshots it, so unlike @page there is no margin to add.
+      window.__EXPORT_SIZE__ = { w: Math.ceil(CANVAS_W), h: Math.ceil(CANVAS_H) };
       document.title = 'READY';
     }
 
@@ -269,7 +417,12 @@ html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);font-famil
 .tb-sep{width:1px;height:18px;background:var(--border);flex-shrink:0;}
 #viewport{position:absolute;top:41px;left:0;right:0;bottom:0;overflow:hidden;cursor:grab;background:var(--bg);}
 #viewport.panning{cursor:grabbing;}
+/* Print mode must lay out flush at 0,0 ON SCREEN too — the PNG exporter
+   screenshots this document in a window sized to the canvas, and a screen
+   capture never sees the print stylesheet. */
+body.printing{background:#fff;overflow:visible;height:auto;}
 body.printing #viewport{position:static;top:0;overflow:visible;}
+body.printing #canvas{transform:none!important;position:static;}
 #canvas{position:relative;transform-origin:0 0;background:var(--white);}
 .tm-box{position:absolute;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;padding:4px 6px;}
 .tm-container{border:1px solid var(--border-dk);background:#e8eaef;}
@@ -285,8 +438,23 @@ body.printing #viewport{position:static;top:0;overflow:visible;}
 #legend-panel{display:none;position:fixed;top:47px;right:14px;background:var(--white);border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.14);padding:10px 12px;min-width:180px;max-height:calc(100vh - 60px);overflow-y:auto;z-index:400;cursor:default;}
 #legend-btn.open #legend-panel{display:block;}
 .legend-row{display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0;color:var(--text-mid);}
-.legend-row .l-sw{width:12px;height:12px;border-radius:3px;flex-shrink:0;}
+.legend-row .l-sw{width:14px;height:14px;border-radius:3px;flex-shrink:0;border:1px solid rgba(0,0,0,.14);}
+.legend-row .l-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* An <input type="color"> carries a thick native bezel that would dwarf a 14px
+   swatch, so the padding/border are stripped and the well is stretched to fill. */
+input.l-pick,input#ctx-color{padding:0;cursor:pointer;background:none;-webkit-appearance:none;appearance:none;}
+input.l-pick::-webkit-color-swatch-wrapper,input#ctx-color::-webkit-color-swatch-wrapper{padding:0;}
+input.l-pick::-webkit-color-swatch,input#ctx-color::-webkit-color-swatch{border:none;border-radius:2px;}
+.legend-foot{margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:6px;align-items:flex-start;}
+.l-reset{padding:2px 8px;font-size:11px;font-family:inherit;border:1px solid var(--border-dk);border-radius:4px;background:var(--white);color:var(--text-mid);cursor:pointer;}
+.l-reset:hover{background:#eef0f4;color:var(--text);}
 .legend-note{font-size:11px;color:var(--text-dim);}
+.ctx-menu{position:fixed;z-index:500;background:var(--white);border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.18);padding:8px 10px;min-width:190px;font-size:12px;}
+.ctx-title{font-weight:600;color:var(--text);margin-bottom:6px;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ctx-row{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--text-mid);margin-bottom:6px;}
+.ctx-row input[type=color]{width:26px;height:20px;border:1px solid var(--border-dk);border-radius:3px;}
+.ctx-btn{width:100%;padding:3px 8px;font-size:11px;font-family:inherit;border:1px solid var(--border-dk);border-radius:4px;background:var(--white);color:var(--text-mid);cursor:pointer;}
+.ctx-btn:hover{background:#eef0f4;color:var(--text);}
 @media print{
   #toolbar{display:none!important;}
   #viewport{position:static;overflow:visible;top:0;}
@@ -313,6 +481,8 @@ body.printing #viewport{position:static;top:0;overflow:visible;}
         toolbar += '<div class="tb-sep"></div>';
         toolbar += '<button class="tb-btn" id="btn-export-client">Export HTML</button>';
         toolbar += '<button class="tb-btn" id="btn-export-pdf">Export PDF</button>';
+        toolbar += '<button class="tb-btn" id="btn-export-png">Export PNG</button>';
+        toolbar += '<button class="tb-btn" id="btn-export-miro">Export to Miro</button>';
       }
       toolbar += '</div>';
     }
