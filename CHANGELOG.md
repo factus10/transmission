@@ -6,6 +6,10 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Changed
+
+- **Releases are published by a script now** (`npm run release:publish`), instead of four commands run by hand. It verifies the signed artifacts before uploading anything, uploads each asset on its own, checks every byte count against the local file, and confirms that `releases/latest` actually resolves to the new version on both repos before the update manifest — the thing that tells running copies an update exists — is published. Developer-facing only; nothing changes in the app.
+
 ## [2.13.1] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Fixed
