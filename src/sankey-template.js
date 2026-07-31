@@ -434,18 +434,10 @@
 
       var cb = $('colorby');
       if (cb) cb.addEventListener('change', function () { colorBy = this.value; unfocus(); render(); });
-      syncColorByLabels();
-    }
 
-    // "Color by current section" / "…by source site" — the second option names
-    // whatever the left column currently is, or it reads as a stale label.
-    function syncColorByLabels() {
-      var cb = $('colorby');
-      if (!cb) return;
-      var f = FROMS.filter(function (x) { return x.key === from; })[0];
-      var opt = cb.querySelector('option[value="source"]');
-      if (opt && f) opt.textContent = 'Color by ' + f.label.toLowerCase();
-
+      // These belong here, NOT in syncColorByLabels() — that runs again on every
+      // axis change, so wiring them there stacked a fresh listener per switch:
+      // two toggles per Legend click (panel never opens), two emits per Export.
       if ($('btn-fit')) $('btn-fit').addEventListener('click', fitToScreen);
       if ($('legend-btn')) $('legend-btn').addEventListener('click', function (e) { e.stopPropagation(); this.classList.toggle('open'); });
       if ($('btn-export-client')) $('btn-export-client').addEventListener('click', function () { emit({ type: 'export', format: 'client' }); });
@@ -453,6 +445,19 @@
       document.addEventListener('click', function () {
         var lb = $('legend-btn'); if (lb) lb.classList.remove('open');
       });
+
+      syncColorByLabels();
+    }
+
+    // "Color by current section" / "…by source site" — the second option names
+    // whatever the left column currently is, or it reads as a stale label.
+    // Called on every axis change, so it must stay free of side effects.
+    function syncColorByLabels() {
+      var cb = $('colorby');
+      if (!cb) return;
+      var f = FROMS.filter(function (x) { return x.key === from; })[0];
+      var opt = cb.querySelector('option[value="source"]');
+      if (opt && f) opt.textContent = 'Color by ' + f.label.toLowerCase();
     }
     function fillLegend() {
       var el = $('legend-body');
@@ -529,7 +534,12 @@ body.focused .sk-node.hot{opacity:1;}
 #tip b{font-weight:600;}
 #tip u{text-decoration:none;color:#9aa8bd;}
 #legend-btn{position:relative;cursor:pointer;}
-#legend-panel{display:none;position:absolute;top:100%;right:0;margin-top:6px;background:var(--white);border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.14);padding:10px 12px;min-width:180px;z-index:50;cursor:default;}
+/* Fixed, not absolute: #toolbar sets overflow-x:auto, and per spec a non-visible
+   value on one axis forces the other to auto — so an absolutely-positioned panel
+   hanging below the 41px bar was clipped to a sliver. Matches sitemap-template.js,
+   which has always positioned its legend this way. max-height keeps a long legend
+   (20 capped sections, or many custom KKE states) on screen. */
+#legend-panel{display:none;position:fixed;top:47px;right:14px;background:var(--white);border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.14);padding:10px 12px;min-width:180px;max-height:calc(100vh - 60px);overflow-y:auto;z-index:400;cursor:default;}
 #legend-btn.open #legend-panel{display:block;}
 .legend-row{display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0;color:var(--text-mid);}
 .legend-row .l-sw{width:12px;height:12px;border-radius:3px;flex-shrink:0;}

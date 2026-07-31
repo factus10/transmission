@@ -278,7 +278,11 @@ body.printing #viewport{position:static;top:0;overflow:visible;}
 .tm-container>.tm-label{color:var(--text-mid);text-shadow:none;}
 .tm-sub{font-size:10px;color:#fff;opacity:0.9;text-shadow:0 1px 2px rgba(0,0,0,0.35);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 #legend-btn{position:relative;cursor:pointer;}
-#legend-panel{display:none;position:absolute;top:100%;right:0;margin-top:6px;background:var(--white);border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.14);padding:10px 12px;min-width:180px;z-index:50;cursor:default;}
+/* Fixed, not absolute: #toolbar sets overflow-x:auto, and per spec a non-visible
+   value on one axis forces the other to auto — so an absolutely-positioned panel
+   hanging below the 41px bar was clipped to a sliver. Matches sitemap-template.js,
+   which has always positioned its legend this way. */
+#legend-panel{display:none;position:fixed;top:47px;right:14px;background:var(--white);border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.14);padding:10px 12px;min-width:180px;max-height:calc(100vh - 60px);overflow-y:auto;z-index:400;cursor:default;}
 #legend-btn.open #legend-panel{display:block;}
 .legend-row{display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0;color:var(--text-mid);}
 .legend-row .l-sw{width:12px;height:12px;border-radius:3px;flex-shrink:0;}

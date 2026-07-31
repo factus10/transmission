@@ -6,6 +6,11 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The legend opens in front of the diagram again** in Content Flow and the Treemap. It was being clipped to a sliver at the bottom edge of the toolbar, so it read as hidden behind the visualization.
+- **Content Flow's toolbar buttons stopped responding after switching the left column.** Legend, Fit and the export buttons were re-registered every time the axis changed, so a second click cancelled the first — the legend in particular would open and immediately close, appearing to do nothing.
+
 ## [2.13.0] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Added
