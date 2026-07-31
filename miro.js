@@ -458,7 +458,11 @@ function escapeMiroHtml(s) {
 // down through the intervening cards — Miro does no obstacle avoidance. Routing
 // those to the LEFT edge of both cards instead pushes the run into the gutter
 // beside the column, mirroring the app's own left-spine layout.
-async function createConnector(boardId, { startId, endId, strokeColor, shape, startSnap, endSnap }) {
+// strokeWidth is normally 1 (a sitemap edge is a relationship, not a quantity).
+// The Content Flow export is the exception — there the width IS the page count,
+// so it is passed per edge and clamped to the 1–24 range Miro's slider accepts.
+async function createConnector(boardId, { startId, endId, strokeColor, shape, startSnap, endSnap, strokeWidth }) {
+  const sw = Math.max(1, Math.min(24, Number(strokeWidth) || 1));
   const c = await miroFetch(`/v2/boards/${encodeURIComponent(boardId)}/connectors`, {
     method: 'POST',
     body: {
@@ -467,7 +471,7 @@ async function createConnector(boardId, { startId, endId, strokeColor, shape, st
       shape: shape || 'elbowed',
       style: {
         strokeColor: strokeColor || '#9aa0ab',
-        strokeWidth: '1.0',
+        strokeWidth: sw.toFixed(1),
         strokeStyle: 'normal',
         startStrokeCap: 'none',
         endStrokeCap: 'none',
@@ -611,13 +615,22 @@ async function exportSitemap(boardId, plan, onProgress) {
   let edgeFailures = 0;
   const connectorShape = plan.connectorShape || 'elbowed';
   await pool(edges, 5, async (e) => {
-    const base = { startId: idMap[e.from], endId: idMap[e.to], strokeColor: plan.connectorColor || '#9aa0ab', shape: connectorShape };
+    const base = {
+      startId: idMap[e.from], endId: idMap[e.to],
+      strokeColor: e.color || plan.connectorColor || '#9aa0ab',
+      shape: connectorShape,
+      strokeWidth: e.strokeWidth,
+    };
     // Left-gutter routing only helps ELBOWED right-angle lines (otherwise they run
     // straight down through the stacked cards). Curved/straight connectors look
     // right with the plain parent-bottom → child-top attach, so only elbowed
     // vertical edges get the side snap.
-    const gutter = e.vertical && connectorShape === 'elbowed';
-    const snap = gutter ? { startSnap: 'left', endSnap: 'left' } : { startSnap: 'bottom', endSnap: 'top' };
+    // A plan may state the attach edges itself (the Content Flow's columns run
+    // left→right, not top→bottom); otherwise the sitemap's own routing applies.
+    const gutter = !e.startSnap && e.vertical && connectorShape === 'elbowed';
+    const snap = e.startSnap
+      ? { startSnap: e.startSnap, endSnap: e.endSnap || 'auto' }
+      : (gutter ? { startSnap: 'left', endSnap: 'left' } : { startSnap: 'bottom', endSnap: 'top' });
     await take(CREDITS_PER_ITEM);
     try {
       await createConnector(boardId, { ...base, ...snap });

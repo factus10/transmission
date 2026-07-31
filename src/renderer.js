@@ -464,6 +464,7 @@ async function init() {
   setupTableView();
   setupSavedFilters();
   setupFieldFilters();
+  setupConsolidateTodoButton();
   $('btn-add-row').addEventListener('click', addNewRow);
   setupGlobalSearch();
   setupShortcutHelp();
@@ -3235,6 +3236,7 @@ function renderRows() {
   if (filteredRows.length === 0 && state.rows.length === 0) return; // not loaded
 
   els.rowCount.textContent = `${filteredRows.length} row${filteredRows.length !== 1 ? 's' : ''}`;
+  refreshConsolidateTodoButton();
 
   if (filteredRows.length === 0) {
     const msg = document.createElement('div');
@@ -12628,6 +12630,49 @@ function rowConsolidateNeedsTarget(row) {
   return !consolidateTargetAddr(row);
 }
 
+// ─── "Consolidate, but into what?" — the unfinished-decision worklist ─────────
+// A Consolidate with no target is the one KKE value that isn't a finished
+// decision: it says the page goes away without saying where its content and its
+// redirect go. The `_consolidate-no-target` filter has always been able to find
+// them, but it sits in a long checkbox list nobody opens without already
+// suspecting the problem — so the count also gets its own chip in the sidebar,
+// visible only when there are any.
+
+/** Count of rows marked Consolidate with no target set. */
+function countConsolidateNeedsTarget() {
+  return state.editedRows.reduce((n, r) => n + (rowConsolidateNeedsTarget(r) ? 1 : 0), 0);
+}
+
+/** Show/hide + label the sidebar chip, and keep its active state in sync with
+ *  whether the filter is actually applied (same contract as
+ *  refreshUnclassifiedButton, so clicking it always toggles what it shows). */
+function refreshConsolidateTodoButton() {
+  const btn = document.getElementById('btn-consolidate-todo');
+  if (!btn) return;
+  const n = countConsolidateNeedsTarget();
+  const active = (state.kkeFilter || []).includes('_consolidate-no-target');
+  if (!n && !active) { btn.classList.add('hidden'); return; }
+  btn.classList.remove('hidden');
+  btn.textContent = `⚠ ${n} Consolidate: no target`;
+  btn.classList.toggle('active', active);
+}
+
+function setupConsolidateTodoButton() {
+  const btn = document.getElementById('btn-consolidate-todo');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    const kf = state.kkeFilter || [];
+    if (kf.includes('_consolidate-no-target')) state.kkeFilter = kf.filter(v => v !== '_consolidate-no-target');
+    else state.kkeFilter = kf.concat(['_consolidate-no-target']);
+    state.projectSettings.kkeFilter = state.kkeFilter;
+    window.electronAPI.savePrefs({ kkeFilter: state.kkeFilter });
+    setDirty(true);
+    renderKkeFilterOptions();
+    updateKkeFilterBtn();
+    applyFilter();
+  });
+}
+
 /**
  * Returns true when this row's consolidation master has KKE = Kill (or Exclude),
  * meaning the consolidation destination is itself being removed from the site.
@@ -12664,6 +12709,84 @@ function updateConsolidateIndicator(row) {
   }
 }
 
+/** Loose URL identity for the self/cycle guards: the same page reached with a
+ *  trailing slash or a capitalized host is still the same page. Deliberately
+ *  NOT used for the stored identity, which stays the Address verbatim. */
+function sameConsolidateUrl(a, b) {
+  const norm = (u) => String(u || '').trim().toLowerCase().replace(/\/+$/, '');
+  const x = norm(a), y = norm(b);
+  return !!x && x === y;
+}
+
+/** Walk the consolidation chain from `startUrl` and report whether it comes back
+ *  around to `backToUrl`. A cycle means the merged content has nowhere to land
+ *  and neither page can produce a redirect — the same defect as consolidating a
+ *  page into itself, just one or more steps removed. Cycle-safe by construction. */
+function consolidateChainReaches(startUrl, backToUrl) {
+  const urlCol = state.urlColumn || 'Address';
+  const seen = new Set();
+  let cur = String(startUrl || '').trim();
+  while (cur && !seen.has(cur.toLowerCase())) {
+    if (sameConsolidateUrl(cur, backToUrl)) return true;
+    seen.add(cur.toLowerCase());
+    const r = state.editedRows.find(x => sameConsolidateUrl(x[urlCol], cur));
+    if (!r || !rowIsConsolidate(r)) return false;
+    cur = consolidateTargetAddr(r);
+  }
+  return false;
+}
+
+/**
+ * The target of a consolidation is receiving someone else's content, which is
+ * work — and Evolve is how this audit says "there is work to do here". A master
+ * left on Keep claims it is unchanged when it no longer is; one left on
+ * Kill/Exclude is a destination that is itself being removed. So offer to move
+ * it to Evolve, and let the user decline — an auditor may have a reason.
+ * Returns nothing; any change is written straight to the target row.
+ */
+async function maybeUpgradeConsolidateTargetToEvolve(targetIndex) {
+  const targetRow = state.editedRows[targetIndex];
+  if (!targetRow) return;
+  const eff = effectiveKke(targetRow);
+  // Evolve is the wanted state; Consolidate means a chain, which the cycle and
+  // dead-target checks already speak to — re-asking here would just be noise.
+  if (eff === 'Evolve' || eff === 'Consolidate') return;
+
+  const urlCol = state.urlColumn || 'Address';
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
+  const label = (titleCol && String(targetRow[titleCol] || '').trim()) || String(targetRow[urlCol] || '').trim();
+  const dying = eff === 'Kill' || eff === 'Exclude';
+  const was = eff ? `is marked ${eff}` : 'has not been reviewed yet';
+
+  const ok = await confirmDialog({
+    title: 'Set the target page to Evolve?',
+    message:
+      `${label}\n\nThis page ${was}, but you're merging another page's content into it.\n\n` +
+      (dying
+        ? 'A page marked Kill or Exclude is being removed, so the content you merge in has nowhere to land and neither page gets a working redirect.'
+        : 'Keep means "carry it across unchanged" — which it no longer is. Evolve is the signal that this page needs work.'),
+    confirmLabel: 'Set to Evolve',
+    cancelLabel: `Leave as ${eff || 'unreviewed'}`,
+  });
+  if (!ok) return;
+
+  const oldKke = String(targetRow[kkeCol()] || '');
+  if (oldKke !== 'Evolve') {
+    targetRow[kkeCol()] = 'Evolve';
+    logChange(targetIndex, kkeCol(), oldKke, 'Evolve');
+  }
+  // Final_KKE outranks KKE_Recommendation, so leaving a stale one behind would
+  // make "Set to Evolve" quietly do nothing on any SME-resolved row.
+  const oldFinal = String(targetRow[finalKkeCol()] || '');
+  if (oldFinal && oldFinal !== 'Evolve') {
+    targetRow[finalKkeCol()] = 'Evolve';
+    logChange(targetIndex, finalKkeCol(), oldFinal, 'Evolve');
+  }
+  setDirty(true);
+  refreshRowInList(targetIndex);
+  if (state.selectedIndex === targetIndex) populateAuditFields(targetRow);
+}
+
 async function applyConsolidateTarget(origIndex, targetUrl) {
   const row = state.editedRows[origIndex];
   const rawTarget = String(targetUrl || '').trim();
@@ -12672,7 +12795,23 @@ async function applyConsolidateTarget(origIndex, targetUrl) {
   // The picker selects a master by its inventory Address. Store that Address as the stable
   // identity, and derive Consolidate_Into as the master's clean relative new path (display).
   const urlCol = state.urlColumn || 'Address';
-  const targetRow = state.editedRows.find(r => String(r[urlCol] || '').trim() === rawTarget);
+  const selfUrl = String(row[urlCol] || '').trim();
+
+  // A page consolidating into itself is not a decision — it is a redirect loop
+  // and a page that never gets merged anywhere. The picker excludes the source
+  // row, but a duplicate Address in the crawl (or a caller passing a URL rather
+  // than a picked row) can still reach here, so the guard lives at the write.
+  if (sameConsolidateUrl(rawTarget, selfUrl)) {
+    showToast('A page can’t consolidate into itself — pick a different target', 'error');
+    return;
+  }
+  if (consolidateChainReaches(rawTarget, selfUrl)) {
+    showToast('That page already consolidates back into this one — the content would have nowhere to land', 'error');
+    return;
+  }
+
+  const targetIndex = state.editedRows.findIndex(r => String(r[urlCol] || '').trim() === rawTarget);
+  const targetRow = targetIndex >= 0 ? state.editedRows[targetIndex] : null;
   const newId = targetRow ? String(targetRow[urlCol] || '').trim() : rawTarget; // off-inventory → keep raw
   const newDisplay = targetRow ? consolidateDisplayPath(targetRow) : rawTarget;
 
@@ -12704,6 +12843,13 @@ async function applyConsolidateTarget(origIndex, targetUrl) {
   updateConsolidateIndicator(row);
   refreshRowInList(origIndex);
   renderMetaFields(row, origIndex);
+
+  // Last, so the source row is already written: if the user declines the Evolve
+  // nudge, the consolidation still stands exactly as they asked for it.
+  if (targetRow) {
+    await maybeUpgradeConsolidateTargetToEvolve(targetIndex);
+    updateConsolidateIndicator(row);   // the dead-target warning may have cleared
+  }
 }
 
 function clearConsolidateTarget(origIndex) {
@@ -12798,12 +12944,14 @@ function openConsolidatePicker(sourceIndex) {
 
   // Build candidate list: all rows except the source itself
   const kke = kkeCol();
+  // Excluded by URL as well as by index: a crawl can contain the same Address
+  // twice, and picking the twin would consolidate the page into itself.
   const allCandidates = state.editedRows.map((row, origIndex) => ({
     origIndex,
     url: String(row[urlCol] || '').trim(),
     title: titleCol ? String(row[titleCol] || '').trim() : '',
     kke: String(row[kke] || '').trim(),
-  })).filter(c => c.origIndex !== sourceIndex && c.url);
+  })).filter(c => c.origIndex !== sourceIndex && c.url && !sameConsolidateUrl(c.url, sourceUrl));
 
   const overlay = document.createElement('div');
   overlay.id = '_cp-overlay';
@@ -16471,6 +16619,7 @@ function openSitemapView(opts) {
       if (msg.state) lastState = msg.state;
       if (msg.format === 'client') sitemapExportClient(baseData, lastState, opts.slug);
       else if (msg.format === 'pdf') sitemapExportPdf(baseData, lastState, opts.slug);
+      else if (msg.format === 'png') sitemapExportPng(baseData, lastState, opts.slug);
       else if (msg.format === 'miro') sitemapExportMiro(baseData, lastState);
     }
   });
@@ -16854,7 +17003,7 @@ async function pickMiroBoard(hidden, settings) {
   // Remembered target from a previous export on this project. Shown from the
   // stored name immediately, then its CURRENT name is re-read from Miro below.
   const remembered = ((state.projectSettings || {}).miroExport || {}).lastBoard || null;
-  let chosenBoard = null;   // set by a search-result click or a resolved paste
+  let getChosen = () => null;   // set by wireMiroBoardChooser once the modal is up
 
   // Exporting "as shown" drops collapsed subtrees entirely, which is easy to do
   // by accident after tidying the view. Say so up front and default to the
@@ -16872,11 +17021,6 @@ async function pickMiroBoard(hidden, settings) {
     '<option value="count">The hidden page count</option>' +
     '<option value="plus">Just a + (more pages)</option>' +
     '</select></div>'
-  ) : '';
-
-  const lastBlock = (remembered && remembered.id) ? (
-    '<label class="setting-row" style="gap:8px"><input type="radio" name="_mb" value="last" checked>' +
-    '<span>Export again to <b id="_mb-last-name">' + escapeHtml(remembered.name || 'the last board') + '</b></span></label>'
   ) : '';
 
   // Appearance controls. Right-angle connectors + rounded corners default to the
@@ -16906,22 +17050,7 @@ async function pickMiroBoard(hidden, settings) {
     '<span>Include a color key (one chip per color rule)</span></label>';
 
   const body =
-    '<div class="modal-message">Where should the sitemap go?</div>' +
-    lastBlock +
-    '<label class="setting-row" style="gap:8px"><input type="radio" name="_mb" value="new"' + (remembered && remembered.id ? '' : ' checked') + '>' +
-    '<span>Create a new board</span></label>' +
-    '<input type="text" id="_mb-name" class="setting-input" style="margin:4px 0 10px 24px;width:calc(100% - 24px)">' +
-    '<label class="setting-row" style="gap:8px"><input type="radio" name="_mb" value="existing">' +
-    '<span>Use an existing board</span></label>' +
-    '<div id="_mb-existing" style="margin-left:24px">' +
-      '<div id="_mb-search"></div>' +
-      '<div class="miro-bs-or sp-help">or paste a board link / ID</div>' +
-      '<div class="setting-row-inline">' +
-        '<input type="text" id="_mb-paste" class="setting-input" style="flex:1" placeholder="https://miro.com/app/board/…">' +
-        '<button type="button" id="_mb-paste-go" class="btn btn-sm btn-ghost">Resolve</button>' +
-      '</div>' +
-      '<div id="_mb-selected" class="miro-bs-selected"></div>' +
-    '</div>' +
+    miroBoardChooserHtml(remembered, 'Where should the sitemap go?') +
     hiddenBlock +
     appearanceBlock;
 
@@ -16947,14 +17076,14 @@ async function pickMiroBoard(hidden, settings) {
             const cornerStyle = (($('_mb-corner') || {}).value) || 'rounded';
             const borderWidth = Number(($('_mb-bw') || {}).value) || 3;
             const includeLegend = $('_mb-legend') ? $('_mb-legend').checked : true;
-            if (mode === 'existing' && !chosenBoard) {
+            if (mode === 'existing' && !getChosen()) {
               showToast('Pick a board from the list, or paste a link', 'error');
               return;   // keep the dialog open
             }
             const look = { expandAll, hiddenLabel, connectorStyle, cornerStyle, borderWidth, includeLegend };
             let val;
             if (mode === 'last') val = Object.assign({ board: remembered }, look);
-            else if (mode === 'existing') val = Object.assign({ board: chosenBoard }, look);
+            else if (mode === 'existing') val = Object.assign({ board: getChosen() }, look);
             else val = Object.assign({ newName: (($('_mb-name') || {}).value || '').trim() }, look);
             settled = true;
             api.close();
@@ -16965,52 +17094,9 @@ async function pickMiroBoard(hidden, settings) {
       onClose: () => { if (!settled) resolve(null); },
     });
 
-    const nameEl = $('_mb-name');
     const ps = state.projectSettings || {};
     const base = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
-    if (nameEl) nameEl.value = base ? base + ' — Sitemap' : 'Sitemap';
-
-    // Existing-board picker: a click on a search result or a resolved paste
-    // both feed one selection, and either action selects the "existing" radio.
-    const setChosen = (b) => {
-      chosenBoard = b;
-      const sel = $('_mb-selected');
-      if (sel) sel.innerHTML = '✓ Selected: <b>' + escapeHtml(b.name) + '</b>';
-      const ex = document.querySelector('input[name="_mb"][value="existing"]');
-      if (ex) ex.checked = true;
-    };
-    attachMiroBoardSearch($('_mb-search'), setChosen);
-    const pasteGo = $('_mb-paste-go'), pasteIn = $('_mb-paste');
-    const resolvePaste = async () => {
-      const id = extractMiroBoardId(pasteIn.value);
-      if (!id) { showToast('Paste a Miro board link or ID', 'error'); return; }
-      pasteGo.disabled = true;
-      const r = await window.electronAPI.miroGetBoard({ boardId: id });
-      pasteGo.disabled = false;
-      if (!r.success) { showToast('Board not found: ' + r.error, 'error'); return; }
-      setChosen(r.board);
-    };
-    pasteGo?.addEventListener('click', resolvePaste);
-    pasteIn?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); resolvePaste(); } });
-
-    // Re-read the remembered board's current name (proves rename-tracking; drops
-    // the option if the board was deleted since we last exported to it).
-    if (remembered && remembered.id) {
-      window.electronAPI.miroGetBoard({ boardId: remembered.id }).then(r => {
-        if (!r || !r.success) {
-          const lastRadio = document.querySelector('input[name="_mb"][value="last"]');
-          const row = lastRadio ? lastRadio.closest('label') : null;
-          const wasChecked = lastRadio && lastRadio.checked;
-          if (row) row.remove();
-          if (wasChecked) { const nr = document.querySelector('input[name="_mb"][value="new"]'); if (nr) nr.checked = true; }
-          return;
-        }
-        remembered.name = r.board.name;
-        remembered.viewLink = r.board.viewLink || remembered.viewLink;
-        const nm = $('_mb-last-name');
-        if (nm) nm.textContent = r.board.name;
-      }).catch(() => {});
-    }
+    getChosen = wireMiroBoardChooser(remembered, base ? base + ' — Sitemap' : 'Sitemap');
 
     const labelSel = $('_mb-hidden-label');
     const expandBox = $('_mb-expand');
@@ -17048,6 +17134,396 @@ async function pickMiroBoard(hidden, settings) {
   });
   if (!r.success) { showToast('Could not create board: ' + r.error, 'error'); return null; }
   return { boardId: r.board.id, board: r.board, expandAll: choice.expandAll, hiddenLabel: choice.hiddenLabel, connectorStyle: choice.connectorStyle, cornerStyle: choice.cornerStyle, borderWidth: choice.borderWidth, includeLegend: choice.includeLegend };
+}
+
+// ─── Miro export for the treemap and Content Flow ────────────────────────────
+// Both reuse the sitemap's whole Miro pipeline — pickMiroBoard's chooser half,
+// the {frame, shapes, edges} plan shape, miro.js's exportSitemap, the progress
+// modal — and differ only in how a plan is built. Neither re-implements its
+// engine's layout: the engine ships the geometry it just drew along with the
+// export message, so the board matches the screen by construction.
+
+/** The "which board?" half of every Miro export dialog. Extracted so the three
+ *  dialogs can't drift on board selection (remembered / new / live search /
+ *  pasted link) — that half is identical and is where all the subtlety is. */
+function miroBoardChooserHtml(remembered, promptText) {
+  const lastBlock = (remembered && remembered.id) ? (
+    '<label class="setting-row" style="gap:8px"><input type="radio" name="_mb" value="last" checked>' +
+    '<span>Export again to <b id="_mb-last-name">' + escapeHtml(remembered.name || 'the last board') + '</b></span></label>'
+  ) : '';
+  return '<div class="modal-message">' + escapeHtml(promptText) + '</div>' +
+    lastBlock +
+    '<label class="setting-row" style="gap:8px"><input type="radio" name="_mb" value="new"' + (remembered && remembered.id ? '' : ' checked') + '>' +
+    '<span>Create a new board</span></label>' +
+    '<input type="text" id="_mb-name" class="setting-input" style="margin:4px 0 10px 24px;width:calc(100% - 24px)">' +
+    '<label class="setting-row" style="gap:8px"><input type="radio" name="_mb" value="existing">' +
+    '<span>Use an existing board</span></label>' +
+    '<div id="_mb-existing" style="margin-left:24px">' +
+      '<div id="_mb-search"></div>' +
+      '<div class="miro-bs-or sp-help">or paste a board link / ID</div>' +
+      '<div class="setting-row-inline">' +
+        '<input type="text" id="_mb-paste" class="setting-input" style="flex:1" placeholder="https://miro.com/app/board/…">' +
+        '<button type="button" id="_mb-paste-go" class="btn btn-sm btn-ghost">Resolve</button>' +
+      '</div>' +
+      '<div id="_mb-selected" class="miro-bs-selected"></div>' +
+    '</div>';
+}
+
+/** Wires the markup above once the modal is in the DOM. Returns an accessor for
+ *  the chosen board (a search-result click or a resolved paste; either also
+ *  ticks the "existing" radio). Also re-reads the remembered board's CURRENT
+ *  name by id, and drops that option if the board has since been deleted. */
+function wireMiroBoardChooser(remembered, defaultNewName) {
+  let chosenBoard = null;
+  const nameEl = $('_mb-name');
+  if (nameEl) nameEl.value = defaultNewName;
+
+  const setChosen = (b) => {
+    chosenBoard = b;
+    const sel = $('_mb-selected');
+    if (sel) sel.innerHTML = '✓ Selected: <b>' + escapeHtml(b.name) + '</b>';
+    const ex = document.querySelector('input[name="_mb"][value="existing"]');
+    if (ex) ex.checked = true;
+  };
+  attachMiroBoardSearch($('_mb-search'), setChosen);
+
+  const pasteGo = $('_mb-paste-go'), pasteIn = $('_mb-paste');
+  const resolvePaste = async () => {
+    const id = extractMiroBoardId(pasteIn.value);
+    if (!id) { showToast('Paste a Miro board link or ID', 'error'); return; }
+    pasteGo.disabled = true;
+    const r = await window.electronAPI.miroGetBoard({ boardId: id });
+    pasteGo.disabled = false;
+    if (!r.success) { showToast('Board not found: ' + r.error, 'error'); return; }
+    setChosen(r.board);
+  };
+  pasteGo?.addEventListener('click', resolvePaste);
+  pasteIn?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); resolvePaste(); } });
+
+  if (remembered && remembered.id) {
+    window.electronAPI.miroGetBoard({ boardId: remembered.id }).then(r => {
+      if (!r || !r.success) {
+        const lastRadio = document.querySelector('input[name="_mb"][value="last"]');
+        const row = lastRadio ? lastRadio.closest('label') : null;
+        const wasChecked = lastRadio && lastRadio.checked;
+        if (row) row.remove();
+        if (wasChecked) { const nr = document.querySelector('input[name="_mb"][value="new"]'); if (nr) nr.checked = true; }
+        return;
+      }
+      remembered.name = r.board.name;
+      remembered.viewLink = r.board.viewLink || remembered.viewLink;
+      const nm = $('_mb-last-name');
+      if (nm) nm.textContent = r.board.name;
+    }).catch(() => {});
+  }
+  return () => chosenBoard;
+}
+
+/** Turn the chooser's answer into a live board, creating one if asked. */
+async function miroResolveChosenBoard(mode, chosenBoard, remembered, newName) {
+  if (mode === 'last') return remembered;
+  if (mode === 'existing') return chosenBoard;
+  const r = await window.electronAPI.miroCreateBoard({
+    name: newName || 'Diagram',
+    description: 'Generated by Transmission.',
+  });
+  if (!r.success) { showToast('Could not create board: ' + r.error, 'error'); return null; }
+  return r.board;
+}
+
+/** The lighter export dialog used by the treemap and Content Flow: board choice
+ *  plus a colour-key toggle. The sitemap's own dialog keeps its extra
+ *  appearance controls (connector style, corners, collapsed sections) because
+ *  those describe a box TREE and have no counterpart here. */
+async function pickMiroBoardSimple({ promptText, defaultName }) {
+  const remembered = ((state.projectSettings || {}).miroExport || {}).lastBoard || null;
+  const body = miroBoardChooserHtml(remembered, promptText) +
+    '<label class="setting-row" style="gap:8px;margin-top:10px"><input type="checkbox" id="_mb-legend" checked>' +
+    '<span>Include a color key</span></label>';
+
+  let getChosen = () => null;
+  const choice = await new Promise(resolve => {
+    let settled = false;
+    openModal({
+      title: 'Export to Miro', width: 460, body, escapeValue: null,
+      buttons: [
+        { label: 'Cancel', variant: 'ghost' },
+        {
+          label: 'Export', variant: 'primary', primary: true, closeOnClick: false,
+          onClick: (api) => {
+            const picked = document.querySelector('input[name="_mb"]:checked');
+            const mode = picked ? picked.value : 'new';
+            if (mode === 'existing' && !getChosen()) {
+              showToast('Pick a board from the list, or paste a link', 'error');
+              return;   // keep the dialog open
+            }
+            settled = true;
+            api.close();
+            resolve({
+              mode,
+              board: getChosen(),
+              newName: (($('_mb-name') || {}).value || '').trim(),
+              includeLegend: $('_mb-legend') ? $('_mb-legend').checked : true,
+            });
+          },
+        },
+      ],
+      onClose: () => { if (!settled) resolve(null); },
+    });
+    getChosen = wireMiroBoardChooser(remembered, defaultName);
+    const me = (state.projectSettings || {}).miroExport || {};
+    const legendChk = $('_mb-legend');
+    if (legendChk && me.includeLegend === false) legendChk.checked = false;
+  });
+  if (!choice) return null;
+
+  const board = await miroResolveChosenBoard(choice.mode, choice.board, remembered, choice.newName);
+  if (!board || !board.id) return null;
+  return { boardId: board.id, board, includeLegend: choice.includeLegend };
+}
+
+/** Runs a built plan against a chosen board: progress modal, the export IPC,
+ *  the result toast, remembering the board, opening it. Shared by all three
+ *  diagrams so only plan-building differs between them. */
+async function runMiroExport(boardId, board, plan, what) {
+  if (!plan.shapes.length) { showToast('Nothing visible to export', 'error'); return; }
+  let cancelled = false;
+  const modal = openModal({
+    title: 'Exporting to Miro', width: 460,
+    body: '<div class="modal-message" id="_mx-msg">Preparing…</div>' +
+          '<div style="height:8px;background:var(--bg-inset,#e8eaed);border-radius:4px;overflow:hidden">' +
+          '<div id="_mx-bar" style="height:100%;width:0;background:var(--accent);transition:width .2s"></div></div>' +
+          '<p class="sp-help" id="_mx-sub" style="margin-top:8px"></p>',
+    escapeValue: 'cancel',
+    buttons: [{ label: 'Cancel', variant: 'ghost', value: 'cancel' }],
+    onClose: (v) => { if (v === 'cancel') { cancelled = true; window.electronAPI.miroCancelExport(); } },
+  });
+
+  window.electronAPI.onMiroExportProgress(p => {
+    const bar = $('_mx-bar'), msg = $('_mx-msg'), sub = $('_mx-sub');
+    if (!bar) return;
+    bar.style.width = Math.round((p.done / p.total) * 100) + '%';
+    if (msg) msg.textContent = { frame: 'Creating frame…', shapes: 'Creating blocks…', connectors: 'Drawing connections…' }[p.phase] || 'Working…';
+    if (sub) sub.textContent = p.done + ' of ' + p.total + ' items';
+  });
+
+  const r = await window.electronAPI.miroExportSitemap({ boardId, plan });
+  try { modal.close(); } catch (e) { /* already closed by Cancel/Esc */ }
+
+  if (!r.success) {
+    if (cancelled || /cancelled/i.test(r.error || '')) showToast('Miro export cancelled', 'info');
+    else showToast('Miro export failed: ' + r.error, 'error');
+    return;
+  }
+  const notes = [];
+  if (r.edgeFailures) notes.push(r.edgeFailures + ' connector(s) failed');
+  if (r.skippedEdges) notes.push(r.skippedEdges + ' edge(s) skipped');
+  showToast(
+    `Exported ${r.shapes} ${what} to Miro` + (r.connectors ? ` + ${r.connectors} connections` : '') +
+    (notes.length ? ' — ' + notes.join(', ') : ''),
+    notes.length ? 'info' : 'success'
+  );
+
+  state.projectSettings.miroExport = Object.assign({}, state.projectSettings.miroExport, {
+    lastBoard: { id: boardId, name: (board && board.name) || '', viewLink: (board && board.viewLink) || '' },
+  });
+  setDirty(true);
+
+  let viewLink = board && board.viewLink;
+  if (!viewLink) {
+    const g = await window.electronAPI.miroGetBoard({ boardId });
+    if (g.success) viewLink = g.board.viewLink;
+  }
+  if (viewLink) window.electronAPI.openExternal(viewLink);
+}
+
+/** Guard shared by the two new exporters: Miro connected, and the engine
+ *  actually sent geometry (it only can once it has rendered). */
+async function miroExportPreflight(payload, what) {
+  const status = await window.electronAPI.miroStatus();
+  if (!status.hasToken) { showToast('Connect Miro first (App Settings → Miro)', 'error'); return false; }
+  if (!payload) { showToast(`Could not read the ${what} layout — try reopening the view`, 'error'); return false; }
+  return true;
+}
+
+// A colour key, stacked below the diagram so nothing above it has to move.
+// Returns the extra height consumed. Mirrors the sitemap exporter's key.
+function pushMiroLegendChips(shapes, entries, top, x) {
+  const LGW = 220, LGH = 26, LGGAP = 6;
+  shapes.push({
+    nodeId: null, text: 'Color key', sub: '',
+    x: x + LGW / 2, y: top + LGH / 2, w: LGW, h: LGH,
+    fill: '#ffffff', border: '#8a90a0', borderWidth: 1, borderStyle: 'solid', shape: 'round_rectangle', fontSize: 12,
+  });
+  entries.forEach((e, i) => shapes.push({
+    nodeId: null, text: e.label, sub: '',
+    x: x + LGW / 2, y: top + (i + 1) * (LGH + LGGAP) + LGH / 2, w: LGW, h: LGH,
+    fill: '#ffffff', border: e.color, borderWidth: 3, borderStyle: 'solid', shape: 'round_rectangle', fontSize: 12,
+  }));
+  return (entries.length + 1) * (LGH + LGGAP) + 20;
+}
+
+/** Treemap → Miro plan. The engine's boxes are already a rectangle packing, so
+ *  this is a straight coordinate transform: scale up (Miro's default zoom makes
+ *  a 1100px canvas tiny), convert top-left origin to centres, drop boxes too
+ *  small to hold a label. No connectors — containment is the only relationship
+ *  and the nesting says it. */
+function buildMiroTreemapPlan(geometry, opts = {}) {
+  const SCALE = 1.6;
+  const MIN_EDGE = 26;              // below this Miro renders an unreadable sliver
+  const shapes = [];
+  const W = (geometry.width || 1100) * SCALE, H = (geometry.height || 680) * SCALE;
+
+  (geometry.boxes || []).forEach(b => {
+    const w = b.w * SCALE, h = b.h * SCALE;
+    if (w < MIN_EDGE || h < MIN_EDGE) return;
+    shapes.push({
+      // Carried even though a treemap has no connectors: exportSitemap counts
+      // the export by how many nodeId-bearing shapes it mapped, so a plan of
+      // all-null ids would report "0 blocks exported" on a full board.
+      nodeId: b.id,
+      text: b.label || '',
+      sub: b.container ? '' : (b.subtitle || ''),
+      x: b.x * SCALE + w / 2, y: b.y * SCALE + h / 2, w, h,
+      // A container is structural chrome on screen too — white with a grey
+      // outline — so only the leaves carry a semantic fill here as well.
+      fill: b.container ? '#ffffff' : (b.color || '#9aa0ab'),
+      border: b.container ? '#9aa0ab' : '#ffffff',
+      borderWidth: b.container ? 2 : 2,
+      borderStyle: 'solid', shape: 'rectangle', fontSize: 12,
+    });
+  });
+
+  let frameH = H;
+  if (opts.includeLegend !== false) {
+    const entries = (geometry.legend || []).filter(e => e.color && e.label);
+    if (entries.length) frameH = H + 36 + pushMiroLegendChips(shapes, entries, H + 36, 24);
+  }
+
+  const ps = state.projectSettings || {};
+  const base = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
+  return {
+    frame: { title: base ? base + ' — Treemap' : 'Treemap', width: Math.max(100, W), height: Math.max(100, frameH) },
+    shapes, edges: [], connectorColor: '#9aa0ab', connectorShape: 'straight',
+  };
+}
+
+/** Content Flow → Miro plan.
+ *
+ *  Miro has no ribbon, so a band becomes a CONNECTOR whose stroke width carries
+ *  the page count (1–24 is all Miro's slider allows, so the mapping is a scaled
+ *  clamp, not the exact proportion the on-screen diagram draws). What does
+ *  survive intact is the reading: which blocks exist, how big each one is, what
+ *  connects to what, and in what colour.
+ *
+ *  Block heights are recomputed here rather than scaled from the engine's,
+ *  because a Miro shape has to be tall enough to hold its label — the engine
+ *  routinely draws a 3px block and simply omits the text. Enforcing a floor
+ *  means re-stacking each column, which is why the engine ships each node's
+ *  settled `order` (the crossing-minimised one) rather than its y. */
+function buildMiroSankeyPlan(graph, opts = {}) {
+  const NODE_W = 210, COL_GAP = 320, MIN_H = 30, GAP = 12, TOP = 60;
+  const shapes = [];
+  const layers = [];
+  (graph.nodes || []).forEach(n => {
+    if (!layers[n.layer]) layers[n.layer] = [];
+    layers[n.layer].push(n);
+  });
+  layers.forEach(l => l.sort((a, b) => a.order - b.order));
+
+  // One height scale across all columns, as on screen: a band's thickness is
+  // only readable as a page count if every column shares the scale.
+  const maxTotal = layers.reduce((m, l) => Math.max(m, l.reduce((s, n) => s + n.value, 0)), 0) || 1;
+  const maxCount = layers.reduce((m, l) => Math.max(m, l.length), 0) || 1;
+  const TARGET_H = 1400;
+  const ky = Math.max(0.5, (TARGET_H - (maxCount - 1) * GAP) / maxTotal);
+
+  const pos = {};
+  let frameH = TOP;
+  layers.forEach((l, li) => {
+    let y = TOP;
+    l.forEach(n => {
+      const h = Math.max(MIN_H, n.value * ky);
+      pos[n.id] = { x: li * COL_GAP, y, h };
+      shapes.push({
+        nodeId: n.id,
+        text: n.label || '',
+        sub: n.value + (n.value === 1 ? ' page' : ' pages'),
+        x: li * COL_GAP + NODE_W / 2, y: y + h / 2, w: NODE_W, h,
+        fill: n.color || '#9aa0ab', border: '#ffffff', borderWidth: 2,
+        borderStyle: 'solid', shape: 'round_rectangle', fontSize: 12,
+      });
+      y += h + GAP;
+    });
+    if (y > frameH) frameH = y;
+  });
+
+  // Stroke width is the page count, scaled so the largest band sits at Miro's
+  // ceiling. Thin bands still get 1px rather than disappearing.
+  const maxLink = (graph.links || []).reduce((m, l) => Math.max(m, l.value), 0) || 1;
+  const edges = (graph.links || []).map(l => ({
+    from: l.s, to: l.t,
+    color: l.color || '#9aa0ab',
+    strokeWidth: Math.max(1, Math.round((l.value / maxLink) * 24)),
+    startSnap: 'right', endSnap: 'left',
+  }));
+
+  // Column headings, above their column.
+  (graph.columns || []).forEach((c, i) => {
+    if (!c || !layers[i] || !layers[i].length) return;
+    shapes.push({
+      nodeId: null, text: c, sub: '',
+      x: i * COL_GAP + NODE_W / 2, y: TOP - 34, w: NODE_W, h: 28,
+      fill: '#ffffff', border: '#ffffff', borderWidth: 1, borderStyle: 'solid', shape: 'rectangle', fontSize: 14,
+    });
+  });
+
+  let frameW = Math.max(100, (layers.length - 1) * COL_GAP + NODE_W + 40);
+  if (opts.includeLegend !== false) {
+    const entries = (graph.legend || []).filter(e => e.color && e.label);
+    if (entries.length) frameH += 36 + pushMiroLegendChips(shapes, entries, frameH + 36, 24);
+  }
+
+  const ps = state.projectSettings || {};
+  const base = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
+  return {
+    frame: { title: base ? base + ' — Content Flow' : 'Content Flow', width: frameW, height: Math.max(100, frameH + 30) },
+    shapes, edges, connectorColor: '#9aa0ab', connectorShape: 'curved',
+  };
+}
+
+async function treemapExportMiro(geometry) {
+  if (!await miroExportPreflight(geometry, 'treemap')) return;
+  const ps = state.projectSettings || {};
+  const base = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
+  const picked = await pickMiroBoardSimple({
+    promptText: 'Where should the treemap go?',
+    defaultName: base ? base + ' — Treemap' : 'Treemap',
+  });
+  if (!picked) return;
+  rememberMiroLegendChoice(picked.includeLegend);
+  await runMiroExport(picked.boardId, picked.board, buildMiroTreemapPlan(geometry, picked), 'blocks');
+}
+
+async function sankeyExportMiro(graph) {
+  if (!await miroExportPreflight(graph, 'content flow')) return;
+  const ps = state.projectSettings || {};
+  const base = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
+  const picked = await pickMiroBoardSimple({
+    promptText: 'Where should the content flow go?',
+    defaultName: base ? base + ' — Content Flow' : 'Content Flow',
+  });
+  if (!picked) return;
+  rememberMiroLegendChoice(picked.includeLegend);
+  await runMiroExport(picked.boardId, picked.board, buildMiroSankeyPlan(graph, picked), 'blocks');
+}
+
+function rememberMiroLegendChoice(includeLegend) {
+  const me = state.projectSettings.miroExport || {};
+  if (me.includeLegend !== includeLegend) {
+    state.projectSettings.miroExport = Object.assign({}, me, { includeLegend });
+    setDirty(true);
+  }
 }
 
 async function sitemapExportMiro(baseData, st) {
@@ -17163,23 +17639,55 @@ async function sitemapExportPdf(baseData, st, slug, templateModule) {
   else if (r && r.error && r.error !== 'Cancelled') showToast('PDF export failed: ' + r.error, 'error');
 }
 
+/** PNG export — same print-mode document as the PDF path, screenshotted instead
+ *  of printed (for slides and docs that can't place a PDF). Shared by all three
+ *  engines via the same optional templateModule param sitemapExportPdf takes. */
+async function sitemapExportPng(baseData, st, slug, templateModule) {
+  const data = Object.assign({}, baseData, {
+    mode: 'print',
+    settings: (st && st.settings) || baseData.settings,
+    initialCollapsed: (st && st.collapsed) || baseData.initialCollapsed
+  });
+  const html = (templateModule || window.SitemapTemplate).build(data);
+  showToast('Generating PNG…');
+  const r = await window.electronAPI.exportVizPng({ html, defaultName: (slug || 'sitemap') + '.png' });
+  if (r && r.success) showToast('Exported PNG', 'success');
+  else if (r && r.error && r.error !== 'Cancelled') showToast('PNG export failed: ' + r.error, 'error');
+}
+
 const TREEMAP_MSG_PREFIX = '@@TREEMAP@@';   // must match MSG_PREFIX in the treemap engine
 
 // Opens the interactive treemap modal for a built tree. Deliberately much
 // smaller than openSitemapView(): no live settings panel, no state
 // round-trip — depth/color-by are chosen once up front (openTreemapConfigDialog())
 // and the resulting view is static aside from pan/zoom/export.
-// opts: { title, roots, legend, slug, canvasWidth?, canvasHeight? }
+// opts: { title, roots, legend, slug, colorBy, canvasWidth?, canvasHeight? }
 function openTreemapView(opts) {
   if (!window.TreemapTemplate) { showToast('Treemap engine unavailable', 'error'); return; }
+
+  // Color overrides are stored per color-by mode: the same key space means
+  // different things in each ("Keep" the decision vs a section called Keep),
+  // and a palette chosen for the section view has no bearing on the KKE view.
+  const ctxKey = opts.colorBy || 'kke';
+  const stored = ((state.projectSettings || {}).treemapSettings || {})[ctxKey] || {};
 
   const baseData = {
     title: opts.title,
     roots: opts.roots,
     legend: opts.legend || [],
+    colorOverrides: stored.colorOverrides || {},
+    nodeOverrides: stored.nodeOverrides || {},
     canvasWidth: opts.canvasWidth,
     canvasHeight: opts.canvasHeight,
   };
+
+  // The engine owns the live colors; this mirrors whatever it last reported so
+  // exports and the persisted settings agree with what's on screen.
+  let lastState = null;
+  const dataForExport = () => (lastState ? Object.assign({}, baseData, {
+    colorOverrides: lastState.colorOverrides || {},
+    nodeOverrides: lastState.nodeOverrides || {},
+  }) : baseData);
 
   const html = window.TreemapTemplate.build(Object.assign({ mode: 'app' }, baseData));
   const wv = document.createElement('webview');
@@ -17193,28 +17701,43 @@ function openTreemapView(opts) {
   wv.addEventListener('console-message', (e) => {
     if (!e || !e.message || e.message.indexOf(TREEMAP_MSG_PREFIX) !== 0) return;
     let msg; try { msg = JSON.parse(e.message.slice(TREEMAP_MSG_PREFIX.length)); } catch (_) { return; }
-    if (msg.type === 'export') {
-      if (msg.format === 'client') sitemapExportClient(baseData, null, opts.slug, window.TreemapTemplate);
-      else if (msg.format === 'pdf') sitemapExportPdf(baseData, null, opts.slug, window.TreemapTemplate);
+    if (msg.type === 'state') {
+      lastState = msg.state || {};
+      const all = Object.assign({}, state.projectSettings.treemapSettings || {});
+      all[ctxKey] = { colorOverrides: lastState.colorOverrides || {}, nodeOverrides: lastState.nodeOverrides || {} };
+      state.projectSettings.treemapSettings = all;
+      setDirty(true);
+    } else if (msg.type === 'export') {
+      if (msg.state) lastState = msg.state;
+      const data = dataForExport();
+      if (msg.format === 'client') sitemapExportClient(data, null, opts.slug, window.TreemapTemplate);
+      else if (msg.format === 'pdf') sitemapExportPdf(data, null, opts.slug, window.TreemapTemplate);
+      else if (msg.format === 'png') sitemapExportPng(data, null, opts.slug, window.TreemapTemplate);
+      // Miro gets the engine's own laid-out boxes, not the tree — see buildMiroTreemapPlan().
+      else if (msg.format === 'miro') treemapExportMiro(msg.geometry);
     }
   });
 
   openModal({ title: opts.title, body: container, width: '94vw', buttons: [{ label: 'Done', variant: 'primary' }] });
 }
 
-/** Legend entries for the current color-by mode — {color, label}[]. */
+/** Legend entries for the current color-by mode — {key, color, label}[].
+ *  `key` is the raw category value (what treemapColorKey() stamps on a box) and
+ *  is what a color override is stored against; `label` is only display, so a
+ *  field's valueLabels can rename "(not set)" without breaking the join. */
 function buildTreemapLegend(ctx) {
   if (ctx.colorBy === 'section') {
-    return Object.keys(ctx.sectionColors).map(label => ({ color: ctx.sectionColors[label], label }));
+    return Object.keys(ctx.sectionColors).map(label => ({ key: label, color: ctx.sectionColors[label], label }));
   }
   if (ctx.colorBy === 'kke') {
     const labels = ['Keep', 'Evolve', 'Kill', 'Consolidate', 'Exclude'];
     (state.customKkeStates || []).forEach(s => { if (s && s.label && !labels.includes(s.label)) labels.push(s.label); });
-    return labels.map(label => ({ color: treemapKkeColor(label), label }));
+    return labels.map(label => ({ key: label, color: treemapKkeColor(label), label }));
   }
   const def = ctx.fieldDefs.find(f => f.key === ctx.colorBy);
   const map = ctx.fieldColorMaps[ctx.colorBy] || {};
   return Object.keys(map).map(val => ({
+    key: val,
     color: map[val],
     label: (def && def.valueLabels && (val in def.valueLabels)) ? def.valueLabels[val] : (val || '(not set)'),
   }));
@@ -17256,6 +17779,7 @@ function generateNavTreemap(opts) {
     title: (title ? title + ' — ' : '') + 'Treemap',
     roots,
     legend,
+    colorBy,
     slug: sitemapProjectSlug() + '-treemap',
   });
 }
@@ -17635,9 +18159,21 @@ function buildSankeyViews(flows, opts) {
   return { views, legends };
 }
 
+/** baseData re-pointed at whatever view the engine says is on screen. Every
+ *  combination already ships in DATA.views, so this only moves the three
+ *  `default*` keys — the exported document opens on the same reading. */
+function sankeyDataForState(baseData, st) {
+  if (!st) return baseData;
+  return Object.assign({}, baseData, {
+    defaultFrom: st.from || baseData.defaultFrom,
+    defaultShape: st.shape || baseData.defaultShape,
+    defaultColorBy: st.colorBy || baseData.defaultColorBy,
+  });
+}
+
 /** Opens the interactive content-flow modal. Both toggles live in the engine
  *  (see its header comment), so unlike the treemap there is nothing to send
- *  back — this is a pure one-way handoff plus the two export buttons. */
+ *  back — this is a pure one-way handoff plus the export buttons. */
 function openSankeyView(opts) {
   if (!window.SankeyTemplate) { showToast('Content Flow engine unavailable', 'error'); return; }
 
@@ -17665,8 +18201,16 @@ function openSankeyView(opts) {
     if (!e || !e.message || e.message.indexOf(SANKEY_MSG_PREFIX) !== 0) return;
     let msg; try { msg = JSON.parse(e.message.slice(SANKEY_MSG_PREFIX.length)); } catch (_) { return; }
     if (msg.type === 'export') {
-      if (msg.format === 'client') sitemapExportClient(baseData, null, opts.slug, window.SankeyTemplate);
-      else if (msg.format === 'pdf') sitemapExportPdf(baseData, null, opts.slug, window.SankeyTemplate);
+      // The engine's toggles are pure re-reads, so it holds the only record of
+      // which view is on screen. Fold its reported state back into the defaults
+      // before rebuilding the document — without this every export renders
+      // whatever view the config dialog opened with, not the one being looked at.
+      const data = sankeyDataForState(baseData, msg.state);
+      if (msg.format === 'client') sitemapExportClient(data, null, opts.slug, window.SankeyTemplate);
+      else if (msg.format === 'pdf') sitemapExportPdf(data, null, opts.slug, window.SankeyTemplate);
+      else if (msg.format === 'png') sitemapExportPng(data, null, opts.slug, window.SankeyTemplate);
+      // Miro gets the engine's laid-out graph, not the views blob — see buildMiroSankeyPlan().
+      else if (msg.format === 'miro') sankeyExportMiro(msg.graph);
     }
   });
 
@@ -18475,6 +19019,17 @@ function resolveTreemapNodeColor(node, topLabel, ctx, breakdownOverride) {
   return (fieldMap && fieldMap[node[ctx.colorBy] || '']) || '#9aa0ab';
 }
 
+/** Which legend category this box belongs to — the join between a box and the
+ *  Legend panel's color pickers. Must stay in lockstep with the branches of
+ *  resolveTreemapNodeColor() above and with buildTreemapLegend()'s keys, or
+ *  recoloring a legend entry silently repaints nothing. A blank key ('' — no
+ *  Page Status set, no KKE decision) is a real category, not a missing one. */
+function treemapColorKey(node, topLabel, ctx, breakdownOverride) {
+  if (ctx.colorBy === 'section') return topLabel;
+  if (ctx.colorBy === 'kke') return dominantKke(breakdownOverride || ctx.kkeBreakdown[node.id] || {}) || '';
+  return node[ctx.colorBy] || '';
+}
+
 /** breakdownOverride: see resolveTreemapNodeColor() — same reason. */
 function treemapSubtitle(node, value, ctx, breakdownOverride) {
   const pages = value + (value === 1 ? ' page' : ' pages');
@@ -18524,6 +19079,9 @@ function buildTreemapNode(node, topLabel, depthLimit, currentDepth, ctx) {
     label: node.label || '(unnamed)',
     value,
     color: resolveTreemapNodeColor(node, topLabel, ctx),
+    // Lets the engine's Legend panel recolor a whole category without the host
+    // rebuilding the tree — see treemapColorKey().
+    colorKey: treemapColorKey(node, topLabel, ctx),
     subtitle: treemapSubtitle(node, value, ctx),
   };
   if (kids.length) {
@@ -18536,6 +19094,7 @@ function buildTreemapNode(node, topLabel, depthLimit, currentDepth, ctx) {
         label: node.label || '(unnamed)',
         value: direct,
         color: resolveTreemapNodeColor(node, topLabel, ctx, directBreakdown),
+        colorKey: treemapColorKey(node, topLabel, ctx, directBreakdown),
         subtitle: treemapSubtitle(node, direct, ctx, directBreakdown),
       });
     }
