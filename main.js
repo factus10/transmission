@@ -3995,6 +3995,83 @@ ipcMain.handle('export-sitemap-pdf', async (event, { html, defaultName }) => {
   }
 });
 
+// Raster export for the three visualization engines. Same hidden-window +
+// print-mode-HTML trick as export-sitemap-pdf, but screenshotted rather than
+// printed — for dropping a diagram into a deck or a doc that can't place a PDF.
+//
+// Two things make this work on a diagram much larger than the screen:
+//   • The window is sized to the document's own content box, which each engine
+//     publishes as window.__EXPORT_SIZE__ once it has laid out (the same moment
+//     it flips document.title to 'READY').
+//   • The OS may refuse a window that big. We read the size back and, if it was
+//     clamped, shrink the zoom factor until the whole diagram fits what we
+//     actually got — a smaller PNG beats a cropped one.
+// A 2× zoom is used where it fits, so text stays crisp at normal viewing size.
+const PNG_MAX_EDGE = 9000;        // hard ceiling per side; ~all real sitemaps fit
+ipcMain.handle('export-viz-png', async (event, { html, defaultName }) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Export as PNG',
+    defaultPath: defaultName || 'diagram.png',
+    filters: [{ name: 'PNG Image', extensions: ['png'] }]
+  });
+  if (result.canceled) return { success: false, error: 'Cancelled' };
+  let win = null;
+  try {
+    win = new BrowserWindow({
+      show: false, width: 1400, height: 900, useContentSize: true,
+      paintWhenInitiallyHidden: true,   // default, but load-bearing here: a hidden window that never paints captures blank
+      webPreferences: { nodeIntegration: false, contextIsolation: true, offscreen: false },
+    });
+    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    await new Promise((resolve) => {
+      let waited = 0;
+      const tick = async () => {
+        try {
+          const t = await win.webContents.executeJavaScript('document.title');
+          if (t === 'READY' || waited >= 6000) return resolve();
+        } catch (_) { return resolve(); }
+        waited += 120;
+        setTimeout(tick, 120);
+      };
+      tick();
+    });
+
+    const size = await win.webContents.executeJavaScript(
+      '(window.__EXPORT_SIZE__ || {w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight})'
+    );
+    const cw = Math.max(1, Math.ceil(size.w || 1));
+    const ch = Math.max(1, Math.ceil(size.h || 1));
+
+    let zoom = Math.min(2, PNG_MAX_EDGE / cw, PNG_MAX_EDGE / ch);
+    if (!(zoom > 0)) zoom = 1;
+    zoom = Math.max(0.15, zoom);
+
+    const applySize = async (z) => {
+      win.webContents.setZoomFactor(z);
+      const w = Math.max(1, Math.ceil(cw * z)), h = Math.max(1, Math.ceil(ch * z));
+      win.setContentSize(w, h);
+      await new Promise(r => setTimeout(r, 220));   // let the relayout land
+      return { want: [w, h], got: win.getContentSize() };
+    };
+
+    let { want, got } = await applySize(zoom);
+    if (got[0] < want[0] - 1 || got[1] < want[1] - 1) {
+      // The OS clamped the window. Re-fit the whole diagram into what it gave us.
+      const adj = Math.min(got[0] / want[0], got[1] / want[1]);
+      if (adj > 0 && adj < 1) await applySize(Math.max(0.05, zoom * adj));
+    }
+
+    const image = await win.webContents.capturePage();
+    if (image.isEmpty()) return { success: false, error: 'Nothing was captured' };
+    fs.writeFileSync(result.filePath, image.toPNG());
+    return { success: true, filePath: result.filePath };
+  } catch (e) {
+    return { success: false, error: e.message };
+  } finally {
+    if (win) { try { win.close(); } catch (_) {} }
+  }
+});
+
 ipcMain.handle('export-report-html', async (event, { html, defaultName }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     title: 'Export Report as HTML',

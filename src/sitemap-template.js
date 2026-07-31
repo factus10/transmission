@@ -659,6 +659,7 @@
       if ($('btn-settings')) $('btn-settings').addEventListener('click', function (e) { e.stopPropagation(); openSettings(); });
       if ($('btn-export-client')) $('btn-export-client').addEventListener('click', function () { emit({ type: 'export', format: 'client', state: currentState() }); });
       if ($('btn-export-pdf')) $('btn-export-pdf').addEventListener('click', function () { emit({ type: 'export', format: 'pdf', state: currentState() }); });
+      if ($('btn-export-png')) $('btn-export-png').addEventListener('click', function () { emit({ type: 'export', format: 'png', state: currentState() }); });
       if ($('btn-export-miro')) $('btn-export-miro').addEventListener('click', function () { emit({ type: 'export', format: 'miro', state: currentState() }); });
 
       document.addEventListener('click', function () {
@@ -1283,6 +1284,9 @@
       st.textContent = '@page { size: ' + (w + 96) + 'px ' + (h + 96) + 'px; margin: 48px; }';
       document.head.appendChild(st);
       document.body.classList.add('print-ready');
+      // Bare content box, for the PNG exporter: it sizes an offscreen window to
+      // this and screenshots it, so unlike @page there is no margin to add.
+      window.__EXPORT_SIZE__ = { w: w, h: h };
       document.title = 'READY';
     }
 
@@ -1424,6 +1428,14 @@ body.hide-counts .node-sub{display:none;}
 .sp-ovrow{display:flex;align-items:center;gap:8px;font-size:12px;}
 .sp-ovrow .sw{width:14px;height:14px;border-radius:3px;border:1px solid var(--border-dk);}
 .sp-ovlabel{flex:1;}
+/* Print mode has to lay out flush at 0,0 ON SCREEN too, not only inside @media
+   print: the PNG exporter screenshots this document in a window sized to the
+   canvas, and a screen capture never sees the print stylesheet. Mirrors the
+   @media print block below. */
+body.printing{background:#fff;overflow:visible;height:auto;display:block;}
+body.printing #toolbar,body.printing #hint,body.printing .ctx-menu,body.printing .sp-overlay{display:none!important;}
+body.printing #viewport{position:static;flex:none;overflow:visible;top:0;}
+body.printing #canvas{transform:none!important;position:static;}
 @media print{
   #toolbar,#hint,.ctx-menu,.sp-overlay{display:none!important;}
   /* Revert the screen-mode flex-column layout so print keeps its original static
@@ -1479,6 +1491,7 @@ body.hide-counts .node-sub{display:none;}
         toolbar += '<div class="tb-sep"></div>';
         toolbar += '<button class="tb-btn" id="btn-export-client">Export HTML</button>';
         toolbar += '<button class="tb-btn" id="btn-export-pdf">Export PDF</button>';
+        toolbar += '<button class="tb-btn" id="btn-export-png">Export PNG</button>';
         toolbar += '<button class="tb-btn" id="btn-export-miro">Export to Miro</button>';
       }
       toolbar += '</div>';
