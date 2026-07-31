@@ -24423,6 +24423,18 @@ function buildRedirectResolverContext() {
   // already sitting in Redirect_Destination — callers decide whether to keep that.
   function computeAutoDestination(row, kke) {
     const selfUrl = String(row[urlCol] || '').trim();
+    const dest = deriveAutoDestination(row, kke, selfUrl);
+    // A derivation that lands back on this very page is not a destination, it is
+    // a loop — and resolveFinalUrl() produces exactly that whenever it bails out
+    // of a consolidate cycle (it returns the last URL it saw, which is seeded to
+    // selfUrl). Writing it made the Redirect Health Check unwinnable: it cleared
+    // the loop, the next save derived it straight back. The non-Kill branch has
+    // always guarded this for itself; hoisting the check up here covers Kill and
+    // Consolidate too, and any branch added later.
+    return isSelfRedirect(selfUrl, dest) ? '' : dest;
+  }
+
+  function deriveAutoDestination(row, kke, selfUrl) {
     if (kke === 'consolidate') {
       const targetId = consolidateTargetAddr(row);
       if (!targetId) return '';
@@ -24473,6 +24485,13 @@ function resolveRedirectDestinations() {
     const src = String(row[REDIRECT_SRC_COL] || '').trim();
     if (src === 'manual') return;   // a person chose this; nothing derived may overwrite it
 
+    // An existing value that points at this page is a loop, whoever wrote it. It
+    // is never a decision worth preserving, so it does not count as a manual
+    // override in the two branches below — otherwise a loop already in the file
+    // survives every save and only the health check can touch it.
+    const addr = String(row[ctx.urlCol] || '').trim();
+    const existingIsLoop = isSelfRedirect(addr, existing);
+
     if (kke === 'consolidate') {
       const targetId = consolidateTargetAddr(row);
       if (!targetId) { writeRedirectDestination(row, '', ''); return; }
@@ -24480,7 +24499,7 @@ function resolveRedirectDestinations() {
       // override (a value unrelated to the master); re-derive blanks, prior auto values, and the
       // bare identity (the latter covers "linked before the master had a nav home, now it does").
       const auto = ctx.computeAutoDestination(row, 'consolidate');
-      const looksAutoDerived = !existing || existing === auto || existing === targetId;
+      const looksAutoDerived = !existing || existing === auto || existing === targetId || existingIsLoop;
       if (looksAutoDerived) writeRedirectDestination(row, auto, 'auto');
       return;
     }
@@ -24493,7 +24512,7 @@ function resolveRedirectDestinations() {
       // this, a Kill page assigned a nav home after autosave already wrote the
       // default keeps redirecting to the default forever.
       const auto = ctx.computeAutoDestination(row, 'kill'); // blank if nothing resolved (retired/404)
-      const looksAutoDerived = !existing || existing === auto || existing === ctx.defaultRedirectUrl;
+      const looksAutoDerived = !existing || existing === auto || existing === ctx.defaultRedirectUrl || existingIsLoop;
       if (looksAutoDerived) writeRedirectDestination(row, auto, 'auto');
       return;
     }
@@ -26152,6 +26171,30 @@ function redirectPathOf(u) {
   catch (_) { return s.replace(/\/+$/, ''); }
 }
 
+/** Does `dest` point at the very page it sits on?
+ *
+ *  A page redirecting to itself is a loop and is never valid for any decision.
+ *  This is the single expression of that invariant, shared by the resolver
+ *  (which must never *derive* one) and the health check (which finds the ones
+ *  already in a file) — because when those two disagreed, they undid each
+ *  other: the check cleared a loop, the next save re-derived it, and the loop
+ *  looked unfixable.
+ *
+ *  Hosts are compared only when BOTH sides carry one. On a multi-site
+ *  consolidation `alpha.edu/about` → `beta.edu/about` is a real redirect and a
+ *  path-only test would call it a loop; a relative destination has no host to
+ *  compare and is taken as same-site, which is what a bare `/about` means.
+ */
+function isSelfRedirect(pageUrl, dest) {
+  const a = String(pageUrl || '').trim();
+  const b = String(dest || '').trim();
+  if (!a || !b || b === '404') return false;   // 404 is a deliberate deindex, not a destination
+  const hostOf = (u) => { try { return new URL(u).host.replace(/^www\./i, '').toLowerCase(); } catch (_) { return ''; } };
+  const ha = hostOf(a), hb = hostOf(b);
+  if (ha && hb && ha !== hb) return false;
+  return redirectPathOf(a).toLowerCase() === redirectPathOf(b).toLowerCase();
+}
+
 const REDIRECT_HEALTH_CATEGORIES = [
   { key: 'self', fixable: true, title: 'Pages redirecting to themselves',
     why: 'A page pointing at its own URL is a redirect loop. This is always wrong.',
@@ -26210,7 +26253,10 @@ function computeRedirectHealth() {
 
     // A loop is wrong regardless of decision — including on Kill/Consolidate,
     // where it usually means a consolidate target resolved back to its own page.
-    if (dp === own) {
+    // Shares isSelfRedirect() with the resolver deliberately: when these two
+    // disagreed about what a loop is, the check cleared one and the next save
+    // put it straight back.
+    if (isSelfRedirect(addr, dest)) {
       entry.proposed = nodeUrl;
       entry.note = node ? 'on "' + (node.label || node.id) + '"' : 'not on the sitemap';
       out.self.push(entry);
