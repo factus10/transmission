@@ -2672,6 +2672,20 @@ ipcMain.handle('miro-list-items', async (event, { boardId, limit }) => {
   catch (err) { return { success: false, error: err.message }; }
 });
 
+// Deletes a whole board. The export dialog's default route is "create a new
+// board" — review it, then tidy up — and until now the app had no way to do the
+// tidying, so scratch boards accumulated in the user's team. Destructive enough
+// that any caller must confirm with the user FIRST: this handler deliberately
+// does no confirming of its own, because a dialog raised from main can't say
+// which board, in whose team, or what is on it.
+ipcMain.handle('miro-delete-board', async (event, { boardId } = {}) => {
+  try {
+    if (!boardId) return { success: false, error: 'No board id given' };
+    await miro.deleteBoard(boardId);
+    return { success: true };
+  } catch (err) { return { success: false, error: err.message }; }
+});
+
 // Sitemap export. Progress is pushed back on a channel rather than returned,
 // since a 400-node board takes tens of seconds and silence reads as a hang.
 ipcMain.handle('miro-export-sitemap', async (event, { boardId, plan }) => {
