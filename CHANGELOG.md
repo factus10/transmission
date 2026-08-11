@@ -9,6 +9,7 @@ major-version codenames drawn from The Smiths.
 ### Added
 
 - **Connector thickness for the Miro sitemap export.** The Appearance section of **Export to Miro** now sets how heavy the lines *between* boxes are — Thin (the default, and what exports drew before) · Medium · Heavy · Extra heavy — alongside the connector style and card border controls that were already there. It's remembered per project like the rest. The widths are whole numbers on purpose: Miro's thickness slider only stops on whole numbers, and an in-between value renders as a barely-visible hairline.
+- **Delete a scratch Miro board straight from the export toast.** The export dialog nudges you toward *create a new board* — review it, then tidy up — and there was no way to do the tidying, so throwaway boards piled up in your Miro team. When an export creates a board, the "Exported N pages…" toast now carries a **Delete board** button. It only appears for boards that export just created (never one you picked, which may have other work on it), it asks for confirmation first, and Miro moves the board to your team's trash so it can be restored. Ignoring it is always fine — the toast simply lapses, and it waits longer than usual and holds while you hover, since the export opens the board in your browser and you'll be looking elsewhere.
 
 ## [2.14.1] — "Please, Please, Please, Let Me Get What I Want"
 
