@@ -6,6 +6,10 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Added
+
+- **Connector thickness for the Miro sitemap export.** The Appearance section of **Export to Miro** now sets how heavy the lines *between* boxes are — Thin (the default, and what exports drew before) · Medium · Heavy · Extra heavy — alongside the connector style and card border controls that were already there. It's remembered per project like the rest. The widths are whole numbers on purpose: Miro's thickness slider only stops on whole numbers, and an in-between value renders as a barely-visible hairline.
+
 ## [2.14.1] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Fixed
