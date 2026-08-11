@@ -224,6 +224,7 @@ A `.transmission` file is a **SQLite database** (better-sqlite3, WAL mode) that 
 | renderer → main | `miro-token-info`  | none → `{ success, type, scopes[], team, organization, user, error? }` — answers "connected but I see no boards" (wrong team) |
 | renderer → main | `miro-create-board` | `{ name, description }` → `{ success, board?, error? }` |
 | renderer → main | `miro-create-frame` / `miro-create-items-bulk` / `miro-create-connector` / `miro-list-items` | board-writing primitives used by the exporter |
+| renderer → main | `miro-delete-board` | `{ boardId }` → `{ success, error? }` — deletes a whole board (Miro moves it to the team's trash). Requires an explicit id; **confirms nothing itself** — the caller must ask the user first, since only the renderer knows which board and what's on it |
 | renderer → main | `miro-probe-write` | `{ boardId }` → creates one off-palette shape, reports what Miro stored, deletes it — proves `boards:write` (which `miro-test-connection` cannot) |
 | renderer → main | `miro-export-sitemap` | `{ boardId, plan }` → `{ success, frameId, shapes, connectors, edgeFailures, skippedEdges, error? }` |
 | renderer → main | `miro-cancel-export` | none → `{ success }` |
