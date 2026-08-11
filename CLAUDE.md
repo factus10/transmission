@@ -224,6 +224,7 @@ A `.transmission` file is a **SQLite database** (better-sqlite3, WAL mode) that 
 | renderer → main | `miro-token-info`  | none → `{ success, type, scopes[], team, organization, user, error? }` — answers "connected but I see no boards" (wrong team) |
 | renderer → main | `miro-create-board` | `{ name, description }` → `{ success, board?, error? }` |
 | renderer → main | `miro-create-frame` / `miro-create-items-bulk` / `miro-create-connector` / `miro-list-items` | board-writing primitives used by the exporter |
+| renderer → main | `miro-delete-board` | `{ boardId }` → `{ success, error? }` — deletes a whole board (Miro moves it to the team's trash). Requires an explicit id; **confirms nothing itself** — the caller must ask the user first, since only the renderer knows which board and what's on it. Caller: the export-result toast's **Delete board** action |
 | renderer → main | `miro-probe-write` | `{ boardId }` → creates one off-palette shape, reports what Miro stored, deletes it — proves `boards:write` (which `miro-test-connection` cannot) |
 | renderer → main | `miro-export-sitemap` | `{ boardId, plan }` → `{ success, frameId, shapes, connectors, edgeFailures, skippedEdges, error? }` |
 | renderer → main | `miro-cancel-export` | none → `{ success }` |
@@ -872,6 +873,21 @@ re-reads that board's *current* name by id via `miroGetBoard` — so a board
 created "Untitled" and renamed later still resolves and shows its real name, and
 a since-deleted board drops the option (falls back to "new") instead of failing
 mid-export. This is why identity is the board **id**, never the name.
+
+**Deleting a scratch board.** The picker steers people to "create a new board"
+— review it, then tidy up — so the export-result toast carries a **Delete
+board** action (`miroDeleteBoardToastAction`, over the `miro-delete-board` IPC),
+shared by all three diagrams' result toasts. It is offered **only when this
+export created the board** (`isNewBoard`, set on the `'new'` branch of
+`pickMiroBoard` / `pickMiroBoardSimple`): deleting a board the user already had,
+carrying whatever else was on it, is a much larger action than discarding a
+scratch one, and a toast has no room to draw that distinction. Clicking it opens
+a `confirmDialog` — a toast button can be hit by someone who hasn't read it. On
+success it clears `miroExport.lastBoard` when that's the board being deleted,
+since the remembered board is keyed by id and would otherwise offer "export
+again to &lt;deleted board&gt;". This is the one sanctioned use of `showToast`'s
+optional `action` param — see **docs/UI_STANDARDS.md §5a** for when that's
+allowed at all.
 
 Rate limiting is proactive, not reactive: Miro bills **Level 2 per ITEM even
 inside a bulk call**, so batching buys round trips and atomicity, never
