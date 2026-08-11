@@ -155,6 +155,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   miroCreateItemsBulk: (payload) => ipcRenderer.invoke('miro-create-items-bulk', payload),
   miroCreateConnector: (payload) => ipcRenderer.invoke('miro-create-connector', payload),
   miroListItems:       (payload) => ipcRenderer.invoke('miro-list-items', payload),
+  miroDeleteBoard:     (payload) => ipcRenderer.invoke('miro-delete-board', payload),
   miroExportSitemap:   (payload) => ipcRenderer.invoke('miro-export-sitemap', payload),
   miroCancelExport:    ()        => ipcRenderer.invoke('miro-cancel-export'),
   onMiroExportProgress:(cb)      => ipcRenderer.on('miro-export-progress', (e, p) => cb(p)),

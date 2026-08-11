@@ -486,7 +486,13 @@ async function listItems(boardId, limit = 50) {
   return (body && Array.isArray(body.data) ? body.data : []);
 }
 
+// Deletes a whole board. Miro puts it in the team's trash rather than purging
+// it, so this is recoverable there — but not from here, and not by the person
+// who ran it if they don't own the team. The id is required and never defaulted:
+// an empty one would send DELETE /v2/boards/, a differently-shaped request whose
+// behaviour is Miro's to define, not ours to find out.
 async function deleteBoard(boardId) {
+  if (!boardId) throw new Error('No board id given');
   await miroFetch(`/v2/boards/${encodeURIComponent(boardId)}`, { method: 'DELETE' });
 }
 
