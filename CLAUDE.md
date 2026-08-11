@@ -881,14 +881,18 @@ mid-export leaves a half-drawn board, hence the credit limiter at 85k/min with
 
 **Export appearance is user-chosen in the dialog.** The Export-to-Miro dialog has
 an **Appearance** section: **Connector style** (Right-angle→`elbowed` (default,
-matches the app) / Curved / Straight), **Card corners** (Rounded / Sharp; default
-derived from the app's Layout `cardRadius`), **Border thickness** (Thin/Medium/
-Heavy = 2/3/5px; overrides the per-node derived width), and **Include a color key**
-(a legend built from the color rules). Including collapsed/hidden nodes is now
-**opt-in** (the "Include them" box defaults OFF). Every one of these persists per
-project in `projectSettings.miroExport.{connectorStyle,cornerStyle,borderWidth,
+matches the app) / Curved / Straight), **Connector thickness** (Thin/Medium/Heavy/
+Extra heavy = 1/2/3/5px; 1 is the default and what every export drew before this
+was a choice, so an untouched project is unchanged), **Card corners** (Rounded /
+Sharp; default derived from the app's Layout `cardRadius`), **Border thickness**
+(Thin/Medium/Heavy = 2/3/5px; overrides the per-node derived width), and
+**Include a color key** (a legend built from the color rules). Including
+collapsed/hidden nodes is now **opt-in** (the "Include them" box defaults OFF).
+Every one of these persists per project in
+`projectSettings.miroExport.{connectorStyle,connectorWidth,cornerStyle,borderWidth,
 includeLegend,expandAll,hiddenLabel}` and is restored when the dialog reopens.
-`buildMiroSitemapPlan` maps `connectorStyle`→`plan.connectorShape`, picks the shape
+`buildMiroSitemapPlan` maps `connectorStyle`→`plan.connectorShape`, stamps
+`connectorWidth` onto every plan edge as `strokeWidth`, picks the shape
 TYPE (`rectangle`/`round_rectangle`) from `cornerStyle`, applies `borderWidth` to
 every card (and legend chip), and — when `includeLegend !== false` — appends a
 **color key** BELOW the tree (one white chip per color rule, border = the rule's
@@ -915,7 +919,10 @@ numeric "Rounded corners" field reads 0 (not a bug).
   1.5px; passed verbatim, Miro's integer-stepped thickness slider can't place a
   handle on `1.5` and renders it hair-thin (a phantom ~80% position that only
   "takes" once clicked). `Math.max(2, Math.round(...))` keeps it on a real slider
-  stop.
+  stop. **Connector width is subject to the same trap**, so `miroConnectorWidth()`
+  (renderer) rounds+clamps the dialog's choice to 1–24 and `createConnector`
+  (miro.js) rounds again at the choke point — every caller's width is an integer
+  by the time it reaches the API, whatever it passed.
 - **Full labels are kept, not truncated, at a constant 12px.** The app clamps card
   text to 2 lines via CSS; Miro can't, but the cards are tall enough for the ~3
   lines a long name needs at 12px, so full names show without truncation. Do NOT
