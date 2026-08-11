@@ -166,8 +166,35 @@ showToast('Nothing to apply to');  // neutral (omit type)
 ```
 
 - Types: `'success'` (green), `'error'` (red), `'info'` (blue, via the `--info` token), or omit the type for a neutral message. All three are styled in `#toast.*`.
-- Toasts auto-dismiss (~2.5s). Use them for outcomes, never for decisions.
+- Toasts auto-dismiss (~2.5s). Use them for outcomes, **never to ask a question** — anything the user must answer is a dialog.
 - Every state-changing user action should give feedback — a toast, a badge update, or a visible result. Silent success erodes trust.
+
+### 5a. Optional actions on a toast
+
+A toast may carry **one optional follow-up** to the outcome it reports — the
+Undo-toast pattern:
+
+```js
+showToast('Exported 409 pages to Miro', 'success',
+  { label: 'Delete board', danger: true, onClick: () => {…} });
+```
+
+This is not a licence to put decisions in toasts. It qualifies only when **all**
+of these hold:
+
+- **Ignoring it is a valid answer.** Letting the toast lapse must leave the user
+  in a sensible state. If they have to answer, it is a dialog.
+- **It follows from the outcome just reported** — undoing it, or discarding what
+  it just produced. Not an unrelated shortcut.
+- **Anything destructive still confirms in a real dialog.** The toast button
+  opens `confirmDialog`; it never destroys on a single click, because a toast
+  can be clicked by someone who has not read it.
+- **There is exactly one.** Two actions is a dialog wearing a toast's clothes.
+
+`showToast()` handles the mechanics: an action switches pointer events back on
+(the base toast is deliberately click-through), stretches the dismiss to ~20s,
+holds it open while hovered, and re-arms when the window regains focus — an
+action the user cannot physically reach is worse than no action at all.
 
 ---
 
@@ -233,6 +260,7 @@ showToast('Nothing to apply to');  // neutral (omit type)
 - [ ] Any new toolbar / control strip has `flex-wrap: wrap` (§1.7) — verified controls wrap, not clip, at a narrow window.
 - [ ] No hardcoded colors/fonts/sizes — tokens only.
 - [ ] State-changing actions give feedback via `showToast`.
+- [ ] Any toast action is optional, singular, follows from the outcome, and confirms in a dialog if destructive (§5a).
 - [ ] New IPC channel touches all three files; new pref key whitelisted in `get-prefs`.
 - [ ] New shortcut added to `SHORTCUT_GROUPS`; KKE/shortcut docs updated.
 - [ ] User-facing changes reflected in `README.md`, `USER_GUIDE.md`, and `src/help.html`.

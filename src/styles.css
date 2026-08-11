@@ -2044,6 +2044,34 @@ webview { width: 100%; height: 100%; display: flex; }
 #toast.error   { border-color: var(--danger); color: var(--danger); }
 #toast.info    { border-color: var(--info);   color: var(--info); }
 
+/* A toast carrying an optional action (see showToast's `action` param). The base
+   toast is deliberately click-through; one with a button must not be, or the
+   button cannot be pressed. */
+#toast.has-action {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  padding-right: 6px;
+}
+.toast-action {
+  flex: none;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--accent-text);
+  background: transparent;
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms;
+}
+.toast-action:hover { background: var(--bg-hover); border-color: var(--accent); }
+.toast-action.danger { color: var(--danger); }
+.toast-action.danger:hover { background: var(--bg-hover); border-color: var(--danger); }
+
 /* ── Assessment popover ───────────────────────────────────────────────────── */
 
 #assess-popover {
