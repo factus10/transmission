@@ -458,11 +458,13 @@ function escapeMiroHtml(s) {
 // down through the intervening cards — Miro does no obstacle avoidance. Routing
 // those to the LEFT edge of both cards instead pushes the run into the gutter
 // beside the column, mirroring the app's own left-spine layout.
-// strokeWidth is normally 1 (a sitemap edge is a relationship, not a quantity).
-// The Content Flow export is the exception — there the width IS the page count,
-// so it is passed per edge and clamped to the 1–24 range Miro's slider accepts.
+// strokeWidth defaults to 1 (a sitemap edge is a relationship, not a quantity)
+// but is settable: the sitemap export offers it as a look choice, and the
+// Content Flow export uses it as the page count itself. Rounded as well as
+// clamped, because Miro's thickness handle only lands on whole numbers — a
+// fractional width renders hair-thin at a position the slider can't show.
 async function createConnector(boardId, { startId, endId, strokeColor, shape, startSnap, endSnap, strokeWidth }) {
-  const sw = Math.max(1, Math.min(24, Number(strokeWidth) || 1));
+  const sw = Math.max(1, Math.min(24, Math.round(Number(strokeWidth)) || 1));
   const c = await miroFetch(`/v2/boards/${encodeURIComponent(boardId)}/connectors`, {
     method: 'POST',
     body: {

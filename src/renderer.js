@@ -16685,6 +16685,17 @@ function countMiroHidden(roots, collapsed) {
 }
 
 // opts.expandAll — ignore the collapse state and export the whole tree.
+// Connector thickness, normalized to a whole number Miro's slider can actually
+// land on. Miro accepts 1–24 but its handle steps in integers, so a fractional
+// width renders hair-thin at a phantom position (the same trap the card border
+// width hit at 1.5). Blank/unset → 1, which is what every export drew before
+// this became a choice, so an untouched project is unchanged.
+function miroConnectorWidth(raw) {
+  const n = Math.round(Number(raw));
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(24, n);
+}
+
 function buildMiroSitemapPlan(baseData, st, opts = {}) {
   const settings = (st && st.settings) || baseData.settings;
   // The "Counts" mode (per-project, mirrored from the Visual Sitemap toolbar)
@@ -16708,6 +16719,7 @@ function buildMiroSitemapPlan(baseData, st, opts = {}) {
   // An explicit border thickness chosen in the export dialog overrides the
   // per-node derived width (the app's 1.5px band / 3px outline). 0 = derive.
   const chosenBorderWidth = Number(opts.borderWidth) > 0 ? Math.round(Number(opts.borderWidth)) : 0;
+  const connectorWidth = miroConnectorWidth(opts.connectorWidth);
 
   const shapes = [];
   const edges = [];
@@ -16797,6 +16809,7 @@ function buildMiroSitemapPlan(baseData, st, opts = {}) {
         from: entry.parent.id,
         to: node.id,
         vertical: !!layout.shouldBeVert(entry.parent, entry.depth - 1),
+        strokeWidth: connectorWidth,
       });
     }
   });
@@ -17034,6 +17047,15 @@ async function pickMiroBoard(hidden, settings) {
         '<option value="curved">Curved</option>' +
         '<option value="straight">Straight</option>' +
       '</select>' +
+      // Miro's thickness slider steps in whole numbers, so these are the real
+      // stops rather than a free number field that would round on arrival.
+      '<label class="mae-label" for="_mb-conn-w">Connector thickness</label>' +
+      '<select id="_mb-conn-w" class="setting-input">' +
+        '<option value="1">Thin</option>' +
+        '<option value="2">Medium</option>' +
+        '<option value="3">Heavy</option>' +
+        '<option value="5">Extra heavy</option>' +
+      '</select>' +
       '<label class="mae-label" for="_mb-corner">Card corners</label>' +
       '<select id="_mb-corner" class="setting-input">' +
         '<option value="rounded">Rounded</option>' +
@@ -17073,6 +17095,7 @@ async function pickMiroBoard(hidden, settings) {
             const expandAll = expandEl ? expandEl.checked : false;
             const hiddenLabel = (($('_mb-hidden-label') || {}).value) || 'count';
             const connectorStyle = (($('_mb-conn') || {}).value) || 'right-angle';
+            const connectorWidth = miroConnectorWidth(($('_mb-conn-w') || {}).value);
             const cornerStyle = (($('_mb-corner') || {}).value) || 'rounded';
             const borderWidth = Number(($('_mb-bw') || {}).value) || 3;
             const includeLegend = $('_mb-legend') ? $('_mb-legend').checked : true;
@@ -17080,7 +17103,7 @@ async function pickMiroBoard(hidden, settings) {
               showToast('Pick a board from the list, or paste a link', 'error');
               return;   // keep the dialog open
             }
-            const look = { expandAll, hiddenLabel, connectorStyle, cornerStyle, borderWidth, includeLegend };
+            const look = { expandAll, hiddenLabel, connectorStyle, connectorWidth, cornerStyle, borderWidth, includeLegend };
             let val;
             if (mode === 'last') val = Object.assign({ board: remembered }, look);
             else if (mode === 'existing') val = Object.assign({ board: getChosen() }, look);
@@ -17113,8 +17136,15 @@ async function pickMiroBoard(hidden, settings) {
     // Appearance defaults: last-used choices, else right-angle + corners derived
     // from the app's Layout radius (so the dialog opens on the current look).
     const me = ps.miroExport || {};
-    const connSel = $('_mb-conn'), cornerSel = $('_mb-corner');
+    const connSel = $('_mb-conn'), connWSel = $('_mb-conn-w'), cornerSel = $('_mb-corner');
     if (connSel) connSel.value = me.connectorStyle || 'right-angle';
+    // Only restore a stored width that is still one of the offered stops —
+    // assigning an unlisted value to a <select> blanks it instead of falling
+    // back, which would then read back as the default anyway but look broken.
+    if (connWSel) {
+      const w = String(miroConnectorWidth(me.connectorWidth));
+      if (connWSel.querySelector(`option[value="${w}"]`)) connWSel.value = w;
+    }
     if (cornerSel) {
       const radiusRounded = Number((settings || {}).cardRadius == null ? 5 : settings.cardRadius) > 0;
       cornerSel.value = me.cornerStyle || (radiusRounded ? 'rounded' : 'sharp');
@@ -17126,14 +17156,14 @@ async function pickMiroBoard(hidden, settings) {
   if (!choice) return null;
 
   if (choice.board && choice.board.id) {
-    return { boardId: choice.board.id, board: choice.board, expandAll: choice.expandAll, hiddenLabel: choice.hiddenLabel, connectorStyle: choice.connectorStyle, cornerStyle: choice.cornerStyle, borderWidth: choice.borderWidth, includeLegend: choice.includeLegend };
+    return { boardId: choice.board.id, board: choice.board, expandAll: choice.expandAll, hiddenLabel: choice.hiddenLabel, connectorStyle: choice.connectorStyle, connectorWidth: choice.connectorWidth, cornerStyle: choice.cornerStyle, borderWidth: choice.borderWidth, includeLegend: choice.includeLegend };
   }
   const r = await window.electronAPI.miroCreateBoard({
     name: choice.newName || 'Sitemap',
     description: 'Generated by Transmission.',
   });
   if (!r.success) { showToast('Could not create board: ' + r.error, 'error'); return null; }
-  return { boardId: r.board.id, board: r.board, expandAll: choice.expandAll, hiddenLabel: choice.hiddenLabel, connectorStyle: choice.connectorStyle, cornerStyle: choice.cornerStyle, borderWidth: choice.borderWidth, includeLegend: choice.includeLegend };
+  return { boardId: r.board.id, board: r.board, expandAll: choice.expandAll, hiddenLabel: choice.hiddenLabel, connectorStyle: choice.connectorStyle, connectorWidth: choice.connectorWidth, cornerStyle: choice.cornerStyle, borderWidth: choice.borderWidth, includeLegend: choice.includeLegend };
 }
 
 // ─── Miro export for the treemap and Content Flow ────────────────────────────
@@ -17537,18 +17567,19 @@ async function sitemapExportMiro(baseData, st) {
 
   const picked = await pickMiroBoard(hidden, (st && st.settings) || baseData.settings || {});
   if (!picked) return;
-  const { boardId, board, expandAll, hiddenLabel, connectorStyle, cornerStyle, borderWidth, includeLegend } = picked;
+  const { boardId, board, expandAll, hiddenLabel, connectorStyle, connectorWidth, cornerStyle, borderWidth, includeLegend } = picked;
 
   // Remember per project — these are house-style choices for a client's deck,
   // not one-offs, and they travel with the file like other sitemap settings.
   const me = state.projectSettings.miroExport || {};
   if (me.hiddenLabel !== hiddenLabel || me.connectorStyle !== connectorStyle || me.cornerStyle !== cornerStyle ||
+      me.connectorWidth !== connectorWidth ||
       me.borderWidth !== borderWidth || me.includeLegend !== includeLegend || me.expandAll !== expandAll) {
-    state.projectSettings.miroExport = Object.assign({}, me, { hiddenLabel, connectorStyle, cornerStyle, borderWidth, includeLegend, expandAll });
+    state.projectSettings.miroExport = Object.assign({}, me, { hiddenLabel, connectorStyle, connectorWidth, cornerStyle, borderWidth, includeLegend, expandAll });
     setDirty(true);
   }
 
-  const plan = buildMiroSitemapPlan(baseData, st, { expandAll, hiddenLabel, connectorStyle, cornerStyle, borderWidth, includeLegend });
+  const plan = buildMiroSitemapPlan(baseData, st, { expandAll, hiddenLabel, connectorStyle, connectorWidth, cornerStyle, borderWidth, includeLegend });
   if (!plan.shapes.length) { showToast('Nothing visible to export', 'error'); return; }
 
   // Connectors have no bulk endpoint and cost the same per item as shapes, so
