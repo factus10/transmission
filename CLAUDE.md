@@ -824,6 +824,44 @@ deliberately NOT per-rule — they describe how a card is drawn rather than what
 means, so they're global Layout settings (`cardRadius`/`cardPadX`/`cardPadY`,
 clamped in `wireLayoutTab` so padding can't squeeze the label out).
 
+**Connector styling (`connectorColor` / `connectorWidthFor` / `maxVolume`)** also
+lives in `sitemap-layout.js`, for exactly the reason the geometry does: the
+webview draws the lines and `buildMiroSitemapPlan` re-derives them, so a single
+shared implementation is what makes the board match the screen. Four settings,
+edited in the Settings panel's **Layout** tab under *Connectors* and persisted
+through the usual tiers: `connectorColor` (was a hardcoded `#9aa0ab` in the
+engine CSS *and* in the Miro plan), `connectorWeight` (`'uniform'` | `'volume'`),
+`connectorWidth` (base px, default `1.5` = the long-standing CSS value), and
+`connectorMaxWidth` (the cap in volume mode).
+
+- **Volume = `node.vol`**, stamped by `navToSitemap()` from
+  `computeSubtreePageCounts().totals` — every audit row assigned anywhere in the
+  subtree. Deliberately NOT `_navPageCountsCache()` (which excludes
+  Kill/Consolidate): the badge answers "how many pages will still be live", the
+  line answers "how much content is under here". `node.sub` can't serve — it's
+  display text (`"6 pages"`), which is why a separate number exists.
+- **The scale is sqrt, not linear.** Sitemap volumes are wildly skewed (a
+  400-page section beside a 3-page leaf); a linear map spends its whole range on
+  the big branch and leaves everything else an indistinguishable hairline.
+- **`maxVolume()` walks ALL nodes, not just visible ones**, and memoizes. If it
+  used the visible set, collapsing a section would silently re-scale every
+  remaining line and change what the diagram claims.
+- **The app's connectors are a shared bus, not a line per edge** — a stub down
+  from the parent, a span across the siblings, a drop into each child. In volume
+  mode the shared parts carry the parent's whole-branch total and each drop
+  carries that child's share, so it reads as a trunk splitting into proportional
+  branches. (Miro genuinely does get one connector per parent→child, so its
+  widths come straight from `connectorWidthFor(child)`.)
+- **Per-path width is an inline style, never a `stroke-width` attribute.**
+  Presentation attributes sit below author CSS in the cascade, so the
+  `#connector-svg path` rule would win and every line would draw at the base
+  width — which is exactly what happened first time.
+- **Uniform mode stamps nothing**: no inline widths at all, colour and base width
+  come from CSS custom properties (`--conn`, `--conn-w`), so an untouched project
+  renders byte-identically to before this existed.
+- Menus carry no `vol`, so volume mode degrades to the base width rather than
+  drawing everything at the cap.
+
 **`miro.js` (main process)** owns the token and the REST client. The token is
 encrypted with `safeStorage` into its own file and **never crosses IPC** — the
 renderer can set/clear/test it and ask main to act, but cannot read it back.
@@ -897,9 +935,15 @@ mid-export leaves a half-drawn board, hence the credit limiter at 85k/min with
 
 **Export appearance is user-chosen in the dialog.** The Export-to-Miro dialog has
 an **Appearance** section: **Connector style** (Right-angle→`elbowed` (default,
-matches the app) / Curved / Straight), **Connector thickness** (Thin/Medium/Heavy/
-Extra heavy = 1/2/3/5px; 1 is the default and what every export drew before this
-was a choice, so an untouched project is unchanged), **Card corners** (Rounded /
+matches the app) / Curved / Straight), **Connector thickness** (**Match sitemap** —
+the default — plus Thin/Medium/Heavy/Extra heavy = 1/2/3/5px as an explicit
+per-board override; `'match'` is a string sentinel, not a number, so it has to
+survive the dialog read intact. Match defers to the sitemap's own
+`connectorWeight`/`connectorWidth`, which means a volume-weighted sitemap
+exports volume-weighted connectors. A project that already stored a numeric
+width keeps it, so nothing from 2.15.0 regresses; an unset project now resolves
+to `round(1.5) = 2` rather than the old hardcoded 1, because "match" has to
+actually match the 1.5px line on screen), **Card corners** (Rounded /
 Sharp; default derived from the app's Layout `cardRadius`), **Border thickness**
 (Thin/Medium/Heavy = 2/3/5px; overrides the per-node derived width), and
 **Include a color key** (a legend built from the color rules). Including

@@ -318,6 +318,60 @@
         return st.band && st.band !== 'none' ? st.band : (fallback || '#9aa0ab');
       }
 
+      // ── Connector styling ──────────────────────────────────────────────────
+      // Lives here, next to the geometry, for the same reason the geometry
+      // does: the webview draws the lines and the Miro exporter re-derives
+      // them, and a board that disagrees with the screen is the failure mode
+      // this whole module exists to prevent.
+
+      function connectorColor() {
+        return settings.connectorColor || '#9aa0ab';
+      }
+
+      // Largest subtree volume in the tree, which normalizes the scale. Walks
+      // ALL nodes, not just visible ones: collapsing a section must not
+      // re-scale every remaining line, or the diagram silently changes meaning
+      // when someone folds a branch.
+      var _maxVol = null;
+      function maxVolume() {
+        if (_maxVol !== null) return _maxVol;
+        var m = 0;
+        function walk(n) {
+          var v = Number(n.vol);
+          if (isFinite(v) && v > m) m = v;
+          (n.children || []).forEach(walk);
+        }
+        getRoots().forEach(walk);
+        _maxVol = m;
+        return m;
+      }
+
+      // Thickness for a line carrying `vol` pages.
+      //
+      // The scale is compressed (sqrt), not linear. Sitemap volumes are wildly
+      // skewed — a 400-page section beside a 3-page leaf — and a linear map
+      // spends its whole range on the one big branch, leaving everything else
+      // an indistinguishable hairline. sqrt keeps the small branches legible
+      // while the big one still reads as biggest.
+      //
+      // Volume mode with no usable numbers (menus, or a project whose pages
+      // were never assigned to the tree) degrades to the base width rather
+      // than drawing every line at the cap.
+      function connectorWidthFor(node) {
+        var base = Number(settings.connectorWidth);
+        if (!isFinite(base) || base <= 0) base = 1.5;
+        if (settings.connectorWeight !== 'volume') return base;
+
+        var max = Number(settings.connectorMaxWidth);
+        if (!isFinite(max) || max <= base) max = Math.max(base, 12);
+
+        var top = maxVolume();
+        if (!top) return base;
+        var v = Number(node && node.vol);
+        if (!isFinite(v) || v <= 0) return base;
+        return base + (max - base) * Math.sqrt(v / top);
+      }
+
       // Flattens the tree to the nodes that are actually VISIBLE — i.e. the
       // same set compute() assigns positions to (a collapsed node's descendants
       // are laid out nowhere and must not be exported). Returns parent links so
@@ -344,7 +398,10 @@
         resolveColor: resolveColor,
         resolveStyle: resolveStyle,
         matchesRule: matchesRule,
-        visibleNodes: visibleNodes
+        visibleNodes: visibleNodes,
+        connectorColor: connectorColor,
+        connectorWidthFor: connectorWidthFor,
+        maxVolume: maxVolume
       };
     }
 
