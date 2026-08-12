@@ -16474,6 +16474,10 @@ function sitemapAppDefaults() {
   return Object.assign({
     vertDepth: 2, childThresh: 3, cardWidth: 148, cardHeight: 70,
     hGap: 40, vRow: 60, vlGap: 12, vlDrop: 32, vlHgap: 20, pad: 72,
+    // Must mirror the engine's own defaults in sitemap-template.js, or the
+    // host and the webview disagree about what "match the sitemap" means.
+    connectorColor: '#9aa0ab', connectorWeight: 'uniform',
+    connectorWidth: 1.5, connectorMaxWidth: 12,
     showNumbers: true, showCounts: true, countMode: 'collapsed'
   }, state.sitemapDefaults || {});
 }
@@ -16719,7 +16723,13 @@ function buildMiroSitemapPlan(baseData, st, opts = {}) {
   // An explicit border thickness chosen in the export dialog overrides the
   // per-node derived width (the app's 1.5px band / 3px outline). 0 = derive.
   const chosenBorderWidth = Number(opts.borderWidth) > 0 ? Math.round(Number(opts.borderWidth)) : 0;
-  const connectorWidth = miroConnectorWidth(opts.connectorWidth);
+  // 'match' (the default for projects that have not overridden it) defers to
+  // the sitemap's own connector settings; anything else is an explicit
+  // per-board override chosen in the export dialog.
+  const volumeWeighted = settings.connectorWeight === 'volume' && opts.connectorWidth === 'match';
+  const connectorWidth = opts.connectorWidth === 'match'
+    ? miroConnectorWidth(settings.connectorWidth)
+    : miroConnectorWidth(opts.connectorWidth);
 
   const shapes = [];
   const edges = [];
@@ -16809,7 +16819,13 @@ function buildMiroSitemapPlan(baseData, st, opts = {}) {
         from: entry.parent.id,
         to: node.id,
         vertical: !!layout.shouldBeVert(entry.parent, entry.depth - 1),
-        strokeWidth: connectorWidth,
+        // In volume mode the width comes from the SAME shared helper the
+        // webview draws with, so the board matches the screen by construction
+        // rather than by two implementations agreeing. Miro needs a whole
+        // number, so it is rounded at the end.
+        strokeWidth: volumeWeighted
+          ? miroConnectorWidth(layout.connectorWidthFor(node))
+          : connectorWidth,
       });
     }
   });
@@ -16855,7 +16871,7 @@ function buildMiroSitemapPlan(baseData, st, opts = {}) {
   return {
     frame: { title: base ? base + ' — Sitemap' : 'Sitemap', width: frameW, height: frameH },
     shapes, edges,
-    connectorColor: '#9aa0ab',
+    connectorColor: layout.connectorColor(),
     connectorShape,
   };
 }
@@ -17051,6 +17067,7 @@ async function pickMiroBoard(hidden, settings) {
       // stops rather than a free number field that would round on arrival.
       '<label class="mae-label" for="_mb-conn-w">Connector thickness</label>' +
       '<select id="_mb-conn-w" class="setting-input">' +
+        '<option value="match">Match sitemap</option>' +
         '<option value="1">Thin</option>' +
         '<option value="2">Medium</option>' +
         '<option value="3">Heavy</option>' +
@@ -17095,7 +17112,8 @@ async function pickMiroBoard(hidden, settings) {
             const expandAll = expandEl ? expandEl.checked : false;
             const hiddenLabel = (($('_mb-hidden-label') || {}).value) || 'count';
             const connectorStyle = (($('_mb-conn') || {}).value) || 'right-angle';
-            const connectorWidth = miroConnectorWidth(($('_mb-conn-w') || {}).value);
+            const rawConnW = (($('_mb-conn-w') || {}).value) || 'match';
+            const connectorWidth = rawConnW === 'match' ? 'match' : miroConnectorWidth(rawConnW);
             const cornerStyle = (($('_mb-corner') || {}).value) || 'rounded';
             const borderWidth = Number(($('_mb-bw') || {}).value) || 3;
             const includeLegend = $('_mb-legend') ? $('_mb-legend').checked : true;
@@ -17142,7 +17160,8 @@ async function pickMiroBoard(hidden, settings) {
     // assigning an unlisted value to a <select> blanks it instead of falling
     // back, which would then read back as the default anyway but look broken.
     if (connWSel) {
-      const w = String(miroConnectorWidth(me.connectorWidth));
+      const stored = me.connectorWidth;
+      const w = (stored == null || stored === 'match') ? 'match' : String(miroConnectorWidth(stored));
       if (connWSel.querySelector(`option[value="${w}"]`)) connWSel.value = w;
     }
     if (cornerSel) {
@@ -18846,6 +18865,13 @@ async function generateNavSitemap() {
   // Computed once for the whole build, not per node — this is a single pass
   // over every audit row, and navToSitemap runs once per node.
   const rowAgg = computeNavRowFieldAggregates();
+  // Subtree page totals, for connector "weight by content volume". Reuses the
+  // treemap's helper — the same question ("how much content sits beneath this
+  // node"), so it must give the same answer in both views. Note this counts
+  // EVERY assigned row including Kill/Consolidate, unlike pageCounts above,
+  // which excludes them because the card's badge answers a different question:
+  // how many pages will still be live.
+  const subtreeVol = computeSubtreePageCounts().totals;
 
   // Which nodes start a new section — see navSectionRoots() for why this isn't
   // simply the tree's top level.
@@ -18885,6 +18911,9 @@ async function generateNavSitemap() {
       // branch. See computeNavRowFieldAggregates().
       rowFields: (rowAgg[node.id] && rowAgg[node.id].dominant) || {},
       rowFieldSets: (rowAgg[node.id] && rowAgg[node.id].sets) || {},
+      // Drives connector thickness in 'volume' mode. A plain number, because
+      // `sub` is display text ("6 pages") and cannot be measured.
+      vol: subtreeVol[node.id] || 0,
     };
     if (count > 0) out.sub = count + (count === 1 ? ' page' : ' pages');
     if (kids.length) {
