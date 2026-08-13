@@ -6,6 +6,8 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.16.1] — "Please, Please, Please, Let Me Get What I Want"
+
 ### Changed
 
 - **The Visual Sitemap and Treemap open faster on large audits.** Both views summarize every audit row against the node it's placed on before they can draw — the step that decides what a section "mostly is" for color-by-field rules. That summary is now about a third quicker: roughly 24ms → 15ms on a 13,000-page audit, and 83ms → 59ms on a 40,000-page one. Nothing about what's drawn changes; it's the same summary, computed with less overhead. (The connector volume-weighting added in 2.16.0 was measured at the same time and left alone — at well under a millisecond it was never the delay.)
