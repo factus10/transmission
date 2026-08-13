@@ -6,6 +6,8 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.16.0] — "Please, Please, Please, Let Me Get What I Want"
+
 ### Added
 
 - **Sitemap connector color and weight.** The Visual Sitemap's **Settings → Layout** tab has a new **Connectors** section. **Line color** replaces the fixed grey — pick one color for every line (per-line rainbows are a Miro job, not this app's). **Line weight** can now be **By content volume**: each line's thickness reflects how many pages sit beneath it, so a section carrying 200 pages draws as a thick trunk and a 4-page corner draws thin. A parent's shared run carries its whole branch and each drop carries that child's share, like a trunk splitting into branches. The scale is compressed on purpose, so small sections stay legible next to a huge one. Both settings save with the project and carry into the HTML, PDF, PNG **and Miro** exports — they're sitemap settings, not export settings.
