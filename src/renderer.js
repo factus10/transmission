@@ -19039,18 +19039,37 @@ function computeNavRowFieldAggregates() {
   const byNode = {};
   if (!cols.length) return byNode;
 
+  // This inner loop runs rows × fields times — ~130k iterations on a 13k-row
+  // audit — and is the dominant cost of opening the Visual Sitemap or the
+  // Treemap, so it's written tight rather than idiomatically: indexed loops
+  // instead of per-row/per-field closures, the field names hoisted out of the
+  // def objects, the node's sub-map held in a local instead of re-indexed
+  // three times, and String() skipped for cells that are already strings
+  // (nearly all of them — it was allocating a copy of every cell).
+  const colNames = cols.map(f => f.col);
+  const colKeys = cols.map(f => f.key);
+  const nCols = colNames.length;
+  const rows = state.editedRows || [];
   const counts = {};   // sitemapId -> key -> value -> n
-  (state.editedRows || []).forEach(row => {
-    const id = String(row.Sitemap_ID || '').trim();
-    if (!id) return;
-    counts[id] = counts[id] || {};
-    cols.forEach(f => {
-      const v = String(row[f.col] == null ? '' : row[f.col]).trim();
-      if (!v) return;                       // blanks tell us nothing; skip
-      counts[id][f.key] = counts[id][f.key] || {};
-      counts[id][f.key][v] = (counts[id][f.key][v] || 0) + 1;
-    });
-  });
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const rawId = row.Sitemap_ID;
+    if (!rawId) continue;                   // matches String(x || '') → '' → skip
+    const id = typeof rawId === 'string' ? rawId.trim() : String(rawId).trim();
+    if (!id) continue;
+    let byKey = counts[id];
+    if (!byKey) byKey = counts[id] = {};
+    for (let j = 0; j < nCols; j++) {
+      const raw = row[colNames[j]];
+      if (raw == null) continue;
+      const v = typeof raw === 'string' ? raw.trim() : String(raw).trim();
+      if (!v) continue;                     // blanks tell us nothing; skip
+      const key = colKeys[j];
+      let tally = byKey[key];
+      if (!tally) tally = byKey[key] = {};
+      tally[v] = (tally[v] || 0) + 1;
+    }
+  }
 
   Object.keys(counts).forEach(id => {
     const keys = Object.keys(counts[id]);
