@@ -52,6 +52,12 @@
       cardWidth: 148, cardHeight: 70,
       hGap: 40, vRow: 60, vlGap: 12, vlDrop: 32, vlHgap: 20, pad: 72,
       cardRadius: 5, cardPadX: 7, cardPadY: 5,
+      // Connector styling. 'uniform' + 1.5px is exactly what every existing
+      // project already draws, so an untouched diagram is unchanged.
+      connectorColor: '#9aa0ab',
+      connectorWeight: 'uniform',
+      connectorWidth: 1.5,
+      connectorMaxWidth: 12,
       showNumbers: true,
       showCounts: true,
       colorRules: [],
@@ -270,32 +276,50 @@
     // ════════════════════════════════════════════════════════════════════════
     // Connectors
     // ════════════════════════════════════════════════════════════════════════
-    function addPath(svg, d) {
+    // `w` omitted leaves the CSS default in force, so uniform mode renders
+    // exactly as it always has rather than stamping an equivalent attribute on
+    // every path.
+    function addPath(svg, d, w) {
       var el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       el.setAttribute('d', d);
+      // INLINE STYLE, not a stroke-width attribute: presentation attributes sit
+      // below author CSS in the cascade, so the #connector-svg rule would win
+      // and every line would draw at the base width.
+      if (w != null) el.style.strokeWidth = w;
       svg.appendChild(el);
     }
+    function connWidth(node) {
+      return S.connectorWeight === 'volume' ? LAYOUT.connectorWidthFor(node) : null;
+    }
+    // A parent's connectors are one shared bus, not a line per child: a stub
+    // down from the parent, a span across the siblings, and a drop into each
+    // child. So in volume mode the shared parts carry the WHOLE branch's volume
+    // (the parent's own subtree total) and each drop carries just that child's
+    // — a trunk splitting into proportional branches. Sizing the span by any
+    // one child would be arbitrary, and leaving it at the base width makes the
+    // whole thing read as a rendering glitch rather than as meaning.
     function drawConnectors(svg, node, depth) {
       var k = L();
       var hasKids = node.children && node.children.length && !collapsed.has(node.id);
       if (!hasKids) return;
       var pp = positions[node.id], kids = node.children;
+      var trunk = connWidth(node);
       if (shouldBeVert(node, depth)) {
         var railX = pp.x + k.VL_HGAP * 0.5;
         var pBotX = pp.x + k.CW / 2, pBotY = pp.y + k.CH;
         var elbowY = pBotY + k.VL_DROP * 0.55;
         var lastMidY = positions[kids[kids.length - 1].id].y + k.CH / 2;
-        addPath(svg, 'M ' + pBotX + ' ' + pBotY + ' L ' + pBotX + ' ' + elbowY);
-        if (Math.abs(pBotX - railX) > 1) addPath(svg, 'M ' + pBotX + ' ' + elbowY + ' L ' + railX + ' ' + elbowY);
-        addPath(svg, 'M ' + railX + ' ' + elbowY + ' L ' + railX + ' ' + lastMidY);
-        kids.forEach(function (c) { var cy = positions[c.id].y + k.CH / 2; addPath(svg, 'M ' + railX + ' ' + cy + ' L ' + positions[c.id].x + ' ' + cy); });
+        addPath(svg, 'M ' + pBotX + ' ' + pBotY + ' L ' + pBotX + ' ' + elbowY, trunk);
+        if (Math.abs(pBotX - railX) > 1) addPath(svg, 'M ' + pBotX + ' ' + elbowY + ' L ' + railX + ' ' + elbowY, trunk);
+        addPath(svg, 'M ' + railX + ' ' + elbowY + ' L ' + railX + ' ' + lastMidY, trunk);
+        kids.forEach(function (c) { var cy = positions[c.id].y + k.CH / 2; addPath(svg, 'M ' + railX + ' ' + cy + ' L ' + positions[c.id].x + ' ' + cy, connWidth(c)); });
       } else {
         var px = pp.x + k.CW / 2, py = pp.y + k.CH, midY = py + k.V_ROW / 2;
         var firstX = positions[kids[0].id].x + k.CW / 2;
         var lastX = positions[kids[kids.length - 1].id].x + k.CW / 2;
-        addPath(svg, 'M ' + px + ' ' + py + ' L ' + px + ' ' + midY);
-        if (kids.length > 1) addPath(svg, 'M ' + firstX + ' ' + midY + ' L ' + lastX + ' ' + midY);
-        kids.forEach(function (c) { var cx = positions[c.id].x + k.CW / 2; addPath(svg, 'M ' + cx + ' ' + midY + ' L ' + cx + ' ' + positions[c.id].y); });
+        addPath(svg, 'M ' + px + ' ' + py + ' L ' + px + ' ' + midY, trunk);
+        if (kids.length > 1) addPath(svg, 'M ' + firstX + ' ' + midY + ' L ' + lastX + ' ' + midY, trunk);
+        kids.forEach(function (c) { var cx = positions[c.id].x + k.CW / 2; addPath(svg, 'M ' + cx + ' ' + midY + ' L ' + cx + ' ' + positions[c.id].y, connWidth(c)); });
       }
       kids.forEach(function (c) { drawConnectors(svg, c, depth + 1); });
     }
@@ -326,6 +350,10 @@
       svg.setAttribute('width', canvasW);
       svg.setAttribute('height', canvasH);
       svg.innerHTML = '';
+      // Colour and base width are CSS-level so uniform mode needs no per-path
+      // attributes at all; volume mode overrides width per path on top.
+      svg.style.setProperty('--conn', LAYOUT.connectorColor());
+      svg.style.setProperty('--conn-w', (Number(S.connectorWidth) > 0 ? S.connectorWidth : 1.5));
 
       var cl = document.getElementById('cards-layer');
       cl.innerHTML = '';
@@ -750,10 +778,30 @@
       var rows = NUM_FIELDS.map(function (f) {
         return '<label class="sp-field"><span>' + f[1] + '</span><input type="number" data-key="' + f[0] + '" value="' + S[f[0]] + '"></label>';
       }).join('');
+      var vol = S.connectorWeight === 'volume';
+      var conn =
+        '<div class="sp-subhead">Connectors</div>' +
+        '<div class="sp-grid">' +
+          '<label class="sp-field"><span>Line color</span>' +
+            '<input type="color" data-conn="connectorColor" value="' + (S.connectorColor || '#9aa0ab') + '"></label>' +
+          '<label class="sp-field"><span>Line weight</span>' +
+            '<select data-conn="connectorWeight">' +
+              '<option value="uniform"' + (vol ? '' : ' selected') + '>Uniform</option>' +
+              '<option value="volume"' + (vol ? ' selected' : '') + '>By content volume</option>' +
+            '</select></label>' +
+          '<label class="sp-field"><span>Base width</span>' +
+            '<input type="number" step="0.5" min="0.5" max="24" data-conn-num="connectorWidth" value="' + (S.connectorWidth || 1.5) + '"></label>' +
+          '<label class="sp-field"><span>Max width</span>' +
+            '<input type="number" step="1" min="1" max="24" data-conn-num="connectorMaxWidth" value="' + (S.connectorMaxWidth || 12) + '"' + (vol ? '' : ' disabled') + '></label>' +
+        '</div>' +
+        '<p class="sp-help">' + (vol
+          ? 'Each line\u2019s thickness reflects how many pages sit beneath it. A parent\u2019s shared run carries its whole branch; each drop carries that child\u2019s share. The scale is compressed, so small sections stay legible next to a large one. Menus have no page counts, so they draw at the base width.'
+          : 'Every line draws at the base width. Switch to <b>By content volume</b> to size each line by the pages beneath it.') +
+        ' Both settings carry into the HTML, PDF, PNG and Miro exports.</p>';
       return '<div class="sp-grid">' + rows + '</div>' +
         '<p class="sp-help">Layout dimensions in pixels. Changes preview live. ' +
         'Note for Miro export: corner radius exports as square vs rounded only (Miro has no radius setting), ' +
-        'and inner padding is app-only \u2014 Miro centres shape text itself.</p>';
+        'and inner padding is app-only \u2014 Miro centres shape text itself.</p>' + conn;
     }
     function wireLayoutTab() {
       Array.prototype.forEach.call(document.querySelectorAll('#sp-body input[data-key]'), function (inp) {
@@ -768,6 +816,29 @@
           if (key === 'cardPadY') v = Math.min(v, Math.floor(S.cardHeight / 3));
           if (key === 'cardRadius') v = Math.min(v, Math.floor(Math.min(S.cardWidth, S.cardHeight) / 2));
           if (String(v) !== inp.value) inp.value = String(v);
+          S[key] = v; render(); pushState();
+        });
+      });
+      // Connector controls are wired apart from the dimension fields above:
+      // those parseInt everything, and base width is deliberately fractional
+      // (1.5 is the long-standing default).
+      Array.prototype.forEach.call(document.querySelectorAll('#sp-body [data-conn]'), function (el) {
+        el.addEventListener('input', function () {
+          var key = el.getAttribute('data-conn');
+          S[key] = el.value;
+          // Switching mode enables/disables Max width, so redraw the tab.
+          if (key === 'connectorWeight') { renderSettingsBody(); }
+          render(); pushState();
+        });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('#sp-body [data-conn-num]'), function (inp) {
+        inp.addEventListener('input', function () {
+          var key = inp.getAttribute('data-conn-num');
+          var v = parseFloat(inp.value);
+          if (isNaN(v) || v <= 0) return;
+          // Miro tops out at 24 and cannot draw below 1, so clamping here keeps
+          // the screen and the board describing the same thing.
+          v = Math.min(24, v);
           S[key] = v; render(); pushState();
         });
       });
@@ -1344,7 +1415,7 @@ body{display:flex;flex-direction:column;}
 #viewport.panning{cursor:grabbing;}
 #canvas{position:absolute;top:0;left:0;transform-origin:0 0;}
 #connector-svg{position:absolute;top:0;left:0;pointer-events:none;overflow:visible;}
-#connector-svg path{fill:none;stroke:var(--border-dk);stroke-width:1.5;stroke-linejoin:round;}
+#connector-svg path{fill:none;stroke:var(--conn,var(--border-dk));stroke-width:var(--conn-w,1.5);stroke-linejoin:round;}
 #cards-layer{position:absolute;top:0;left:0;}
 .root-heading{position:absolute;font-size:12px;font-weight:700;color:var(--text-mid);text-transform:uppercase;letter-spacing:.05em;}
 .node-card{position:absolute;width:148px;height:54px;background:var(--card-fill,var(--white));border:var(--card-bw,1.5px) var(--card-bs,solid) var(--card-border,var(--border));border-radius:var(--card-radius,5px);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:var(--card-pad-y,5px) var(--card-pad-x,7px);text-align:center;overflow:hidden;transition:box-shadow .15s,border-color .15s;}
