@@ -14517,6 +14517,37 @@ function openCreateSitemapFromAuditDialog() {
 
   const hasExistingTree = state.navTree && state.navTree.length > 0;
 
+  // Predict the tree BEFORE building it. This is the cheapest place to catch a
+  // flat site: the generator keys top-level sections off the FIRST URL segment,
+  // so the section count is fixed no matter which bucket depth is chosen — and
+  // saying so here prevents 548 sections rather than diagnosing them afterwards.
+  const predict = (includeAll) => {
+    const segs = new Map();
+    let eligible = 0;
+    state.editedRows.forEach(row => {
+      if (String(row['Sitemap_ID'] || '').trim()) return;
+      const url = String(row[state.urlColumn] || '').trim();
+      if (!url) return;
+      if (!includeAll) {
+        const kke = String(row[kkeCol()] || '').trim();
+        if (kke !== 'Keep' && kke !== 'Evolve') return;
+      }
+      const parts = urlPathSegments(url);
+      if (!parts.length) return;
+      eligible++;
+      const k = parts[0];
+      segs.set(k, (segs.get(k) || 0) + 1);
+    });
+    const ranked = Array.from(segs.entries()).sort((a, b) => b[1] - a[1]);
+    return {
+      eligible,
+      sections: segs.size,
+      singles: ranked.filter(e => e[1] === 1).length,
+      artifacts: ranked.filter(e => SITEMAP_ARTIFACT_SLUGS.has(e[0].toLowerCase())),
+      top: ranked.slice(0, 6),
+    };
+  };
+
   const body = document.createElement('div');
   body.style.cssText = 'display:flex;flex-direction:column;gap:14px;font-size:13px;';
   body.innerHTML = `
@@ -14536,6 +14567,7 @@ function openCreateSitemapFromAuditDialog() {
       <input type="checkbox" id="_csa-include-all" />
       Include Kill / Exclude / unreviewed pages too
     </label>
+    <div id="_csa-predict"></div>
     <div style="border-top:1px solid var(--border-light);padding-top:12px;display:flex;flex-direction:column;gap:6px;">
       <div style="color:var(--text-secondary);font-weight:600;">What is this tree for?</div>
       <label style="display:flex;align-items:flex-start;gap:8px;">
@@ -14557,9 +14589,50 @@ function openCreateSitemapFromAuditDialog() {
 
   const countEl = body.querySelector('#_csa-count');
   const includeAllCb = body.querySelector('#_csa-include-all');
+  const predictEl = body.querySelector('#_csa-predict');
+
+  const renderPrediction = () => {
+    const p = predict(includeAllCb.checked);
+    if (!p.eligible) { predictEl.innerHTML = ''; return; }
+    const bad = p.sections >= SITEMAP_MANY_ROOTS;
+    const flatShare = p.sections ? Math.round((p.singles / p.sections) * 100) : 0;
+    predictEl.innerHTML =
+      '<div style="background:' + (bad ? 'var(--kke-evolve-bg)' : 'var(--bg-field-bar)') + ';border:1px solid var(--border);' +
+        'border-left:3px solid ' + (bad ? 'var(--kke-evolve)' : 'var(--border)') + ';border-radius:6px;padding:10px 12px;line-height:1.55;">' +
+        '<div style="' + (bad ? 'font-weight:600;' : 'color:var(--text-secondary);') + '">' +
+          (bad ? '⚠ ' : '') + 'This creates <b>' + p.sections.toLocaleString() + '</b> top-level section' + (p.sections !== 1 ? 's' : '') +
+          (p.singles ? ' — ' + p.singles.toLocaleString() + ' of them holding a single page' : '') + '.' +
+        '</div>' +
+        (bad
+          ? '<div style="color:var(--text-secondary);margin-top:5px;">Most of these pages sit at the root of the URL, so there is no path segment to nest them under. ' +
+            'Bucket depth won’t change this — sections come from the <i>first</i> URL segment, so every depth gives the same ' + p.sections.toLocaleString() + '. ' +
+            'A tree this wide won’t render as a readable diagram.</div>'
+          : '') +
+        (p.artifacts.length
+          ? '<div style="color:var(--text-secondary);margin-top:5px;">Includes crawl artifacts that are not sections: ' +
+            p.artifacts.slice(0, 4).map(a => '<code>/' + escapeHtml(a[0]) + '</code> (' + a[1] + ')').join(', ') +
+            '. Consider triaging those to Kill or Exclude first.</div>'
+          : '') +
+        '<div style="color:var(--text-muted);font-size:11.5px;margin-top:5px;">Biggest: ' +
+          p.top.map(t => escapeHtml(t[0]) + ' (' + t[1] + ')').join(' · ') + '</div>' +
+        (p.singles >= 10
+          ? '<label style="display:flex;align-items:center;gap:8px;margin-top:9px;font-size:12px;">' +
+              '<input type="checkbox" id="_csa-group-singles"' + (bad ? ' checked' : '') + ' />' +
+              'Put single-page sections under one section named' +
+              '<input type="text" id="_csa-group-label" value="Unsorted" style="font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;width:120px;" />' +
+            '</label>'
+          : '') +
+        (flatShare >= 70 && p.sections >= SITEMAP_MANY_ROOTS
+          ? '<div style="color:var(--text-muted);font-size:11.5px;margin-top:6px;">' + flatShare + '% of sections are a single page. That is a finding about the site, not about this tool — the URLs carry no hierarchy to derive one from.</div>'
+          : '') +
+      '</div>';
+  };
+
   includeAllCb.addEventListener('change', () => {
     countEl.textContent = countEligible(includeAllCb.checked);
+    renderPrediction();
   });
+  renderPrediction();
 
   // Asking what the tree is FOR beats warning about what it does: the answer is
   // exactly what decides whether deriving redirects from it makes any sense.
@@ -14595,14 +14668,35 @@ function openCreateSitemapFromAuditDialog() {
   genBtn.addEventListener('click', () => {
     const maxDepth = parseInt(body.querySelector('#_csa-depth').value, 10) || 2;
     const includeAllRows = includeAllCb.checked;
+    const groupCb = body.querySelector('#_csa-group-singles');
+    const groupLabelEl = body.querySelector('#_csa-group-label');
     const result = createSitemapFromAudit({ maxDepth, includeAllRows });
     modal.close();
     if (result.assigned === 0) {
       showToast('No eligible pages found to place', 'error');
       return;
     }
+
+    // Sweep the one-page sections into a bucket in the same step that made them,
+    // so the tree that lands is one you can actually open. Reuses the shape
+    // check's own repair, undo included.
+    let grouped = 0;
+    if (groupCb && groupCb.checked) {
+      const shape = computeSitemapShape({ measure: false });
+      if (shape.singletons.length) {
+        grouped = groupNavRootsUnderBucket(shape.singletons, (groupLabelEl && groupLabelEl.value) || 'Unsorted').moved;
+      }
+    }
+
     const skippedTotal = result.skippedPlaced + result.skippedKke;
-    showToast(`Created ${result.nodesCreated} sitemap node${result.nodesCreated !== 1 ? 's' : ''}, placed ${result.assigned} page${result.assigned !== 1 ? 's' : ''}` + (skippedTotal ? ` — ${skippedTotal} skipped` : ''), 'success');
+    showToast(`Created ${result.nodesCreated} sitemap node${result.nodesCreated !== 1 ? 's' : ''}, placed ${result.assigned} page${result.assigned !== 1 ? 's' : ''}` +
+      (grouped ? ` — ${grouped.toLocaleString()} single-page sections grouped` : '') +
+      (skippedTotal ? ` — ${skippedTotal} skipped` : ''), 'success');
+
+    // If it's still not a shape that will render, say so now rather than at the
+    // moment they click Visual Sitemap and get a wall of specks.
+    const after = computeSitemapShape({ measure: false });
+    if (sitemapShapeNeedsAttention(after)) setTimeout(() => openSitemapShapeCheck(), 400);
   });
 }
 
@@ -15130,7 +15224,10 @@ function setupNavTree() {
   });
 
   // Sitemap generator
-  $('btn-nav-sitemap').addEventListener('click', generateNavSitemap);
+  // Not `addEventListener('click', generateNavSitemap)` — that hands the click
+  // Event in as the options object, so a future option would silently read off
+  // a MouseEvent.
+  $('btn-nav-sitemap').addEventListener('click', () => generateNavSitemap());
   $('btn-nav-treemap').addEventListener('click', openTreemapConfigDialog);
   $('btn-nav-sankey').addEventListener('click', openSankeyConfigDialog);
 
@@ -18791,6 +18888,19 @@ function renderNavEditor() {
     statsEl.appendChild(ph);
   }
 
+  // Shape warning — the tree is structurally fine but won't render as a diagram.
+  // Same treatment as the duplicate-ID warning: state it where the user already
+  // reads counts, and make it the way in to the fix.
+  const shape = computeSitemapShape({ measure: false });
+  if (sitemapShapeNeedsAttention(shape)) {
+    const sw = document.createElement('span');
+    sw.style.cssText = 'margin-left:12px;color:var(--kke-evolve);font-weight:600;cursor:pointer;text-decoration:underline;';
+    sw.textContent = `⚠ ${shape.roots.toLocaleString()} top-level section${shape.roots !== 1 ? 's' : ''} — check shape`;
+    sw.title = 'This tree may not render as a readable diagram. Click to see what is driving it and what would fix it.';
+    sw.addEventListener('click', () => openSitemapShapeCheck());
+    statsEl.appendChild(sw);
+  }
+
   if (dupNavIds.length > 0) {
     const totalNodes = dupNavIds.reduce((s, g) => s + g.nodes.length, 0);
     const warn = document.createElement('span');
@@ -18853,10 +18963,602 @@ function renderNavEditor() {
   updateNavMultiBar();
 }
 
-async function generateNavSitemap() {
+// ════════════════════════════════════════════════════════════════════════════
+// Sitemap shape check
+//
+// "Create Sitemap from Audit" derives hierarchy from URL segments, which only
+// produces an IA if the site HAS one in its URLs. A flat CMS — every article at
+// `/some-long-slug` — yields one top-level section per page, faithfully and
+// uselessly. A real audit produced 548 top-level sections from ~1,900 rows, and
+// the resulting diagram laid out ~38,000 × 105,000 px: not a rendering bug, an
+// IA finding, but one the tool previously reported as a blank screen.
+//
+// So this is not a validator that blocks. It quantifies the shape, names what
+// is driving it, predicts what the diagram will actually look like, and offers
+// the specific repairs — leaving "ship it anyway" available, because a flat
+// site is a legitimate thing to discover and show a client.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** URL path segments that are crawl/CMS plumbing rather than sections of a site.
+ *  These become top-level nodes when a sitemap is derived from URLs, and they
+ *  inflate the tree with pages nobody is migrating. */
+const SITEMAP_ARTIFACT_SLUGS = new Set([
+  'tag', 'tags', 'category', 'categories', 'author', 'authors', 'feed', 'rss',
+  'page', 'comment', 'comments', 'search', 'print', 'amp', 'embed', 'attachment',
+  'wp-content', 'wp-includes', 'wp-json', 'wp-admin', 'xmlrpc.php', 'sitemap.xml',
+]);
+
+/** A sitemap that fits at less than this cannot be read at all — cards are
+ *  sub-pixel and labels never render. Below the second threshold it is legible
+ *  only by zooming and panning, which is a poster, not a diagram. */
+const SITEMAP_FIT_UNUSABLE = 0.10;
+const SITEMAP_FIT_CROWDED  = 0.30;
+
+/** Root count past which a tree is not an information architecture — a large
+ *  university site runs 6–12 top-level sections. Used only where measuring the
+ *  layout would be too expensive to repeat (the nav editor's stats bar renders
+ *  on every edit); anywhere the real number matters, the layout is measured. */
+const SITEMAP_MANY_ROOTS = 40;
+
+/** Run the real box-tree layout over `roots` and report what it would take to
+ *  show it. Returns { canvasW, canvasH, fitScale }.
+ *
+ *  Uses window.SitemapLayout — the same pure geometry module the webview and the
+ *  Miro exporter share — rather than estimating, so the size reported here is
+ *  the size that renders. Verified against a live render of a 1,755-node tree:
+ *  ~38,000 × 105,000 px, identical to the DOM. */
+function measureSitemapLayout(roots, collapsedIds) {
+  // The sitemap view is a 94vw × 80vh modal; its toolbar and padding take a
+  // little more. Close enough that the percentage quoted matches what opens.
+  const vw = Math.max(320, Math.round(window.innerWidth * 0.94) - 64);
+  const vh = Math.max(240, Math.round(window.innerHeight * 0.80) - 110);
+  // fitScale null means "not measured", never "fits fine" — a missing layout
+  // module reporting 100% would make the shape check confidently declare a
+  // 105,000px tree healthy, which is worse than admitting it can't tell.
+  if (!window.SitemapLayout || !roots || !roots.length) return { canvasW: 0, canvasH: 0, fitScale: null };
+  const r = window.SitemapLayout.create({
+    roots,
+    settings: sitemapEffectiveSettings('nav', []),
+    collapsed: collapsedIds || new Set(),
+  }).compute();
+  if (!r.canvasW || !r.canvasH) return { canvasW: 0, canvasH: 0, fitScale: null };
+  return { canvasW: r.canvasW, canvasH: r.canvasH, fitScale: Math.min(1, Math.min(vw / r.canvasW, vh / r.canvasH)) };
+}
+
+function sitemapFitVerdict(fitScale) {
+  if (fitScale == null) return null;   // unmeasured — callers fall back to the root count
+  return fitScale < SITEMAP_FIT_UNUSABLE ? 'unusable'
+       : fitScale < SITEMAP_FIT_CROWDED ? 'crowded' : 'ok';
+}
+
+/** Analyse the shape of the current sitemap tree and predict how it will render.
+ *
+ *  Deliberately runs the REAL layout engine (window.SitemapLayout) over the real
+ *  effective settings rather than estimating: the number this reports is the
+ *  number the view will produce, so "fits at 2%" is a fact the user can act on
+ *  rather than a guess that might be alarmist.
+ *
+ *  Returns { nodes, roots, depthCounts, maxDepth, canvasW, canvasH, fitScale,
+ *            verdict, withSiteRoot, singletons, artifacts, wide }.
+ *  Pure — reads state, writes nothing. */
+function computeSitemapShape(opts = {}) {
+  const tree = state.navTree || [];
+  const all = state.navNodes || [];
+
+  const depthCounts = [];
+  let maxDepth = 0;
+  (function walk(nodes, d) {
+    if (!nodes || !nodes.length) return;
+    depthCounts[d] = (depthCounts[d] || 0) + nodes.length;
+    if (d > maxDepth) maxDepth = d;
+    nodes.forEach(n => walk(n.children, d + 1));
+  })(tree, 0);
+
+  // Every assigned row, Kill and Consolidate included — "is this section one
+  // page" is a question about the tree's shape, not about what survives.
+  const direct = {};
+  (state.editedRows || []).forEach(r => {
+    const id = String(r['Sitemap_ID'] || '').trim();
+    if (id) direct[id] = (direct[id] || 0) + 1;
+  });
+
+  const singletons = [];
+  const artifacts = [];
+  tree.forEach(node => {
+    const kids = (node.children || []).length;
+    const slug = String(node.path || '').trim().toLowerCase();
+    if (SITEMAP_ARTIFACT_SLUGS.has(slug)) { artifacts.push(node); return; }
+    if (!kids && (direct[node.id] || 0) <= 1) singletons.push(node);
+  });
+
+  // A node whose direct children are laid out in one horizontal row past this
+  // many is what turns a canvas very wide. The threshold is the engine's own
+  // vertical-flip rule read backwards: below `vertDepth` children still spread
+  // sideways however many there are.
+  const wide = [];
+  const wideAt = opts.wideThreshold || 12;
+  all.forEach(n => {
+    const kids = (n.children || []).length;
+    if (kids >= wideAt && !(n.collapse === 'Y' || n.collapse === true)) wide.push({ node: n, children: kids });
+  });
+  wide.sort((a, b) => b.children - a.children);
+
+  // Measuring runs the real layout over every node, so callers that only need
+  // the counts (the stats bar, which re-renders on every nav edit) opt out.
+  if (opts.measure === false) {
+    return {
+      nodes: all.length, roots: tree.length, depthCounts, maxDepth,
+      canvasW: 0, canvasH: 0, fitScale: null, verdict: null,
+      withSiteRoot: null, singletons, artifacts, wide,
+    };
+  }
+
+  // Predict the render using the same engine, settings and collapse set the view
+  // will use, so these numbers are not an approximation of the layout.
+  const collapsed = new Set(all.filter(n => n.collapse === 'Y' || n.collapse === true).map(n => n.id));
+  const plain = measureSitemapLayout(tree, collapsed);
+  // Answers the obvious first guess — "did we forget a root node?". Wrapping N
+  // sections under one synthetic site root trades height for width, because the
+  // engine lays a depth-0 node's children out in a single horizontal row.
+  // Measuring it is both cheaper and more honest than asserting an answer.
+  const rooted = measureSitemapLayout([{ id: '__shape_probe__', label: 'Site', root: true, children: tree }], collapsed);
+
+  const fitScale = plain.fitScale;
+  const verdict = sitemapFitVerdict(fitScale);
+
+  return {
+    nodes: all.length,
+    roots: tree.length,
+    depthCounts, maxDepth,
+    canvasW: plain.canvasW, canvasH: plain.canvasH,
+    fitScale, verdict,
+    withSiteRoot: rooted,
+    singletons, artifacts, wide,
+  };
+}
+
+/** True when the tree is worth warning about before opening the diagram.
+ *  Handles an unmeasured shape (opts.measure === false) by falling back to the
+ *  root count rather than silently reporting every tree as fine. */
+function sitemapShapeNeedsAttention(shape) {
+  if (shape.artifacts.length > 0) return true;
+  if (shape.verdict) return shape.verdict === 'unusable';
+  return shape.roots >= SITEMAP_MANY_ROOTS;
+}
+
+/** The recalculate-and-cascade tail every structural nav edit shares. Taken
+ *  verbatim from moveNavNode() so a grouping edit settles the tree exactly the
+ *  way a drag does — numbers, derived paths, references, then the row cascade
+ *  against paths snapshotted before the mutation. */
+function navStructuralRecalc(oldPaths) {
+  recalcAllNumbers();
+  state.navTree.forEach(root => recalcDerivedFields(root));
+  resolveNavReferences();
+  cascadeNavChangesToRows(oldPaths);
+  invalidateNavPageCountsCache();
+  state.navTreeDirty = true;
+  setDirty(true);
+  if (_navEditorOpen) renderNavEditor();
+}
+
+/** Move top-level sections under one new bucket section, as ONE undoable step.
+ *
+ *  Restructuring hundreds of sections by hand is not a thing anyone will do, so
+ *  this has to be reversible — hence its own 'nav-group' undo action rather than
+ *  a bare confirm. The reversal is exact and cheap because the source is always
+ *  known: every moved node came from the top level at a recorded index, and the
+ *  bucket is a node this function created. Following the 'nav-delete' precedent,
+ *  the undo item holds a REAL reference to the bucket rather than a clone —
+ *  cloning nav nodes is a known way to silently drop extension fields. */
+function groupNavRootsUnderBucket(nodes, label) {
+  const targets = (nodes || []).filter(n => n && state.navTree.indexOf(n) !== -1);
+  if (!targets.length) return { moved: 0, bucket: null };
+
+  const oldPaths = snapshotNavPaths();
+  // Indices are read BEFORE any mutation. createBucketNode appends at the end of
+  // the top level, so creating it first does not disturb them.
+  const items = targets
+    .map(n => ({ nodeId: n.id, index: state.navTree.indexOf(n) }))
+    .sort((a, b) => a.index - b.index);
+
+  const bucket = createBucketNode(label || 'Unsorted', null);
+  // Collapsed on creation, and this is not cosmetic. A depth-0 node lays its
+  // children out in ONE horizontal row (the engine's vertical flip needs depth
+  // >= 1), so an expanded bucket of 456 sections made the canvas ~86,000 px wide
+  // — it moved the problem from height to width and improved the fit from 0.7%
+  // to 1.7%, i.e. not at all. Collapsed, the pile is one card the user can open
+  // whenever they want, via the Collapse checkbox this flag is bound to.
+  bucket.collapse = 'Y';
+  applyGroupNavRoots(bucket, targets);
+  navStructuralRecalc(oldPaths);
+
+  pushUndo({ type: 'nav-group', bucketNode: bucket, items });
+  return { moved: targets.length, bucket };
+}
+
+/** Splice `targets` out of the top level and into `bucket`. Shared by the
+ *  forward operation and redo so the two cannot drift. */
+function applyGroupNavRoots(bucket, targets) {
+  targets.forEach(n => {
+    const i = state.navTree.indexOf(n);
+    if (i !== -1) state.navTree.splice(i, 1);
+    bucket.children.push(n);
+    n.parentNumber = bucket.number;
+  });
+}
+
+function undoNavGroup(action) {
+  const bucket = action.bucketNode;
+  if (state.navTree.indexOf(bucket) === -1) {
+    showToast('Can’t undo — that section is no longer at the top level', 'error');
+    return;
+  }
+
+  const oldPaths = snapshotNavPaths();
+  let restored = 0;
+  // Ascending, so each recorded index is still valid as the earlier ones refill.
+  (action.items || []).slice().sort((a, b) => a.index - b.index).forEach(it => {
+    const node = (bucket.children || []).find(c => c.id === it.nodeId);
+    if (!node) return;   // moved elsewhere since — leave it where the user put it
+    bucket.children.splice(bucket.children.indexOf(node), 1);
+    state.navTree.splice(Math.min(it.index, state.navTree.length), 0, node);
+    node.parentNumber = '';
+    restored++;
+  });
+
+  // Only remove the bucket if it is empty again — anything the user added to it
+  // in the meantime is theirs, and taking it with the undo would be a surprise.
+  if (!(bucket.children || []).length) {
+    const idx = state.navTree.indexOf(bucket);
+    if (idx !== -1) state.navTree.splice(idx, 1);
+    const ni = state.navNodes.indexOf(bucket);
+    if (ni !== -1) state.navNodes.splice(ni, 1);
+  }
+
+  navStructuralRecalc(oldPaths);
+  showToast(`Ungrouped ${restored.toLocaleString()} section${restored !== 1 ? 's' : ''}`, 'success');
+}
+
+function redoNavGroup(action) {
+  const bucket = action.bucketNode;
+  // Undo removes the bucket when it empties, which frees its id — and every id
+  // allocator here scans the CURRENT nodes for a max with no persistent
+  // high-water mark, so an unrelated create in the meantime can legitimately
+  // take it. Re-inserting blindly would then produce a duplicate Sitemap_ID.
+  // Same precondition, and the same reasoning, as undoNavDelete's.
+  if (state.navNodes.indexOf(bucket) === -1 && state.navNodes.some(n => n.id === bucket.id)) {
+    showToast('Can’t redo — another section has taken that ID', 'error');
+    return;
+  }
+
+  const oldPaths = snapshotNavPaths();
+  if (state.navNodes.indexOf(bucket) === -1) state.navNodes.push(bucket);
+  if (state.navTree.indexOf(bucket) === -1) state.navTree.push(bucket);
+  const targets = (action.items || [])
+    .map(it => state.navTree.find(n => n.id === it.nodeId))
+    .filter(Boolean);
+  applyGroupNavRoots(bucket, targets);
+  navStructuralRecalc(oldPaths);
+  showToast(`Grouped ${targets.length.toLocaleString()} section${targets.length !== 1 ? 's' : ''}`, 'success');
+}
+
+/** Measure what the tree WOULD look like after the selected repairs, without
+ *  touching it.
+ *
+ *  This is the load-bearing half of the shape check. On the audit that prompted
+ *  all this, every repair applied together still left 88 top-level sections and
+ *  a diagram that fits at 2.4% — so a dialog that simply offered fixes would
+ *  have implied a cure it cannot deliver, and the user would have applied a
+ *  restructure for nothing. Showing the projected outcome first is what turns
+ *  this from a repair tool into a decision tool: sometimes the honest answer is
+ *  "these won't be enough, the tree needs real sections". */
+function projectSitemapShape(shape, keys) {
+  const drop = new Set();
+  if (keys.includes('artifacts')) shape.artifacts.forEach(n => drop.add(n));
+  const grouping = keys.includes('singletons') && shape.singletons.length > 0;
+  if (grouping) shape.singletons.forEach(n => drop.add(n));
+
+  const roots = (state.navTree || []).filter(n => !drop.has(n));
+  const collapsed = new Set((state.navNodes || [])
+    .filter(n => n.collapse === 'Y' || n.collapse === true).map(n => n.id));
+
+  if (grouping) {
+    // The bucket is created collapsed — see groupNavRootsUnderBucket. A pile of
+    // several hundred unsorted pages expanded into one horizontal row is how
+    // grouping made the canvas WIDER than it was tall on the first attempt.
+    const BUCKET = '__proj_bucket__';
+    roots.push({ id: BUCKET, label: 'Unsorted', children: shape.singletons, collapse: 'Y' });
+    collapsed.add(BUCKET);
+  }
+  if (keys.includes('wide')) shape.wide.forEach(w => collapsed.add(w.node.id));
+
+  const m = measureSitemapLayout(roots, collapsed);
+  return { roots: roots.length, canvasW: m.canvasW, canvasH: m.canvasH, fitScale: m.fitScale, verdict: sitemapFitVerdict(m.fitScale) };
+}
+
+const SITEMAP_SHAPE_CATEGORIES = [
+  {
+    key: 'singletons',
+    title: 'Top-level sections holding a single page',
+    why: 'These pages sit at the root of the URL, so there was no path segment to nest them under and each became its own section. They are the main reason the diagram is large.',
+    fix: 'Move them under one section',
+  },
+  {
+    key: 'artifacts',
+    title: 'Crawl artifacts, not sections',
+    why: 'Tag, category, author and wp-* URLs are CMS plumbing rather than parts of the site’s structure. They are rarely migrated and they crowd out the real sections.',
+    fix: 'Remove these sections — their pages stay in the audit, just unplaced',
+  },
+  {
+    key: 'wide',
+    title: 'Sections too wide to lay out',
+    why: 'A node with this many children spreads across a single very long row, which is what makes the canvas wide.',
+    fix: 'Mark them collapsed in the diagram (the Collapse checkbox — reversible any time)',
+  },
+];
+
+/** The decision tool: what shape is this tree, why, and what would change it. */
+function openSitemapShapeCheck(opts = {}) {
+  if (!state.navTree || !state.navTree.length) { showToast('No sitemap loaded', 'error'); return; }
+
+  const shape = computeSitemapShape();
+  const pct = (f) => (f >= 0.1 ? Math.round(f * 100) : (f * 100).toFixed(1)) + '%';
+  const px = (n) => Math.round(n).toLocaleString();
+
+  const body = document.createElement('div');
+  body.style.cssText = 'display:flex;flex-direction:column;gap:14px;max-height:66vh;overflow:auto;';
+
+  const headline = shape.verdict === 'unusable'
+      ? '⚠ This sitemap won’t render as a readable diagram'
+    : shape.verdict === 'crowded'
+      ? 'This sitemap will render, but tightly'
+    : shape.verdict === 'ok'
+      ? 'This sitemap is a good shape for a diagram'
+      : 'Sitemap shape';
+  const accent = shape.verdict === 'unusable' ? 'var(--kke-kill)'
+               : shape.verdict === 'crowded' ? 'var(--kke-evolve)'
+               : shape.verdict === 'ok' ? 'var(--kke-keep)' : 'var(--border)';
+
+  const summary = document.createElement('div');
+  summary.style.cssText = 'padding:10px 12px;border-radius:8px;background:var(--bg-field-bar);border:1px solid var(--border);border-left:3px solid ' + accent + ';flex-shrink:0;line-height:1.55;';
+  summary.innerHTML =
+    '<div style="font-weight:600;font-size:13px;">' + escapeHtml(headline) + '</div>' +
+    '<div style="font-size:12px;color:var(--text-muted);margin-top:4px;">' +
+      escapeHtml(shape.nodes.toLocaleString()) + ' nodes in <b>' + escapeHtml(shape.roots.toLocaleString()) +
+      ' top-level section' + (shape.roots !== 1 ? 's' : '') + '</b>.' +
+      (shape.fitScale == null
+        ? ' The diagram’s size could not be measured.'
+        : ' The Visual Sitemap lays this out at ' + px(shape.canvasW) + ' × ' + px(shape.canvasH) +
+          ' px, which fits the window at <b>' + pct(shape.fitScale) + '</b>' +
+          (shape.fitScale < SITEMAP_FIT_UNUSABLE ? ' — a card is under three pixels wide at that zoom.' : '.')) +
+    '</div>' +
+    '<div style="font-size:11.5px;color:var(--text-muted);margin-top:5px;">' +
+      shape.depthCounts.map((c, d) => (d === 0 ? 'Top level' : 'Level ' + d) + ' <b>' + c.toLocaleString() + '</b>').join(' · ') +
+    '</div>';
+  body.appendChild(summary);
+
+  // "Did we forget a site root?" is the obvious first guess, so answer it with a
+  // measurement rather than an assertion — and let the measurement decide what
+  // the answer is, since a root box genuinely does trade height for width.
+  if ((shape.verdict === 'unusable' || shape.verdict === 'crowded') && shape.roots > 1 &&
+      shape.withSiteRoot && shape.withSiteRoot.fitScale != null) {
+    const rootedHelps = shape.withSiteRoot.fitScale >= SITEMAP_FIT_CROWDED;
+    const note = document.createElement('div');
+    note.style.cssText = 'font-size:12px;color:var(--text-muted);line-height:1.55;padding-left:2px;';
+    note.innerHTML = 'Adding a single site-root box above these sections lays the tree out at ' +
+      px(shape.withSiteRoot.canvasW) + ' × ' + px(shape.withSiteRoot.canvasH) + ' px instead (fits at ' +
+      pct(shape.withSiteRoot.fitScale) + ') — the engine puts a root’s children in one row, so the height becomes width. ' +
+      (rootedHelps
+        ? 'That is enough to make it readable: turn it on in <b>Project Settings → Identity</b>.'
+        : 'Not enough to make it readable here. What shrinks the diagram is <b>fewer top-level sections</b>.');
+    body.appendChild(note);
+  }
+
+  const cats = SITEMAP_SHAPE_CATEGORIES
+    .map(c => Object.assign({}, c, { nodes: shape[c.key] || [] }))
+    .filter(c => c.nodes.length);
+
+  if (!cats.length) {
+    const ok = document.createElement('div');
+    ok.style.cssText = 'font-size:12px;color:var(--text-muted);';
+    ok.textContent = 'Nothing to repair — no single-page sections, no crawl artifacts, no over-wide branches.';
+    body.appendChild(ok);
+  }
+
+  const pagesOf = (() => {
+    const direct = {};
+    (state.editedRows || []).forEach(r => {
+      const id = String(r['Sitemap_ID'] || '').trim();
+      if (id) direct[id] = (direct[id] || 0) + 1;
+    });
+    const totals = {};
+    const rec = (node) => {
+      let t = direct[node.id] || 0;
+      (node.children || []).forEach(c => { t += rec(c); });
+      totals[node.id] = t;
+      return t;
+    };
+    (state.navTree || []).forEach(rec);
+    return totals;
+  })();
+
+  cats.forEach(c => {
+    const block = document.createElement('div');
+    block.style.cssText = 'border-left:3px solid var(--kke-evolve);padding-left:10px;';
+
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:baseline;gap:6px;';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = c.key !== 'wide';   // collapsing is cosmetic; don't opt people in
+    cb.className = 'ssc-cat';
+    cb.dataset.key = c.key;
+    cb.style.cssText = 'margin:0;flex-shrink:0;position:relative;top:1px;';
+    head.appendChild(cb);
+    const label = document.createElement('label');
+    label.style.cssText = 'font-weight:600;font-size:13px;cursor:pointer;';
+    label.textContent = c.title + ' — ' + c.nodes.length.toLocaleString();
+    // Setting .checked in script does not fire `change`, and the projection
+    // below listens for it — dispatch so clicking the label updates it too.
+    label.addEventListener('click', () => {
+      cb.checked = !cb.checked;
+      cb.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    head.appendChild(label);
+    block.appendChild(head);
+
+    const why = document.createElement('div');
+    why.style.cssText = 'font-size:12px;color:var(--text-muted);margin:3px 0 5px;line-height:1.5;';
+    why.textContent = c.why + ' Fix: ' + c.fix + '.';
+    block.appendChild(why);
+
+    if (c.key === 'singletons') {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;';
+      row.innerHTML = '<label style="font-size:12px;color:var(--text-secondary);" for="_ssc-bucket">Section name</label>' +
+        '<input id="_ssc-bucket" type="text" value="Unsorted" style="font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;width:180px;" />';
+      block.appendChild(row);
+    }
+
+    const list = document.createElement('div');
+    list.style.cssText = 'font-size:11.5px;font-family:var(--font-mono);line-height:1.5;max-height:150px;overflow:auto;border:1px solid var(--border-light);border-radius:4px;padding:6px 8px;';
+    list.innerHTML = c.nodes.slice(0, 400).map(entry => {
+      // The `wide` bucket holds {node, children:N} wrappers; the others hold raw
+      // nav nodes — which carry their own `children` ARRAY, so the wrapper has
+      // to be detected by `.node`, not by the presence of `children`.
+      const isWrapped = !!entry.node;
+      const n = isWrapped ? entry.node : entry;
+      const pages = pagesOf[n.id] || 0;
+      const detail = isWrapped
+        ? entry.children + ' children'
+        : pages + ' page' + (pages !== 1 ? 's' : '');
+      return '<div style="word-break:break-all;">' + escapeHtml(n.label || n.id) +
+        ' <span style="color:var(--text-muted);">/' + escapeHtml(n.path || '') + ' · ' + escapeHtml(detail) + '</span></div>';
+    }).join('') + (c.nodes.length > 400 ? '<div style="color:var(--text-muted);">… and ' + (c.nodes.length - 400).toLocaleString() + ' more</div>' : '');
+    block.appendChild(list);
+    body.appendChild(block);
+  });
+
+  // Live projection of the ticked repairs. The point is to let someone decide
+  // BEFORE restructuring hundreds of sections whether it will actually buy them
+  // a diagram — on a genuinely flat site it does not, and saying so is more
+  // useful than a fix that quietly disappoints.
+  let projEl = null;
+  if (cats.length) {
+    projEl = document.createElement('div');
+    projEl.className = 'ssc-projection';
+    projEl.style.cssText = 'padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-field-bar);font-size:12px;line-height:1.55;flex-shrink:0;';
+    body.appendChild(projEl);
+  }
+
+  const refreshProjection = (scope) => {
+    if (!projEl) return;
+    const keys = Array.from(scope.querySelectorAll('.ssc-cat')).filter(x => x.checked).map(x => x.dataset.key);
+    if (!keys.length) {
+      projEl.innerHTML = '<span style="color:var(--text-muted);">Nothing selected — the sitemap stays as it is.</span>';
+      return;
+    }
+    const p = projectSitemapShape(shape, keys);
+    const enough = p.verdict !== 'unusable';
+    projEl.innerHTML =
+      '<div style="font-weight:600;">After these fixes: ' + p.roots.toLocaleString() + ' top-level section' + (p.roots !== 1 ? 's' : '') +
+        (p.fitScale == null ? '' : ', ' + px(p.canvasW) + ' × ' + px(p.canvasH) + ' px, fits at ' + pct(p.fitScale)) + '</div>' +
+      '<div style="color:var(--text-muted);margin-top:3px;">' +
+        (p.fitScale == null
+          ? 'The resulting diagram size could not be measured.'
+          : enough
+          ? 'That renders as a diagram you can read.'
+          : 'Still not readable. ' + p.roots.toLocaleString() + ' top-level sections is more than a diagram can carry — the rest is judgement: ' +
+            'group these into the handful of real sections the new site will have, using the Sitemap editor’s drag-and-drop. ' +
+            'You can also open it as-is and treat the sprawl itself as the finding.') +
+      '</div>';
+  };
+
+  body.querySelectorAll('.ssc-cat').forEach(cb => {
+    cb.addEventListener('change', () => refreshProjection(body));
+  });
+  refreshProjection(body);
+
+  const modal = openModal({
+    title: 'Sitemap shape check',
+    body,
+    width: 720,
+    buttons: [
+      { label: 'Open the diagram anyway', variant: 'ghost', onClick: () => { setTimeout(() => generateNavSitemap({ skipShapeCheck: true }), 0); } },
+      { label: cats.length ? 'Cancel' : 'Close', variant: 'ghost' },
+      ...(cats.length ? [{
+        label: 'Apply selected', variant: 'primary', primary: true, closeOnClick: false,
+        onClick: (api) => {
+          const keys = Array.from(api.dialog.querySelectorAll('.ssc-cat')).filter(x => x.checked).map(x => x.dataset.key);
+          const bucketEl = api.dialog.querySelector('#_ssc-bucket');
+          const bucketLabel = bucketEl ? bucketEl.value : 'Unsorted';
+          api.close();
+          applySitemapShapeFixes(cats.filter(c => keys.includes(c.key)), bucketLabel, opts.onDone);
+        },
+      }] : []),
+    ],
+  });
+
+  // Left utility, spacer, Cancel, primary — the documented footer layout
+  // (UI_STANDARDS §4). openModal appends buttons in array order into a
+  // flex-end footer, so the spacer has to be inserted afterwards.
+  if (modal.footer && modal.footer.children.length > 1) {
+    const spacer = document.createElement('span');
+    spacer.style.flex = '1';
+    modal.footer.insertBefore(spacer, modal.footer.children[1]);
+  }
+  return modal;
+}
+
+/** Run the chosen repairs, most-additive first and the destructive one last
+ *  (it carries its own confirm, and running it after the moves means the counts
+ *  it quotes are the ones the user just saw). */
+async function applySitemapShapeFixes(cats, bucketLabel, onDone) {
+  const done = [];
+
+  const singles = cats.find(c => c.key === 'singletons');
+  if (singles && singles.nodes.length) {
+    const r = groupNavRootsUnderBucket(singles.nodes, bucketLabel);
+    if (r.moved) done.push(`grouped ${r.moved.toLocaleString()} section${r.moved !== 1 ? 's' : ''} under "${r.bucket.label}"`);
+  }
+
+  const wide = cats.find(c => c.key === 'wide');
+  if (wide && wide.nodes.length) {
+    wide.nodes.forEach(e => { e.node.collapse = 'Y'; });
+    state.navTreeDirty = true;
+    setDirty(true);
+    if (_navEditorOpen) renderNavEditor();
+    done.push(`collapsed ${wide.nodes.length} wide section${wide.nodes.length !== 1 ? 's' : ''}`);
+  }
+
+  const arts = cats.find(c => c.key === 'artifacts');
+  if (arts && arts.nodes.length) {
+    const before = state.navNodes.length;
+    await bulkDeleteNavNodes(arts.nodes.map(n => n.id));
+    const removed = before - state.navNodes.length;
+    if (removed > 0) done.push(`removed ${removed.toLocaleString()} artifact node${removed !== 1 ? 's' : ''}`);
+  }
+
+  if (!done.length) { showToast('Nothing changed', 'info'); return; }
+
+  const after = computeSitemapShape();
+  showToast(`Sitemap shape: ${done.join(', ')} — now ${after.roots.toLocaleString()} top-level section${after.roots !== 1 ? 's' : ''}`, 'success');
+  if (typeof onDone === 'function') onDone(after);
+}
+
+async function generateNavSitemap(sitemapOpts = {}) {
   if (!state.navTree || state.navTree.length === 0) {
     showToast('No sitemap loaded', 'error');
     return;
+  }
+
+  // Preflight. A tree that cannot render legibly used to open as an empty
+  // viewport, which reads as "the sitemap was never built" — so say what the
+  // shape is first. The check offers to open it regardless: a flat site is a
+  // real finding, and being told what you're looking at is the whole fix.
+  if (!sitemapOpts.skipShapeCheck) {
+    const shape = computeSitemapShape();
+    if (sitemapShapeNeedsAttention(shape)) { openSitemapShapeCheck(); return; }
   }
 
   invalidateNavPageCountsCache();
@@ -23535,6 +24237,11 @@ function applyUndoAction(action, isUndo) {
   if (action.type === 'nav-delete') {
     if (isUndo) undoNavDelete(action);
     else redoNavDelete(action);
+    return;
+  }
+  if (action.type === 'nav-group') {
+    if (isUndo) undoNavGroup(action);
+    else redoNavGroup(action);
     return;
   }
   if (action.type === 'bulk-edit') {
