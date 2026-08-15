@@ -608,7 +608,7 @@
         var MAX = 80;
         var raw = Math.max(-MAX, Math.min(MAX, e.deltaY));
         var factor = 1 + (raw / MAX) * 0.18;
-        var ns = Math.min(3, Math.max(0.10, scale * factor));
+        var ns = Math.min(3, Math.max(zoomFloor(), scale * factor));
         tx = mx - (mx - tx) * (ns / scale);
         ty = my - (my - ty) * (ns / scale);
         scale = ns; applyXform();
@@ -625,12 +625,39 @@
       });
       viewport.addEventListener('pointerup', function () { panning = false; viewport.classList.remove('panning'); });
     }
+    // A tree with hundreds of top-level sections (what a flat site produces when
+    // a sitemap is derived from URL segments) lays out tens of thousands of
+    // pixels wide and a hundred thousand tall. The old floor here was 0.10, and
+    // it did not merely make such a tree small — it made it INVISIBLE: the fit
+    // was clamped UP to 0.10 and the canvas then centred, so on a canvas ten
+    // times wider than the viewport every card sat off the left edge and the
+    // view opened on empty space. Measured on a real 1,755-node / 548-root
+    // audit: 0 of 1,755 cards inside the viewport, which reads as "the sitemap
+    // never got built".
+    //
+    // Two fixes, and both are needed. The floor drops far enough that even an
+    // absurd canvas still resolves to a visible texture you can zoom into, and
+    // centring is applied PER AXIS only where the content actually fits —
+    // centring an axis that overflows is what pushed the content away. (The
+    // y-axis already had this via its Math.max; x never did.)
+    var MIN_FIT = 0.02;
+    function fitScaleFor(vw, vh, margin) {
+      return Math.min(1, Math.min((vw - margin * 2) / canvasW, (vh - margin * 2) / canvasH));
+    }
+    // Manual zoom-out stops at 10% normally, but must never stop ABOVE what Fit
+    // shows, or a tree that fits at 2% could not be zoomed back out to it.
+    function zoomFloor() {
+      var viewport = document.getElementById('viewport');
+      if (!viewport) return 0.10;
+      return Math.max(MIN_FIT, Math.min(0.10, fitScaleFor(viewport.clientWidth, viewport.clientHeight, 32)));
+    }
     function fitToScreen() {
       var viewport = document.getElementById('viewport');
       var vw = viewport.clientWidth, vh = viewport.clientHeight, margin = 32;
-      var s = Math.min((vw - margin * 2) / canvasW, (vh - margin * 2) / canvasH);
-      scale = Math.max(0.10, Math.min(1, s));
-      tx = (vw - canvasW * scale) / 2; ty = Math.max(margin, (vh - canvasH * scale) / 2);
+      scale = Math.max(MIN_FIT, fitScaleFor(vw, vh, margin));
+      var w = canvasW * scale, h = canvasH * scale;
+      tx = w <= vw - margin * 2 ? (vw - w) / 2 : margin;
+      ty = h <= vh - margin * 2 ? (vh - h) / 2 : margin;
       applyXform();
     }
 

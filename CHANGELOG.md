@@ -6,6 +6,22 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Visual Sitemap no longer opens on an empty screen.** A very large tree — the kind "Create Sitemap from Audit" produces from a flat site, where every page sits at the URL root and becomes its own top-level section — laid out tens of thousands of pixels wide and over a hundred thousand tall. Fit-to-screen refused to zoom out past 10% and then centred the canvas, which on a canvas ten times wider than the window pushed every card off the left edge: on a real 1,755-node audit, **none** of the 1,755 cards were on screen, so the diagram looked as though it had never been built. Fit now zooms out as far as it needs to, and only centres an axis when the content actually fits it, so you always land on the diagram. Scrolling out reaches the same zoom Fit uses, rather than stopping above it.
+
+### Added
+
+- **Sitemap shape check.** A sitemap can be structurally perfect and still be undrawable, and the app used to discover that for you only by rendering a wall of specks. The check names what's driving the size and shows what fixing it would buy — *before* you commit to the fix.
+
+  It reports how many top-level sections you have, the exact size the diagram will be, and the zoom it will open at (measured with the real layout engine, so the numbers are the ones you'll get). Then it groups the causes: **top-level sections holding a single page** — the signature of a flat site with no hierarchy in its URLs; **crawl artifacts** like `/tag`, `/category` and `/wp-content` that are CMS plumbing rather than parts of the site; and **sections too wide to lay out**. Each can be repaired in place — moved under one section, removed (the pages stay in the audit, just unplaced), or marked collapsed.
+
+  As you tick the repairs it shows the tree you'd end up with. That matters because on a genuinely flat site the honest answer is that they aren't enough — the tree needs real sections, which is judgement, not a button — and it's better to know that before restructuring hundreds of sections than after. Opening the diagram as-is is always offered: a site with no information architecture is a legitimate finding to show a client. Reached from the ⚠ in the Sitemap toolbar's stats line, and offered automatically when you open the Visual Sitemap on a tree that won't render.
+
+- **Create Sitemap from Audit says what it's about to build.** The dialog now predicts the tree before you generate it: how many top-level sections you'll get, how many of those hold a single page, and which crawl artifacts are in the mix. It also explains something the tool can't fix for you — sections come from the *first* URL segment, so bucket depth won't reduce them. When the result would be unusable it offers to sweep the single-page sections into one named section as part of the same step, so what lands is a tree you can actually open.
+
+- **Undo covers grouping sitemap sections.** Moving sections under a bucket — from either the shape check or Create Sitemap from Audit — reverses with a single Cmd+Z, however many sections moved.
+
 ## [2.16.1] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Changed
