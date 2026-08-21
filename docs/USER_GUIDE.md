@@ -235,7 +235,7 @@ A list of your named filter bundles, each with **Apply** and **Delete**. A bundl
 
 ### Set your personal preferences
 
-Open App Settings from the **⚙** button (or **File → App Settings**); the subtitle confirms it applies to you across all files.
+Open App Settings from the **⚙** button (or **Transmission → Preferences…**, **Cmd+,** — under **File** on Windows and Linux); the subtitle confirms it applies to you across all files.
 
 - **Appearance** — a **System / Light / Dark** segmented toggle at the top of the dialog. **System** (the default) follows your macOS appearance; **Light** and **Dark** pin the app regardless of the OS. This is a per-user preference. *(The embedded browser always renders crawled pages as designed — it is never dark-mode-adapted — so the pages you review look exactly as they do live.)*
 - **Auto-advance** — jump to the next row after you set a KKE call (on by default).
@@ -1035,7 +1035,7 @@ Work down the conflict list, picking the right call for each — or use the bulk
 
 ### A related tool: Import / Merge
 
-**File → Import/Merge** is the gentler cousin of a full auditor merge: it matches by URL and fills **only empty** fields, leaving your existing decisions untouched. Multi-sheet files offer a sheet picker, column checkboxes show **exists** / **new** badges, and an **"Add new URLs not in current file"** option (on by default) appends rows your file is missing.
+**File → Import/Merge Audit Decisions…** is the gentler cousin of a full auditor merge: it matches by URL and fills **only empty** fields, leaving your existing decisions untouched. Multi-sheet files offer a sheet picker, column checkboxes show **exists** / **new** badges, and an **"Add new URLs not in current file"** option (on by default) appends rows your file is missing.
 
 > **Good to know — the change log.** Every change to a KKE, SME Decision, or Final KKE is recorded automatically and written to a hidden `KKE_ChangeLog` sheet on save (Timestamp, Row, URL, Field, Old Value, New Value). It accumulates across sessions, giving the project a complete decision history — see [Pre-flight & Hand-off](#18-pre-flight--hand-off).
 
@@ -1184,7 +1184,7 @@ Select a row and click **Sitemap** to open the picker. Cascading dropdowns drill
 
 #### The node editor
 
-Double-click a label (or click **✎**) for the full editor. It shows read-only context (number, ID, parent, breadcrumb, computed path, page count) and editable Label, Slug, In Menu, External URL, **URL override**, **Phase**, **Notes**, and **Node type** — plus the **Build / Write / Migrate** sections covered in [Build & Direction](#14-build--direction). The breadcrumb and path preview live as you type; **Esc** cancels and **Cmd/Ctrl+Enter** saves; and the **← / →** arrows walk the tree in order (saving first) so you can annotate node after node. A node with notes shows a small `·` and reveals them on hover.
+Double-click a label (or click **✎**) for the full editor. It shows read-only context (number, ID, parent, breadcrumb, computed path, page count) and editable Label, Slug, **Collapse** (folds the node's subtree in the Visual Sitemap), External URL, **URL override**, **Phase**, **Notes**, and **Node type** — plus the **Build / Write / Migrate** sections covered in [Build & Direction](#14-build--direction). The breadcrumb and path preview live as you type; **Esc** cancels and **Cmd/Ctrl+Enter** saves; and the **← / →** arrows walk the tree in order (saving first) so you can annotate node after node. A node with notes shows a small `·` and reveals them on hover.
 
 > **URL override — when the address shouldn't follow the menu.** Normally a page's URL is built from its place in the tree (`Company > Careers` → `/company/careers`). Sometimes you want the page grouped one way in the navigation but published at a different address — e.g. listed under *Company* in the menu but living at `/careers`. Type that path into **URL override** and the page's URL ignores its ancestors. It's an absolute path from the site root, and it **re-roots the page's sub-pages too**: an override of `careers` on a section makes a child *Open Roles* resolve to `/careers/open-roles` regardless of where the section sits in the menu. Leave it blank to follow the hierarchy as before. Overridden rows show a `↪` next to their path in the tree, and the stats bar tallies how many overrides are in play. Everything downstream — redirects, the Migration Tracker's target URLs, consolidation targets — uses the overridden address automatically.
 
