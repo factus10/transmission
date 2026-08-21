@@ -52,6 +52,12 @@ try {
 const UPDATE_MANIFEST_URL = 'https://factus10.github.io/transmission-updates/update-manifest.json';
 const UPDATE_TRUSTED_HOSTS = new Set(['factus10.github.io', 'github.com']);
 
+// The user documentation, published to the same public Pages site from this
+// repo's docs/ via scripts/generate-docs-site.js. Opened in the user's browser
+// rather than a BrowserWindow like the changelog: this is a multi-page site
+// people will want to search, bookmark and keep open beside the app.
+const DOCS_SITE_URL = 'https://factus10.github.io/transmission-updates/docs/';
+
 // ─── Audit columns injected if not present in the xlsx ───────────────────────
 // The actual injection list lives in injectAndOrderAuditColumns()'s inline
 // auditCols array below — this is the one source of truth for which columns
@@ -519,6 +525,7 @@ function buildMenu() {
         { label: 'Keyboard Shortcuts', accelerator: 'CmdOrCtrl+/', click: send('menu-shortcuts') },
         { type: 'separator' },
         { label: 'Transmission Help', click: () => openHelpWindow() },
+        { label: 'Online Documentation', click: () => openDocsSite() },
         { type: 'separator' },
         { label: 'Check for Updates…', click: send('menu-check-updates') }
       ]
@@ -2504,6 +2511,14 @@ function isTrustedUpdateUrl(url) {
     const u = new URL(url);
     return u.protocol === 'https:' && UPDATE_TRUSTED_HOSTS.has(u.hostname);
   } catch (e) { return false; }
+}
+
+// Constant, not manifest-supplied — the trust check is a floor that keeps a
+// later edit (or a URL that starts coming from config) from pointing a menu
+// item at an arbitrary host.
+function openDocsSite() {
+  if (!isTrustedUpdateUrl(DOCS_SITE_URL)) return;
+  shell.openExternal(DOCS_SITE_URL);
 }
 
 async function performUpdateCheck() {
