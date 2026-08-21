@@ -62,4 +62,4 @@ Two sidebar special filters help you work the list: **SME conflicts** and **SME 
 
 ---
 
-*Next: **Multi-auditor Merge** — combining work from several auditors. See also `USER_GUIDE.md`.*
+*Next: **Multi-auditor Merge** — combining work from several auditors. See also [the User Guide](../USER_GUIDE.md).*

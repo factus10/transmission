@@ -1,20 +1,20 @@
 ---
-title: Content Practice Wiki — Index
+title: Content Audit Method — Index
 status: working
 last-reviewed: 2026-04-28
 ---
 
-# Content Practice Wiki
+# Content Audit Method
 
-Internal reference for content audit, migration, and strategy work. A living set of pages that name our concepts, show their relationships, and capture lessons from real engagements.
+A recommended method for the practice Transmission supports. The app implements the mechanics of a content audit — the decisions, the columns, the reports — but an audit is a piece of consulting work, and the mechanics only pay off inside a method. These pages carry that method: what the concepts mean, how they relate, and what recurring situations look like when you hit them.
 
-> **For Claude and David:** this wiki is the working memory. When in doubt about how a concept is defined, link to the page here rather than re-deriving it. When you encounter a new pattern in a real engagement, write it up here so the next engagement starts ahead.
+Nothing here is enforced by the software, and none of it is the only way to run an audit. Treat it as a starting position that has survived real engagements — adopt it, argue with it, or tailor it per client. The [Running an Audit](../RUNNING_AN_AUDIT.md) guide is the same method expressed as a sequence of steps in the app; this is the reasoning underneath it.
 
 ---
 
 ## How to navigate
 
-The wiki organizes around three axes:
+These pages organize around three axes:
 
 - **Concepts** — the vocabulary we use (KKE, dispositions, scope, authority, etc.)
 - **Patterns** — recurring situations and how to recognize them
@@ -82,44 +82,3 @@ Each page is self-contained but cross-linked. Most pages end with a **See also**
         │  Governance        │
         └────────────────────┘
 ```
-
----
-
-## Conventions
-
-### File format
-
-- Markdown only. Plain `[text](./relative-path.md)` links so this works in GitHub, Obsidian, Notion (paste), and raw `cat`.
-- Top-of-file front-matter (`---` block) with `title`, `status`, `last-reviewed`. Keep it minimal so non-front-matter readers don't choke.
-- Each page ends with a **See also** section listing related pages.
-
-### Status values
-
-- `working` — actively being edited; expect revisions
-- `stable` — content is solid; minor updates only
-- `archived` — kept for history but no longer current
-- `stub` — placeholder; needs writing
-
-### When to add a new page
-
-- A concept gets used in two or more discussions and we keep re-deriving its definition → make a page.
-- A pattern recurs across engagements → write it up under Patterns.
-- A practice has steps that someone other than the originator might run → write the procedure.
-
-### When NOT to add a new page
-
-- One-off observations belong in engagement notes, not the wiki.
-- If the topic fits cleanly inside an existing page, expand the existing page.
-- Project-specific details (a particular client's quirks) don't belong here — they belong in that project's docs.
-
-### Tone
-
-- Direct. We're writing for our colleagues, not pitching to clients.
-- Examples over abstractions. If you can't show it, you don't understand it yet.
-- Honest about tradeoffs. "Here's why we don't do X" is as useful as "here's how we do Y."
-
----
-
-## See also
-
-This wiki lives alongside (and was seeded by) the [Content Audit Framework critique](../CONTENT_AUDIT_FRAMEWORK.md) — a longer analytical document that argues for the CAD framework. Read that first if you want the full reasoning; use the wiki for working reference.

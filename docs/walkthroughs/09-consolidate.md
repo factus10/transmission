@@ -55,4 +55,4 @@ Resolve both before shipping — every consolidated page must point at a live su
 
 ---
 
-*See also: the **Redirects** walkthrough (how targets resolve to URLs) and `USER_GUIDE.md`.*
+*See also: the **Redirects** walkthrough (how targets resolve to URLs) and [the User Guide](../USER_GUIDE.md).*

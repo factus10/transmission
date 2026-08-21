@@ -5,7 +5,7 @@
 > order to do things in, and the order now matters. This page is the
 > five-minute tour of the core loop.
 
-**Your first content audit in about 10 minutes.** This is the short version; the full manual is `USER_GUIDE.md`.
+**Your first content audit in about 10 minutes.** This is the short version; the full manual is [the User Guide](./USER_GUIDE.md).
 
 > KKE = **Keep · Kill · Evolve** (+ **Consolidate** and **Exclude**). For every page on a site, you make one call.
 
