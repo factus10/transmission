@@ -286,4 +286,4 @@ This is what feeds **Reports → Migration Direction Brief…**, which prints on
 - [User Guide](./USER_GUIDE.md) — the full reference, feature by feature
 - [Quick Start](./QUICK_START.md) — the five-minute version of the core loop
 - [Content Audit Framework](./CONTENT_AUDIT_FRAMEWORK.md) — the thinking behind KKE
-- [Methodology wiki](./methodology/README.md) — practice-level guidance
+- [Content Audit Method](./methodology/README.md) — the reasoning underneath this sequence

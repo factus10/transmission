@@ -32,7 +32,7 @@ The **KKE filter** (toolbar row 2) is a **checkbox dropdown** — check **multip
 
 - **Unreviewed** — no KKE call yet.
 - **Flagged** — rows you marked with **F**.
-- **Duplicates**, **SME conflicts / pending**, **Consolidate: no target / dead target**, **Shared nav**, **Needs placement**, **Suggested disagrees**, **Suggested ≠ your call**.
+- **Duplicates**, **SME conflicts / pending**, **Consolidate (no target)** / **Consolidate → Kill/Exclude target**, **Shared sitemap node (2+ pages)**, **Needs placement**, **Suggested disagrees**, **Suggested ≠ your call**.
 
 Use the **Group** dropdown alongside it to scope to one content group.
 
