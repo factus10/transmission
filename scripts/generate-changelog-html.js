@@ -28,11 +28,26 @@ const { marked } = require('marked');
 const mdPath = process.argv[2] || path.join(__dirname, '..', 'CHANGELOG.md');
 const outPath = process.argv[3] || path.join(__dirname, '..', 'dist', 'changelog.html');
 
+// CHANGELOG.md keeps an empty `## [Unreleased]` heading between releases, so
+// entries have somewhere to land. On the published page — which is what the
+// app's What's New button opens — that renders as an empty section above the
+// newest release, which reads as though something is missing. Drop it when it
+// has no content; leave it alone the moment it does, because then it is real
+// news about what is coming.
+//
+// Done on the MARKDOWN, not the HTML: an empty section by definition contains
+// no ### headings, so removing it cannot disturb marked's "-1"/"-2" dedupe of
+// the repeated Added/Fixed anchors below it. Every other id on the page stays
+// exactly as it was.
+function dropEmptyUnreleased(md) {
+  return md.replace(/^## \[Unreleased\]\s*\n\s*(?=^## )/ms, '');
+}
+
 // marked's DEFAULT options, deliberately. Its own slugger produced every anchor
 // on the live page (including the repeat-heading dedupe); substituting a
 // hand-rolled one silently rewrites every id on the page and breaks any link
 // anyone has kept to a specific release.
-const body = marked(fs.readFileSync(mdPath, 'utf8'), { gfm: true });
+const body = marked(dropEmptyUnreleased(fs.readFileSync(mdPath, 'utf8')), { gfm: true });
 
 // Standalone by necessity: GitHub Pages serves this file on its own, and the
 // app opens it in a bare BrowserWindow with no stylesheet of its own.
