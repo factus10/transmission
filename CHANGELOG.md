@@ -6,9 +6,12 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.17.1] — "Please, Please, Please, Let Me Get What I Want"
+
 ### Fixed
 
 - **What's New always shows the current changelog.** The window could render a copy up to ten minutes old — which is exactly the wrong ten minutes, since you reach it from a prompt that has just told you a new version exists, and the cached page describes the *previous* release. It now fetches fresh every time you open it.
+- **The changelog page opens on the newest release.** It used to lead with an empty "Unreleased" section, which read as though something had failed to load. (This one was already live before this release — the page is generated and published separately from the app.)
 
 ## [2.17.0] — "Please, Please, Please, Let Me Get What I Want"
 
