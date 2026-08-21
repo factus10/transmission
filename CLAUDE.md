@@ -48,7 +48,7 @@ Note: **Table View** (Cmd+T), **Sitemap** (Cmd+Shift+T), and **Redirect Editor**
 - **Migration** — Pre-Handoff Check · Migration Tracker · Export Redirect Map (CSV) · Redirect Chain Check · Redirect Health Check
 - **Reports** — Executive Summary · Content Inventory by Section · SME Review Status · Menu Report · Sitemap Coverage Report · Component Inventory · Content Type Crosswalk · Audience Coverage · Audience × Section Matrix · Audience Debt · Site Consolidation Overview · Cross-Site Duplicate Overlap · Migration Direction Brief · Migration Checklist · Net New Content Brief · Redirect Map Report
 - **SME** — Export / Import / Compare KKE vs SME / Resolve
-- **Help** — Getting Started · Product Tour · Keyboard Shortcuts · Transmission Help · Check for Updates…
+- **Help** — Getting Started · Product Tour · Keyboard Shortcuts · Transmission Help · Online Documentation (`DOCS_SITE_URL` → the published docs site, opened in the system browser via `openDocsSite()`; gated by `isTrustedUpdateUrl`) · Check for Updates…
 
 Platform-conditional Preferences placement: `process.platform === 'darwin'` → app menu; otherwise → File menu. `buildMenu()` uses a `send(channel)` factory to reduce boilerplate.
 
