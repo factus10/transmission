@@ -59,13 +59,15 @@ A stub that is subtly weaker than the real function produces a *false failure* (
 2. Add anything new it closes over to `PRELUDE`.
 3. Write the test. `setState(rows, overrides)` assigns the global `state` the lifted code reads.
 
-**Verify a new test can fail.** Break the code it covers, confirm it goes red, then revert. A green suite that cannot detect a regression is worse than no suite, because it is trusted. The current file has been checked this way against three mutations: mis-routing `Exclude` to the wrong terminal bucket, removing the consolidation cycle guard, and renaming an extracted function — each caught.
+**Verify a new test can fail.** Break the code it covers, confirm it goes red, then revert. A green suite that cannot detect a regression is worse than no suite, because it is trusted. `test/sankey.test.js` has been checked this way against three mutations: mis-routing `Exclude` to the wrong terminal bucket, removing the consolidation cycle guard, and renaming an extracted function — each caught.
 
 ---
 
 ## Coverage today
 
-`test/sankey.test.js` — 32 tests over the Content Flow (Sankey) feature:
+Three suites, 67 tests. Each file carries its own `EXTRACTED` list and `PRELUDE`, so a suite only stands up the stubs its own functions need.
+
+### `test/sankey.test.js` — 34 tests over the Content Flow (Sankey) feature
 
 | Area | What's asserted |
 |------|-----------------|
@@ -79,5 +81,28 @@ A stub that is subtly weaker than the real function produces a *false failure* (
 | Source cap | The tail folds into `Other` without losing pages; a no-op below the limit; the engine retains room to draw |
 | Site labels | Rename trims, cascades to `Source_Site`, dirties the project; rejects duplicates/blanks/bad indices; allows a case-only rename |
 | Engine template | Self-contained output with no external `<script src>`; app vs client vs print mode chrome |
+
+### `test/redirect-health.test.js` — 11 tests over self-redirects and the health check
+
+Written against the 2.14.1 bug, where the health check and `resolveRedirectDestinations()` disagreed about what a loop is: the check cleared a loop and the next save derived it straight back, and on a two-page consolidation cycle the "fix" turned one loop into two.
+
+| Area | What's asserted |
+|------|-----------------|
+| `isSelfRedirect` | The same page matches however it's written; a different page doesn't; the same path on another host is **not** a loop; blank and `404` are neither |
+| A cleared loop stays cleared | The consolidation cycle that used to double; a Kill page whose target chains back to it; a loop already sitting in a file heals on the next save with no health check run |
+| The fix does not overreach | A genuine consolidate redirect is still derived; a hand-typed destination is never touched; `404` survives; a cross-site redirect sharing a path is left alone |
+
+### `test/sitemap-shape.test.js` — 22 tests over the sitemap shape check
+
+The load-bearing assertions are the ones about *not overclaiming*: an unmeasurable tree must report "unknown" rather than "fine", and a projection has to be able to say the repairs aren't enough.
+
+| Area | What's asserted |
+|------|-----------------|
+| Flat-site classification | One-page roots are singletons; a zero-page root counts too; a root with children never does; pages are counted **including** Kill and Consolidate |
+| Crawl artifacts | `/tag`, `/category`, `/wp-content` roots classify as artifacts rather than singletons, and are flagged even in an otherwise healthy tree |
+| Render prediction | A small tree is legible and a flat 500-root tree isn't; `measure:false` classifies without laying out; an unmeasurable tree reports unknown, never "fits"; a healthy tree doesn't warn; the site-root probe is measured, not assumed |
+| Over-wide branches | Reported worst-first; an already-collapsed node isn't reported |
+| Projection | Grouping shortens the canvas without widening it; **the bucket must be collapsed** — expanded it is not a fix at all; projecting mutates nothing; selecting nothing changes nothing; dropping artifacts removes exactly those roots; a projection can still come back unusable |
+| The repair | `applyGroupNavRoots` moves the chosen roots and leaves the rest alone; a node below the top level is adopted, not duplicated |
 
 Everything else in the app is currently covered by the manual pass in `docs/dev/TEST_PLAN.md`.

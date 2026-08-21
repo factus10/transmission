@@ -148,6 +148,8 @@ Only if you're replatforming.
 
 **Build the tree.** **Create Sitemap from Audit…** (`Project` menu) generates a starter tree from your URL structure — faster than hand-building and easy to reorganize afterwards in the **Sitemap** view (`Cmd+Shift+T`).
 
+A URL-derived tree is only an information architecture if the URLs carry one, and plenty don't. Read the dialog's prediction before you generate: on a flat CMS where every article sits at `/some-slug`, each page becomes its own top-level section — one real audit produced 548 sections from ~1,900 pages. Bucket depth won't change that, because sections come from the *first* URL segment. That's a finding about the site, not a fault in the tool, but it does produce a tree too big to draw, so the dialog offers to sweep the single-page sections into one section as part of the same step. If it lands that way anyway, the **shape check** (the ⚠ in the Sitemap toolbar's stats line, and offered when you open the Visual Sitemap) measures what you've got and what each repair would buy — including telling you when the repairs aren't enough, because grouping hundreds of pages into the eight sections the new site needs is your judgment, not a button.
+
 Then place pages: the **Needs sitemap placement** filter finds Keep/Evolve pages with no home yet, and the Multi-bar's **Assign to Sitemap…** places many at once.
 
 Useful checks while you're here: **Sitemap Coverage Report** (empty nodes, overloaded nodes), and the **Consolidation Candidates** tool for nodes that ended up with several pages.
@@ -276,6 +278,8 @@ This is what feeds **Reports → Migration Direction Brief…**, which prints on
 **Leaving AI suggestions unreviewed.** A pending suggestion is not a tagged page — it's an unanswered question, and every audience report still counts that page as untagged. Drain the queue before you run the readout.
 
 **Leaving Site Domain unset with several sites in scope.** Redirect destinations get built on an arbitrary domain. The tool warns; heed it.
+
+**Expecting the URL structure to be an IA.** *Create Sitemap from Audit* derives sections from first URL segments. On a site with no hierarchy in its URLs that yields hundreds of one-page sections — read the prediction before generating, and the shape check afterwards.
 
 **Building a "current state" sitemap in the working file.** Placing pages writes redirects, and deleting the tree afterwards doesn't take them back — they survive to contradict the future-state tree you build next. Do it in an archived copy: [Showing the current state](#showing-the-current-state--do-it-in-a-copy).
 
