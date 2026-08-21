@@ -60,4 +60,4 @@ To score many pages at once rather than set a call by hand:
 
 ---
 
-*Next: **Tagging, Grouping & the Glossary** — the vocabulary layer. See also `USER_GUIDE.md`.*
+*Next: **Tagging, Grouping & the Glossary** — the vocabulary layer. See also [the User Guide](../USER_GUIDE.md).*

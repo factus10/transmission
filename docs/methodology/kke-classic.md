@@ -48,7 +48,7 @@ All of them share KKE's compression problem. None of them addresses Authority or
 
 ## The fifth state: Consolidate
 
-We've added **Consolidate** as a fifth state in our practice. It means: *this page is going away, and its content is being merged into another page in the inventory.* The destination is recorded in a `Consolidate_Into` column.
+This method adds **Consolidate** as a fifth state, and Transmission implements it as one. It means: *this page is going away, and its content is being merged into another page in the inventory.* The destination is recorded in a `Consolidate_Into` column.
 
 Consolidate is the merge option. Without it, auditors are forced to choose between:
 

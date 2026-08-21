@@ -72,4 +72,4 @@ When a row's **Content Type** is set (or changed), the app looks it up in the re
 
 ---
 
-*See also: `CONTENT_TYPE_MODEL.md` (the rationale), the **Build & Direction** walkthrough (Target Specs), and `USER_GUIDE.md`.*
+*See also: `CONTENT_TYPE_MODEL.md` (the rationale), the **Build & Direction** walkthrough (Target Specs), and [the User Guide](../USER_GUIDE.md).*

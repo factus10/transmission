@@ -27,7 +27,7 @@ Goal: drive **need placement** in the stats line to **0**.
 
 1. **Audit** view (**Cmd+1**) → **KKE** filter → check **Keep** + **Evolve** → **+ Field filter** → field `Sitemap_ID`, operator **is blank** → **Apply**.
 2. For each row, click **Sitemap** (in the **DECIDE** cluster) → drill to the right node → **Assign**. Use **+ Child** in the picker footer to create a new node inline if no good home exists yet.
-3. To place many similar pages at once: multi-select them in the sidebar (**Cmd/Shift-click**), then **drag the selection onto a node** in the tree.
+3. To place many similar pages at once: multi-select them in the sidebar (**Cmd/Shift-click**), then use the Multi-bar's **Assign to Sitemap…** action — pick an existing node or create a new bucket, and choose whether the pages land as direct children or keep their URL structure.
 
 > Fast path: the stats line's **N need placement** link is clickable — it jumps you straight to the audit view filtered to exactly those rows. Work the list down to zero.
 
@@ -54,7 +54,7 @@ In the **Sitemap**:
 Open a node's editor (double-click the label, or **✎**). The top fields define what kind of node it is:
 
 - **Node type** — **Page (standard)** / **Header / organizing level** / **Fragment / shared content**. A **Header** is a grouping level with no page of its own; a **Fragment** is shared/embedded content with no menu entry, breadcrumb, or redirect (see the Build & Direction walkthrough).
-- **In menu** — toggles whether the node appears in the navigation menus. (**Set Menu ✓** / **Clear Menu** in the toolbar bulk-toggle this for all *visible* nodes — combine with the Depth filter.)
+- **Collapse** — folds this node's subtree in the Visual Sitemap, so a big branch doesn't swamp the diagram. (**Collapse ✓** / **Expand** in the toolbar set this for all *visible* nodes — combine with the Depth filter.) Menu membership is no longer a node property: menus are their own view (§3 note below).
 - **External URL** — point a menu item at an outside URL instead of a built page.
 - **Reference** — alias this node to another node (a "→ breadcrumb" target) so the same destination can appear in two places without duplicating it.
 
@@ -95,7 +95,7 @@ The stats line reads, in order:
 - **status tallies** (e.g. "5 built · 3 in progress") track build completion — covered in the Build & Direction walkthrough.
 
 **Filter the tree** with the toolbar dropdowns:
-- **Depth:** collapse to a level (then bulk **Set Menu ✓** / **Clear Menu** on what's visible).
+- **Depth:** collapse to a level (then bulk **Collapse ✓** / **Expand** on what's visible).
 - **Phase:** current vs. non-current (§4).
 - **Build:** by status / assignee / pattern / guidance presence (Build & Direction walkthrough).
 
@@ -113,10 +113,14 @@ If several pages landed on one node, they may be consolidation candidates:
 
 ## 8. See it and report on it
 
-**Visual Sitemap** — toolbar **Sitemap**: a box-style tree where solid borders = in-menu, dashed = not in menu, fill color = build pattern, a stacked shadow = hidden children, and a corner badge = page count. Toggle **Menu items only**, switch **Visual / Text Tree** tabs, zoom/pan, and export as **PDF** or **SVG/HTML**.
+**Visual Sitemap** — toolbar **Visual Sitemap**: an interactive box-tree. A card's **+/−** collapses its branch, scroll zooms, drag pans, **Fit** frames the whole thing. A stacked shadow means a collapsed branch or a multi-page leaf; a **dashed** border means the node is phased. The **Counts** dropdown decides what the line under each label reports, and **Settings** holds **Layout** (card sizes, corner radius, and the connector color and weight), **Colors** (the rule engine — color by depth, section, or any of fifteen fields), and **Legend**. Right-click a node to force a layout direction or set its color. Export as interactive **HTML**, a one-page **PDF**, a **PNG**, or straight onto a **Miro** board.
+
+> If the tree is too big to draw, the **shape check** says so before the diagram opens — and the ⚠ in the stats line opens it any time. See the User Guide for what it measures and what each repair buys.
+
+**Treemap** and **Content Flow** sit next to it in the toolbar: the first sizes each section by how much content is in it, the second traces where the current site's content lands in the new tree.
 
 **IA & coverage reports:**
-- **IA Report** (toolbar) or **Reports → Sitemap & IA…** — the sitemap with per-node page and redirect counts; flags empty, redirect-only, and header nodes.
+- **Reports → Menu Report…** — each menu as a section-by-section tree, with page counts and broken references flagged. (Also reachable from the Menus view's **Report** button.)
 - **Reports → Sitemap Coverage Report…** — empty leaves, hubs, overloaded nodes, and path mismatches.
 - **Reports → Net New Content Brief…** — every node that needs brand-new content.
 
@@ -128,10 +132,10 @@ If several pages landed on one node, they may be consolidation candidates:
 - [ ] No **empty** leaf nodes left unexplained (assign / net-new / phase / delete)
 - [ ] No **duplicate Sitemap_ID** warning in the stats line
 - [ ] No red **duplicate-slug** highlights within a branch
-- [ ] **In menu** set correctly on every node that belongs in navigation
+- [ ] Menus drawn in the **Menus** view for every navigation that ships (the sitemap is where pages *live*, not how people reach them)
 - [ ] Phased work is marked **Future / Stretch / Archived**, not left in the current build
 - [ ] Net-new sections are intentional, not accidental **NEW** badges
 
 ---
 
-*Next: **Build & Direction** — annotate these nodes with target specs, build metadata, and Builder / Writer / Migrator assignments, then generate the per-person worklists. See also `USER_GUIDE.md`.*
+*Next: **Build & Direction** — annotate these nodes with target specs, build metadata, and Builder / Writer / Migrator assignments, then generate the per-person worklists. See also [the User Guide](../USER_GUIDE.md).*

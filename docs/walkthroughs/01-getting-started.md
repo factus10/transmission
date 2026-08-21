@@ -93,4 +93,4 @@ Seeding only stages the data — **save** to commit it to the file.
 
 ---
 
-*Next: **Project Setup** — configure identity, KKE states, suggestion sources, and the migration vocabularies. See also `USER_GUIDE.md` and the *Audit Columns* reference.*
+*Next: **Project Setup** — configure identity, KKE states, suggestion sources, and the migration vocabularies. See also [the User Guide](../USER_GUIDE.md) and the *Audit Columns* reference.*
