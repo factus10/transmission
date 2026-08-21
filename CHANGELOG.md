@@ -6,6 +6,10 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Added
+
+- **Help → Online Documentation** opens the full documentation in your browser — the User Guide, the engagement sequence, one-page walkthroughs for every stage of an audit, and the method pages behind them. The in-app **Transmission Help** window is unchanged and still the fastest way to check one thing; this is the long-form set, and it's public, so it can be sent to a client or a colleague who doesn't have the app.
+
 ### Fixed
 
 - **The Visual Sitemap no longer opens on an empty screen.** A very large tree — the kind "Create Sitemap from Audit" produces from a flat site, where every page sits at the URL root and becomes its own top-level section — laid out tens of thousands of pixels wide and over a hundred thousand tall. Fit-to-screen refused to zoom out past 10% and then centred the canvas, which on a canvas ten times wider than the window pushed every card off the left edge: on a real 1,755-node audit, **none** of the 1,755 cards were on screen, so the diagram looked as though it had never been built. Fit now zooms out as far as it needs to, and only centres an axis when the content actually fits it, so you always land on the diagram. Scrolling out reaches the same zoom Fit uses, rather than stopping above it.
