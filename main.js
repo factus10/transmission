@@ -2547,10 +2547,18 @@ ipcMain.handle('check-for-updates', async () => {
 
 ipcMain.handle('open-changelog-window', (event, url) => { openChangelogWindow(url); });
 
+// GitHub Pages serves the changelog with `cache-control: max-age=600`, so a
+// plain loadURL can render a copy up to ten minutes old. That is exactly the
+// wrong ten minutes: the user reaches this window from an update prompt that
+// has just told them a new version exists, and a cached page shows them the
+// PREVIOUS release's notes. Always revalidate — the page is ~150KB and opens
+// on an explicit click, so the round trip costs nothing anyone will notice.
+const CHANGELOG_LOAD_OPTS = { extraHeaders: 'Cache-Control: no-cache\n' };
+
 function openChangelogWindow(url) {
   if (!isTrustedUpdateUrl(url)) return;
   if (changelogWindow && !changelogWindow.isDestroyed()) {
-    changelogWindow.loadURL(url);
+    changelogWindow.loadURL(url, CHANGELOG_LOAD_OPTS);
     changelogWindow.focus();
     return;
   }
@@ -2562,7 +2570,7 @@ function openChangelogWindow(url) {
     title: "What's New — Transmission",
     webPreferences: { nodeIntegration: false, contextIsolation: true }
   });
-  changelogWindow.loadURL(url);
+  changelogWindow.loadURL(url, CHANGELOG_LOAD_OPTS);
   changelogWindow.on('closed', () => { changelogWindow = null; });
 }
 

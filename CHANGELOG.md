@@ -6,6 +6,10 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Fixed
+
+- **What's New always shows the current changelog.** The window could render a copy up to ten minutes old — which is exactly the wrong ten minutes, since you reach it from a prompt that has just told you a new version exists, and the cached page describes the *previous* release. It now fetches fresh every time you open it.
+
 ## [2.17.0] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Added
