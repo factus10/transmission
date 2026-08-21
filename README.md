@@ -74,7 +74,7 @@ The View menu mirrors these and adds **Audit Progress…** (`Cmd+P`), zoom contr
 - **Migration** (export & validation tools) — **Pre-Handoff Check** · Migration Tracker · Export Redirect Map (CSV) · Redirect Chain Check · **Redirect Health Check**
 - **Reports** (all reports, grouped) — Executive Summary · Content Inventory · SME Review Status · Menu Report · Sitemap Coverage · Component Inventory · **Audience Coverage · Audience × Section Matrix · Audience Debt · Site Consolidation Overview · Cross-Site Duplicate Overlap** · Migration Checklist · Net New Content Brief · Redirect Map Report
 - **SME** — Export · Import · **Compare KKE vs SME** · Resolve Conflicts
-- **Help** — Getting Started · Product Tour · Keyboard Shortcuts (`Cmd+/`) · Help
+- **Help** — Getting Started · Product Tour · Keyboard Shortcuts (`Cmd+/`) · Transmission Help · Online Documentation · Check for Updates… · Help
 
 The unified Export dialog (`File → Export…`) is a single chooser for: Filtered Rows (xlsx) · Audit Decisions (CSV/JSON) · Redirect Map (CSV) · Migration Tracker (xlsx multi-sheet) · Client Export (column profiles, xlsx).
 
