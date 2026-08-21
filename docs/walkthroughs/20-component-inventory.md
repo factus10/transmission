@@ -53,4 +53,4 @@ This tells the design-system team what to build first (high-frequency), what to 
 
 ---
 
-*See also: the **Tagging, Grouping & Glossary** walkthrough (same chip mechanic) and `USER_GUIDE.md`.*
+*See also: the **Tagging, Grouping & Glossary** walkthrough (same chip mechanic) and [the User Guide](../USER_GUIDE.md).*

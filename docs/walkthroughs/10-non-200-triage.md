@@ -48,4 +48,4 @@ Non-200 rows carry a **status-code badge** in the sidebar: amber for **3xx**, re
 
 ---
 
-*See also: the **Redirects** walkthrough (turning Kills into redirect rules) and `USER_GUIDE.md`.*
+*See also: the **Redirects** walkthrough (turning Kills into redirect rules) and [the User Guide](../USER_GUIDE.md).*

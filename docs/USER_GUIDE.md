@@ -1,6 +1,6 @@
 # Transmission — User Guide
 
-**Version 2.5.2 "How Soon Is Now?"**
+**Version 2.16.1 "Please, Please, Please, Let Me Get What I Want"**
 macOS (Apple Silicon + Intel)
 
 ---
@@ -59,7 +59,7 @@ That has one wonderfully freeing consequence: **one file is the whole project.**
 
 Working directly in the `.xlsx` is fine for small files, but every save rebuilds the whole workbook — and on a few thousand rows you'll feel that pause. The fix is one menu item: **File → Save As Project…** (**Cmd+Shift+S**). That converts your open spreadsheet — including everything you've done so far this session — into a **Transmission project file** (`.transmission`), and the app switches over to it on the spot.
 
-A project file keeps the "one file is the whole project" promise — rows, decisions, sitemap, settings, glossary, libraries, and the full change history all live inside it — but saves become **instant**. Edits are committed within a couple of seconds of making them, with no workbook rebuild and no pause, no matter how big the crawl. Put the file wherever the project lives (`Documents/Smeal/smeal.transmission`, say); double-clicking it in Finder opens it in Transmission, and it shows up in **Open Recent** like any other file.
+A project file keeps the "one file is the whole project" promise — rows, decisions, sitemap, settings, glossary, libraries, and the full change history all live inside it — but saves become **instant**. Edits are committed within a couple of seconds of making them, with no workbook rebuild and no pause, no matter how big the crawl. Put the file wherever the project lives (`Documents/Client Audits/acme.transmission`, say); double-clicking it in Finder opens it in Transmission, and it shows up in **Open Recent** like any other file.
 
 Excel doesn't disappear — it just becomes the *deliverable* format instead of the *working* format:
 
