@@ -6,9 +6,9 @@ last-reviewed: 2026-04-28
 
 # Related Practices — Roadmap
 
-Pages we should write next. The wiki currently focuses on the [KKE / disposition framework](./README.md). The practices that *feed* and *consume* the framework deserve their own pages over time.
+Pages still to write. The method currently focuses on the [KKE / disposition framework](./README.md). The practices that *feed* and *consume* the framework deserve their own pages over time.
 
-This is a stub. Add new pages by following the conventions in [README.md](./README.md#conventions).
+This is a stub — the sections below name the pages and say what each would cover.
 
 ---
 
@@ -127,7 +127,7 @@ This is a stub. Add new pages by following the conventions in [README.md](./READ
 
 When you're ready to write one of these:
 
-1. Create the file in `wiki/` using a kebab-case filename matching the link above (e.g. `rubrics.md`, `sme-review-workflow.md`).
+1. Create the file in `docs/methodology/` using a kebab-case filename matching the link above (e.g. `rubrics.md`, `sme-review-workflow.md`).
 2. Add front-matter (`status: working`, `last-reviewed: <date>`).
 3. Update [the index](./README.md) — add the page under the right section.
 4. Cross-link from related pages (the [Five Dimensions](./the-five-dimensions.md), [Patterns](./patterns.md), [CAD](./content-audit-disposition.md)).
@@ -137,5 +137,5 @@ Replace the entry above with a working link once the page exists.
 
 ## See also
 
-- [Wiki Index](./README.md)
+- [Method Index](./README.md)
 - [Content Audit Overview](./content-audit-overview.md)
