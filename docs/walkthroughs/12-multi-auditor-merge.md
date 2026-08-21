@@ -45,4 +45,4 @@ After resolving, **Cmd+S**. The merged decisions and the change-log entries pers
 
 ---
 
-*See also: the **SME Review** walkthrough (same resolution UX for expert decisions) and `USER_GUIDE.md`.*
+*See also: the **SME Review** walkthrough (same resolution UX for expert decisions) and [the User Guide](../USER_GUIDE.md).*

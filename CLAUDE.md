@@ -1250,6 +1250,14 @@ When adding features or making user-facing changes, update **all four** document
 | `docs/PITCH.md` | Client-facing pitch (written + conversational versions) — describes the audit process and its competitive advantages |
 | `src/help.html` | Help window — concise feature documentation opened as a separate window |
 
+### Publishing the public docs site
+
+The user-facing subset is published to `https://factus10.github.io/transmission-updates/docs/` — the public home for people who have the app but not this repo. `npm run docs:html` renders it into `dist/docs-site/` via `scripts/generate-docs-site.js`; copy that over `docs/` in the `transmission-updates` repo and push (same repo, and same reasoning, as the changelog page).
+
+**The published set is an explicit allow-list in that script, never a directory walk** — `docs/` also holds the pitch, the dev notes, the UI contract and the screenshot scripts, and a walk would ship them the moment someone adds a file. Currently published: Quick Start · Running an Audit · User Guide · Content Audit Framework · `walkthroughs/` · `methodology/` · `report-templates/`. A link from a published doc to an unpublished one is degraded to plain text (and reported on stdout) rather than shipped as a 404.
+
+Generated HTML rather than committed markdown because the updates repo carries `.nojekyll`, so Pages serves a committed `.md` as plain text.
+
 For UI/interaction changes, also keep **`docs/UI_STANDARDS.md`** current (the interaction contract) and **`docs/dev/REVIEW_FINDINGS.md`** (the audit backlog) up to date. If a change alters the design tokens (`:root` in `styles.css`), the button specs, or the dialog/toast conventions, also update **`docs/SHARED_STYLE_GUIDE.md`** — the portable style contract handed to the sibling **Tauri** app to keep both apps visually consistent (it mirrors §1 tokens + §2 button CSS verbatim).
 
 ---

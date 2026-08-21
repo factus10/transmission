@@ -14,6 +14,7 @@
     "build:intel": "electron-builder --mac --x64",
     "build:signed:sandboxed": "bash scripts/build-signed-mac.sh",
     "changelog:html": "node scripts/generate-changelog-html.js",
+    "docs:html": "node scripts/generate-docs-site.js",
     "release:publish": "bash scripts/publish-release.sh"
   },
   "dependencies": {

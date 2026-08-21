@@ -79,4 +79,4 @@ This is distinct from the sidebar filter: it finds and navigates rather than red
 
 ---
 
-*Next: **Bulk Operations** — act on the filtered set all at once. See also `USER_GUIDE.md`.*
+*Next: **Bulk Operations** — act on the filtered set all at once. See also [the User Guide](../USER_GUIDE.md).*

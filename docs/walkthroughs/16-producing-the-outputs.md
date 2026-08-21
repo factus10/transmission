@@ -59,4 +59,4 @@ In any report preview, use the **PDF** or **HTML** export buttons. HTML is best 
 
 ---
 
-*Next: **Migration Tracker Hand-off** — the multi-sheet engineering workbook. See also `USER_GUIDE.md`.*
+*Next: **Migration Tracker Hand-off** — the multi-sheet engineering workbook. See also [the User Guide](../USER_GUIDE.md).*

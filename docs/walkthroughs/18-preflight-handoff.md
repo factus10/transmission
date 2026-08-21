@@ -53,4 +53,4 @@ Every change to a decision field (KKE, SME Decision, Final KKE, and auto-filled 
 
 ---
 
-*This is the end of the lifecycle. See also: **Producing the Outputs**, **Migration Tracker**, and `USER_GUIDE.md`.*
+*This is the end of the lifecycle. See also: **Producing the Outputs**, **Migration Tracker**, and [the User Guide](../USER_GUIDE.md).*

@@ -60,4 +60,4 @@ In the glossary editor, **Export for Word…** writes an `.html` file you can op
 
 ---
 
-*Next (Classify for migration): **Content Types & the Crosswalk**. See also `USER_GUIDE.md`.*
+*Next (Classify for migration): **Content Types & the Crosswalk**. See also [the User Guide](../USER_GUIDE.md).*
