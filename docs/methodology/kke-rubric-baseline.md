@@ -247,4 +247,4 @@ Before marking Exclude, answer this: **does anyone outside the migration project
 
 ---
 
-*Maintained by the content strategy team. Tailor freely per client; preserve the structure.*
+*A baseline, not a standard. Tailor the thresholds and the language per engagement; preserve the structure, because the structure is what makes two auditors agree.*

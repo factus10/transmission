@@ -42,7 +42,7 @@ Open with **File → Project Settings…** (or **Project → Project Settings…
 
 ## 2. App Settings — per-user preferences
 
-Open with the **⚙** button (or **File → App Settings**). The subtitle confirms it: *Applies to you, across all files.*
+Open with the **⚙** button (or **Transmission → Preferences…**, **Cmd+,** — on Windows and Linux it sits under **File**). The subtitle confirms it: *Applies to you, across all files.*
 
 - **Auto-advance** — jump to the next row after you assign a KKE status.
 - **Show SME fields** — reveal SME Decision / Final KKE / Content Owner in the audit bar.
@@ -78,4 +78,4 @@ Blank read-only metadata fields are hidden by default, and each audit-bar **clus
 
 ---
 
-*Next: **Running the Audit Pass** — the field bar, KKE keys, and the embedded browser. See also `USER_GUIDE.md`.*
+*Next: **Running the Audit Pass** — the field bar, KKE keys, and the embedded browser. See also [the User Guide](../USER_GUIDE.md).*

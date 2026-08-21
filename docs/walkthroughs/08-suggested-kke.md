@@ -61,4 +61,4 @@ When sources **disagree**, the badge gets a dashed amber border + **⚠** and th
 
 ---
 
-*See also: the *Rubric DSL* reference, the **Content Types & Crosswalk** walkthrough, and `USER_GUIDE.md`.*
+*See also: the *Rubric DSL* reference, the **Content Types & Crosswalk** walkthrough, and [the User Guide](../USER_GUIDE.md).*

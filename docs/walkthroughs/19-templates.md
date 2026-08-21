@@ -48,4 +48,4 @@ Custom report templates are **Markdown files with Mustache placeholders**, rende
 
 ---
 
-*See also: the **Build & Direction** walkthrough (the Migration Direction Brief) and `USER_GUIDE.md`.*
+*See also: the **Build & Direction** walkthrough (the Migration Direction Brief) and [the User Guide](../USER_GUIDE.md).*

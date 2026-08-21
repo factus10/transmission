@@ -6,7 +6,7 @@ last-reviewed: 2026-04-28
 
 # Glossary
 
-Every term used elsewhere in the wiki, defined once. When in doubt, link here rather than re-defining.
+Every term used elsewhere in these pages, defined once. When in doubt, link here rather than re-defining.
 
 ---
 
@@ -111,4 +111,4 @@ The gradual divergence of values used in audit data when no governance is in pla
 
 ## See also
 
-Every page in this wiki uses these terms. Start at [the index](./README.md).
+Every page in the method uses these terms. Start at [the index](./README.md).
