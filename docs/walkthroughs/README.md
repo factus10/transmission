@@ -42,4 +42,4 @@ Every label, menu path, and shortcut here is verified against the 2.4.1 source â
 
 ---
 
-*Full reference: `USER_GUIDE.md`. Architecture: `CLAUDE.md`. Design rationale: `CONTENT_TYPE_MODEL.md`.*
+*Full reference: [the User Guide](../USER_GUIDE.md). Architecture: `CLAUDE.md`. Design rationale: `CONTENT_TYPE_MODEL.md`.*

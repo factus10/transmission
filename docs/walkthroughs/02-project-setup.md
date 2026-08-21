@@ -78,4 +78,4 @@ Blank read-only metadata fields are hidden by default, and each audit-bar **clus
 
 ---
 
-*Next: **Running the Audit Pass** — the field bar, KKE keys, and the embedded browser. See also `USER_GUIDE.md`.*
+*Next: **Running the Audit Pass** — the field bar, KKE keys, and the embedded browser. See also [the User Guide](../USER_GUIDE.md).*

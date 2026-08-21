@@ -134,4 +134,4 @@ If several pages landed on one node, they may be consolidation candidates:
 
 ---
 
-*Next: **Build & Direction** — annotate these nodes with target specs, build metadata, and Builder / Writer / Migrator assignments, then generate the per-person worklists. See also `USER_GUIDE.md`.*
+*Next: **Build & Direction** — annotate these nodes with target specs, build metadata, and Builder / Writer / Migrator assignments, then generate the per-person worklists. See also [the User Guide](../USER_GUIDE.md).*

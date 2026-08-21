@@ -131,4 +131,4 @@ Once nodes are annotated:
 
 ---
 
-*See also: the **Sitemap & IA** walkthrough (building and placing the sitemap), `USER_GUIDE.md` (full manual), and `CONTENT_TYPE_MODEL.md` (why the three roles and two levels exist).*
+*See also: the **Sitemap & IA** walkthrough (building and placing the sitemap), [the User Guide](../USER_GUIDE.md), and `CONTENT_TYPE_MODEL.md` (why the three roles and two levels exist).*
