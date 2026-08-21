@@ -211,7 +211,7 @@ A `.transmission` file is a **SQLite database** (better-sqlite3, WAL mode) that 
 | main → renderer | `menu-url-variant-triage` | none — opens the URL Variant Triage dialog |
 | main → renderer | `menu-create-sitemap-from-audit` | none — opens the Create Sitemap from Audit dialog |
 | renderer → main | `check-for-updates` | none → `{ available, current, latest, notes, changelogUrl, downloadUrl, publishedAt } \| { error }` — fetches `update-manifest.json` and compares to `app.getVersion()` |
-| renderer → main | `open-changelog-window` | url string — opens the changelog URL in a small internal `BrowserWindow` (rejects untrusted hosts) |
+| renderer → main | `open-changelog-window` | url string — opens the changelog URL in a small internal `BrowserWindow` (rejects untrusted hosts; loaded with `Cache-Control: no-cache`, since Pages serves the page with `max-age=600` and a cached copy would show the *previous* release to someone who just got an update prompt) |
 | main → renderer | `menu-check-updates` | none — Help → Check for Updates… |
 | renderer → main | `miro-status`      | none → `{ hasToken, encryptionAvailable, connectAvailable }` |
 | renderer → main | `miro-connect`     | none → `{ success, teamId?, scope?, expiring?, error? }` — opens the browser, polls the auth worker, stores the token in main |
