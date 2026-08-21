@@ -1,6 +1,8 @@
 # Transmission — Test Plan
 
-Features added in the current session. Test with a Screaming Frog crawl export (.xlsx) that has 50+ rows and a NavStructure sheet.
+The manual half of the test suite — it accumulates by feature, and covers what `npm test` structurally cannot reach: the DOM, IPC, the `<webview>` engines, and anything that talks to Miro. See `docs/dev/TESTING.md` for what is automated.
+
+Test with a Screaming Frog crawl export (.xlsx) that has 50+ rows and a Sitemap sheet.
 
 ---
 
@@ -279,3 +281,78 @@ Transmission has no built-in crawler by design; crawl exports come from external
 - [ ] Zip is revealed in Finder; contains the `.transmission` + README.txt
 - [ ] Unzip → double-click the project → opens with full state (rows, nav, settings, changelog)
 - [ ] Original project keeps working after packaging (checkpoint doesn't disturb the open session)
+
+---
+
+## 21. Visualizations (Visual Sitemap · Treemap · Content Flow)
+
+These three engines render inside a `<webview>` from a generated standalone document, and every export re-generates that document in `print` mode in a hidden window. None of that is reachable from `npm test` — the automated suites cover only the host-side data (see `docs/dev/TESTING.md`), so everything below is a manual pass.
+
+**Setup:** a project with a sitemap of 100+ nodes, several sections, at least one collapsed node, and pages assigned across a mix of KKE values.
+
+### 21a. Visual Sitemap — view
+- [ ] Sitemap toolbar → **Visual Sitemap** opens the diagram with cards on screen (not a blank/empty viewport)
+- [ ] A card's **+/−** collapses/expands; clicking the card body does nothing
+- [ ] Scroll zooms, drag pans, **Fit** frames the whole tree; on a very large tree Fit zooms below 10% and the cards are visible, not pushed off the left edge
+- [ ] Scrolling out reaches the same zoom **Fit** lands on (no floor above it)
+- [ ] **Numbers** toggle; **Expand all** / **Collapse all**
+- [ ] **Counts** dropdown: hidden-sub-pages (default, only on collapsed cards) · sub-pages on every branch · assigned audit pages · none — choice survives close + reopen and appears in an export
+- [ ] Collapse a node in the diagram → close → the Sitemap editor's **Collapse** checkbox for that node is now ticked (two-way binding)
+
+### 21b. Visual Sitemap — settings
+- [ ] **Layout** tab: card size/gaps/corner radius/padding all preview live; radius and padding are clamped so a label can't be squeezed out
+- [ ] **Connectors**: **Line color** repaints every line; **Line weight → By content volume** makes trunks thicker than leaf drops; **Base/Max width** move the two ends of the scale; *Uniform* renders exactly as before the setting existed
+- [ ] **Colors** tab: generators (by depth · by section · mark external · by field), add/delete/drag-reorder rules, per-rule line style, card style band vs heavy outline
+- [ ] Right-click a node → force horizontal/vertical, set color; overridden nodes show a dashed outline
+- [ ] **Save as my defaults** → new project opens with those settings; **Reset to defaults** restores
+- [ ] All of the above persists with the project (save, reopen, verify)
+
+### 21c. Sitemap shape check
+- [ ] Sitemap stats line shows a clickable **⚠** when the tree is too big to draw, and no ⚠ on a healthy tree
+- [ ] Opening the Visual Sitemap on such a tree offers the check first
+- [ ] Reported section count, canvas size, and zoom match what the diagram actually opens at
+- [ ] Ticking repairs updates the projected sections/size/zoom live; unticking restores the original numbers
+- [ ] The projection changes nothing until **Apply** — cancel, then confirm the tree is untouched
+- [ ] Apply grouping → the bucket is created **collapsed**, the chosen roots move into it, other roots are unmoved
+- [ ] **Cmd+Z** reverses the whole grouping in one step, however many sections moved
+- [ ] Drop artifacts → exactly those roots go, and their pages remain in the audit as unplaced
+- [ ] **Open the diagram anyway** always available and works
+
+### 21d. Create Sitemap from Audit — prediction
+- [ ] Dialog reports predicted top-level sections, single-page sections, and crawl artifacts before generating
+- [ ] Toggling "include Kill/Exclude/unreviewed" updates the prediction
+- [ ] Changing **Bucket depth** does *not* change the section count
+- [ ] The sweep-into-one-section offer appears on a flat site, and the generated tree opens
+- [ ] Choosing *where pages are today* reveals the redirect note and **Save a copy first…**, which switches the session to the copy
+- [ ] After generating, the shape check is offered when the result needs it
+
+### 21e. Treemap
+- [ ] Sitemap toolbar → **Treemap**: config dialog offers Depth and Color by; field-based coloring is offered only at **Unlimited** depth
+- [ ] Box sizes reflect subtree page counts including Kill/Consolidate; KKE subtitle percentage never exceeds 100%
+- [ ] Legend color wells recolor a whole category; right-click recolors one leaf only; container boxes are not recolorable
+- [ ] **Reset colors** restores; palette persists per color-by mode and survives save + reopen
+
+### 21f. Content Flow (Sankey)
+- [ ] Sitemap toolbar → **Content Flow**; config dialog offers source depth, and site-rename fields only with 2+ in-scope sites
+- [ ] **From** (section / source site) and **Shape** (→ Decision · → New sitemap · both) re-read without regenerating
+- [ ] Column totals conserve across every shape; Retired / Out of scope / Not placed buckets are present
+- [ ] A consolidated page flows through to its master's destination, still colored as Consolidate
+- [ ] Custom KKE states get their own block in the configured color
+
+### 21g. Exports (all three engines)
+- [ ] **Export HTML** → opens in a browser with no app, still interactive, no external `<script src>`; the client file has no settings panel or export buttons
+- [ ] **Export PDF** → one page sized to the diagram, nothing clipped
+- [ ] **Export PNG** → the whole diagram at its layout size, not a screenshot of the viewport
+- [ ] Every export renders **the view currently on screen** (collapse state, counts mode, colors, and for Content Flow the From/Shape/Color-by toggles)
+
+## 22. Miro export
+
+**Setup:** a connected Miro account (App Settings → Miro) and a sitemap of 100+ nodes.
+
+- [ ] Board picker: create new (default) · search by name · paste a board link/ID · re-export to the last board (shown by its *current* name after a rename; the option disappears if the board was deleted)
+- [ ] **Appearance**: connector style, connector thickness (**Match sitemap** default — a volume-weighted sitemap exports volume-weighted lines), card corners, border thickness, color key — all remembered per project
+- [ ] Collapsed sections: **Include them** is off by default and exports a stacked block with the chosen `+N` / count label; ticking it exports the whole tree
+- [ ] Board matches the app: positions, colors, line styles, and the color key chips
+- [ ] Progress modal updates through frame → shapes → connectors; **Cancel** stops cleanly
+- [ ] Result toast reports the item count; **Delete board** appears only for a board this export created, confirms first, and clears the remembered board
+- [ ] Treemap and Content Flow export to Miro through the same picker (board choice + color key only), after the view has rendered
