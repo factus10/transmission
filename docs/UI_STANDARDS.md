@@ -92,11 +92,18 @@ If a legacy modal builds its own overlay/dialog and you only need to make it beh
 
 ```js
 document.body.appendChild(overlay);
-document.body.appendChild(dialog);
+overlay.appendChild(dialog);   // a CHILD of the overlay — see below
 registerModalDismiss(overlay, dialog, () => close()); // close = its existing teardown
 ```
 
 It assigns a stacked z-index and wires Esc. The modal keeps its own backdrop/button close paths; the stack is self-healing (`_pruneModalStack`) so it won't leak. New modals should use `openModal` instead.
+
+**The dialog must be a child of the overlay, or carry its own `position`.** `.modal-overlay` is `position: fixed` with a z-index, so it opens a stacking context; `.modal-dialog` is *not* positioned, and **z-index is ignored on a static-position element**. A dialog appended to `<body>` as the overlay's *sibling* therefore paints **under** the dim mask however high a z-index it — or `registerModalDismiss` — is given: the screen dims and the dialog is unreachable. Two ways out, and only two:
+
+- **Preferred:** append the dialog *into* the overlay. It gets flex-centered and paints above the mask, exactly as `openModal()` does.
+- **Legacy:** keep it a sibling but give it `position: fixed` in its own inline `cssText`. Most hand-built dialogs in `renderer.js` do this and are fine; the ones that forgot are how this rule got written.
+
+`makeModalDraggable()` works either way — it switches to `position: absolute`, which resolves against the `inset: 0` overlay to the same viewport coordinates.
 
 ### 1.6 Popovers, toolbars, and full-panel views are NOT modals
 
@@ -254,6 +261,7 @@ action the user cannot physically reach is worse than no action at all.
 
 - [ ] No `window.confirm/alert/prompt`; used `confirmDialog`/`alertDialog`/`showPrompt`.
 - [ ] Any new modal uses `openModal` (or `registerModalDismiss` for a legacy one). No bespoke overlay/z-index/Esc code.
+- [ ] A hand-built dialog is appended **into** its overlay (or sets its own `position: fixed`) — a static-position sibling paints under the dim mask no matter its z-index.
 - [ ] Header has a `.modal-close ×`; Esc and backdrop close it.
 - [ ] Footer: `btn btn-sm`; one green primary, rightmost; Cancel ghost to its left; utilities/count on the left via a `flex:1` span.
 - [ ] Destructive primary uses `.btn-danger` (or `danger:true`).
