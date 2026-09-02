@@ -274,7 +274,15 @@ html, body {
   gap: 4px;
   flex-wrap: wrap;
   align-items: center;
+  min-width: 0;
 }
+/* Chips take a row of their own once there are any. As an ordinary flex item in
+   #toolbar-row2 they got squeezed by the buttons beside them, which shrank each
+   chip below its content — and with overflow:hidden on the chip that clipped the
+   remove button off the right edge, so a second filter became undismissable. */
+#field-filter-chips:empty { display: none; }
+#field-filter-chips:not(:empty) { flex: 1 1 100%; }
+
 .field-filter-chip {
   display: inline-flex;
   align-items: center;
@@ -287,11 +295,18 @@ html, body {
   color: var(--text-primary);
   white-space: nowrap;
   max-width: 240px;
+  min-width: 0;
+}
+/* Only the TEXT truncates. The × is flex-shrink:0 so it survives any squeeze —
+   a control that removes the only thing hiding your rows must always be hittable. */
+.field-filter-chip .ff-chip-field,
+.field-filter-chip .ff-chip-value {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .field-filter-chip .ff-chip-field { font-weight: 600; }
-.field-filter-chip .ff-chip-op    { color: var(--text-muted); margin: 0 2px; }
+.field-filter-chip .ff-chip-op    { color: var(--text-muted); margin: 0 2px; flex-shrink: 0; }
 .field-filter-chip .ff-chip-value { font-family: var(--font-mono); }
 .field-filter-chip button {
   background: none;
@@ -301,6 +316,7 @@ html, body {
   font-size: 13px;
   line-height: 1;
   padding: 0 2px;
+  flex-shrink: 0;
 }
 .field-filter-chip button:hover { color: var(--kke-kill); }
 
@@ -338,6 +354,12 @@ html, body {
   border-radius: 4px;
   background: var(--bg-surface);
   color: var(--text-primary);
+}
+#field-filter-popup .ff-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  margin: -4px 0 8px 70px;
 }
 #field-filter-popup .ff-actions {
   display: flex;

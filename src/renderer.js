@@ -204,6 +204,65 @@ function statusCodeCategory(code) {
   return null;
 }
 
+// ─── Content vs non-content rows ─────────────────────────────────────────────
+//
+// A crawl is a list of URLs that responded, not a list of pages — and the
+// headline number in a client report has to say which one it is counting. A
+// stakeholder reading "13,216 pages audited" will ask whether they are really
+// migrating 13,216 pages, and the honest answer subtracts the redirects and the
+// dead URLs, which were never content in the first place.
+//
+// Derived from the crawl's own Status Code rather than stored, so it is right
+// retroactively in every existing project and needs no decision from the user.
+// A file with no Status Code column reports everything as content, which is
+// exactly the pre-existing behavior.
+//
+// 5xx is deliberately COUNTED AS CONTENT. A 500 is a page that exists and is
+// broken — Triage Non-200 defaults it to Evolve for that reason — so dropping
+// it from the inventory would hide real work rather than reveal padding. Only
+// 3xx (the URL is a signpost to somewhere else) and 4xx (the URL is gone) are
+// non-content.
+//
+// This is orthogonal to KKE. Exclude is a decision a person made about scope;
+// this is a fact about what the URL returned. Keeping them separate is what
+// lets a report say "6,550 content pages, of which 2,000 are being killed,
+// plus 4,102 inherited redirects" instead of blurring the two together.
+
+/** The crawl's Status Code column, whatever case it was exported in. */
+function statusCodeCol() {
+  return (state.headers || []).find(h => h.toLowerCase() === 'status code') || '';
+}
+
+/** '' (content), 'redirect' (3xx) or 'gone' (4xx). `scCol` may be pre-resolved
+ *  by callers looping over thousands of rows. */
+function nonContentKind(row, scCol) {
+  const col = scCol !== undefined ? scCol : statusCodeCol();
+  if (!col) return '';
+  const cat = statusCodeCategory(parseInt(row[col] || '', 10));
+  if (cat === '3xx') return 'redirect';
+  if (cat === '4xx') return 'gone';
+  return '';
+}
+
+/** True when this URL never served a page, so it shouldn't be counted as one. */
+function isNonContentRow(row, scCol) {
+  return nonContentKind(row, scCol) !== '';
+}
+
+/** The crawl's own "Redirect URL" column — where a 3xx URL currently points.
+ *  Screaming Frog's name; matched case-insensitively like the Status Code column. */
+function redirectUrlCol() {
+  return (state.headers || []).find(h => h.toLowerCase() === 'redirect url') || '';
+}
+
+/** The destination the LIVE site currently redirects this URL to, per the crawl.
+ *  Only meaningful for 3xx rows; blank for everything else. */
+function crawlRedirectUrl(row) {
+  if (nonContentKind(row) !== 'redirect') return '';
+  const col = redirectUrlCol();
+  return col ? String(row[col] || '').trim() : '';
+}
+
 function defaultTriageAction(code) {
   const n = parseInt(code, 10);
   if (n >= 300 && n < 400) return 'kill-redirect';
@@ -2706,13 +2765,43 @@ const FIELD_FILTER_OPERATORS = [
   { value: 'not-equals',    label: "doesn't equal",    needsValue: true  },
   { value: 'starts-with',   label: 'starts with',      needsValue: true  },
   { value: 'ends-with',     label: 'ends with',        needsValue: true  },
+  { value: 'greater-than',  label: 'is greater than',  needsValue: true  },
+  { value: 'less-than',     label: 'is less than',     needsValue: true  },
 ];
+
+/** Parse a cell or a filter value for the ordering operators. Comma grouping is
+ *  stripped because crawl and analytics exports routinely write "1,234". Returns
+ *  null for anything that isn't a plain number, which is what makes the ordering
+ *  operators fall back to a string compare. */
+function fieldFilterNumber(s) {
+  const t = String(s).trim().replace(/,/g, '');
+  if (!/^[+-]?(\d+\.?\d*|\.\d+)$/.test(t)) return null;
+  return Number(t);
+}
+
+/** Shared compare behind greater-than / less-than: numeric when BOTH sides parse
+ *  as numbers, otherwise a raw code-unit (ASCII-order) string compare.
+ *
+ *  Deliberately case-SENSITIVE, unlike every other operator here — ordering text
+ *  is only meaningful if you know exactly what it's ordering by, and folding case
+ *  would put 'Z' on either side of 'a' depending on which one got folded.
+ *
+ *  Returns null for a blank cell so blanks match NEITHER direction: blank means
+ *  unreviewed throughout this app, not "smaller than everything". */
+function fieldFilterCompare(cell, needle) {
+  if (cell === '') return null;
+  const a = fieldFilterNumber(cell);
+  const b = fieldFilterNumber(needle);
+  if (a !== null && b !== null) return a < b ? -1 : a > b ? 1 : 0;
+  return cell < needle ? -1 : cell > needle ? 1 : 0;
+}
 
 function fieldFilterMatches(row, ff) {
   const raw = String(row[ff.field] ?? '');
   const v = raw.trim();
   const isBlank = v === '';
-  const needle = String(ff.value || '').trim().toLowerCase();
+  const rawNeedle = String(ff.value ?? '').trim();
+  const needle = rawNeedle.toLowerCase();
   const hay = v.toLowerCase();
   switch (ff.operator) {
     case 'is-blank':     return isBlank;
@@ -2723,6 +2812,8 @@ function fieldFilterMatches(row, ff) {
     case 'not-equals':   return hay !== needle;
     case 'starts-with':  return hay.startsWith(needle);
     case 'ends-with':    return hay.endsWith(needle);
+    case 'greater-than': { const c = fieldFilterCompare(v, rawNeedle); return c !== null && c > 0; }
+    case 'less-than':    { const c = fieldFilterCompare(v, rawNeedle); return c !== null && c < 0; }
     default:             return true;
   }
 }
@@ -2824,6 +2915,7 @@ function openFieldFilterPopup(anchorEl) {
       <label>Value</label>
       <input id="ff-value" type="text" placeholder="">
     </div>
+    <div class="ff-hint hidden" id="ff-hint">Compares as numbers when both sides are numeric, otherwise character-by-character (ASCII order, case-sensitive). Blank cells match neither.</div>
     <div class="ff-actions">
       <button type="button" id="ff-cancel" class="btn btn-sm btn-ghost">Cancel</button>
       <button type="button" id="ff-apply" class="btn btn-sm btn-primary">Apply</button>
@@ -2841,10 +2933,13 @@ function openFieldFilterPopup(anchorEl) {
   const valueRow = popup.querySelector('#ff-value-row');
   const valueInp = popup.querySelector('#ff-value');
 
+  const hintEl = popup.querySelector('#ff-hint');
   function syncValueVisibility() {
     const opt = opSel.options[opSel.selectedIndex];
     const needsValue = opt && opt.dataset.needsValue === '1';
     valueRow.style.display = needsValue ? '' : 'none';
+    const isOrdering = opSel.value === 'greater-than' || opSel.value === 'less-than';
+    hintEl.classList.toggle('hidden', !isOrdering);
     if (needsValue) setTimeout(() => valueInp.focus(), 0);
   }
   opSel.addEventListener('change', syncValueVisibility);
@@ -2916,9 +3011,21 @@ function applyFilter() {
 
   if (kf && kf.length > 0) {
     // Separate status values from special filters
-    const specialFilters = new Set(['_unreviewed', '_flagged', '_duplicates', '_sme-conflicts', '_sme-pending', '_consolidate-no-target', '_consolidate-dead-target', '_shared-nav', '_needs-placement', '_suggested-disagree', '_suggested-mismatch', '_needs-audience', '_audience-orphan', '_audience-suggested', '_cross-site-duplicate', '_url-variant', '_variant-target-missing', '_needs-job']);
+    const specialFilters = new Set(['_unreviewed', '_flagged', '_duplicates', '_sme-conflicts', '_sme-pending', '_consolidate-no-target', '_consolidate-dead-target', '_shared-nav', '_needs-placement', '_suggested-disagree', '_suggested-mismatch', '_needs-audience', '_audience-orphan', '_audience-suggested', '_cross-site-duplicate', '_url-variant', '_variant-target-missing', '_needs-job', '_non-content', '_inherited-redirect', '_redirect-needs-review']);
     const statusValues = kf.filter(v => !specialFilters.has(v));
     const specials = kf.filter(v => specialFilters.has(v));
+
+    // Inherited-redirect review set — classification needs the resolver context,
+    // which is far too expensive to build per row, so build it once and only
+    // when the filter is actually on.
+    let redirectReviewSet = null;
+    if (specials.includes('_redirect-needs-review')) {
+      redirectReviewSet = new Set();
+      const findings = inheritedRedirectFindings();
+      INHERITED_REDIRECT_CLASSES.filter(c => c.actionable).forEach(c => {
+        findings.byClass[c.key].forEach(f => redirectReviewSet.add(f.origIndex));
+      });
+    }
 
     // Precompute shared Sitemap_IDs (Sitemap_IDs assigned to 2+ rows) if needed
     let sharedNavIds = null;
@@ -2966,6 +3073,11 @@ function applyFilter() {
           const eff = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
           if (eff === 'Keep' || eff === 'Evolve') return true;
         }
+        // Not a page: the URL returned a redirect or an error. How you check
+        // the "content pages" figure in a report against the rows themselves.
+        if (s === '_non-content' && isNonContentRow(row)) return true;
+        if (s === '_inherited-redirect' && nonContentKind(row) === 'redirect') return true;
+        if (s === '_redirect-needs-review' && redirectReviewSet && redirectReviewSet.has(origIndex)) return true;
         if (s === '_url-variant' && _urlVariantSet.has(origIndex)) return true;
         if (s === '_variant-target-missing' && _variantTargetMissingSet.has(origIndex)) return true;
         if (s === '_needs-audience') {
@@ -12189,8 +12301,12 @@ function openNon200TriageDialog() {
     </div>
   `;
 
+  // The dialog must be a CHILD of the overlay. .modal-overlay is position:fixed
+  // (so it opens a stacking context) while .modal-dialog is not positioned — a
+  // sibling dialog's z-index is therefore ignored and it paints UNDER the dim
+  // mask. Same rule openModal() follows; the overlay flex-centers it.
   document.body.appendChild(overlay);
-  document.body.appendChild(modal);
+  overlay.appendChild(modal);
   registerModalDismiss(overlay, modal, () => close());
 
   // Set default selections
@@ -12262,7 +12378,12 @@ function openNon200TriageDialog() {
             if (!existingDest) {
               const redirectUrl = String(editedRow[redirectUrlColName] || '').trim();
               if (redirectUrl) {
-                writeRedirectDestination(editedRow, redirectUrl, 'manual');
+                // 'inherited', NOT 'manual': this is the live site's own answer
+                // copied in wholesale, not a decision anyone made about where
+                // this URL should end up. Marking it manual froze it forever —
+                // the resolver treats manual as untouchable — so a rule written
+                // on day one still pointed at the target's OLD url on day ninety.
+                writeRedirectDestination(editedRow, redirectUrl, 'inherited');
                 logChange(origIndex, 'Redirect_Destination', '', redirectUrl);
                 undoItems.push({ origIndex, field: 'Redirect_Destination', oldValue: '', newValue: redirectUrl });
               }
@@ -23570,7 +23691,18 @@ function setupProgress() {
 
 /** Gather all progress stats into a plain object for rendering and PDF export */
 function gatherProgressStats() {
-  const total = state.editedRows.length;
+  // reportRows(), not state.editedRows. Its own contract is "excluded from every
+  // report denominator — otherwise a site that isn't being migrated still drags
+  // down every completion percentage", and this function feeds four surfaces
+  // that are exactly that: the progress dashboard, its PDF, the Executive
+  // Summary and SME Review Status. Two of those already print
+  // scopeDisclosureHtml()'s "N pages are excluded from every figure below" —
+  // which was simply untrue while the figures still counted them.
+  //
+  // Returns state.editedRows by reference when nothing is out of scope, so a
+  // single-site project is provably unaffected.
+  const rows = reportRows();
+  const total = rows.length;
   const kkeCounts = {};
   BUILTIN_KKE.forEach(s => kkeCounts[s] = 0);
   state.customKkeStates.forEach(s => kkeCounts[s.label] = 0);
@@ -23579,8 +23711,37 @@ function gatherProgressStats() {
 
   let smeReviewed = 0, smeApproved = 0, smeChanged = 0, finalResolved = 0;
 
-  state.editedRows.forEach(row => {
+  // Content vs non-content, tallied alongside the all-rows numbers rather than
+  // replacing them. Both readings are legitimate and they answer different
+  // questions: the auditor's progress covers every row (a redirect still has to
+  // be triaged), while the client's inventory is content pages only. Reports
+  // pick the one they mean instead of a single number silently standing for
+  // both — see isNonContentRow().
+  const scCol = statusCodeCol();
+  // Sections are tallied twice on purpose. The dashboard's "By group" belongs to
+  // the auditor and matches the auditor's own all-rows total; the Executive
+  // Summary's "By Section" says "N pages" to a client and must therefore agree
+  // with the content-page figure above it. One shared tally would contradict
+  // whichever surface it wasn't built for.
+  const contentGroupCounts = {};
+  const contentKkeCounts = {};
+  BUILTIN_KKE.forEach(s => contentKkeCounts[s] = 0);
+  state.customKkeStates.forEach(s => contentKkeCounts[s.label] = 0);
+  let contentTotal = 0, contentUnreviewed = 0;
+  let nonContentRedirects = 0, nonContentGone = 0;
+
+  rows.forEach(row => {
     const kke = String(row[kkeCol()] || '').trim();
+    const nc = nonContentKind(row, scCol);
+    if (nc === 'redirect') nonContentRedirects++;
+    else if (nc === 'gone') nonContentGone++;
+    else {
+      contentTotal++;
+      if (!kke) contentUnreviewed++;
+      else contentKkeCounts[kke] = (contentKkeCounts[kke] || 0) + 1;
+      const cg = String(row[groupCol()] || '').trim();
+      if (cg) contentGroupCounts[cg] = (contentGroupCounts[cg] || 0) + 1;
+    }
     // Only a blank KKE is unreviewed — matching the sidebar's _unreviewed filter.
     // A rogue (typo/undefined) value is a decision someone made; tally it under its
     // own literal key so it stays visible instead of deflating the reviewed %.
@@ -23604,12 +23765,19 @@ function gatherProgressStats() {
   const reviewed = total - unreviewed;
   const pct = total > 0 ? Math.round((reviewed / total) * 100) : 0;
   const groups = Object.entries(groupCounts).sort((a, b) => b[1] - a[1]);
+  const contentGroups = Object.entries(contentGroupCounts).sort((a, b) => b[1] - a[1]);
   const smeTotal = reviewed; // reviewable set = rows with KKE decision
   const smePct = smeTotal > 0 ? Math.round((smeReviewed / smeTotal) * 100) : 0;
   const finalPct = smeTotal > 0 ? Math.round((finalResolved / smeTotal) * 100) : 0;
 
+  const nonContent = nonContentRedirects + nonContentGone;
+  const contentReviewed = contentTotal - contentUnreviewed;
+  const contentPct = contentTotal > 0 ? Math.round((contentReviewed / contentTotal) * 100) : 0;
+
   return { total, reviewed, pct, kkeCounts, unreviewed, flagged, tagged, noted, groups,
-           smeTotal, smeReviewed, smePct, smeApproved, smeChanged, finalResolved, finalPct };
+           smeTotal, smeReviewed, smePct, smeApproved, smeChanged, finalResolved, finalPct,
+           contentTotal, contentKkeCounts, contentUnreviewed, contentReviewed, contentPct,
+           contentGroups, nonContent, nonContentRedirects, nonContentGone };
 }
 
 /** KKE color map (CSS variable values resolved at call time) */
@@ -23650,8 +23818,31 @@ function openProgressDashboard() {
   } else {
     html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Set client &amp; project name in Project Settings (▤)</div>`;
   }
+  // The auditor's progress is over EVERY row — a redirect still has to be
+  // triaged — so those numbers keep counting the whole crawl. The content split
+  // is shown alongside because it is the number that reaches the client, and
+  // seeing both here is what stops the two being confused later.
+  // Neither this dashboard nor its PDF goes through showReport(), so neither
+  // gets scopeDisclosureHtml() automatically — and now that the numbers honor
+  // reportRows(), an unexplained drop in the total is exactly the confusion the
+  // banner exists to prevent.
+  const scopeInfo = outOfScopeSiteInfo();
+  if (scopeInfo && scopeInfo.rows) {
+    html += `<div style="background:#fffbeb;border-left:3px solid #d97706;padding:8px 10px;font-size:11px;line-height:1.5;margin-bottom:10px;color:#1a1a1a;">
+      <strong>${scopeInfo.rows} page${scopeInfo.rows !== 1 ? 's are' : ' is'} excluded from these figures.</strong>
+      ${escapeHtml(scopeInfo.sites.join(', '))} ${scopeInfo.sites.length !== 1 ? 'are' : 'is'} marked out of scope
+      in Project Settings → Sites.
+    </div>`;
+  }
   html += `
-    <div class="progress-stat"><span class="progress-stat-label">Total pages</span><span class="progress-stat-value">${stats.total}</span></div>
+    <div class="progress-stat"><span class="progress-stat-label">Total pages</span><span class="progress-stat-value">${stats.total}</span></div>`;
+  if (stats.nonContent > 0) {
+    html += `
+    <div class="progress-stat"><span class="progress-stat-label" style="padding-left:10px;color:var(--text-muted);">of which content pages</span><span class="progress-stat-value">${stats.contentTotal}</span></div>
+    <div class="progress-stat"><span class="progress-stat-label" style="padding-left:10px;color:var(--text-muted);">existing redirects (3xx)</span><span class="progress-stat-value">${stats.nonContentRedirects}</span></div>
+    <div class="progress-stat"><span class="progress-stat-label" style="padding-left:10px;color:var(--text-muted);">not found / gone (4xx)</span><span class="progress-stat-value">${stats.nonContentGone}</span></div>`;
+  }
+  html += `
     <div class="progress-stat"><span class="progress-stat-label">Reviewed</span><span class="progress-stat-value">${stats.reviewed} (${stats.pct}%)</span></div>
     <div class="progress-bar-wrap">`;
 
@@ -23756,6 +23947,16 @@ async function exportProgressPdf(format) {
     groupHtml += '</table>';
   }
 
+  // Same disclosure the reports get from showReport() — this PDF is a client
+  // deliverable and must say what it is not counting.
+  const scopeInfo = outOfScopeSiteInfo();
+  const scopeNote = (scopeInfo && scopeInfo.rows)
+    ? `<div style="background:#fffbeb;border-left:3px solid #d97706;padding:9px 12px;font-size:12px;margin:16px 0 0;">
+         <strong>${scopeInfo.rows} page${scopeInfo.rows !== 1 ? 's are' : ' is'} excluded from every figure below.</strong>
+         ${escapeHtml(scopeInfo.sites.join(', '))} ${scopeInfo.sites.length !== 1 ? 'are' : 'is'} marked out of scope.
+       </div>`
+    : '';
+
   const pdfHtml = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
   body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; color: #222; margin: 40px; line-height: 1.5; }
@@ -23777,6 +23978,7 @@ async function exportProgressPdf(format) {
   <div class="meta">Report date: ${dateStr}</div>
   <div class="meta">File: ${escapeHtml(state.filePath ? state.filePath.split('/').pop() : 'Unknown')}</div>
 
+  ${scopeNote}
   <div style="margin-top:20px">
     <div class="summary-row"><span>Total pages</span><span class="summary-value">${stats.total}</span></div>
     <div class="summary-row"><span>Reviewed</span><span class="summary-value">${stats.reviewed} (${stats.pct}%)</span></div>
@@ -23872,6 +24074,9 @@ function renderKkeFilterOptions() {
     { value: '_audience-suggested', text: 'Audience suggested by AI (awaiting review)' },
     { value: '_cross-site-duplicate', text: 'Duplicated on another source site' },
     { value: '_needs-job', text: 'Needs a job (Keep/Evolve, untagged)' },
+    { value: '_inherited-redirect', text: 'Existing redirect (3xx — not content)' },
+    { value: '_non-content', text: 'Not content (3xx or 4xx)' },
+    { value: '_redirect-needs-review', text: 'Inherited redirect needs review' },
     { value: '_url-variant', text: 'Alternate view of another page (canonical)' },
     { value: '_variant-target-missing', text: 'Canonical target not in this crawl' }
   ];
@@ -25290,6 +25495,13 @@ function buildRedirectResolverContext() {
     }
     // Target has an explicit redirect of its own
     if (targetExplicit) return targetExplicit;
+    // Target is ITSELF a live 3xx that nobody has triaged yet — follow the hop the
+    // crawl recorded rather than stopping on it. Without this, A→B→C ships a rule
+    // pointing at B, which is a URL being retired: the visitor takes two hops on a
+    // good day and lands on a 404 on a bad one. The visited-set makes the walk
+    // cycle-safe, and a redirect loop on the live site is exactly where this bites.
+    const targetHop = crawlRedirectUrl(target);
+    if (targetHop) return resolveFinalUrl(targetHop, visited);
     return startUrl;
   };
 
@@ -25317,7 +25529,15 @@ function buildRedirectResolverContext() {
       return resolveFinalUrl(targetId, new Set([selfUrl]));
     }
     if (kke === 'kill') {
-      // Priority: consolidation master > sitemap node path > default destination > blank
+      // Priority: consolidation master > sitemap node path > inherited 3xx target
+      // > default destination > blank.
+      //
+      // The inherited hop sits BELOW the first two because both are decisions a
+      // person made about this page, and above the default because the live
+      // site's own answer beats a blanket fallback. It is resolved through
+      // resolveFinalUrl(), not copied: that is the whole carry-forward fix — if
+      // the page it points at is itself moving, being consolidated, or retired,
+      // the rule follows it there instead of freezing today's answer.
       let resolved = '';
       const consolidateTarget = consolidateTargetAddr(row);
       if (consolidateTarget) resolved = resolveFinalUrl(consolidateTarget, new Set([selfUrl]));
@@ -25327,6 +25547,10 @@ function buildRedirectResolverContext() {
         if (node && node.computedPath) {
           resolved = baseUrl ? baseUrl + '/' + node.computedPath.replace(/^\//, '') : '/' + node.computedPath.replace(/^\//, '');
         }
+      }
+      if (!resolved) {
+        const inherited = crawlRedirectUrl(row);
+        if (inherited) resolved = resolveFinalUrl(inherited, new Set([selfUrl]));
       }
       if (!resolved && defaultRedirectUrl) resolved = defaultRedirectUrl;
       return resolved;
@@ -25342,6 +25566,124 @@ function buildRedirectResolverContext() {
   }
 
   return { urlCol, baseUrl, defaultRedirectUrl, rowByUrl, nodeById, resolveFinalUrl, computeAutoDestination };
+}
+
+// ─── Inherited redirect classification ───────────────────────────────────────
+//
+// A 3xx in the crawl is a redirect rule that ALREADY EXISTS on the live site.
+// Carrying it forward is usually right — external links and bookmarks still
+// point at the old URL — but "carry it forward" is not one decision, it is six,
+// and the difference is entirely in what the destination turns out to be.
+//
+// resolveFinalUrl() handles the resolvable cases silently. This classifier
+// exists for the rest: the ones where the app cannot know the answer and a
+// person has to look. Reported by the Redirect Chain Check and surfaced as the
+// _redirect-needs-review filter.
+
+const INHERITED_REDIRECT_CLASSES = [
+  { key: 'no-target',    label: 'No destination recorded',        actionable: true },
+  { key: 'loop',         label: 'Redirects to itself',            actionable: true },
+  { key: 'dead',         label: 'Destination is a dead URL (4xx)', actionable: true },
+  { key: 'undecided',    label: 'Destination has no KKE decision yet', actionable: true },
+  { key: 'target-retired', label: 'Destination is being retired with nowhere to go', actionable: true },
+  { key: 'uncrawled',    label: 'Destination not in this crawl',  actionable: true },
+  { key: 'out-of-scope', label: 'Destination is on an out-of-scope site', actionable: true },
+  { key: 'external',     label: 'Destination is off-site',        actionable: false },
+  { key: 'retired',      label: 'Intentional 404',                actionable: false },
+  { key: 'ok',           label: 'Resolves inside the inventory',  actionable: false },
+];
+
+/** Every host the source-site registry claims, normalized. Used to tell "this
+ *  points somewhere we are auditing but did not crawl" (a gap worth flagging)
+ *  from "this points off-site entirely" (normal, and nothing to resolve). */
+function knownSourceHosts() {
+  const hosts = new Set();
+  (state.siteLibrary || []).forEach(site => {
+    (site.hosts || []).forEach(h => { const n = normalizeSourceHost(h); if (n) hosts.add(n); });
+  });
+  return hosts;
+}
+
+function hostOfUrl(u) {
+  try { return normalizeSourceHost(new URL(String(u)).host); } catch (_) { return ''; }
+}
+
+/**
+ * Classify one inherited (3xx) row. `ctx` is a buildRedirectResolverContext(),
+ * `hosts` a knownSourceHosts() — both hoisted by callers looping over the file.
+ * Returns { cls, target, resolved } where `target` is the live site's current
+ * destination and `resolved` is where the rule will actually point after the
+ * migration.
+ */
+function classifyInheritedRedirect(row, ctx, hosts) {
+  const selfUrl = String(row[ctx.urlCol] || '').trim();
+  const target = crawlRedirectUrl(row);
+  if (!target) return { cls: 'no-target', target: '', resolved: '' };
+
+  const resolved = ctx.resolveFinalUrl(target, new Set([selfUrl]));
+  if (resolved === '404') return { cls: 'retired', target, resolved };
+  // Checked before everything else: a rule that lands on its own URL is broken
+  // however it got that way, and is the one case that is always wrong.
+  if (isSelfRedirect(selfUrl, resolved)) return { cls: 'loop', target, resolved };
+
+  // Does the destination correspond to a row we actually have?
+  const targetRow = ctx.rowByUrl.get(target);
+  if (targetRow) {
+    if (nonContentKind(targetRow) === 'gone') return { cls: 'dead', target, resolved };
+    const site = siteOfRow(targetRow);
+    if (site && site.inScope === false) return { cls: 'out-of-scope', target, resolved };
+
+    // The destination is a page in the inventory — but "in the inventory" is not
+    // the same as "will still be there". Two ways it won't be:
+    //
+    // (1) NO DECISION YET. This is the case that survives every workflow. An
+    //     earlier draft of this check flagged "destination not placed on the
+    //     sitemap", which is wrong for a migration that preserves URLs 1:1 in
+    //     the new CMS — a perfectly normal project with no sitemap at all would
+    //     have fired on every row. Whether a page is *placed* depends on how you
+    //     work; whether it has been *decided* does not. An undecided target may
+    //     turn out to be Kill, and then this rule points at nothing.
+    //
+    // (2) DECIDED, BUT RETIRED WITH NOWHERE TO GO. A Kill target with no
+    //     destination of its own, or a Consolidate target with no master picked,
+    //     leaves resolveFinalUrl() stopping ON that page rather than passing
+    //     through it. If it had somewhere to go the walk would already have
+    //     followed it, so the test is simply "did resolution move past it".
+    const targetKke = effectiveKke(targetRow);
+    if (!targetKke) return { cls: 'undecided', target, resolved };
+    const stoppedOnTarget = isSelfRedirect(String(targetRow[ctx.urlCol] || ''), resolved);
+    if (stoppedOnTarget && (targetKke === 'Kill' || targetKke === 'Consolidate')) {
+      return { cls: 'target-retired', target, resolved };
+    }
+    return { cls: 'ok', target, resolved };
+  }
+
+  // Not in the inventory. The host decides which of two very different things
+  // that means — and conflating them is why this classifier exists. A URL on a
+  // site we are migrating that we did not crawl is a hole in the data; a URL on
+  // somebody else's domain is simply an external destination, carried verbatim.
+  const h = hostOfUrl(target);
+  if (h && hosts.has(h)) return { cls: 'uncrawled', target, resolved };
+  if (h) return { cls: 'external', target, resolved };
+  // A relative or unparseable destination we cannot match to a row: treat as a
+  // gap rather than as external, since we cannot show it is off-site.
+  return { cls: 'uncrawled', target, resolved };
+}
+
+/** Rows whose inherited redirect needs a person. Hoists the context once. */
+function inheritedRedirectFindings() {
+  const ctx = buildRedirectResolverContext();
+  const hosts = knownSourceHosts();
+  const byClass = {};
+  INHERITED_REDIRECT_CLASSES.forEach(c => { byClass[c.key] = []; });
+  let total = 0;
+  state.editedRows.forEach((row, origIndex) => {
+    if (nonContentKind(row) !== 'redirect') return;
+    total++;
+    const r = classifyInheritedRedirect(row, ctx, hosts);
+    byClass[r.cls].push({ origIndex, url: String(row[ctx.urlCol] || ''), ...r });
+  });
+  return { total, byClass };
 }
 
 function resolveRedirectDestinations() {
@@ -25388,6 +25730,17 @@ function resolveRedirectDestinations() {
       // this, a Kill page assigned a nav home after autosave already wrote the
       // default keeps redirecting to the default forever.
       const auto = ctx.computeAutoDestination(row, 'kill'); // blank if nothing resolved (retired/404)
+      // An inherited value is the live site's answer copied in by triage, not a
+      // decision — so it is always re-derived, exactly as 'auto' is. Without
+      // this it would fail the looksAutoDerived test the moment its target
+      // moved (the new destination differs from the copied one, isn't the
+      // project default, and isn't a loop) and freeze at the old site's answer:
+      // the precise bug this fix exists to close. Provenance stays 'inherited'
+      // so the classification report can still tell where the value came from.
+      if (src === 'inherited') {
+        writeRedirectDestination(row, auto, auto ? 'inherited' : '');
+        return;
+      }
       const looksAutoDerived = !existing || existing === auto || existing === ctx.defaultRedirectUrl || existingIsLoop;
       if (looksAutoDerived) writeRedirectDestination(row, auto, 'auto');
       return;
@@ -25580,16 +25933,26 @@ function reportExecutiveSummary() {
   const stats = gatherProgressStats();
   const urlCol = state.urlColumn || 'Address';
 
-  const killPct = stats.total > 0 ? Math.round((stats.kkeCounts['Kill'] || 0) / stats.total * 100) : 0;
-  const evolveCount = stats.kkeCounts['Evolve'] || 0;
-  const keepCount = stats.kkeCounts['Keep'] || 0;
+  // Every number in this report is over CONTENT pages, not crawled URLs. This is
+  // the report a client reads, and "13,216 pages audited" invites exactly one
+  // question — are we really migrating 13,216 pages? — whose honest answer
+  // subtracts the redirects and dead URLs. Those are reported, separately and by
+  // name, rather than folded into a total that overstates the migration.
+  const cTotal = stats.contentTotal;
+  const cCounts = stats.contentKkeCounts;
+  const killPct = cTotal > 0 ? Math.round((cCounts['Kill'] || 0) / cTotal * 100) : 0;
+  const evolveCount = cCounts['Evolve'] || 0;
+  const keepCount = cCounts['Keep'] || 0;
 
   // Auto-generate findings
   const findings = [];
-  if (killPct > 0) findings.push(`${killPct}% of pages (${stats.kkeCounts['Kill']}) recommended for removal`);
+  if (killPct > 0) findings.push(`${killPct}% of content pages (${cCounts['Kill']}) recommended for removal`);
   if (evolveCount > 0) findings.push(`${evolveCount} pages need content updates or improvements`);
   if (keepCount > 0) findings.push(`${keepCount} pages are valuable and should be retained`);
-  if (stats.unreviewed > 0) findings.push(`${stats.unreviewed} pages still pending review`);
+  if (stats.contentUnreviewed > 0) findings.push(`${stats.contentUnreviewed} content pages still pending review`);
+  if (stats.nonContentRedirects > 0) {
+    findings.push(`${stats.nonContentRedirects} crawled URL${stats.nonContentRedirects !== 1 ? 's are' : ' is'} an existing redirect, not a page — each needs a carry-forward decision, but none is content to migrate`);
+  }
 
   // Check for low-link pages
   if (state.headers.includes('Unique Inlinks')) {
@@ -25597,12 +25960,29 @@ function reportExecutiveSummary() {
     if (noLinks > 0) findings.push(`${noLinks} pages have no internal links (orphan pages)`);
   }
 
+  // Only shown when the crawl actually contains non-content URLs, so a clean
+  // 200-only inventory reads exactly as it did before.
+  const ncRows = stats.nonContent > 0 ? `
+    <div class="stat-row"><span class="stat-label">URLs crawled</span><span class="stat-value">${stats.total}</span></div>
+    <div class="stat-row"><span class="stat-label">— existing redirects (3xx)</span><span class="stat-value">${stats.nonContentRedirects}</span></div>
+    <div class="stat-row"><span class="stat-label">— not found / gone (4xx)</span><span class="stat-value">${stats.nonContentGone}</span></div>` : '';
+  const ncNote = stats.nonContent > 0
+    ? `<div style="background:#f1f5f9;border-left:3px solid #64748b;padding:9px 12px;font-size:12px;margin:10px 0 14px;line-height:1.55;">
+         A crawl lists every URL that responded, not every page. The
+         <strong>${stats.nonContent}</strong> URLs above returned a redirect or an error, so they
+         are not content and are excluded from every figure below. They still need attention — an existing redirect
+         has to be carried forward or retired — but they are not pages being migrated.
+       </div>`
+    : '';
+
   let body = `
     <h2>Overview</h2>
-    <div class="stat-row"><span class="stat-label">Total pages audited</span><span class="stat-value">${stats.total}</span></div>
-    <div class="stat-row"><span class="stat-label">Pages reviewed</span><span class="stat-value">${stats.reviewed} (${stats.pct}%)</span></div>
-    ${kkeBarHtml(stats.kkeCounts, stats.total)}
-    ${kkeStatsRows(stats.kkeCounts)}
+    ${ncRows}
+    <div class="stat-row"><span class="stat-label">Content pages audited</span><span class="stat-value">${cTotal}</span></div>
+    <div class="stat-row"><span class="stat-label">Content pages reviewed</span><span class="stat-value">${stats.contentReviewed} (${stats.contentPct}%)</span></div>
+    ${ncNote}
+    ${kkeBarHtml(cCounts, cTotal)}
+    ${kkeStatsRows(cCounts)}
 
     <h2>Key Findings</h2>
     <ul>${findings.map(f => `<li>${escapeHtml(f)}</li>`).join('')}</ul>
@@ -25618,9 +25998,11 @@ function reportExecutiveSummary() {
     `;
   }
 
-  if (stats.groups.length > 0) {
+  // Content groups, so the per-section counts add up to the content-page figure
+  // in the Overview rather than to the raw crawl.
+  if (stats.contentGroups.length > 0) {
     body += `<h2>By Section</h2>`;
-    stats.groups.forEach(([g, c]) => {
+    stats.contentGroups.forEach(([g, c]) => {
       body += `<div class="stat-row"><span class="stat-label">${escapeHtml(g)}</span><span class="stat-value">${c} pages</span></div>`;
     });
   }
@@ -26997,20 +27379,81 @@ function checkRedirectChains() {
   if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
 
   const chains = computeRedirectChains();
+  const inherited = inheritedRedirectFindings();
+  const actionable = INHERITED_REDIRECT_CLASSES.filter(c => c.actionable)
+    .reduce((n, c) => n + inherited.byClass[c.key].length, 0);
 
-  if (chains.length === 0) {
+  if (chains.length === 0 && inherited.total === 0) {
     showToast('No redirect chains detected', 'success');
     return;
   }
 
-  // Show results as a simple alert with details
-  let msg = `${chains.length} redirect chain${chains.length !== 1 ? 's' : ''} found:\n\n`;
-  chains.slice(0, 20).forEach(c => {
-    msg += `${c.sourceUrl}\n  → ${c.destUrl}\n  ${c.issue}\n\n`;
-  });
-  if (chains.length > 20) msg += `… and ${chains.length - 20} more.\n`;
-  msg += 'Filter by "Kill" and check the Redirect Editor to fix these.';
-  alertDialog({ title: 'Redirect chains found', message: msg, width: 560 });
+  const esc = escapeHtml;
+  const rowsHtml = (items, limit = 12) => items.slice(0, limit).map(f => `
+      <div style="padding:5px 0;border-bottom:1px solid #eee;font-size:12px;">
+        <div style="font-family:ui-monospace,Menlo,monospace;">${esc(f.url)}</div>
+        <div style="color:#636363;padding-left:14px;">→ ${esc(f.target || '(none recorded)')}${
+          f.resolved && f.resolved !== f.target ? ` <strong>(now resolves to ${esc(f.resolved)})</strong>` : ''}</div>
+      </div>`).join('') + (items.length > limit
+        ? `<div style="font-size:12px;color:#636363;padding-top:5px;">…and ${items.length - limit} more</div>` : '');
+
+  let body = '';
+
+  if (inherited.total > 0) {
+    body += `
+      <h2>Inherited redirects</h2>
+      <p style="font-size:13px;">
+        ${inherited.total} URL${inherited.total !== 1 ? 's in the crawl are' : ' in the crawl is'} already a redirect on the
+        live site. Their destinations are re-derived on every save, so a rule follows its target if that page moves,
+        is consolidated, or is retired — you do not have to revisit them. The groups below are the ones the app
+        cannot resolve on its own.
+      </p>`;
+
+    INHERITED_REDIRECT_CLASSES.forEach(c => {
+      const items = inherited.byClass[c.key];
+      if (!items.length) return;
+      const note = {
+        'no-target':    'The crawl records no destination for these, so nothing can be carried forward. Decide whether each URL should redirect somewhere or be allowed to 404.',
+        'loop':         'These resolve back to their own URL. Always wrong — repoint or retire each one.',
+        'dead':         'These redirect to a URL that returns 4xx. The rule sends visitors to a dead end; retire it (set the destination to 404) or repoint it.',
+        'undecided':    'The destination is a page in this audit that nobody has made a KKE call on yet. If it turns out to be Kill, this rule points at nothing. Decide those pages — the redirects re-derive themselves afterwards.',
+        'target-retired': 'The destination is marked Kill (with no redirect of its own) or Consolidate (with no target picked), so the rule lands on a page that will not exist. Finish the destination page\u2019s decision, or repoint these.',
+        'uncrawled':    'The destination is on a site you are migrating but was not in this crawl, so the app cannot confirm it survives. Widen the crawl or confirm each by hand.',
+        'out-of-scope': 'The destination is on a site marked out of scope, so nothing here will maintain it. Confirm the rule should still point there.',
+        'external':     'The destination is off-site. These carry forward verbatim — nothing to resolve, listed so you can confirm you still want to send traffic there.',
+        'retired':      'Explicitly set to 404. No rule is written for these.',
+        'ok':           'The destination is a page in this audit; the rule follows it automatically.',
+      }[c.key] || '';
+      const heading = c.actionable ? `⚠ ${c.label}` : c.label;
+      body += `
+        <h3 style="margin:16px 0 4px;font-size:13px;">${esc(heading)} — ${items.length}</h3>
+        <p style="font-size:12px;color:#636363;margin:0 0 6px;">${esc(note)}</p>`;
+      // The two clean classes are counted, not listed — on a real crawl 'ok' is
+      // thousands of rows and printing them buries the groups that need work.
+      if (c.key !== 'ok' && c.key !== 'retired') body += rowsHtml(items);
+    });
+  }
+
+  if (chains.length > 0) {
+    body += `
+      <h2>Redirect chains</h2>
+      <p style="font-size:13px;">
+        ${chains.length} redirect${chains.length !== 1 ? 's point' : ' points'} at another page that is also being killed.
+        Fix these in the Redirect Editor so each rule lands on a surviving page in one hop.
+      </p>` +
+      chains.slice(0, 25).map(c => `
+        <div style="padding:5px 0;border-bottom:1px solid #eee;font-size:12px;">
+          <div style="font-family:ui-monospace,Menlo,monospace;">${esc(c.sourceUrl)}</div>
+          <div style="color:#636363;padding-left:14px;">→ ${esc(c.destUrl)} — ${esc(c.issue)}</div>
+        </div>`).join('') +
+      (chains.length > 25 ? `<div style="font-size:12px;color:#636363;padding-top:5px;">…and ${chains.length - 25} more</div>` : '');
+  }
+
+  const title = 'Redirect Chain Check';
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
+  if (actionable > 0) {
+    showToast(`${actionable} inherited redirect${actionable !== 1 ? 's need' : ' needs'} review — filter: Inherited redirect needs review`, 'info');
+  }
 }
 
 // ─── Redirect Health Check ───────────────────────────────────────────────────
@@ -27332,6 +27775,23 @@ function runPreHandoffCheck() {
     title: 'No redirect chains (Kill redirecting to a Kill page)',
     items: chains.map(c => `${escapeHtml(c.sourceUrl)} &rarr; ${escapeHtml(c.destUrl)} <span style="color:var(--text-muted);">(${escapeHtml(c.issue)})</span>`),
     fix: `Open the Redirect Editor and repoint these to a live destination.`,
+  });
+
+  // Inherited (3xx) redirects whose destination the app cannot vouch for. The
+  // headline case is a destination nobody has decided on yet: it may become
+  // Kill, and then the rule points at nothing. Deliberately keyed on the KKE
+  // decision rather than on sitemap placement, so this reads the same whether
+  // the new site re-maps every URL or preserves them 1:1.
+  const inherited = inheritedRedirectFindings();
+  const inheritedItems = [];
+  INHERITED_REDIRECT_CLASSES.filter(c => c.actionable).forEach(c => {
+    const n = inherited.byClass[c.key].length;
+    if (n) inheritedItems.push(`${escapeHtml(c.label)} <span style="color:var(--text-muted);">&mdash; ${n} redirect${n !== 1 ? 's' : ''}</span>`);
+  });
+  checks.push({
+    title: 'Inherited redirects resolve to pages that will exist',
+    items: inheritedItems,
+    fix: `Run Migration → Redirect Chain Check… for the detail, or use the "Inherited redirect needs review" filter. Deciding the destination pages fixes most of these on its own — inherited redirects re-derive on every save.`,
   });
 
   // Redirects that contradict the sitemap. Reported here as a count per class —
@@ -30191,6 +30651,10 @@ function setupMultiBar() {
       // No value select — Apply opens the bucket picker/creator dialog directly.
       applyBtn.classList.remove('hidden');
       return;
+    } else if (a === 'delete-rows') {
+      // No value select either — Apply opens the typed-confirmation dialog.
+      applyBtn.classList.remove('hidden');
+      return;
     }
     valueSel.classList.remove('hidden');
     applyBtn.classList.remove('hidden');
@@ -30204,6 +30668,17 @@ function setupMultiBar() {
     const targets = getMultiBarTargets();
     if (!targets || targets.length === 0) {
       showToast('Nothing to apply to', 'error');
+      return;
+    }
+    if (a === 'delete-rows') {
+      // Deliberately ahead of the generic confirm: deletion has its own dialog,
+      // and routing it through "apply value to N rows" would understate it.
+      openDeleteRowsDialog(targets, () => {
+        action.value = '';
+        valueSel.innerHTML = '';
+        valueSel.classList.add('hidden');
+        applyBtn.classList.add('hidden');
+      });
       return;
     }
     if (a === 'assign-nav') {
@@ -30259,6 +30734,220 @@ function setupMultiBar() {
     updateMultiBar();
     renderVisibleRows();
   });
+}
+
+// ─── Permanent row deletion ──────────────────────────────────────────────────
+//
+// The one destructive operation in the app: every other action edits a cell, and
+// a crawl export is otherwise preserved losslessly end to end. It exists because
+// a crawl arrives with rows that are not pages at all — a stray export, a merge
+// that doubled a section — and the alternative is round-tripping the file
+// through Excel, which loses the project's audit columns and change log.
+//
+// Three things make it safe enough to ship:
+//   * It is NOT undoable, and it says so. See deleteRows() for why the undo
+//     stack is cleared rather than remapped — the short version is that every
+//     undo entry addresses a row by index, and a splice silently re-points them.
+//   * The dialog reports what the deletion BREAKS, not just what it removes:
+//     consolidation targets other rows still point at, sitemap placements, and
+//     reviewed decisions. Those are the costs a row count can't convey.
+//   * It requires typing a phrase. Nothing here is reachable by a stray Return.
+
+const DELETE_ROWS_PHRASE = 'PERMANENTLY DELETE';
+
+/** What deleting these rows would break, for the confirmation dialog. Each
+ *  finding is a real downstream reference, computed against the SURVIVORS —
+ *  a consolidation target that is itself being deleted alongside its sources
+ *  is not an orphan, it's a section going away together. */
+function deleteRowsImpact(origIndexes) {
+  const doomed = new Set(origIndexes);
+  const urlCol = state.urlColumn || 'Address';
+  const doomedUrls = new Map(); // lowercased Address → origIndex
+  origIndexes.forEach(i => {
+    const u = String(state.editedRows[i]?.[urlCol] || '').trim().toLowerCase();
+    if (u) doomedUrls.set(u, i);
+  });
+
+  // Survivors that consolidate INTO one of the doomed rows: their target
+  // identity is about to point at a page that no longer exists.
+  const orphanedConsolidations = [];
+  state.editedRows.forEach((row, i) => {
+    if (doomed.has(i)) return;
+    const target = consolidateTargetAddr(row).trim().toLowerCase();
+    if (target && doomedUrls.has(target)) {
+      orphanedConsolidations.push({ origIndex: i, url: String(row[urlCol] || ''), target });
+    }
+  });
+
+  let placed = 0, decided = 0, withRedirect = 0;
+  origIndexes.forEach(i => {
+    const row = state.editedRows[i];
+    if (!row) return;
+    if (String(row['Sitemap_ID'] || '').trim()) placed++;
+    if (effectiveKke(row)) decided++;
+    if (String(row['Redirect_Destination'] || '').trim()) withRedirect++;
+  });
+
+  return { orphanedConsolidations, placed, decided, withRedirect };
+}
+
+/**
+ * Permanently remove rows. Splices BOTH state.rows and state.editedRows, which
+ * are index-parallel (editedRows is a clone of rows, and addNewRow pushes to
+ * both) — so they must be spliced together or every origIndex after the first
+ * deletion addresses a different row in each array.
+ *
+ * Descending order matters: splicing low-to-high shifts the indices still to be
+ * removed, so the second splice would take the wrong row.
+ *
+ * WHY THE UNDO STACK IS CLEARED, NOT REMAPPED. Every undo entry addresses its
+ * row by origIndex — the field-edit actions directly, and the 'bulk-edit' and
+ * 'nav-delete' snapshots inside their item lists. A splice re-points all of
+ * them: undoing afterwards would write an old value into a DIFFERENT row and
+ * report success. Remapping is possible but has to reach inside three action
+ * shapes and drop entries for deleted rows, and getting it subtly wrong is
+ * silent data corruption in a client audit. Dropping the history is the honest
+ * trade for an action already gated behind a typed phrase, and the dialog says
+ * so before you commit.
+ */
+function deleteRows(origIndexes) {
+  const idx = Array.from(new Set(origIndexes))
+    .filter(i => Number.isInteger(i) && i >= 0 && i < state.editedRows.length)
+    .sort((a, b) => b - a);
+  if (idx.length === 0) return 0;
+
+  const urlCol = state.urlColumn || 'Address';
+  // Log before splicing — logChange() reads the row out of state.editedRows by
+  // index, so it has nothing to read once the row is gone.
+  idx.slice().reverse().forEach(i => {
+    logChange(i, '(row deleted)', String(state.editedRows[i]?.[urlCol] || ''), '');
+  });
+
+  idx.forEach(i => {
+    state.editedRows.splice(i, 1);
+    if (i < state.rows.length) state.rows.splice(i, 1);
+  });
+
+  // Everything keyed by origIndex is now stale.
+  _undoStack.length = 0;
+  _redoStack.length = 0;
+  state.multiSelected.clear();
+  _globalSearchMatches = [];
+  _globalSearchCurrent = -1;
+
+  const deletedSet = new Set(idx);
+  if (state.selectedIndex !== null) {
+    if (deletedSet.has(state.selectedIndex)) {
+      state.selectedIndex = null;
+    } else {
+      // Shift down by however many deleted rows sat above it.
+      state.selectedIndex -= idx.filter(d => d < state.selectedIndex).length;
+    }
+  }
+
+  invalidateNavPageCountsCache();
+  detectDuplicates();
+  setDirty(true);
+  applyFilter();
+  updateMultiBar();
+  if (state.selectedIndex === null) showNoSelection();
+  if (_tableViewOpen) renderTableView();
+  if (_navEditorOpen) renderNavEditor();
+
+  return idx.length;
+}
+
+/** The confirmation. Reports the blast radius, then gates on a typed phrase. */
+function openDeleteRowsDialog(targets, onDone) {
+  const urlCol = state.urlColumn || 'Address';
+  const using = state.multiSelected.size > 0 ? 'selected' : 'matching the current filter';
+  const impact = deleteRowsImpact(targets);
+
+  const sample = targets.slice(0, 8)
+    .map(i => escapeHtml(String(state.editedRows[i]?.[urlCol] || '(no URL)')))
+    .map(u => `<div style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;">${u}</div>`)
+    .join('');
+  const more = targets.length > 8
+    ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px;">…and ${targets.length - 8} more</div>` : '';
+
+  const warn = [];
+  if (impact.orphanedConsolidations.length) {
+    warn.push(`<strong>${impact.orphanedConsolidations.length} other page${impact.orphanedConsolidations.length !== 1 ? 's' : ''}</strong> consolidate into pages you're deleting. Those pages will be left pointing at nothing, and their redirects can't be derived.`);
+  }
+  if (impact.decided) {
+    warn.push(`<strong>${impact.decided}</strong> of these carry a KKE decision — this is reviewed work, not just crawl noise.`);
+  }
+  if (impact.placed) {
+    warn.push(`<strong>${impact.placed}</strong> are placed on the sitemap. Their nodes stay; the page counts drop.`);
+  }
+  if (impact.withRedirect) {
+    warn.push(`<strong>${impact.withRedirect}</strong> have a redirect destination that will be lost from the redirect map.`);
+  }
+  const warnHtml = warn.length
+    ? `<div style="margin:12px 0;padding:10px 12px;border:1px solid var(--kke-kill);border-radius:6px;background:var(--kke-kill-bg);">
+         <div style="font-size:12px;font-weight:600;margin-bottom:6px;">What this breaks</div>
+         <ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.6;">${warn.map(w => `<li>${w}</li>`).join('')}</ul>
+       </div>`
+    : '';
+
+  const body = document.createElement('div');
+  body.innerHTML = `
+    <div style="font-size:13px;margin-bottom:10px;">
+      Permanently remove <strong>${targets.length} row${targets.length !== 1 ? 's' : ''}</strong> ${escapeHtml(using)} from this project.
+    </div>
+    <div style="max-height:130px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:8px;margin-bottom:10px;">
+      ${sample}${more}
+    </div>
+    ${warnHtml}
+    <div style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:12px;">
+      This cannot be undone, and it <strong>clears the undo history</strong> for this session — after a deletion the earlier entries no longer refer to the same rows. <strong>Autosave writes it to the file within a couple of seconds</strong>, so there is no close-without-saving escape. The deletion itself is recorded in the change log.
+    </div>
+    <label style="font-size:12px;display:block;margin-bottom:4px;">Type <code style="font-family:var(--font-mono);font-weight:600;">${DELETE_ROWS_PHRASE}</code> to confirm</label>
+    <input id="_del-confirm" type="text" autocomplete="off" spellcheck="false"
+           style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:13px;font-family:var(--font-mono);background:var(--bg-surface);color:var(--text-primary);box-sizing:border-box;">
+  `;
+
+  let deleteBtn = null;
+  const api = openModal({
+    title: 'Permanently delete rows',
+    width: 520,
+    body,
+    className: 'delete-rows-modal',
+    escapeValue: false,
+    buttons: [
+      { label: 'Cancel', variant: 'ghost', value: false },
+      {
+        label: `Delete ${targets.length} row${targets.length !== 1 ? 's' : ''}`,
+        variant: 'danger',
+        primary: true,
+        onClick: () => {
+          // Belt and braces: the button is disabled until the phrase matches,
+          // but Enter-to-submit paths shouldn't depend on that alone.
+          const v = body.querySelector('#_del-confirm').value.trim();
+          if (v !== DELETE_ROWS_PHRASE) return undefined;
+          return true;
+        },
+        closeOnClick: true,
+      },
+    ],
+    onClose: (val) => {
+      if (val !== true) return;
+      const n = deleteRows(targets);
+      showToast(`Deleted ${n} row${n !== 1 ? 's' : ''}`, 'success');
+      if (onDone) onDone();
+    },
+  });
+
+  // Gate the primary button on the typed phrase.
+  deleteBtn = api.footer ? api.footer.querySelector('.btn-danger') : null;
+  const input = body.querySelector('#_del-confirm');
+  const sync = () => {
+    const ok = input.value.trim() === DELETE_ROWS_PHRASE;
+    if (deleteBtn) { deleteBtn.disabled = !ok; deleteBtn.style.opacity = ok ? '' : '0.5'; }
+  };
+  input.addEventListener('input', sync);
+  sync();
+  setTimeout(() => input.focus(), 0);
 }
 
 /** Returns array of origIndex values to operate on. Multi-selected wins;
