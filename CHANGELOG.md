@@ -6,6 +6,10 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Multi-paragraph dialogs no longer run together.** A modal body with more than one paragraph rendered as a single block — most visibly the update dialog, where "Transmission vX is available" ran straight into the release note beneath it. The global CSS reset zeroes every margin and nothing restored it for dialog text.
+
 ## [2.18.0] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Added
