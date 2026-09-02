@@ -28,6 +28,9 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'),
 
 const EXTRACTED = [
   'redirectPathOf', 'isSelfRedirect',
+  // Inherited (3xx) redirect carry-forward — the resolver now follows a target
+  // that is itself an untriaged redirect, so these are real, not stubbed.
+  'statusCodeCategory', 'statusCodeCol', 'nonContentKind', 'redirectUrlCol', 'crawlRedirectUrl',
   'buildRedirectResolverContext', 'resolveRedirectDestinations',
   'computeRedirectHealth', 'applyRedirectHealthFixes', 'writeRedirectDestination',
 ];
