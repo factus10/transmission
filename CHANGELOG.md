@@ -6,6 +6,8 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.18.0] — "Please, Please, Please, Let Me Get What I Want"
+
 ### Added
 
 - **Inherited redirects carry forward instead of freezing.** A 3xx in a crawl is a redirect rule the live site already has, and Triage Non-200 copies its destination in. That copy was recorded as a hand-typed value, which meant the redirect resolver would never revisit it — so a rule written on day one still pointed at its target's **old** URL on day ninety, after you'd moved that page in the sitemap. On a replatform that ships redirects to URLs which won't exist.
