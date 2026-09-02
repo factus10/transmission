@@ -70,6 +70,8 @@ openModal({
 
 You get for free: centered + draggable, **Esc-closes**, **backdrop-click-closes**, focus on the first field/primary button, a coordinated **z-index stack** (nested dialogs always layer correctly), and a `.modal-close ×` header button. **Do not** add your own Esc/backdrop/z-index — the factory owns those.
 
+**Prose bodies go in `.modal-message`, and consecutive `<p>` are spaced for you.** The global reset zeroes every margin, so a bare `<p>` in a dialog has none; `.modal-message p + p` restores it. Write plain `<p>` elements — don't hand-patch with an inline `margin`, which is how this went unnoticed long enough for the update dialog to ship its version line and its release note as one run-on block.
+
 Button objects: `{ label, variant: 'primary'|'danger'|'ghost', value, primary, onClick, closeOnClick }`.
 - `primary: true` marks the Enter-key default and the rightmost emphasis.
 - `onClick(api)` may return a value used as the close result; set `closeOnClick: false` to keep the dialog open (e.g. validation failed).
