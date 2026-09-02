@@ -20,6 +20,8 @@ Transmission is not neutral. A handful of decisions are baked in, and every one 
 
 **`Kill` and `Exclude` are different.** `Kill` means the page is being removed and its URL needs a redirect decision. `Exclude` means the page isn't part of this audit's inventory at all — an alternate view, an out-of-scope property, an internal tool. Killing something you meant to exclude pollutes your redirect map with rules nobody needs.
 
+**A crawled URL is not a page.** Reports count *content pages*, not rows. A URL that returned a redirect (3xx) or an error (4xx) never served content, so it is broken out and named in the Executive Summary rather than folded into the migration total — otherwise the headline invites the wrong question at the readout. A 5xx *is* counted as content: a broken page is a page, and fixing it is work. Both readings stay available — your own progress covers every row, because a redirect still has to be triaged.
+
 **Everything travels with the file.** Libraries, settings, decisions, and the change log all live in the spreadsheet or the `.transmission` project. There's no server and no separate state. Hand someone the file and they have the whole audit.
 
 ---
@@ -57,6 +59,12 @@ Steps 0–3 are close to mandatory. Everything after depends on what you were hi
 - Anything whose canonical wasn't crawled is left alone; the *Canonical target not in this crawl* filter finds them.
 
 The whole triage undoes with one `Cmd+Z`, so it's safe to run and look at.
+
+**Redirects triage into `Kill`, and their destinations look after themselves.** A 3xx is a rule the live site already has. Triage copies its current destination in, and from then on the app re-derives it on every save — if the page it points at moves in your new sitemap, gets consolidated, or is retired, the rule follows. You do not have to revisit them when the tree changes. What the app *can't* resolve — a destination that was never crawled, one that's now a 404, one on a site you've marked out of scope — is listed by `Migration → Redirect Chain Check`, and the `Inherited redirect needs review` filter is the worklist. Run it once near the end, not now.
+
+**Exclude is the tool here, not deletion.** Both triages *record* a decision on every row rather than removing it, and that is deliberate: an audit has to be able to say what it looked at and why something was dropped. `Exclude` keeps the row, its history, and its explanation while keeping it out of every report and every count.
+
+Transmission can delete rows outright (Multi-bar → **⚠ Delete rows permanently…**, gated behind typing a phrase), but that is for rows which were never pages — a stray export appended to the file, a merge that doubled a section. It is the answer to "this shouldn't be in the spreadsheet," never to "this shouldn't be in the audit."
 
 **c. Name the source sites.** `Project Settings → Sites`. One entry is created per domain found in the crawl. Two jobs here:
 
