@@ -410,8 +410,10 @@ Use the **Group** dropdown next to it to narrow to a single content group.
 For anything the built-in filters don't cover, click **+ Field filter** and build your own:
 
 1. Pick a **field** (any column in your spreadsheet).
-2. Pick an **operator**: `is blank`, `is not blank`, `contains`, `doesn't contain`, `equals`, `doesn't equal`, `starts with`, or `ends with`.
+2. Pick an **operator**: `is blank`, `is not blank`, `contains`, `doesn't contain`, `equals`, `doesn't equal`, `starts with`, `ends with`, `is greater than`, or `is less than`.
 3. Enter a **value** and click **Apply**.
+
+`is greater than` and `is less than` are for the numeric columns a crawl is full of — word count, status code, response time, inlinks, GA sessions. They compare as **numbers** whenever both the cell and your value are numeric (`1,234` is fine), so `Word Count is less than 300` finds thin pages without `900` sorting above `1,000` the way a text comparison would. Give either side something non-numeric and they fall back to comparing character by character in ASCII order — usable for text if you know that ordering, where uppercase sorts before lowercase. Blank cells match neither direction: blank means *unreviewed*, not zero.
 
 Each filter becomes a removable chip, and you can stack several (they AND together). The **Unclassified** button is a one-click shortcut for the common case `Content Nature is blank`.
 
@@ -469,13 +471,36 @@ If you've both selected rows and applied a filter, your **selection wins**.
 
 ### Apply an action
 
-1. Pick an **Action** — Set KKE, Set Published Status, Set Content Type, Set Content Theme, Set Group, Set Primary Tag, Add Tag, or **Assign to Sitemap…**.
+1. Pick an **Action** — Set KKE, Set Published Status, Set Content Type, Set Content Theme, Set Group, Set Primary Tag, Add Tag, **Assign to Sitemap…**, or **⚠ Delete rows permanently…**.
 2. Choose the **value** (every list except *Add Tag* offers a `— Clear` option at the top, so bulk-clearing a field is easy).
 3. Click **Apply**. Every change is written to the audit trail.
 
 **Clear selection** drops your multi-selection and hands the target back to the filter.
 
 > **Heads-up:** bulk-setting **Kill** on pages that already have a sitemap assignment or redirect triggers the same cleanup prompt as a single Kill — so you decide whether to clear those too, rather than leaving redirects pointing nowhere.
+
+### Deleting rows for good
+
+Almost nothing in Transmission destroys data — your crawl is preserved column-for-column from import to export. **⚠ Delete rows permanently…** is the exception, and it exists for one narrow case: rows that were never pages. A stray export appended to the file, a merge that doubled a section, a handful of junk lines that arrived with the spreadsheet. Without it the only remedy is Excel, which costs you the audit columns and the change log.
+
+**Use `Exclude`, not deletion, for anything that is a real URL.** Exclude says "this was in the crawl and isn't part of my inventory" — it keeps the row, keeps its history, and keeps it out of every report. Deletion says the row should never have existed. If you might want to explain the decision later, you want Exclude.
+
+Before it does anything, the dialog tells you what the deletion **breaks**:
+
+- pages that **consolidate into** one you're deleting, which would be left pointing at nothing
+- how many of the doomed rows carry a **KKE decision** — reviewed work, as distinct from crawl noise
+- how many are **placed on the sitemap**, or carry a **redirect destination** that will drop out of the redirect map
+
+Then it asks you to type `PERMANENTLY DELETE`. The Delete button stays greyed out until you do.
+
+Two things worth knowing before you commit:
+
+- **It cannot be undone, and it clears your undo history for the session.** That second part isn't caution for its own sake — every undo entry refers to a row *by position*, and removing rows moves everything below them. Keeping the history would mean a later Cmd+Z quietly writing an old value into the wrong page. Dropping it is the safe answer.
+- **Each deleted row is written to the change log**, with its URL. The removal is part of the audit trail even though the row isn't.
+
+**There is no close-without-saving escape.** Autosave runs a couple of seconds after any change — sooner on a `.transmission` project than on a spreadsheet — so a deletion is on disk almost immediately. Don't rely on quitting to undo it.
+
+If you do need to recover, a `.transmission` project writes a backup into the app's `backups` folder **each time it is opened**, so the fallback is the state of the project when you opened it this session — everything since is lost. That is a genuinely bad day, which is why the confirmation is what it is. Spreadsheets have no such backup.
 
 ### Placing many pages on the sitemap at once
 
@@ -518,6 +543,7 @@ Sometimes you don't want to *set* a call across many pages — you want a *sugge
 ### Quick self-check
 
 - [ ] The Multi-bar's label confirms the right target (**selected** vs **filtered**) before you Apply
+- [ ] Anything you're tempted to delete is genuinely not a page — a real URL you aren't auditing is an `Exclude`
 - [ ] You've spot-checked a couple of rows in the filtered set
 - [ ] Any Kill-cleanup prompt was handled the way you intended
 - [ ] You used batch scoring for *suggestions*, and set KKE by hand where judgment matters
@@ -1411,7 +1437,32 @@ Destinations also resolve automatically on **Save**, so the editor is for review
 
 ### Validate the chains
 
-**Migration → Redirect Chain Check…** flags any redirect that points at another page being killed (a redirect into a redirect, or into a 404). Repoint those to a live destination. The same check runs as part of the [Pre-flight check](#18-pre-flight--hand-off).
+**Migration → Redirect Chain Check…** covers two things: redirects that point at another page being killed (repoint those to a live destination), and every **inherited redirect** in the crawl. The same check runs as part of the [Pre-flight check](#18-pre-flight--hand-off).
+
+### Inherited redirects — the 3xx rows in your crawl
+
+A 3xx URL isn't a page, it's a redirect rule the live site already has. Triage sets those to `Kill` and copies in the destination the crawl recorded — and from then on **the app re-derives that destination on every save**. That matters more than it sounds: if `/old-nursing` currently redirects to `/programs/nursing`, and you later move that page to `/academics/nursing` in your sitemap, the inherited rule follows it. You don't have to go back and fix redirects every time the tree changes. The same applies if the target gets consolidated into another page, or is retired to a 404. A chain on the live site (A → B → C) collapses to a single hop, so no rule you ship lands on a URL that is itself being retired.
+
+Your own typed destinations are never touched by any of this — a redirect you set by hand stays exactly as you left it.
+
+What the app **can't** decide for you gets grouped in the report, and the sidebar's **Inherited redirect needs review** filter is the worklist:
+
+| Group | What it means | What to do |
+|---|---|---|
+| **No destination recorded** | The crawl found a 3xx but captured no target. | Give it a destination, or let it 404. |
+| **Redirects to itself** | The rule resolves back to its own URL. | Always wrong — repoint or retire. |
+| **Destination is a dead URL (4xx)** | It redirects to a page that's already gone. | Retire it (destination `404`) or repoint. |
+| **Destination has no KKE decision yet** | It points at a page in your audit that nobody has ruled on. If that page turns out to be Kill, this rule points at nothing. | Decide those pages. The redirects re-derive themselves afterwards — you don't come back here. |
+| **Destination is being retired with nowhere to go** | It points at a page marked Kill with no redirect of its own, or Consolidate with no target picked. | Finish the destination page's decision, or repoint the rule. |
+| **Destination not in this crawl** | The target is on a site you're migrating but wasn't crawled, so the app can't confirm it survives. | Widen the crawl, or confirm by hand. |
+| **Destination is on an out-of-scope site** | Nobody is maintaining the thing it points at. | Confirm you still want to send traffic there. |
+| **Destination is off-site** | Points at another domain entirely. | Nothing to resolve — carried forward verbatim. Listed so you can confirm it. |
+
+That "not in this crawl" versus "off-site" split is the one worth reading carefully. Both are destinations the app can't resolve to a row, but one is a gap in your data and the other is completely normal.
+
+**Why "no KKE decision" and not "not placed on the sitemap"?** Because plenty of migrations keep every URL exactly as it is — the new CMS re-uses the existing paths and nobody builds a sitemap at all. In that project *nothing* is placed, so a placement-based warning would fire on every single row and mean nothing. Whether a page is placed depends on how you work; whether it has been decided does not. So the check asks the question that holds either way: **is there a page here that we've committed to keeping?**
+
+This is also the one group you can clear without touching a single redirect. Decide the destination pages and the rules re-derive themselves on the next save.
 
 ### Check the redirects still agree with the sitemap
 
@@ -1438,7 +1489,7 @@ Tick the groups you want repaired and apply: the whole repair is a **single Cmd+
 
 - [ ] Every Kill / URL-changed page has a destination (or an intentional **404**)
 - [ ] You ran **Re-derive from sitemap** after the tree was finalized
-- [ ] The **Redirect Chain Check** is clean — no redirects into Kill/404 pages
+- [ ] The **Redirect Chain Check** is clean — no redirects into Kill/404 pages, and no inherited redirect left in an actionable group
 - [ ] The **Redirect Health Check** is clean — no loops, orphans, or destinations that contradict the sitemap
 - [ ] Intentional 404s are marked, not left blank
 - [ ] The redirect map is exported
@@ -1467,7 +1518,13 @@ Reports are read-only views, generated on demand from the current file — run t
 
 ### For stakeholders
 
-- **Executive Summary** — the top-line story: total pages, the KKE distribution, auto-generated key findings, SME status, and a section breakdown. Lead a client readout with this.
+- **Executive Summary** — the top-line story: the content inventory, the KKE distribution, auto-generated key findings, SME status, and a section breakdown. Lead a client readout with this.
+
+  **It counts content pages, not crawled URLs, and the difference is usually large.** A crawl lists every URL that *responded* — including every inherited 301 and every dead link. Reporting those as pages invites the one question you don't want mid-readout: *"we're really migrating twelve thousand pages?"* So the Overview leads with `URLs crawled`, breaks out **existing redirects (3xx)** and **not found / gone (4xx)**, and then gives **content pages audited** — and every figure below it, including the Kill percentage, is over content pages only. On a real higher-ed crawl that moved the headline "recommended for removal" figure from 66% to 31%; the first number was mostly redirects.
+
+  A 5xx still counts as content — a broken page is a page, and it's work you'll be doing. Nothing is hidden: the non-content rows are named, counted, and still in the audit. **By Section** counts content pages too, so it adds up to the content total rather than to the crawl. If a section is missing entirely, check whether its site is marked out of scope — those rows are excluded from every figure in the report, and the banner at the top says how many.
+
+  To see the rows behind the numbers, use the sidebar's **Existing redirect (3xx — not content)** or **Not content (3xx or 4xx)** filters.
 - **Content Inventory by Section** — the full inventory grouped by section, with KKE distribution, sample pages, and notes counts. Your detailed appendix.
 - **SME Review Status** — where expert review stands: overall completion plus a per-Content-Owner table (assigned, reviewed, %, approved vs changed, unresolved conflicts) and a conflict list.
 - **Audience Coverage** — per audience in priority order: how many pages serve them, how many treat them as the *primary* audience, what you're doing to that content, and which sections it lives in. Flags any Primary-tier audience with almost nothing aimed at it — usually the most actionable finding in the set. Ends with the pages nobody has reviewed for audience yet.
@@ -1566,6 +1623,8 @@ Three things don't survive the trip exactly, and it's worth knowing which before
 The **Reports** menu holds everything above. The separate **Migration** menu is reserved for export and validation *tools* rather than reports — Pre-Handoff Check, Migration Tracker, Export Redirect Map (CSV), and Redirect Chain Check.
 
 For a live progress view rather than a formal report, open the **Progress Dashboard** with **Cmd+P** (or **View → Audit Progress**): client and project, total and percent reviewed, the KKE breakdown as a stacked bar, flagged/tagged/noted counts, a by-group breakdown, and SME stats — exportable to PDF or HTML with a client/project/date header, like every other report.
+
+It counts every row you're actually auditing, including redirects and error URLs — a 3xx still needs triaging, so it's still work — with the content split shown beneath the total. **Pages on sites you've marked out of scope are left out**, so a retired property can't hold your completion percentage below 100% forever; a note at the top says how many rows that was and which sites. The Executive Summary counts the same rows but reports only content pages, which is why its total is the smaller of the two.
 
 ---
 
