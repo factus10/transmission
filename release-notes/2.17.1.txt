@@ -1,0 +1,1 @@
+Two small fixes to the What's New window. It no longer opens on an empty "Unreleased" section — it starts on the newest release — and it now fetches the changelog fresh each time, so it can't show you the previous release's notes right after telling you a new version is available.
