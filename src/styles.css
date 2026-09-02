@@ -4581,6 +4581,13 @@ body.dragging-modal, body.dragging-modal * { cursor: grabbing !important; }
   line-height: 1.5;
   color: var(--text-secondary);
 }
+/* The global reset zeroes every margin and nothing restored it here, so a modal
+   body with more than one paragraph rendered as a single run-on block — most
+   visibly the update dialog, where the "vX is available" line ran straight into
+   the release note. Scoped to `p + p` so single-paragraph dialogs (nearly all of
+   them) are untouched and no existing spacing shifts; a paragraph carrying its
+   own inline margin still wins, since inline styles outrank this. */
+.modal-message p + p { margin-top: 8px; }
 .modal-prompt-input {
   width: 100%;
   margin-top: 12px;
