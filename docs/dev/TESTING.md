@@ -65,7 +65,7 @@ A stub that is subtly weaker than the real function produces a *false failure* (
 
 ## Coverage today
 
-Three suites, 67 tests. Each file carries its own `EXTRACTED` list and `PRELUDE`, so a suite only stands up the stubs its own functions need.
+Eight suites, 189 tests — the four largest are described below. Each file carries its own `EXTRACTED` list and `PRELUDE`, so a suite only stands up the stubs its own functions need.
 
 ### `test/sankey.test.js` — 34 tests over the Content Flow (Sankey) feature
 
@@ -104,5 +104,25 @@ The load-bearing assertions are the ones about *not overclaiming*: an unmeasurab
 | Over-wide branches | Reported worst-first; an already-collapsed node isn't reported |
 | Projection | Grouping shortens the canvas without widening it; **the bucket must be collapsed** — expanded it is not a fix at all; projecting mutates nothing; selecting nothing changes nothing; dropping artifacts removes exactly those roots; a projection can still come back unusable |
 | The repair | `applyGroupNavRoots` moves the chosen roots and leaves the rest alone; a node below the top level is adopted, not duplicated |
+
+### `test/mcp-server.test.js` — 37 tests over the MCP server (`mcp/`)
+
+The one suite here that tests code it can simply `require()` — `mcp/` is ordinary Node — and the one that stands up a real SQLite file and a real child process. It still leans on source-lifting, for a different reason: not to reach the code under test, but to pin it to the code it **mirrors**.
+
+| Area | What's asserted |
+|------|-----------------|
+| Schema drift | The fixture database is built from the `CREATE TABLE` text lifted out of `project-store.js` (the server can't load `ProjectStore` — `better-sqlite3` is built for Electron's ABI), so a schema change the server hasn't followed fails here |
+| Filter drift | `fieldFilterMatches` and `statusCodeCategory` lifted from `renderer.js` agree with the server's ports across every operator × ~170 cell/needle shapes; the app's operator table and the server's are the same set |
+| Loader | Column mapping tiers; a newer schema is refused; a non-project fails with an actionable message; legacy nav column names; one corrupt row is quarantined without shifting the rows after it |
+| Read-only | The project file is byte-identical, and `user_version` untouched, after every tool has run |
+| Counting rules | Content vs 3xx/4xx with 5xx as content; both readings of progress; `Final_KKE` wins and blank is never Keep; fragments owe no placement; out-of-scope sites excluded by default |
+| Aggregate / query | CSV columns split (and say so); virtual fields; case-insensitive field names; an unknown field errors with a suggestion; numeric ordering with blanks last |
+| Saved filters | Applied the way the sidebar would; one needing app-only state is refused **by name** rather than half-applied |
+| Sitemap / redirects / changelog | Live vs subtree counts and net-new; set / deliberate-404 / owed-but-blank with provenance; fragments never owe a redirect; history newest-first |
+| Stdio server | Handshake and version negotiation; tool errors are results, protocol faults are JSON-RPC errors; a failed `open_project` keeps the open project; **nothing on stderr and nothing but JSON on stdout**; an autosave-shaped write through the WAL is picked up on the next call |
+
+Checked against four mutations, each caught: a blank cell matching `less-than`, the scope filter removed, the `-wal` file left out of the freshness stamp, and Kill rows counted as live pages. The third one originally presented as a **hang** rather than a failure — a failed assertion skipped the test's own `close()`, and the orphaned server process kept the runner alive — which is why `startServer(t, …)` takes the test context and registers the kill in `t.after()`. Any future test that spawns a process should do the same.
+
+The filter drift test uses `vm.runInNewContext`, against the advice above — safely, because the lifted functions need no globals beyond language intrinsics and only booleans cross the realm boundary. Don't copy that into a suite whose code touches `URL` or returns arrays.
 
 Everything else in the app is currently covered by the manual pass in `docs/dev/TEST_PLAN.md`.
