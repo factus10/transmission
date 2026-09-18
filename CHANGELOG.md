@@ -6,6 +6,14 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Added
+
+- **MCP server (developer preview) — ask an AI about an audit.** The Reports menu is a fixed set of questions, and an audit raises plenty that aren't on it. `mcp/server.js` is a Model Context Protocol server that gives a client such as Claude Desktop or Claude Code **read-only** access to a `.transmission` project: counts grouped by any columns, rows filtered with the same field filters and saved filters the sidebar uses, one page's full record with its change history, the sitemap with page counts, redirects with their provenance, and the audit trail.
+
+  It reads the project file directly and is safe to run beside the app — it opens read-only, never migrates the file, and notices each autosave. It deliberately cannot write: the app keeps the project in memory and would overwrite an outside edit within seconds, so changes are planned as proposals you accept in the app. The conventions that change how a number must be read — blank means *unreviewed*, Kill vs Exclude, content pages vs crawled URLs — are sent to the model with the connection, so an untouched crawl doesn't get reported as a finished audit.
+
+  Not part of the app bundle: it needs Node 22.13+ and has no dependencies. Setup is in `mcp/README.md`; the design, and what Phase 2 looks like, in `docs/dev/MCP_SERVER_PROPOSAL.md`.
+
 ## [2.19.0] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Added
