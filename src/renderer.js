@@ -48,7 +48,7 @@ const state = {
   selectedIndex: null,      // origIndex into editedRows
   filteredRows:  [],        // [{ row, origIndex }]
   filterText:    '',
-  sortOrder:     '',         // '' | 'asc' | 'desc'
+  sortOrder:     '',         // '' | 'asc' | 'desc' | 'tree' (site order)
   isDirty:       false,
 
   // Prefs (loaded from main)
@@ -3198,8 +3198,102 @@ function applyFilter() {
   updateStatsBar();
 }
 
+// ─── Site order: review a scattered site section by section ──────────────────
+// A crawl lists pages in whatever order the spider found them, and an A–Z URL
+// sort still interleaves unrelated sections. "Site order" sorts the sidebar the
+// way the site is ORGANIZED: pages placed in the sitemap follow the sitemap
+// (the editor's own display order — a DFS over state.navTree's child arrays,
+// not parentNumber, which can go stale after a reorganization); unplaced pages
+// follow, grouped by site, then by URL path compared SEGMENT by segment.
+//
+// Segment-wise matters: a plain string sort puts "/about-us" between "/about"
+// and "/about/team", because '-' sorts before '/'. Comparing path segments keeps
+// a section's landing page directly above everything beneath it.
+
+/** Row-list indent (in tree levels) per origIndex, filled while sorting in
+ *  site order and read by renderVisibleRows(). Empty in every other mode. */
+let _siteOrderDepth = new Map();
+
+/** nodeId → {ord, depth} in on-screen sitemap order. */
+function navDisplayOrder() {
+  const out = new Map();
+  let ord = 0;
+  (function walk(nodes, depth) {
+    (nodes || []).forEach(n => {
+      if (!n || out.has(n.id)) return;
+      out.set(n.id, { ord: ord++, depth });
+      walk(n.children, depth + 1);
+    });
+  })(state.navTree, 0);
+  return out;
+}
+
+/** Sort key for a URL's place in its site's path hierarchy. */
+function urlTreeKey(url) {
+  const raw = String(url || '').trim();
+  let host = '', path = raw, query = '';
+  try {
+    const u = new URL(raw);
+    host = normalizeSourceHost(u.hostname);
+    path = u.pathname;
+    query = u.search;
+  } catch (_) {
+    const q = raw.indexOf('?');
+    if (q >= 0) { query = raw.slice(q); path = raw.slice(0, q); }
+  }
+  const segs = path.split('/').filter(Boolean).map(seg => {
+    try { return decodeURIComponent(seg).toLowerCase(); } catch (_) { return seg.toLowerCase(); }
+  });
+  return { host, segs, query: query.toLowerCase() };
+}
+
+const _siteOrderCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+/** Compare two urlTreeKey()s: host, then path segments (a parent before its
+ *  children), then query string (a bare page before its ?variants). */
+function compareUrlTreeKeys(a, b) {
+  if (a.host !== b.host) return _siteOrderCollator.compare(a.host, b.host);
+  const n = Math.min(a.segs.length, b.segs.length);
+  for (let i = 0; i < n; i++) {
+    const c = _siteOrderCollator.compare(a.segs[i], b.segs[i]);
+    if (c) return c;
+  }
+  if (a.segs.length !== b.segs.length) return a.segs.length - b.segs.length;
+  return _siteOrderCollator.compare(a.query, b.query);
+}
+
+/** Sort [{row, origIndex}] into site order in place; returns origIndex → indent depth. */
+function sortRowsBySiteOrder(list, urlCol) {
+  const order = navDisplayOrder();
+  const keyed = list.map(fr => {
+    const id = String(fr.row['Sitemap_ID'] || '').trim();
+    const placed = id ? order.get(id) : null;
+    const key = urlTreeKey(fr.row[urlCol]);
+    return { fr, placed, key };
+  });
+  keyed.sort((a, b) => {
+    if (a.placed && b.placed) {
+      if (a.placed.ord !== b.placed.ord) return a.placed.ord - b.placed.ord;
+      return compareUrlTreeKeys(a.key, b.key);
+    }
+    if (a.placed !== b.placed && (!a.placed || !b.placed)) return a.placed ? -1 : 1;
+    return compareUrlTreeKeys(a.key, b.key);
+  });
+  const depth = new Map();
+  keyed.forEach((k, i) => {
+    list[i] = k.fr;
+    depth.set(k.fr.origIndex, k.placed ? k.placed.depth : Math.max(0, k.key.segs.length - 1));
+  });
+  return depth;
+}
+
 function applySort() {
+  _siteOrderDepth = new Map();
   if (!state.sortOrder || !state.urlColumn) return;
+  if (state.sortOrder === 'tree') {
+    _siteOrderDepth = sortRowsBySiteOrder(state.filteredRows, state.urlColumn);
+    return;
+  }
   const col = state.urlColumn;
   const dir = state.sortOrder === 'asc' ? 1 : -1;
   state.filteredRows.sort((a, b) => {
@@ -3248,14 +3342,33 @@ function renderColHeaders() {
     const cell = document.createElement('div');
     cell.className = 'col-header-cell url-col sortable';
     const arrow = state.sortOrder === 'asc' ? ' ▲' : state.sortOrder === 'desc' ? ' ▼' : '';
-    cell.textContent = state.urlColumn + arrow;
-    cell.title = 'Click to sort';
-    cell.addEventListener('click', () => {
-      state.sortOrder = state.sortOrder === '' ? 'asc' : state.sortOrder === 'asc' ? 'desc' : '';
+    const label = document.createElement('span');
+    label.className = 'col-header-label';
+    label.textContent = state.urlColumn + arrow;
+    cell.appendChild(label);
+    cell.title = 'Click to sort A–Z / Z–A';
+    const setSort = (v) => {
+      state.sortOrder = v;
       applyFilter();
       renderColHeaders();
       window.electronAPI.savePrefs({ sortOrder: state.sortOrder });
+    };
+    cell.addEventListener('click', () => {
+      // A–Z cycle; from site order, a header click starts the cycle over.
+      setSort(state.sortOrder === 'asc' ? 'desc' : state.sortOrder === 'desc' ? '' : 'asc');
     });
+    const tree = document.createElement('button');
+    tree.type = 'button';
+    tree.className = 'site-order-btn' + (state.sortOrder === 'tree' ? ' active' : '');
+    tree.textContent = 'Site order';
+    tree.title = state.sortOrder === 'tree'
+      ? 'Sorted in site order — sitemap order for placed pages, then by URL path. Click to turn off.'
+      : 'Sort in site order: placed pages in sitemap order, then unplaced pages grouped by site and URL path, indented by level.';
+    tree.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setSort(state.sortOrder === 'tree' ? '' : 'tree');
+    });
+    cell.appendChild(tree);
     els.colHeaderStrip.appendChild(cell);
   }
 
@@ -3473,6 +3586,11 @@ function renderVisibleRows() {
       const cell = document.createElement('div');
       cell.className = idx === 0 ? 'row-cell url-cell' : 'row-cell';
       cell.textContent = row[h] ?? '';
+      // Site order indents the URL by its level, so sections read as sections.
+      if (idx === 0 && _siteOrderDepth.size) {
+        const d = Math.min(_siteOrderDepth.get(origIndex) || 0, 6);
+        if (d) cell.style.paddingLeft = `calc(${d} * 10px + 4px)`;
+      }
       // The URL cell is horizontally scrollable on hover, so skip the redundant
       // native title tooltip there; keep it for the other (truncated) columns.
       if (idx !== 0) cell.title = row[h] ?? '';
@@ -16803,6 +16921,7 @@ function sitemapAppDefaults() {
   return Object.assign({
     vertDepth: 2, childThresh: 3, cardWidth: 148, cardHeight: 70,
     hGap: 40, vRow: 60, vlGap: 12, vlDrop: 32, vlHgap: 20, pad: 72,
+    parentAlign: 'center',
     // Must mirror the engine's own defaults in sitemap-template.js, or the
     // host and the webview disagree about what "match the sitemap" means.
     connectorColor: '#9aa0ab', connectorWeight: 'uniform',
@@ -16904,6 +17023,13 @@ function openSitemapView(opts) {
       hGap: eff.hGap, vRow: eff.vRow, vlGap: eff.vlGap, vlDrop: eff.vlDrop,
       vlHgap: eff.vlHgap, pad: eff.pad, showNumbers: eff.showNumbers !== false,
       showCounts: eff.countMode !== 'off', countMode: eff.countMode,
+      parentAlign: eff.parentAlign,
+      // Passed through so a reopened diagram keeps what the Layout tab set —
+      // these were omitted, so they silently reverted to the engine defaults.
+      // `undefined` (never set) is harmless: the engine's defaults fill it.
+      cardRadius: eff.cardRadius, cardPadX: eff.cardPadX, cardPadY: eff.cardPadY,
+      connectorColor: eff.connectorColor, connectorWeight: eff.connectorWeight,
+      connectorWidth: eff.connectorWidth, connectorMaxWidth: eff.connectorMaxWidth,
       colorRules: eff.colorRules, baseCardStyle: eff.baseCardStyle, legendLabels: eff.legendLabels, nodeOverrides: eff.nodeOverrides
     },
     // Nav uses node.collapse (the Nav Tree checkbox / Sitemap sheet's Collapse column) as the
@@ -16912,6 +17038,10 @@ function openSitemapView(opts) {
     // such flag, so they fall back to their own persisted collapse view-state.
     initialCollapsed: opts.collapseToNavNodes ? (opts.initialCollapsed || []) : (eff.collapsed || opts.initialCollapsed || [])
   };
+
+  // Drop never-set keys: Object.assign in the engine copies an `undefined`
+  // straight over its own default.
+  Object.keys(baseData.settings).forEach(k => { if (baseData.settings[k] === undefined) delete baseData.settings[k]; });
 
   let lastState = { collapsed: baseData.initialCollapsed, showNumbers: baseData.settings.showNumbers, showCounts: baseData.settings.showCounts, countMode: baseData.settings.countMode, settings: baseData.settings };
 
