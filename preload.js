@@ -107,6 +107,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMenuSmeExport:     (cb) => ipcRenderer.on('menu-sme-export',        ()   => cb()),
   onMenuSmeImport:     (cb) => ipcRenderer.on('menu-sme-import',        ()   => cb()),
   onMenuSmeResolve:    (cb) => ipcRenderer.on('menu-sme-resolve',       ()   => cb()),
+  onMenuConsolidateReview: (cb) => ipcRenderer.on('menu-consolidate-review', () => cb()),
   smeExport:           (payload) => ipcRenderer.invoke('sme-export', payload),
   onMenuRedirectChainCheck: (cb) => ipcRenderer.on('menu-redirect-chain-check', () => cb()),
   onMenuRedirectHealthCheck: (cb) => ipcRenderer.on('menu-redirect-health-check', () => cb()),
