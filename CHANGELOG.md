@@ -6,6 +6,16 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Added
+
+- **Site order in the sidebar.** A **Site order** button in the Address header sorts the list the way the site is organized, not the order the crawler found it. Pages placed in the sitemap come first, in sitemap order. Unplaced pages follow, grouped by site and then by URL path, with each section's landing page directly above its children and every URL indented by level. The path comparison goes one segment at a time, so `/about-us` no longer sorts into the middle of `/about/…`, and `page/10` comes after `page/2`.
+
+- **Left-aligned Visual Sitemap.** Settings → Layout → **Parent position** can put each parent at the left edge of its children instead of centered over them. The root anchors the top-left corner and the tree grows to the right. Fit keeps it against the left edge, and the setting carries into every export, Miro included.
+
+### Fixed
+
+- **Visual Sitemap connector and card settings now stick.** Line color, line weight (uniform or by content volume), base and max width, corner radius, and padding were never sent back from the diagram to the project. They reset every time the sitemap reopened, and the PDF, PNG, HTML and Miro exports drew the default grey uniform lines whatever the Layout tab showed.
+
 ## [2.18.1] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Fixed
