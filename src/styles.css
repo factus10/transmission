@@ -593,6 +593,10 @@ html, body {
 .row-ind-redirect { background: var(--kke-evolve-bg); color: var(--kke-evolve); }
 .row-ind-consolidate { background: var(--kke-consolidate-bg); color: var(--kke-consolidate); }
 .row-ind-consolidate-missing { background: var(--kke-kill-bg); color: var(--kke-kill); }
+/* A consolidate target the client's Final_KKE overrode — still stored, not acted on */
+.row-ind-inactive { opacity: 0.45; text-decoration: line-through; }
+/* Sidebar KKE badge whose recommendation a Final_KKE overrides (title names the Final) */
+.kke-badge.kke-badge-overridden { text-decoration: line-through; opacity: 0.6; outline: 1px dashed currentColor; outline-offset: -1px; }
 .row-ind-cms {
   background: #ecfdf5;
   color: #047857;
@@ -5702,3 +5706,61 @@ body.dragging-modal, body.dragging-modal * { cursor: grabbing !important; }
 
 /* ── Utilities ────────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
+
+/* ── Final KKE override chip (audit bar) ─────────────────────────────────────
+   Shown beside the KKE buttons when the client's Final_KKE differs from the
+   recommendation the buttons highlight. Inherits .kke-badge colors. */
+.final-kke-override {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px dashed currentColor;
+  cursor: pointer;
+  font-size: 11px;
+}
+.final-kke-override.hidden { display: none; }
+.final-kke-override-label {
+  font-family: var(--font-sans);
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.75;
+}
+.final-kke-override.needs-target { border-style: solid; border-color: var(--danger); }
+.final-kke-override.needs-target::after { content: '⚠'; color: var(--danger); }
+
+/* ── Review Consolidations dialog ─────────────────────────────────────────── */
+.cr-review-intro { margin: 0 0 10px; color: var(--text-secondary); font-size: 12px; }
+.cr-review-list { max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.cr-review-empty { padding: 28px; text-align: center; color: var(--text-muted); font-size: 13px; }
+.cr-review-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  background: var(--bg-surface);
+  font-size: 12px;
+}
+.cr-review-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cr-review-title { font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cr-review-kind {
+  flex: none;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--kke-consolidate-bg);
+  color: var(--kke-consolidate);
+}
+.cr-review-kind.cr-kind-client-override { background: var(--bg-hover); color: var(--text-secondary); }
+.cr-review-meta, .cr-review-target { margin-top: 4px; color: var(--text-secondary); }
+.cr-review-target { font-family: var(--font-mono); font-size: 11px; word-break: break-all; }
+.cr-review-target.cr-missing { color: var(--danger); font-family: var(--font-sans); }
+.cr-review-notes {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--warning);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+}
+.cr-review-actions { margin-top: 8px; display: flex; gap: 6px; justify-content: flex-end; }
