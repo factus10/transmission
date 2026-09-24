@@ -209,7 +209,8 @@ Kill/Redirect is the simplest track to *execute* but the easiest to get wrong by
 | KKE | Content Nature | Default Migration Track |
 |-----|----------------|------------------------|
 | Keep | Page | Scripted |
-| Keep | Content Object | Migrate Records |
+| Keep | Content Object (Record) | Migrate Records |
+| Keep | Fragment | Migrate Records |
 | Keep | Generated | Configure |
 | Evolve | (any) | Manual Rebuild |
 | Consolidate | (any) | Merge |
