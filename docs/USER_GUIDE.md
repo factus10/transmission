@@ -392,6 +392,16 @@ The top of the sidebar is a search box with a **scope** selector beside it:
 
 The placeholder text changes to show the active scope, and the scope sticks as you refine your search — it only changes when you pick a different one. Click **✕** to clear.
 
+### Sort in site order
+
+A crawl lists pages in whatever order the spider found them, and even an A–Z sort mixes sections together. For a site that's all over the place, click **Site order** in the sidebar's Address header to review it section by section:
+
+- **Pages placed in the sitemap** come first, in sitemap order: the order you see in the Sitemap editor.
+- **Unplaced pages** follow, grouped by site and then by URL path. Each section's landing page sits directly above everything under it: `/about`, then `/about/history` and `/about/team`, then `/about-us`. A plain A–Z sort would put `/about-us` in the middle of the About section. Numbers sort as numbers (`page/2` before `page/10`), and a page comes before its `?query` variants.
+- URLs are **indented by level**, so sections read as sections.
+
+Click **Site order** again to turn it off, or click the Address header to go back to A–Z / Z–A. Site order works together with every filter, and it's remembered like the other sort settings.
+
 ### Filter by KKE status
 
 Click the **KKE filter** to open a checkbox list. Check as many as you like and they combine with OR — so **Keep + Evolve** shows everything you're keeping. Alongside the five calls, the list includes useful **special filters**:
@@ -1166,6 +1176,7 @@ So **need placement → 0** confirms every Keep/Evolve page is in the IA, **empt
 
     **Opening it anyway is always offered**, and is sometimes the right call: "this site has 548 top-level sections and no information architecture" is a finding worth showing a client, and it's more convincing as a picture than a number.
   - **Smart layout** — each branch lays out **horizontally** (children fan sideways below the parent) or **vertically** (children stack below-and-indented) automatically. Two toolbar dropdowns decide which, whichever fires first: **Vertical from depth** (go vertical at this depth) and **or if children ≥** (go vertical for any node with this many children). Right-click any node with children to **force horizontal / force vertical** or clear the override; nodes you've overridden show a dashed outline.
+  - **Parent position** (Settings → Layout) — **Centered over children** (the default), or **Left-aligned**, where each parent sits over its first child. The root anchors the top-left corner and the tree grows out to the right, which reads more like an outline on a wide, shallow site. **Fit** keeps a left-aligned tree against the left edge. Carries into the HTML, PDF, PNG and Miro exports.
   - **Settings** (button → panel, three tabs):
     - **Layout** — card width/height and every gap, in pixels, plus **Corner radius**, **Padding L/R**, and **Padding top/btm**. These are global looks, not per-rule. Radius and padding are capped relative to the card, so a large value can't squeeze the label out of its box. Previews live. Long page names clip cleanly at the card edge (hover a card for the full name), and the default card height fits a two-line name alongside the number and page count.
 

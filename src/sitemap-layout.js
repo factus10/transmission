@@ -114,8 +114,12 @@
               ? node.children.map(function (c) { return subtreeBox(c, depth + 1); })
               : [];
             var totalW = boxes.reduce(function (s, b, i) { return s + b.w + (i > 0 ? k.H_GAP : 0); }, 0) || k.CW;
-            // Parent sits centred over the span of its children.
-            var cardX = x + totalW / 2 - k.CW / 2;
+            // Parent sits centred over the span of its children — or, with
+            // parentAlign 'left', at its left edge, so the root anchors the
+            // top-left corner and the tree spills out to the right. Connectors
+            // need no special case: every level anchors the same way, so a
+            // parent's centre line lands exactly on its first child's.
+            var cardX = settings.parentAlign === 'left' ? x : x + totalW / 2 - k.CW / 2;
             positions[node.id] = { x: cardX, y: y, depth: depth };
             if (hasKids) {
               var cx = x;
