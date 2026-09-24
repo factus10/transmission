@@ -1125,9 +1125,8 @@ function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, she
       state.projectSettings.siteLibrary = state.siteLibrary;
       setDirty(true);
     }
-    if (state.siteLibrary.length > 1) {
-      maybeWarnMissingSiteDomain();
-    }
+    // Also catches a malformed Site Domain on a single-site project.
+    maybeWarnMissingSiteDomain();
   }
 
   // Jobs-to-be-done library (per-project, Jobs sheet). Same fold-in as audiences:
@@ -6524,14 +6523,48 @@ function reportRows() {
   return state.editedRows.filter(rowSiteInScope);
 }
 
+/** Site Domain is ONE base URL — the new site's — that getRedirectBaseUrl()
+ *  prefixes verbatim onto every derived redirect. It is not a list of source
+ *  domains, but on a consolidation that is the natural thing to type, and the
+ *  result is `https://a.edu; https://b.edu/path` written into every destination
+ *  (found on a real two-site audit: 822 of 1,227 rows). A path is allowed — a
+ *  site can live in a subdirectory — but query, fragment and anything that
+ *  looks like a second URL are not. Blank is valid (means auto-detect).
+ *  Returns { ok, value, error } — `value` normalized (trimmed, no trailing /). */
+function validateSiteDomain(raw) {
+  const value = String(raw || '').trim().replace(/\/+$/, '');
+  if (!value) return { ok: true, value: '', error: '' };
+  if ((value.match(/:\/\//g) || []).length > 1 || /[\s;,|]/.test(value)) {
+    return { ok: false, value, error: 'Enter a single domain: the new site that redirects will point to, not a list of source sites.' };
+  }
+  if (!/^https?:\/\//i.test(value)) {
+    return { ok: false, value, error: 'Include the scheme, e.g. https://example.com.' };
+  }
+  let u;
+  try { u = new URL(value); } catch (_) {
+    return { ok: false, value, error: 'Not a valid URL.' };
+  }
+  if (!u.hostname || u.search || u.hash) {
+    return { ok: false, value, error: 'Use just the domain (optionally with a path), without ? or #.' };
+  }
+  return { ok: true, value, error: '' };
+}
+
 /** With several source sites and no Site Domain set, getRedirectBaseUrl() falls
  *  back to the origin of the first row that parses — so every derived redirect
  *  destination gets built on whichever domain happened to sort first. Harmless
  *  on a single-domain crawl (that origin IS the site); arbitrary here. */
 function maybeWarnMissingSiteDomain() {
+  const stored = String(state.projectSettings.siteDomain || '').trim();
+  if (stored) {
+    // Set but unusable is worse than unset, on any project: getRedirectBaseUrl()
+    // prefixes it verbatim onto every derived destination.
+    const v = validateSiteDomain(stored);
+    if (!v.ok) showToast(`Site Domain "${stored}" is not a usable URL. ${v.error} Fix it in Project Settings → Identity.`, 'error');
+    return;
+  }
   const inScope = (state.siteLibrary || []).filter(s => s.inScope !== false);
   if (inScope.length < 2) return;
-  if (String(state.projectSettings.siteDomain || '').trim()) return;
   if (state.projectSettings.multiSiteDomainWarningDismissed) return;
   showToast(`${inScope.length} source sites, no Site Domain set — redirect destinations would use whichever domain comes first. Set it in Project Settings → Identity.`, 'error');
 }
@@ -8928,13 +8961,27 @@ function setupSettings() {
     state.projectSettings.projectName = $('ps-project-name').value.trim();
     setDirty(true);
   });
+  // Only a valid value is ever stored (see validateSiteDomain); while the field
+  // holds an invalid one the error shows and the last good value stays in force.
+  // Existing destinations are rewritten once, on commit, against the value the
+  // field held when focused — rewriting per keystroke chased half-typed bases.
+  let siteDomainAtFocus = '';
+  $('ps-site-domain').addEventListener('focus', () => {
+    siteDomainAtFocus = String(state.projectSettings.siteDomain || '');
+  });
   $('ps-site-domain').addEventListener('input', () => {
-    const val = $('ps-site-domain').value.trim().replace(/\/+$/, '');
-    state.projectSettings.siteDomain = val || '';
-    if (!val) delete state.projectSettings.siteDomain;
+    const v = validateSiteDomain($('ps-site-domain').value);
+    showSiteDomainError(v.ok ? '' : v.error);
+    if (!v.ok) return;
+    if (v.value) state.projectSettings.siteDomain = v.value;
+    else delete state.projectSettings.siteDomain;
     setDirty(true);
-    // Re-evaluate redirects if the editor is open
-    if (_redirectEditorOpen) onSiteDomainChange();
+  });
+  $('ps-site-domain').addEventListener('change', () => {
+    const now = String(state.projectSettings.siteDomain || '');
+    if (now === siteDomainAtFocus) return;
+    onSiteDomainChange(siteDomainAtFocus);
+    siteDomainAtFocus = now;
   });
   if ($('ps-sitemap-show-root')) $('ps-sitemap-show-root').addEventListener('change', () => {
     // Default is now "hide the synthetic site root". Store the explicit boolean
@@ -9510,6 +9557,7 @@ function toggleProjectSettingsPopover() {
   $('ps-client-name').value = ps.clientName || '';
   $('ps-project-name').value = ps.projectName || '';
   $('ps-site-domain').value = ps.siteDomain || '';
+  { const v = validateSiteDomain(ps.siteDomain); showSiteDomainError(v.ok ? '' : v.error); }
   $('ps-default-redirect').value = ps.defaultRedirectUrl || '';
   if ($('ps-breadcrumb-home')) $('ps-breadcrumb-home').value = ps.breadcrumbHomeLabel || '';
   if ($('ps-breadcrumb-maxdepth')) $('ps-breadcrumb-maxdepth').value = ps.breadcrumbMaxDepth || '';
@@ -10764,6 +10812,10 @@ function renderSavedFiltersList() {
 }
 
 function closeProjectSettingsPopover() {
+  // Commit a field still being edited: a field hidden while focused may never
+  // fire `change`, and Site Domain rewrites existing redirects on `change`.
+  const active = document.activeElement;
+  if (active && els.projectSettingsModal.contains(active)) active.blur();
   els.projectSettingsOverlay.classList.add('hidden');
   resetModalPosition(els.projectSettingsModal);
 }
@@ -25717,6 +25769,8 @@ function resolveRedirectDestinations() {
       // override (a value unrelated to the master); re-derive blanks, prior auto values, and the
       // bare identity (the latter covers "linked before the master had a nav home, now it does").
       const auto = ctx.computeAutoDestination(row, 'consolidate');
+      // We wrote it, so we keep it current — see the Kill branch below.
+      if (src === 'auto') { writeRedirectDestination(row, auto, auto ? 'auto' : ''); return; }
       const looksAutoDerived = !existing || existing === auto || existing === targetId || existingIsLoop;
       if (looksAutoDerived) writeRedirectDestination(row, auto, 'auto');
       return;
@@ -25739,6 +25793,16 @@ function resolveRedirectDestinations() {
       // so the classification report can still tell where the value came from.
       if (src === 'inherited') {
         writeRedirectDestination(row, auto, auto ? 'inherited' : '');
+        return;
+      }
+      // Same for a value this app derived. The looksAutoDerived test below is a
+      // guess for values of unknown origin; applied to a recorded 'auto' value it
+      // froze every one whose inputs had since changed — a corrected Site Domain,
+      // a target that moved — because the stale value no longer matched the new
+      // derivation and so "looked" hand-typed. The non-Kill branch has re-derived
+      // 'auto' unconditionally since provenance landed; these two lagged.
+      if (src === 'auto') {
+        writeRedirectDestination(row, auto, auto ? 'auto' : '');
         return;
       }
       const looksAutoDerived = !existing || existing === auto || existing === ctx.defaultRedirectUrl || existingIsLoop;
@@ -29545,18 +29609,38 @@ function resyncNavBasedRedirects() {
 
   let updated = 0;
   let skipped = 0; // rows with Sitemap_ID but node not found / no computed path
+  let ctx = null;  // built lazily — only unplaced Kill/Consolidate rows need it
 
   state.editedRows.forEach((row, origIndex) => {
-    const navID = String(row['Sitemap_ID'] || '').trim();
-    if (!navID) return;
-
     const existing = String(row['Redirect_Destination'] || '').trim();
     if (existing === '404') return; // intentional deindex — never touch
+    // Effective KKE, as everywhere else redirects are derived (an SME's Final_KKE wins).
+    const kke = String(row[finalKkeCol()] || row[kkeCol()] || '').trim().toLowerCase();
+
+    const navID = String(row['Sitemap_ID'] || '').trim();
+    if (!navID) {
+      // An unplaced Kill/Consolidate row still has a derived destination — from
+      // its consolidation master, or the live 3xx it inherits (both of which
+      // resolve through the sitemap). Skipping them meant a "re-derive" after a
+      // Site Domain fix left every retired 301 on the old value. Only values the
+      // app wrote are touched here; a person's pick stays theirs.
+      if (kke !== 'kill' && kke !== 'consolidate') return;
+      if (isFragmentRow(row)) return;
+      const src = String(row[REDIRECT_SRC_COL] || '').trim();
+      if (src === 'manual') return;
+      if (existing && src !== 'auto' && src !== 'inherited') return; // unknown origin — leave it
+      if (!ctx) ctx = buildRedirectResolverContext();
+      const derived = ctx.computeAutoDestination(row, kke);
+      if (!derived || derived === existing) return;
+      logChange(origIndex, 'Redirect_Destination', existing, derived);
+      writeRedirectDestination(row, derived, src === 'inherited' ? 'inherited' : 'auto');
+      updated++;
+      return;
+    }
 
     const node = state.navNodes.find(n => n.id === navID);
     if (!node || !node.computedPath) { skipped++; return; }
 
-    const kke = String(row[kkeCol()] || '').trim().toLowerCase();
     let newUrl = '';
 
     if (kke === 'kill' || kke === 'consolidate') {
@@ -29754,8 +29838,19 @@ function computedPathToUrl(path) {
   return base ? base + '/' + p : '/' + p;
 }
 
-/** When the site domain changes, update any redirect destinations that used the old domain. */
-function onSiteDomainChange() {
+function showSiteDomainError(msg) {
+  const el = $('ps-site-domain-error');
+  if (el) { el.textContent = msg || ''; el.classList.toggle('hidden', !msg); }
+  const input = $('ps-site-domain');
+  if (input) input.classList.toggle('input-invalid', !!msg);
+}
+
+/** When the site domain changes, update any redirect destinations that used the
+ *  old base: the crawl's auto-detected origin, and `previousBase` — the Site
+ *  Domain being replaced. The latter is what repairs a file whose previous value
+ *  was malformed (e.g. two domains joined by ";"), since those destinations
+ *  start with that exact string and with no crawl origin at all. */
+function onSiteDomainChange(previousBase = '') {
   const newBase = getRedirectBaseUrl();
   const urlCol = state.urlColumn || 'Address';
   // Determine the old auto-detected base for comparison
@@ -29768,16 +29863,21 @@ function onSiteDomainChange() {
     }
   }
 
-  // Re-evaluate existing redirect destinations:
-  // If a destination starts with a known old base URL (auto-detected or previous siteDomain),
-  // rewrite it with the new base.
+  // Longest first, so a previous base that extends the crawl origin wins.
+  const prev = String(previousBase || '').trim().replace(/\/+$/, '');
+  const oldBases = [...new Set([prev, autoBase])]
+    .filter(b => b && b !== newBase)
+    .sort((a, b) => b.length - a.length);
+
+  // Re-evaluate existing redirect destinations: if one starts with an old base,
+  // rewrite it onto the new base, keeping the path and the provenance.
   for (const row of state.editedRows) {
     const dest = String(row[REDIRECT_DEST_COL] || '').trim();
     if (!dest) continue;
-    if (autoBase && dest.startsWith(autoBase + '/')) {
-      const pathPart = dest.slice(autoBase.length);
+    const base = oldBases.find(b => dest.startsWith(b + '/'));
+    if (base) {
+      const pathPart = dest.slice(base.length);
       writeRedirectDestination(row, newBase ? newBase + pathPart : pathPart, 'keep');
-      setDirty(true);
     }
   }
 

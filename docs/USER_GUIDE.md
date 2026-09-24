@@ -197,7 +197,7 @@ Open **File → Project Settings…** to find five tabs. You don't need to fill 
 #### Identity
 
 - **Client name** and **Project name** — shown in the progress dashboard and on exported reports.
-- **Site domain** — the canonical domain for redirect and navigation paths. It overrides the domain auto-detected from your URLs. If you change it later, Transmission offers to rewrite any existing redirects that used the old domain.
+- **Site domain** — the canonical domain for redirect and navigation paths: **one** URL, the domain the new site will live on (e.g. `https://business.example.edu`, optionally with a path). On a consolidation, don't list the source sites here — every redirect is built by putting a page's path after this value, so `https://a.edu; https://b.edu` produces destinations like `https://a.edu; https://b.edu/about`. The field refuses anything that isn't a single URL, and Transmission warns on open if a saved value isn't usable. It overrides the domain auto-detected from your URLs. If you change it later, existing redirects built on the old value are rewritten to the new one when you leave the field.
 - **Default redirect destination** — the fallback for Kill pages that don't have their own redirect. Change it and Transmission offers to update existing destinations that matched the old value (including blank ones).
 
 #### KKE States
@@ -1428,7 +1428,7 @@ Open it from the **Redirects** tab or **Cmd+Shift+R**. It lists every page that 
 
 ### Set destinations efficiently
 
-- **Re-derive from sitemap** recomputes destinations from current sitemap paths for every row with a sitemap assignment (it skips any explicit `404`). Run it after you've reorganized the sitemap.
+- **Re-derive from sitemap** recomputes destinations from current sitemap paths for every row with a sitemap assignment, plus unplaced Kill/Consolidate rows whose destination the app derived (from a consolidation target or an inherited 3xx). It skips any explicit `404` and any destination you typed or picked yourself. Run it after you've reorganized the sitemap or changed the Site Domain.
 - The per-row **sitemap picker** points a single redirect at a specific node.
 - The **404 toggle** marks a row as an intentional 404.
 - **Find/Replace** opens a bar that *filters the list* to matching destinations (exact-match optional) and can **Replace All** across them — ideal for domain or path-prefix sweeps.

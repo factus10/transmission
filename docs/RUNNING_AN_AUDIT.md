@@ -71,7 +71,7 @@ Transmission can delete rows outright (Multi-bar → **⚠ Delete rows permanent
 - **Merge the hosts that are really one site.** `www.` is folded in automatically; whether `careers.` or `docs.` is the same site is your call. Each host shows its page count to make that obvious.
 - **Un-tick "In scope"** for any property that isn't part of this engagement. You'll be asked whether to record `Exclude` on those rows — say yes unless you intend to review them individually.
 
-> If more than one site is in scope, **set the Site Domain** on the Identity tab. Without it, redirect destinations get built on whichever domain happens to come first in the crawl. The tool warns you; don't ignore it.
+> If more than one site is in scope, **set the Site Domain** on the Identity tab. Without it, redirect destinations get built on whichever domain happens to come first in the crawl. The tool warns you; don't ignore it. Set it to the **one** domain the merged site will live on, not to the list of sites being merged: every destination is that value plus a path.
 
 **Skip this whole step if:** single domain, no query strings, no non-200s. Rare, but it happens on small brochure sites.
 
