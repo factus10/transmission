@@ -6,6 +6,18 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A client's Final KKE now decides whether a page consolidates.** If you recommended Consolidate and the client's Final KKE said Keep, the page was still treated as consolidating. It kept its target, it kept the redirect that merges it into another page, and it stayed in the consolidate worklists. Every other part of the app already put Final KKE first; consolidation now does too. The reverse case works as well: a client Final of Consolidate over your Keep now counts as a consolidation, and the audit bar asks where it should go.
+
+- **The audit bar shows when the client overrode your call.** The KKE buttons show your recommendation, and nothing showed that a Final KKE had replaced it unless you had turned on the SME fields. A **Final** chip now appears next to the buttons whenever the two differ. Click it to pick the target (for a Consolidate) or to open the Final dropdown. In the sidebar, the KKE badge is struck through when a Final overrides it, and a consolidate flag the client overrode is shown as inactive.
+
+- **The Consolidate button's status dot is back.** The red dot (no target) and the amber dot (target is being killed) inside the Consolidate button disappeared as soon as a file opened, because the buttons were rebuilt without them. Both show again.
+
+### Added
+
+- **SME → Review Consolidations….** Clients often have their own view of which pages overlap and where the content belongs. This list collects every consolidation their Final KKE changed: pages they asked to consolidate that you didn't, pages you consolidated that they kept (their old target is still stored), and pages where you both agreed but the SME left notes. That last group is where "merge it into X instead" usually gets written. For each page you can choose or change the target, confirm it, or clear the target nobody uses anymore. A page leaves the list once you've reviewed it, and comes back if the decision or target changes later. The app offers the review after an SME import or a Resolve session, and the **Consolidate (client changed — review)** sidebar filter finds the same pages.
+
 ## [2.18.1] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Fixed
