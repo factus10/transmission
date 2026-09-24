@@ -1110,14 +1110,23 @@ Reconciles SME decisions with original KKE recommendations to produce `Final_KKE
 
 ## Client reports
 
-Six client-facing reports accessible from the Reports menu, all using shared infrastructure:
+Seventeen reports on the Reports menu, plus the Audit Progress dashboard, Redirect Chain Check and Pre-Handoff Check. A full review with a per-report scorecard and a phased plan is in `docs/dev/REPORT_REVIEW.md`. They share this infrastructure:
 
 - `buildReportShell(title, bodyHtml)` — wraps body HTML in a full standalone HTML document with embedded styles
 - `showReport(title, bodyHtml, exporterFn)` — renders report in the progress modal and wires up the exporter callback
 - `exportReport(title, bodyHtml, defaultName, format)` — exports as PDF (via `export-progress-pdf`) or HTML (via `export-report-html`)
 - `_progressModalExporter` — callback stored globally; called with `'pdf'` or `'html'` when the user clicks the export buttons in the progress modal
 
-Reports: Executive Summary, Content Inventory by Section, SME Review Status, Redirect Map Report, Net New Content Brief, Migration Checklist. Each is triggered by a `menu-report-*` IPC channel from the Reports menu.
+Each is triggered by a `menu-report-*` IPC channel from the Reports menu.
+
+**Report foundations: reports read shared definitions, not their own copies.** Reports that each re-derived these drifted apart. The worst case was the Redirect Map Report listing different rules from the CSV that gets deployed. The shared definitions:
+- **Decisions** are counted by `effectiveKke()`, where Final_KKE wins. `gatherProgressStats()` reads it too, so the dashboard, progress PDF, Executive Summary and SME Status agree with the engine. The SME figures still compare against the raw recommendation, because that is what an SME approves or changes. They are counted over rows that *have* a recommendation, which keeps every SME % within 0–100.
+- **Redirect rules** come from `redirectEntryForRow(r)`, which returns `{source, dest, status, kind: kill|consolidate|moved|tbd|404, reason, site}` read from the STORED `Redirect_Destination`. Callers run `resolveRedirectDestinations()` first. It feeds the CSV (`exportRedirectMap`), the Tracker (`redirectRuleForRow` is a thin mapper to its row shape), the Redirect Map Report, the Migration Checklist, `computeRedirectChains()` (any 301 pointing at a page that is itself redirected or TBD, in scope only) and Pre-Handoff's "Pages going away have a redirect destination" check. A Consolidate page with no destination is a `tbd`, like a Kill with none; it used to vanish from every list.
+- **Net new / empty** is `navNodeContentStatus(node, pageCounts)`, returning `'hub'` | `'empty'` | `''`. Header, Fragment, phased, external-link and alias nodes are never either. It is used by the tree's badges, the stats bar, the node editor, the Tracker's Net New column, Net New Brief, Sitemap Coverage, the Checklist, Pre-Handoff and the Menu Report (`_menuRefIsHub`).
+- **Page counts:** `navPageCounts(rows)` is the pure tally (Kill/Consolidate excluded). `_navPageCountsCache()` is the editor's version over every row. `reportNavPageCounts()` is the reports' version over `reportRows()`, and reuses the cache when nothing is out of scope.
+- **Scope:** client-facing counts are `reportRows()` and content pages (`nonContentKind`). `audienceScopeRows()`, Content Inventory, Site Consolidation's page column and `crossSiteDuplicateGroups()` all drop 3xx/4xx. Site Consolidation deliberately still walks every row, so out-of-scope sites get an honest count on their own row. It now shows its `(unattributed)` bucket.
+- **Long tables** go through `reportTableHtml(headers, rows, {cap, moreNote})` (default `REPORT_TABLE_CAP` = 200). Past the cap it prints "…and N more" plus where the full list lives.
+- **Preview styling:** `REPORT_CSS` only reaches exports. The in-app preview gets mirrored `.report-preview-surface …` rules in styles.css; keep the two in step.
 
 **Menu Report (`reportMenus`, formerly the nav "IA Report"):** the polished section-card + tree report — once the in-menu nav IA, now **fed by the independent menus** (this retired the parked `inMenu`/IA-report question). `_menuToReportSection(menu)` converts each menu's item tree into the pseudo-node shape the existing builders consume (`ref` → referenced node's id so page counts resolve; `header` → `nodeType:'Header'`; `link` → `_link` URL; broken ref → `_missing`), and `reportMenus()` feeds `menus.map(_menuToReportSection)` to `_navIaPreviewHtml` / `_navIaExportHtml`. The shared item builders (`_navIaPreviewSubtree` / `_navIaExportL2` / `_navIaExportItem`) render per-item badges: page-count `Np` on refs, `↗` on `_link`, `≡` on headers, red **missing** on `_missing` (the old empty/redirect node-states still exist for ref-to-empty-node leaves). Reached via **Menus → Report** (`#btn-menu-report`) and **Reports → Menu Report…** (`menu-report-nav-ia` IPC, kept). The old nav-editor IA-Report button was removed.
 
