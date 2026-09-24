@@ -238,7 +238,7 @@ This is what feeds **Reports → Migration Direction Brief…**, which prints on
 **Reports** (all export to PDF or HTML; the HTML opens cleanly in Word):
 
 - *Stakeholder* — Executive Summary · Content Inventory by Section · SME Review Status
-- *Audience* — Audience Coverage · Audience × Section Matrix · Audience Debt · Jobs Coverage
+- *Audience* — Audience Coverage (including its Risks section) · Audience × Section Matrix · Jobs Coverage
 - *Consolidation* — Site Consolidation Overview · Cross-Site Duplicate Overlap
 - *IA* — Menu Report · Sitemap Coverage · Content Type Crosswalk · Component Inventory
 - *Build* — Migration Direction Brief · Migration Checklist · Net New Content Brief · Redirect Map

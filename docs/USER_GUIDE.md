@@ -726,7 +726,7 @@ The report's **Best page** column is the page you'd send someone to for that job
 - [ ] Every Keep/Evolve page is tagged, or on the **Needs audience** worklist
 - [ ] No AI suggestions are left sitting unreviewed (**Audience suggested by AI** filter is empty)
 - [ ] Pages that genuinely serve nobody are tagged **— None**, not left blank
-- [ ] You've reviewed the **Audience Debt** report before signing off the redirect map
+- [ ] You've reviewed the **Risks** in Audience Coverage before signing off the redirect map
 - [ ] If a JTBD workshop was run, **Jobs Coverage** has been read and its unserved jobs are in the net-new brief
 
 ---
@@ -1550,12 +1550,17 @@ Reports are read-only views, generated on demand from the current file — run t
   To see the rows behind the numbers, use the sidebar's **Existing redirect (3xx — not content)** or **Not content (3xx or 4xx)** filters.
 - **Content Inventory by Section** — content pages by section. One ranked table shows every section's size and the share of each decision. Then a closer look at the ten largest sections: KKE distribution, a few sample pages, and notes counts. Your detailed appendix. Its section counts are the same as the Executive Summary's By Section.
 - **SME Review Status** — where expert review stands: overall completion plus a per-Content-Owner table (assigned, reviewed, %, approved vs changed, unresolved conflicts) and a conflict list.
-- **Audience Coverage** — per audience in priority order: how many pages serve them, how many treat them as the *primary* audience, what you're doing to that content, and which sections it lives in. Flags any Primary-tier audience with almost nothing aimed at it — usually the most actionable finding in the set. Ends with the pages nobody has reviewed for audience yet.
+- **Audience Coverage** — per audience in priority order: how many pages serve them, how many treat them as the *primary* audience, what you're doing to that content, and which sections it lives in. Flags any Primary-tier audience with almost nothing aimed at it, usually the most actionable finding in the set. A **Risks** section (formerly the separate Audience Debt report) counts:
+  - pages serving only non-priority audiences
+  - pages reviewed as serving no audience
+  - Primary-audience pages marked **Kill** (re-read these before signing off the redirect map)
+  - **detail** pages serving four or more audiences
+
+  Only detail pages count toward that last one. A landing page serving four or more audiences is normal: a program landing page can rightly serve prospective undergraduates, graduate students, executive-education seekers and certificate seekers at once. So a page is only counted when nothing sits beneath it in the sitemap or its URL path, and even then it's worth a look, not a defect. The page-by-page lists are in the audit-team appendix.
 - **Audience × Section Matrix** — sections down, audiences across. Each cell is shaded by its share of the section's *tagged* pages, and an **Untagged** column shows what's left to tag. The 40 largest sections are shown. The single most persuasive artifact here: it makes "this entire section is written for the wrong people" visible in one glance, and it argues IA changes rather than page-by-page ones.
 - **Site Consolidation Overview** — for audits merging several sites: what each source site contributes (pages, disposition mix, audiences served, how much of it duplicates another site, how many redirect rules retiring it needs). A site that is mostly overlap and serves no audience the others don't is a candidate to retire wholesale rather than migrate page by page.
 - **Cross-Site Duplicate Overlap** — pages whose title, H1 and meta description are identical across two or more source sites. Each set collapses to one surviving page: pick the master, mark the rest **Consolidate** pointing at it, and the redirect map writes itself. Exact-match only, so treat it as a floor rather than a ceiling.
 - **Jobs Coverage** — per job: how many pages serve it, what you're doing to them, and the page you'd send someone to. Leads with the jobs **nothing answers** — the strongest brief for net-new content, since each traces back to the client's own workshop.
-- **Audience Debt** — three worklists that translate straight into scope: pages serving only non-priority audiences (carrying cost, no return), priority-audience pages marked **Kill** (re-read these before signing off the redirect map), and pages tagged with four or more audiences (usually doing several jobs at once and needing a split).
 
 ### For information architecture
 
@@ -1567,13 +1572,16 @@ Reports are read-only views, generated on demand from the current file — run t
 ### For the build and engineering team
 
 - **Migration Direction Brief** — per-person worklists for the Writer, Builder, or Migrator, grouped by spec and led by the reference direction (supports custom templates — see [Templates](#19-templates)).
-- **Migration Checklist** — the scope summary. It counts pages for every decision (Consolidate and custom states included), then gives redirect totals and net-new pages. It includes the pages to update, and a redirect table built from the same rules as the CSV.
-- **Net New Content Brief** — every sitemap node that needs brand-new content written.
+- **Migration Checklist** — the migration on one page: a ready / not-ready headline, what happens to the pages (every decision, custom states included), redirect totals, and new pages to write. It points you to the Redirect Map Report for the rules and the Pre-Handoff Check for the blockers, rather than repeating them. The list of pages to update is in the audit-team appendix.
+- **Net New Content Brief** — the hand-off to writers, grouped by writer and then by section. It lists section landing pages whose sub-pages exist, new pages nothing on the current site maps to, and placeholder pages still to be written. Each shows its status, template and writer brief, and it flags pages with no writer or no brief. It ends with the jobs no page answers.
+- **Build Status** — the weekly progress view. It shows every page of the new site by **Page Status**, broken down by section and by person (builder, writer, migrator), with the blocked pages listed. Pages with no status yet are in the audit-team appendix. It leaves out headers, phased nodes, external links and aliases.
 - **Redirect Map Report** — the same rules as the redirect CSV. It gives totals by type, the pages that still need a destination, chain warnings, a per-site split, and tables capped at 200 rows.
 
 ### Export them
 
 Every report preview has **PDF** and **HTML** buttons. Choose HTML when the client wants to drop it into Word or a doc; PDF for a fixed deliverable.
+
+Most reports open with **Key findings** and **Next steps**: what the numbers below mean, and what to do about them. Some also end with a marked **For the audit team** appendix of page-by-page working lists, such as untagged pages or pages still needing a place. The appendix is left out of exports unless you tick **Include audit-team appendix in export** next to the export buttons. It starts unticked every time, so the default export is the client version.
 
 ### Send the sitemap to Miro
 
