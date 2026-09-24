@@ -6,6 +6,19 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Added
+
+- **Build Status report** (Reports → Build Status…). The weekly progress view of the new site. It shows every page by Page Status, broken down by section and by person (builder, writer, migrator), with blocked pages listed. Until now this only existed inside the Migration Tracker spreadsheet.
+- **Key findings and next steps.** Most reports now open with what the numbers mean and what to do about them. This covers the Executive Summary, Content Inventory, SME Review Status, Sitemap Coverage, Audience Coverage, Site Consolidation, the Migration Checklist, the Net New Brief, Build Status and the Redirect Map.
+- **An audit-team appendix, left out of client exports.** Page-by-page working lists (untagged pages, pages still needing a place, pages to update, pages with no build status) move to a marked **For the audit team** section at the end of the report. Exports leave it out unless you tick **Include audit-team appendix in export**.
+
+### Changed
+
+- **Audience Debt is now part of Audience Coverage**, as a **Risks** section, so there's one audience report instead of two with the same preamble. The Audience Debt menu item is gone.
+- **Serving four or more audiences is no longer flagged on landing pages.** A program landing page can rightly serve prospective undergraduates, graduate students, executive-education seekers and certificate seekers at once. Only detail pages count: pages with nothing beneath them in the sitemap or URL path. They're described as worth a look, not as a defect.
+- **The Migration Checklist is one page.** It gives a ready / not-ready headline, what happens to the pages, redirect totals and pages to write. It points to the Redirect Map Report and the Pre-Handoff Check instead of repeating their tables.
+- **The Net New Content Brief is a hand-off to writers.** It's grouped by writer and section, and each page shows its status, template and writer brief. Besides section landing pages, it now lists new pages nothing on the current site maps to, and placeholder pages still to be written. Before, it only listed landing pages, so the pages a sitemap plans from scratch never appeared.
+
 ### Changed
 
 - **Every report has the same header.** It shows client · project, the date the report was generated, and the dates the site was crawled (read from Screaming Frog's **Crawl Timestamp** column when the export has it). The local file name is gone from exported reports. The in-app preview now shows the same header as the exported file.

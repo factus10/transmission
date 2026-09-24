@@ -1190,6 +1190,10 @@
     <div id="progress-header">
       <span class="modal-title" id="progress-modal-title">Audit Progress</span>
       <div style="display:flex;gap:6px;align-items:center">
+        <!-- Shown only when the report has an audit-team appendix (auditorAppendixHtml) -->
+        <label id="progress-appendix-toggle" class="progress-appendix-toggle hidden" title="The audit-team appendix holds working lists (untagged pages, pages to re-check). Leave it out of what you send to a client.">
+          <input type="checkbox" id="progress-include-appendix"> Include audit-team appendix in export
+        </label>
         <button id="btn-progress-export-pdf" class="btn btn-sm btn-ghost" title="Export as PDF">PDF</button>
         <button id="btn-progress-export-html" class="btn btn-sm btn-ghost" title="Export as HTML (Word-compatible)">HTML</button>
         <button id="btn-progress-close" class="modal-close" title="Close">×</button>
