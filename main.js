@@ -764,7 +764,7 @@ const NAV_HEADER_TO_KEY = {
   'Notes': 'notes', 'Phase': 'phase', 'Node_Type': 'nodeType', 'Nav_Layer': 'navLayer',
   'Build_Pattern': 'buildPattern', 'Build_Guidance': 'buildGuidance', 'Writer_Brief': 'writerBrief',
   'Page_Status': 'pageStatus', 'Build_Assignee': 'buildAssignee', 'Write_Assignee': 'writeAssignee',
-  'Migrate_Assignee': 'migrateAssignee'
+  'Migrate_Assignee': 'migrateAssignee', 'Node_Audiences': 'audiences'
 };
 
 function navTreeFromFlatNodes(flatNodes) {
@@ -877,7 +877,9 @@ function parseNavSheet(worksheet) {
     pageStatus:     h.indexOf('Page_Status'),
     buildAssignee:  h.indexOf('Build_Assignee'),
     writeAssignee:  h.indexOf('Write_Assignee'),
-    migrateAssignee: h.indexOf('Migrate_Assignee')
+    migrateAssignee: h.indexOf('Migrate_Assignee'),
+    // Who the branch is for (renderer: nodeOwnAudiences / navEffectiveAudienceMap)
+    audiences:    h.indexOf('Node_Audiences')
   };
 
   if (idx.number === -1 || idx.label === -1 || idx.id === -1) return null;
@@ -918,6 +920,7 @@ function parseNavSheet(worksheet) {
       buildAssignee:  idx.buildAssignee >= 0 ? String(r[idx.buildAssignee] || '') : '',
       writeAssignee:  idx.writeAssignee >= 0 ? String(r[idx.writeAssignee] || '') : '',
       migrateAssignee: idx.migrateAssignee >= 0 ? String(r[idx.migrateAssignee] || '') : '',
+      audiences:    idx.audiences >= 0 ? String(r[idx.audiences] || '') : '',
       children:     []
     };
     nodes.push(node);
@@ -1883,7 +1886,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
           nsData[0] = nsHeaders;
         }
         // Phase 2, Chunk α: build / write metadata columns
-        const ensureCols = ['Build_Pattern', 'Build_Guidance', 'Writer_Brief', 'Page_Status', 'Build_Assignee', 'Write_Assignee', 'Migrate_Assignee'];
+        const ensureCols = ['Build_Pattern', 'Build_Guidance', 'Writer_Brief', 'Page_Status', 'Build_Assignee', 'Write_Assignee', 'Migrate_Assignee', 'Node_Audiences'];
         ensureCols.forEach(c => {
           if (!nsHeaders.includes(c)) {
             nsHeaders.push(c);
@@ -1922,7 +1925,8 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
           pageStatus:     nsHeaders.indexOf('Page_Status'),
           buildAssignee:  nsHeaders.indexOf('Build_Assignee'),
           writeAssignee:  nsHeaders.indexOf('Write_Assignee'),
-          migrateAssignee: nsHeaders.indexOf('Migrate_Assignee')
+          migrateAssignee: nsHeaders.indexOf('Migrate_Assignee'),
+          audiences:      nsHeaders.indexOf('Node_Audiences')
         };
 
         const rebuilt = [nsData[0]];
@@ -1955,6 +1959,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
           if (colIdx.buildAssignee  >= 0) newRow[colIdx.buildAssignee]  = node.buildAssignee  || '';
           if (colIdx.writeAssignee  >= 0) newRow[colIdx.writeAssignee]  = node.writeAssignee  || '';
           if (colIdx.migrateAssignee >= 0) newRow[colIdx.migrateAssignee] = node.migrateAssignee || '';
+          if (colIdx.audiences      >= 0) newRow[colIdx.audiences]      = node.audiences      || '';
           rebuilt.push(newRow);
         }
 
@@ -1966,7 +1971,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
         const nsHeaders = ['ID', 'Number', 'ParentNumber', 'Label', 'Path', 'SortID', 'Computed Path', 'Breadcrumb',
                            'RefNodeID', 'InMenu', 'URL', 'Url_Path', 'Breadcrumb_Parent', 'Collapse', 'Notes', 'Phase', 'Node_Type', 'Nav_Layer',
                            'Build_Pattern', 'Build_Guidance', 'Writer_Brief', 'Page_Status',
-                           'Build_Assignee', 'Write_Assignee', 'Migrate_Assignee'];
+                           'Build_Assignee', 'Write_Assignee', 'Migrate_Assignee', 'Node_Audiences'];
         const rebuilt = [nsHeaders];
         for (const node of allNavNodes) {
           rebuilt.push([
@@ -1976,7 +1981,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
             node.refNodeId || '', node.inMenu || '', node.url || '', node.urlOverride || '', node.breadcrumbParentId || '', node.collapse || '',
             clampCell(node.notes || ''), node.phase || '', node.nodeType || '', node.navLayer || '',
             node.buildPattern || '', clampCell(node.buildGuidance || ''), clampCell(node.writerBrief || ''), node.pageStatus || '',
-            node.buildAssignee || '', node.writeAssignee || '', node.migrateAssignee || ''
+            node.buildAssignee || '', node.writeAssignee || '', node.migrateAssignee || '', node.audiences || ''
           ]);
         }
         workbook.Sheets[nsName] = XLSX.utils.aoa_to_sheet(rebuilt);
