@@ -53,6 +53,15 @@ In any report preview, use the **PDF** or **HTML** export buttons. HTML is best 
 
 ---
 
+## 5. Questions no report answers (MCP server)
+
+- The **MCP server** (`mcp/server.js` in the Transmission source; developer preview) lets Claude Desktop / Claude Code **read** a `.transmission` project and answer ad hoc questions with real counts — grouped by any column, filtered, using your saved filters by name.
+- **Read-only.** It never changes the file and is safe to use while the app is open. Spreadsheets aren't supported: Save As Project first.
+- Needs **Node 22.13+**: `claude mcp add transmission -- node /path/to/transmission/mcp/server.js`. Full setup in [the User Guide §16](../USER_GUIDE.md#16-producing-the-outputs).
+- It hands project data to the connected model — check the engagement's data terms first.
+
+---
+
 ## Quick checklist for "outputs produced"
 
 - [ ] **Executive Summary** for the client readout

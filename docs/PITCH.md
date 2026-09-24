@@ -131,6 +131,8 @@ Use these as talking points. Adapt to context.
 >
 > And when it's time for your subject matter experts to review — we don't just email them a spreadsheet and hope for the best. We generate a structured review sheet with dropdown menus for their decisions, merge their responses back automatically, and flag any disagreements for our strategist to resolve. The whole back-and-forth that usually takes a week of emails happens in minutes.
 >
+> And when a question comes up that no report was written for — how much of a section is being retired, what's still undecided for one audience — we can put it to the audit directly and get a real count back in minutes, not after a round of spreadsheet pivots. The audit stays the single source of truth; nothing about your content decisions is delegated to a model.
+>
 > And we can give you a status update at any point. We're not disappearing for three weeks and coming back with a deliverable. We generate a progress report — branded with your project details — and share it as a PDF whenever you want to see where things stand."
 
 ### Handling the "Can't We Just Use a Spreadsheet?" Question
