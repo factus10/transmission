@@ -1506,7 +1506,7 @@ Tick the groups you want repaired and apply: the whole repair is a **single Cmd+
 ### Export the map
 
 - **Migration → Export Redirect Map (CSV)…** writes the rules as CSV for engineering.
-- **Reports → Redirect Map Report…** is the human-readable version, split into Kill redirects, URL-changed redirects, and intentional 404s.
+- **Reports → Redirect Map Report…** is the human-readable version. It is built from the same rules as the CSV, so the two always agree. It lists the pages that **still need a destination** first, then redirects for removed pages, consolidated pages and pages whose URL changes, then intentional 404s. It also warns about redirect chains, and splits the rules by source site on a merger. Long lists stop at 200 rows. Deploy from the CSV or the Migration Tracker, not from the report.
 
 ### Quick self-check
 
@@ -1560,16 +1560,16 @@ Reports are read-only views, generated on demand from the current file — run t
 ### For information architecture
 
 - **Menu Report** — one section card per menu with its item hierarchy, page-count badges on page references, `↗` on links, `≡` on headers, and a red **missing** badge on broken references. Also available as **Menus → Report**. A tight hand-off doc for colleagues and clients.
-- **Sitemap Coverage Report** — the gap-finder: empty leaf nodes, hub nodes, overloaded nodes (5+ pages), and path mismatches.
+- **Sitemap Coverage Report** — the gap-finder. It lists kept pages that still need a place, net-new nodes, empty nodes, crowded nodes (more than 5 pages) and URLs that change. Its net-new and empty counts use the same definitions as the Sitemap tree's NEW and ○ badges.
 - **Content Type Crosswalk** — one row per current type → renders → target type → target spec → migration track, with page volume and KKE breakdown, flagging any type with no crosswalk.
 - **Component Inventory** — the UI-component picture (see [Component Inventory](#20-component-inventory)).
 
 ### For the build and engineering team
 
 - **Migration Direction Brief** — per-person worklists for the Writer, Builder, or Migrator, grouped by spec and led by the reference direction (supports custom templates — see [Templates](#19-templates)).
-- **Migration Checklist** — the comprehensive hand-off: what to retain, remove, update, and redirect, plus URL changes and net-new pages, with full tables.
+- **Migration Checklist** — the scope summary. It counts pages for every decision (Consolidate and custom states included), then gives redirect totals and net-new pages. It includes the pages to update, and a redirect table built from the same rules as the CSV.
 - **Net New Content Brief** — every sitemap node that needs brand-new content written.
-- **Redirect Map Report** — totals, intentional 404s, chain warnings, and full tables by type.
+- **Redirect Map Report** — the same rules as the redirect CSV. It gives totals by type, the pages that still need a destination, chain warnings, a per-site split, and tables capped at 200 rows.
 
 ### Export them
 

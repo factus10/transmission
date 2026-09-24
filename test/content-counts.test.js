@@ -56,6 +56,8 @@ vm.runInThisContext(
   extract('siteOfRow') +
   extract('rowSiteInScope') +
   extract('reportRows') +
+  // Decision counts read the effective KKE (Final_KKE wins) — real, not stubbed.
+  extract('effectiveKke') +
   extract('gatherProgressStats')
 );
 
@@ -288,5 +290,31 @@ describe('the Executive Summary reports the content figures', () => {
       'the old crawl-total headline is back');
     assert.ok(body.includes('stats.contentGroups'),
       'By Section is back to counting non-content rows');
+  });
+});
+
+describe('gatherProgressStats — the decision that counts is the effective one', () => {
+  test('a client Final_KKE is counted instead of the recommendation', () => {
+    seed([['200', 'Kill'], ['200', 'Keep'], ['200', '']]);
+    state.editedRows[0].Final_KKE = 'Keep';        // client overrode Kill
+    state.editedRows[2].Final_KKE = 'Evolve';      // client decided an unreviewed page
+    const s = gatherProgressStats();
+    assert.equal(s.kkeCounts.Kill, 0);
+    assert.equal(s.kkeCounts.Keep, 2);
+    assert.equal(s.kkeCounts.Evolve, 1);
+    assert.equal(s.unreviewed, 0);
+  });
+
+  test('SME percentages stay within their own denominator', () => {
+    // A Final value on a row with no recommendation used to count toward
+    // finalResolved but not smeTotal, pushing "resolved" past 100%.
+    seed([['200', 'Keep'], ['200', ''], ['200', '']]);
+    state.editedRows[1].Final_KKE = 'Kill';
+    state.editedRows[2].Final_KKE = 'Keep';
+    state.editedRows[0].Final_KKE = 'Keep';
+    const s = gatherProgressStats();
+    assert.equal(s.smeTotal, 1);
+    assert.equal(s.finalResolved, 1);
+    assert.ok(s.finalPct <= 100);
   });
 });
