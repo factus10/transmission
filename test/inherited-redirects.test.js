@@ -57,6 +57,8 @@ function siteOfRow(row) {
 }
 function logChange() {}
 function setDirty() {}
+function showToast() {}
+function renderRedirectEditor() {}
 `;
 
 vm.runInThisContext(
@@ -68,7 +70,8 @@ vm.runInThisContext(
   extract('knownSourceHosts') + extract('hostOfUrl') + extract('effectiveKke') +
   extract('writeRedirectDestination') +
   extract('buildRedirectResolverContext') + extract('resolveRedirectDestinations') +
-  extract('classifyInheritedRedirect') + extract('inheritedRedirectFindings')
+  extract('classifyInheritedRedirect') + extract('inheritedRedirectFindings') +
+  extract('resyncNavBasedRedirects') + extract('validateSiteDomain')
 );
 
 const HOST = 'https://example.edu';
@@ -368,5 +371,95 @@ describe('classification — the cases the app cannot resolve alone', () => {
     const seen = Object.values(f.byClass).flat().map(x => x.origIndex);
     assert.equal(new Set(seen).size, seen.length, 'a row landed in two classes');
     assert.equal(seen.length, 4, 'a row landed in no class');
+  });
+});
+
+// ─── App-derived Kill/Consolidate destinations follow their inputs ──────────
+// Found on a real two-site audit: Site Domain had been set to both source
+// domains joined by ";", so every derived destination was malformed. Fixing
+// the setting repaired Keep/Evolve rows on save but not Kill/Consolidate —
+// their branch only re-derived values that "looked" auto-derived, and a stale
+// value never matches the new derivation.
+
+describe('recorded auto provenance re-derives on Kill and Consolidate', () => {
+  const BAD = 'https://a.edu; https://b.edu';
+
+  test('a Kill 301 with a stale auto destination is corrected on save', () => {
+    seed([
+      { url: `${HOST}/old`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill',
+        dest: `${BAD}/new-b`, src: 'auto' },
+      { url: `${HOST}/b`, kke: 'Keep', computedPath: 'new-b' },
+    ]);
+    resolveRedirectDestinations();
+    assert.equal(destOf(`${HOST}/old`), `${HOST}/new-b`);
+    assert.equal(srcOf(`${HOST}/old`), 'auto');
+  });
+
+  test('a Consolidate row with a stale auto destination is corrected on save', () => {
+    seed([
+      { url: `${HOST}/a`, kke: 'Consolidate', consolidateTo: `${HOST}/b`, dest: `${BAD}/new-b`, src: 'auto' },
+      { url: `${HOST}/b`, kke: 'Keep', computedPath: 'new-b' },
+    ]);
+    resolveRedirectDestinations();
+    assert.equal(destOf(`${HOST}/a`), `${HOST}/new-b`);
+  });
+
+  test('a manual Kill destination is still never touched', () => {
+    seed([
+      { url: `${HOST}/old`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill',
+        dest: `${HOST}/hand-picked`, src: 'manual' },
+      { url: `${HOST}/b`, kke: 'Keep', computedPath: 'new-b' },
+    ]);
+    resolveRedirectDestinations();
+    assert.equal(destOf(`${HOST}/old`), `${HOST}/hand-picked`);
+  });
+});
+
+describe('Re-derive from sitemap covers unplaced Kill/Consolidate rows', () => {
+  const withNav = () => { state.navNodes = [{ id: 'n1', computedPath: 'x' }]; };
+
+  test('an unplaced Kill 301 with an auto destination is re-derived', () => {
+    seed([
+      { url: `${HOST}/old`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill', dest: 'https://a.edu; https://b.edu/new-b', src: 'auto' },
+      { url: `${HOST}/b`, kke: 'Keep', computedPath: 'new-b' },
+    ]);
+    withNav();
+    resyncNavBasedRedirects();
+    assert.equal(destOf(`${HOST}/old`), `${HOST}/new-b`);
+  });
+
+  test('inherited provenance is kept; manual and unknown-origin values are left alone', () => {
+    seed([
+      { url: `${HOST}/i`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill', dest: `${HOST}/b`, src: 'inherited' },
+      { url: `${HOST}/m`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill', dest: `${HOST}/mine`, src: 'manual' },
+      { url: `${HOST}/u`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill', dest: `${HOST}/legacy`, src: '' },
+      { url: `${HOST}/b`, kke: 'Keep', computedPath: 'new-b' },
+    ]);
+    withNav();
+    resyncNavBasedRedirects();
+    assert.equal(destOf(`${HOST}/i`), `${HOST}/new-b`);
+    assert.equal(srcOf(`${HOST}/i`), 'inherited');
+    assert.equal(destOf(`${HOST}/m`), `${HOST}/mine`);
+    assert.equal(destOf(`${HOST}/u`), `${HOST}/legacy`);
+  });
+});
+
+describe('validateSiteDomain', () => {
+  test('accepts one URL, with or without a path, and normalizes the trailing slash', () => {
+    assert.deepEqual(validateSiteDomain('https://business.pitt.edu/'), { ok: true, value: 'https://business.pitt.edu', error: '' });
+    assert.equal(validateSiteDomain('https://pitt.edu/business').ok, true);
+    assert.equal(validateSiteDomain('').ok, true, 'blank means auto-detect');
+  });
+  test('rejects a list of domains, whatever the separator', () => {
+    for (const v of ['https://a.edu; https://b.edu', 'https://a.edu, https://b.edu',
+                     'https://a.edu https://b.edu', 'https://a.eduhttps://b.edu']) {
+      assert.equal(validateSiteDomain(v).ok, false, v);
+    }
+  });
+  test('rejects a missing scheme, a query, or garbage', () => {
+    assert.equal(validateSiteDomain('business.pitt.edu').ok, false);
+    assert.equal(validateSiteDomain('https://a.edu/?x=1').ok, false);
+    assert.equal(validateSiteDomain('https://').ok, false);
+    assert.equal(validateSiteDomain('ftp://a.edu').ok, false);
   });
 });
