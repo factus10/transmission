@@ -1641,6 +1641,47 @@ Three things don't survive the trip exactly, and it's worth knowing which before
 - **Corner radius becomes square-or-rounded.** Miro has no radius setting, so whatever specific radius you set in the Layout tab arrives as simply "rounded".
 - **Inner padding is app-only.** Miro centres shape text itself and offers no padding control.
 
+### Ask the audit a question (MCP server)
+
+The reports above answer a fixed set of questions. An audit raises plenty that aren't on the list — *how many Keep pages under `/news` have no audience? Which sections did the SME overturn most? What did we decide about the PDFs on the careers subdomain?* — and until now the honest answer was "export to Excel and pivot."
+
+Transmission ships a small **MCP server** (Model Context Protocol — the standard AI assistants use to talk to tools) that lets Claude Desktop, Claude Code or any other MCP client **read** a `.transmission` project and answer those questions directly, with real numbers. It's a developer preview: it works, it's tested, and it needs a one-time terminal setup.
+
+**What it can do**
+
+- Count pages grouped by any column — sections, decisions, audiences, tags, source sites, status codes — with filters, so *"Kill pages by section, content pages only"* is one question.
+- List matching pages with the columns you choose, or pull one page's full record with its change history.
+- Walk the sitemap with page counts per node, list redirects with who wrote each one, read the audit trail, and read the project's libraries (audiences, jobs, sites, the content-type crosswalk, the glossary).
+- Apply your **saved filters** by name, so the AI sees the same worklists you do.
+
+It also sends the model the conventions that matter — blank means *unreviewed*, Kill vs Exclude, content pages vs crawled URLs, the `404` sentinel — so an untouched crawl doesn't get reported back as a finished audit.
+
+**What it deliberately can't do**
+
+- **Change anything.** It opens the project read-only and never touches the file. Writes are planned as *proposals* you'd accept or reject in the app — the same contract Suggested_KKE and the AI audience suggestions already follow.
+- Read `.xlsx` files. Use **File → Save As Project…** first.
+- Compute the handful of filters only the app can (duplicates, URL variants, redirect review, cross-site duplicates). A saved filter that uses one is refused by name rather than run half-applied.
+
+**Set it up**
+
+You need **Node 22.13 or newer** installed (it uses Node's built-in SQLite; nothing else to install) and a copy of the Transmission source, which contains `mcp/server.js`.
+
+For Claude Code:
+
+```bash
+claude mcp add transmission -- node /path/to/transmission/mcp/server.js
+```
+
+For Claude Desktop, add to `claude_desktop_config.json`:
+
+```json
+{ "mcpServers": { "transmission": { "command": "node", "args": ["/path/to/transmission/mcp/server.js"] } } }
+```
+
+Then, in a conversation: *"Open the project at /path/to/audit.transmission and give me an overview."* You can keep working in the app while it's connected — the server notices each autosave and answers from the current state.
+
+**A note on client data.** The server hands crawl and audit data to whichever model your assistant is connected to. Treat it like any other tool that can read the client's project file, and check the engagement's data terms before connecting one.
+
 ### Quick self-check
 
 - [ ] **Executive Summary** ready for the client readout
@@ -1939,6 +1980,7 @@ npm run build      # build universal .dmg (output in dist/)
 - **Miro: collapsed sections can't be unfolded on the board** — Miro has no collapse behaviour for shapes. Only Miro *mind maps* collapse, and those are text-only with no colour, so using them would lose all the colour coding. Collapsed sections export as a stacked block instead, which shows that something is folded away but can't be opened.
 - **Miro: corner radius exports as square-vs-rounded only** — Miro has no radius setting, so a specific radius value in the app arrives as simply "rounded".
 - **Miro: inner padding is app-only** — Miro centres shape text itself and has no padding control.
+- **MCP server is read-only and needs Node 22.13+** — it can answer questions about a project but cannot change it; proposals-based writes are planned. It reads `.transmission` projects only, not spreadsheets.
 - **Miro: one team per connection** — a Miro token is scoped to a single team; working across teams means connecting once per team.
 - **New sitemap card defaults apply to new projects only** — existing projects keep the card height and colour rules they already saved. Changing them is a one-click job in the Visual Sitemap's **Layout** / **Colors** tabs.
 
