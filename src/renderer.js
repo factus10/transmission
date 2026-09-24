@@ -612,6 +612,7 @@ function bindIPCListeners() {
   window.electronAPI.onMenuSmeExport(() => smeExport());
   window.electronAPI.onMenuSmeImport(() => smeImport());
   window.electronAPI.onMenuSmeResolve(() => openSmeResolveDialog());
+  window.electronAPI.onMenuConsolidateReview(() => openConsolidateReviewDialog());
   window.electronAPI.onMenuRedirectChainCheck(() => checkRedirectChains());
   if (window.electronAPI.onMenuRedirectHealthCheck) window.electronAPI.onMenuRedirectHealthCheck(() => openRedirectHealthCheck());
   window.electronAPI.onMenuNavCoverage(() => showNavCoverageReport());
@@ -763,13 +764,34 @@ function bindStaticEvents() {
       if (!ok) { sel.value = old; return; }
       renderMetaFields(state.editedRows[state.selectedIndex], state.selectedIndex);
     }
-    state.editedRows[state.selectedIndex][finalKkeCol()] = newVal;
-    logChange(state.selectedIndex, finalKkeCol(), old, newVal);
+    const idx = state.selectedIndex;
+    const row = state.editedRows[idx];
+    const wasConsolidate = rowIsConsolidate(row);
+    row[finalKkeCol()] = newVal;
+    logChange(idx, finalKkeCol(), old, newVal);
     setDirty(true);
-    refreshRowInList(state.selectedIndex);
+    refreshRowInList(idx);
     // If the new value matches KKE, swap back to the ✓ chip display
-    const row = state.editedRows[state.selectedIndex];
     populateFinalKkeSelect(newVal, row[kkeCol()] || '');
+    updateConsolidateIndicator(row);
+    updateFinalOverrideChip(row);
+    await afterEffectiveKkeChange(idx, wasConsolidate);
+  });
+
+  $('final-kke-override').addEventListener('click', () => {
+    if (state.selectedIndex === null) return;
+    const row = state.editedRows[state.selectedIndex];
+    if (rowIsConsolidate(row)) { openConsolidatePicker(state.selectedIndex); return; }
+    if (!state.showSmeFields) {
+      state.showSmeFields = true;
+      window.electronAPI.savePrefs({ showSmeFields: true });
+      applySmeFieldsVisibility();
+    }
+    const sel = $('final-kke-select');
+    const matchBtn = $('final-kke-match');
+    if (matchBtn) matchBtn.classList.add('hidden');
+    sel.classList.remove('hidden');
+    sel.focus();
   });
 
   // Clicking the "✓ matches KKE" chip reveals the dropdown so the user can override.
@@ -867,8 +889,11 @@ function bindStaticEvents() {
       return;
     }
 
-    // Switching AWAY from Consolidate to another state — offer to clear the target
-    if (current === 'Consolidate' && newVal !== 'Consolidate') {
+    // Switching AWAY from Consolidate to another state — offer to clear the target.
+    // Not when a client's Final_KKE of Consolidate still stands: the target is
+    // live either way, and clearing it would orphan their decision.
+    const finalStillConsolidates = String(row[finalKkeCol()] || '').trim() === 'Consolidate';
+    if (current === 'Consolidate' && newVal !== 'Consolidate' && !finalStillConsolidates) {
       const target = String(row[CONSOLIDATE_COL] || '').trim() || consolidateTargetAddr(row);
       if (target) {
         const clearIt = await confirmDialog({ title: 'Clear Consolidate target?', message: `This page has a Consolidate target:\n  ${target}\n\nClear it along with the KKE change?`, confirmLabel: 'Clear target' });
@@ -886,6 +911,7 @@ function bindStaticEvents() {
     recordKkeChange(state.selectedIndex, current, newVal);
     row[kkeCol()] = newVal;
     applyKkeStyle(newVal);
+    updateFinalOverrideChip(row);
     setDirty(true);
     refreshRowInList(state.selectedIndex);
     // Phase 1, Chunk C: refresh migration ghost suggestion (KKE drives the suggestion)
@@ -1182,7 +1208,7 @@ function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, she
     const byAddr = new Map();
     state.editedRows.forEach(r => { const u = String(r[urlC] || '').trim(); if (u) byAddr.set(u, r); });
     state.editedRows.forEach((r, i) => {
-      if (!rowIsConsolidate(r)) return;
+      if (!rowMentionsConsolidate(r)) return;
       if (String(r[CONSOLIDATE_ID_COL] || '').trim()) return; // already migrated
       const legacy = String(r[CONSOLIDATE_COL] || '').trim();
       if (!legacy) return;
@@ -3072,7 +3098,7 @@ function applyFilter() {
 
   if (kf && kf.length > 0) {
     // Separate status values from special filters
-    const specialFilters = new Set(['_unreviewed', '_flagged', '_duplicates', '_sme-conflicts', '_sme-pending', '_consolidate-no-target', '_consolidate-dead-target', '_shared-nav', '_needs-placement', '_suggested-disagree', '_suggested-mismatch', '_needs-audience', '_audience-orphan', '_audience-suggested', '_cross-site-duplicate', '_url-variant', '_variant-target-missing', '_needs-job', '_non-content', '_inherited-redirect', '_redirect-needs-review']);
+    const specialFilters = new Set(['_unreviewed', '_flagged', '_duplicates', '_sme-conflicts', '_sme-pending', '_consolidate-no-target', '_consolidate-review', '_consolidate-dead-target', '_shared-nav', '_needs-placement', '_suggested-disagree', '_suggested-mismatch', '_needs-audience', '_audience-orphan', '_audience-suggested', '_cross-site-duplicate', '_url-variant', '_variant-target-missing', '_needs-job', '_non-content', '_inherited-redirect', '_redirect-needs-review']);
     const statusValues = kf.filter(v => !specialFilters.has(v));
     const specials = kf.filter(v => specialFilters.has(v));
 
@@ -3119,6 +3145,7 @@ function applyFilter() {
           if (kke && !final_) return true;
         }
         if (s === '_consolidate-no-target' && rowConsolidateNeedsTarget(row)) return true;
+        if (s === '_consolidate-review' && consolidateReviewKind(row)) return true;
         if (s === '_consolidate-dead-target' && rowConsolidateHasDeadTarget(row)) return true;
         if (s === '_needs-placement') {
           // Keep/Evolve pages not yet assigned to a sitemap node (matches the nav-tree "need placement" count).
@@ -3530,11 +3557,18 @@ function renderVisibleRows() {
     }
     const consolidateTarget = String(row[CONSOLIDATE_COL] || '').trim() || consolidateTargetAddr(row);
     const needsTarget = rowConsolidateNeedsTarget(row);
-    if (consolidateTarget) {
+    if (consolidateTarget && rowIsConsolidate(row)) {
       const c = document.createElement('span');
       c.className = 'row-ind row-ind-consolidate';
       c.textContent = 'C';
       c.title = 'Consolidate into: ' + consolidateTarget;
+      indicators.appendChild(c);
+    } else if (consolidateTarget) {
+      // A target the client's Final_KKE has overridden — kept, but inactive.
+      const c = document.createElement('span');
+      c.className = 'row-ind row-ind-consolidate row-ind-inactive';
+      c.textContent = 'C';
+      c.title = `Inactive consolidate target (Final KKE is ${effectiveKke(row) || 'blank'}): ` + consolidateTarget;
       indicators.appendChild(c);
     } else if (needsTarget) {
       const c = document.createElement('span');
@@ -3576,10 +3610,19 @@ function renderVisibleRows() {
     const kke = row[kkeCol()] || '';
     const badge = document.createElement('div');
     badge.style.cssText = 'width:54px;flex:none;padding:7px 4px;display:flex;align-items:center;';
-    if (kke) {
+    // The badge is the recommendation (the column the KKE filter reads); when the
+    // client's Final_KKE overrides it, mark that — the override is what redirects
+    // and reports act on, so it must be visible from the list, not only the audit bar.
+    const finalOverride = kkeCol() !== finalKkeCol() ? String(row[finalKkeCol()] || '').trim() : '';
+    const overridden = !!finalOverride && finalOverride !== String(kke).trim();
+    if (kke || overridden) {
       const span = document.createElement('span');
-      span.className = `kke-badge ${kke.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
-      span.textContent = kke;
+      span.className = `kke-badge ${String(kke).toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+      span.textContent = kke || '—';
+      if (overridden) {
+        span.classList.add('kke-badge-overridden');
+        span.title = `Recommended ${kke || '(none)'} — Final KKE is ${finalOverride}`;
+      }
       badge.appendChild(span);
     }
     item.appendChild(badge);
@@ -3891,6 +3934,7 @@ function populateAuditFields(row) {
   updateGaKkeBadge(row);
   updateSuggestedKkeBadge(row);
   updateConsolidateIndicator(row);
+  updateFinalOverrideChip(row);
 
   // Tags
   const tagsRaw = row[tagsCol()] || '';
@@ -12919,11 +12963,32 @@ function resyncConsolidateInto() {
   refreshAllConsolidateDisplays();
 }
 
+/** Is this page consolidating? Decided by the EFFECTIVE KKE — a client's
+ *  Final_KKE outranks the auditor's recommendation here exactly as it does in
+ *  the redirect resolver and every report. This used to OR the two columns, so a
+ *  client who overrode "Consolidate" with "Keep" was silently ignored: the page
+ *  kept its target, its consolidation redirect, and its place in the worklists. */
 function rowIsConsolidate(row) {
+  if (!row) return false;
+  return effectiveKke(row).toLowerCase() === 'consolidate';
+}
+
+/** Either column says Consolidate — the auditor's call OR the client's. Only for
+ *  data migrations that must not drop a stored target just because the client
+ *  has since overridden it; decisions use rowIsConsolidate(). */
+function rowMentionsConsolidate(row) {
   if (!row) return false;
   const kke = String(row[kkeCol()] || '').trim().toLowerCase();
   const finalK = String(row[finalKkeCol()] || '').trim().toLowerCase();
   return kke === 'consolidate' || finalK === 'consolidate';
+}
+
+/** A stored consolidation target on a page that is no longer consolidating —
+ *  typically the auditor recommended Consolidate and the client's Final_KKE
+ *  said otherwise. Inactive (nothing reads it) but worth tidying. */
+function rowHasInactiveConsolidateTarget(row) {
+  if (!row || rowIsConsolidate(row)) return false;
+  return !!String(row[CONSOLIDATE_ID_COL] || row[CONSOLIDATE_COL] || '').trim();
 }
 
 function rowConsolidateNeedsTarget(row) {
@@ -12983,7 +13048,7 @@ function rowConsolidateHasDeadTarget(row) {
   if (!consolidateTargetAddr(row)) return false;
   const targetRow = findConsolidateTargetRow(row);
   if (!targetRow) return false;
-  const targetKke = String(targetRow[kkeCol()] || '').trim().toLowerCase();
+  const targetKke = effectiveKke(targetRow).toLowerCase();
   return targetKke === 'kill' || targetKke === 'exclude';
 }
 
@@ -12991,7 +13056,9 @@ function updateConsolidateIndicator(row) {
   const dot = els.consolidateIndicator;
   if (!dot) return;
   dot.classList.remove('needs-target', 'dead-target');
-  const target = row ? consolidateTargetAddr(row) : '';
+  // Only an ACTIVE consolidation shows its target — one the client's Final_KKE
+  // has overridden is inactive, and the audit bar's override chip says so.
+  const target = rowIsConsolidate(row) ? consolidateTargetAddr(row) : '';
   if (target) {
     dot.classList.remove('hidden');
     if (rowConsolidateHasDeadTarget(row)) {
@@ -13008,6 +13075,32 @@ function updateConsolidateIndicator(row) {
     dot.classList.add('hidden');
     dot.title = '';
   }
+}
+
+/** The KKE buttons edit (and highlight) the auditor's recommendation, but the
+ *  engine acts on the effective KKE — so when the client's Final_KKE says
+ *  something else, show it beside the buttons. Clicking it goes where the
+ *  override needs attention: the target picker for a Consolidate, otherwise the
+ *  SME fields holding the Final dropdown. */
+function updateFinalOverrideChip(row) {
+  const chip = $('final-kke-override');
+  if (!chip) return;
+  const rec = row ? String(row[kkeCol()] || '').trim() : '';
+  const fin = row ? String(row[finalKkeCol()] || '').trim() : '';
+  if (!row || !fin || fin === rec || kkeCol() === finalKkeCol()) {
+    chip.classList.add('hidden');
+    return;
+  }
+  chip.classList.remove('hidden');
+  $('final-kke-override-value').textContent = fin;
+  chip.className = 'final-kke-override kke-badge ' + fin.toLowerCase().replace(/[^a-z0-9]/g, '-');
+  const needsTarget = fin.toLowerCase() === 'consolidate' && rowConsolidateNeedsTarget(row);
+  chip.classList.toggle('needs-target', needsTarget);
+  const recText = rec ? `recommended ${rec}` : 'no recommendation';
+  chip.title = fin.toLowerCase() === 'consolidate'
+    ? `Final KKE is Consolidate (${recText}) — this is what redirects and reports use.\n` +
+      (needsTarget ? 'No target page yet — click to choose where it consolidates.' : 'Click to review the consolidation target.')
+    : `Final KKE is ${fin} (${recText}) — this is what redirects and reports use.\nClick to show the Final dropdown.`;
 }
 
 /** Loose URL identity for the self/cycle guards: the same page reached with a
@@ -13123,12 +13216,32 @@ async function applyConsolidateTarget(origIndex, targetUrl) {
   // the target — don't overwrite KKE_Recommendation, and skip the kill-cleanup prompt.
   const alreadyConsolidate = rowIsConsolidate(row);
   const oldKke = row[kkeCol()];
+  const oldFinal = String(row[finalKkeCol()] || '').trim();
 
   if (!alreadyConsolidate) {
+    // A client Final_KKE outranks the recommendation, so writing only
+    // KKE_Recommendation here would leave the page NOT consolidating — the
+    // target would be stored and ignored. Say so, and let the user decide.
+    if (oldFinal && oldFinal !== 'Consolidate' && kkeCol() !== finalKkeCol()) {
+      const ok = await confirmDialog({
+        title: 'Override the Final KKE?',
+        message: `The Final KKE for this page is ${oldFinal} — that is the decision redirects and reports act on.\n\n` +
+          'Consolidating it changes the Final KKE to Consolidate as well.',
+        confirmLabel: 'Consolidate anyway',
+      });
+      if (!ok) return;
+    }
     await promptKillCleanup(origIndex, 'Consolidate'); // cancel is fine — user can still proceed with the state change
-    row[kkeCol()] = 'Consolidate';
-    logChange(origIndex, kkeCol(), oldKke, 'Consolidate');
-    applyKkeStyle('Consolidate');
+    if (oldKke !== 'Consolidate') {
+      row[kkeCol()] = 'Consolidate';
+      logChange(origIndex, kkeCol(), oldKke, 'Consolidate');
+      applyKkeStyle('Consolidate');
+    }
+    if (oldFinal && oldFinal !== 'Consolidate' && kkeCol() !== finalKkeCol()) {
+      row[finalKkeCol()] = 'Consolidate';
+      logChange(origIndex, finalKkeCol(), oldFinal, 'Consolidate');
+      if (state.selectedIndex === origIndex) populateFinalKkeSelect('Consolidate', row[kkeCol()] || '');
+    }
   }
 
   if (oldId !== newId) {
@@ -13141,7 +13254,8 @@ async function applyConsolidateTarget(origIndex, targetUrl) {
   }
 
   setDirty(true);
-  updateConsolidateIndicator(row);
+  markConsolidateReviewed(row);
+  if (state.selectedIndex === origIndex) { updateConsolidateIndicator(row); updateFinalOverrideChip(row); }
   refreshRowInList(origIndex);
   renderMetaFields(row, origIndex);
 
@@ -13160,7 +13274,190 @@ function clearConsolidateTarget(origIndex) {
   if (!oldId && !oldDisplay) return;
   if (oldId) { row[CONSOLIDATE_ID_COL] = ''; logChange(origIndex, CONSOLIDATE_ID_COL, oldId, ''); }
   if (oldDisplay) { row[CONSOLIDATE_COL] = ''; logChange(origIndex, CONSOLIDATE_COL, oldDisplay, ''); }
-  updateConsolidateIndicator(row);
+  if (state.selectedIndex === origIndex) { updateConsolidateIndicator(row); updateFinalOverrideChip(row); }
+}
+
+// ─── Consolidation review: where the client's Final_KKE disagrees ─────────────
+// SME review is exactly where consolidation decisions get revisited: a client
+// knows which pages overlap in ways a crawl can't show, and can have a different
+// idea of where content should land. Three shapes need a person to look:
+//   client-consolidate — Final says Consolidate, the auditor didn't recommend it
+//                        (needs a target, or confirmation of a stale one)
+//   client-override    — the auditor said Consolidate, Final says otherwise, and
+//                        the old target is still stored (now inactive)
+//   client-notes       — both say Consolidate but the SME left notes, which is
+//                        where "merge it into X instead" gets written
+// A row drops off once reviewed, keyed on the decision it was reviewed AGAINST
+// (projectSettings.consolidateReviewed[address] = signature): change the Final,
+// the recommendation or the target, and it comes back — a sign-off on one
+// decision says nothing about the next.
+
+function consolidateReviewSignature(row) {
+  return [
+    String(row[kkeCol()] || '').trim(),
+    String(row[finalKkeCol()] || '').trim(),
+    String(row[CONSOLIDATE_ID_COL] || row[CONSOLIDATE_COL] || '').trim(),
+  ].join('\u0000');
+}
+
+/** The review kind for a row, ignoring whether it has been reviewed. */
+function consolidateReviewKindRaw(row) {
+  if (!row || kkeCol() === finalKkeCol()) return '';
+  const rec = String(row[kkeCol()] || '').trim().toLowerCase();
+  const fin = String(row[finalKkeCol()] || '').trim().toLowerCase();
+  if (!fin) return '';
+  if (fin === 'consolidate' && rec !== 'consolidate') return 'client-consolidate';
+  if (rec === 'consolidate' && fin !== 'consolidate') return rowHasInactiveConsolidateTarget(row) ? 'client-override' : '';
+  if (rec === 'consolidate' && fin === 'consolidate' && String(row[smeNotesCol()] || '').trim()) return 'client-notes';
+  return '';
+}
+
+/** The review kind if the row still needs a look, else ''. */
+function consolidateReviewKind(row) {
+  const kind = consolidateReviewKindRaw(row);
+  if (!kind) return '';
+  const addr = String(row[state.urlColumn || 'Address'] || '').trim();
+  const done = ((state.projectSettings || {}).consolidateReviewed || {})[addr];
+  return done && done === consolidateReviewSignature(row) ? '' : kind;
+}
+
+/** Record that this row's consolidation was reviewed against its current decision. */
+function markConsolidateReviewed(row) {
+  if (!consolidateReviewKindRaw(row)) return;
+  const addr = String(row[state.urlColumn || 'Address'] || '').trim();
+  if (!addr) return;
+  const ps = state.projectSettings || (state.projectSettings = {});
+  ps.consolidateReviewed = Object.assign({}, ps.consolidateReviewed, { [addr]: consolidateReviewSignature(row) });
+}
+
+function countConsolidateReview() {
+  return state.editedRows.reduce((n, r) => n + (consolidateReviewKind(r) ? 1 : 0), 0);
+}
+
+function openConsolidateReviewDialog() {
+  if (!state.editedRows.length) { showToast('No data loaded', 'error'); return; }
+  const urlCol = state.urlColumn || 'Address';
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
+  const KIND_TEXT = {
+    'client-consolidate': 'Client says Consolidate',
+    'client-override': 'Client overrode Consolidate',
+    'client-notes': 'Client left notes',
+  };
+
+  const wrap = document.createElement('div');
+  wrap.className = 'cr-review';
+  const intro = document.createElement('p');
+  intro.className = 'cr-review-intro';
+  intro.textContent = 'Consolidations where the Final KKE (the client’s decision) differs from the recommendation, or where the SME commented. ' +
+    'Final KKE is what redirects and reports act on.';
+  wrap.appendChild(intro);
+  const list = document.createElement('div');
+  list.className = 'cr-review-list';
+  wrap.appendChild(list);
+
+  function afterEdit(origIndex) {
+    setDirty(true);
+    refreshRowInList(origIndex);
+    refreshConsolidateTodoButton();
+    render();
+  }
+
+  function render() {
+    list.innerHTML = '';
+    const items = [];
+    state.editedRows.forEach((row, origIndex) => {
+      const kind = consolidateReviewKind(row);
+      if (kind) items.push({ row, origIndex, kind });
+    });
+    api.dialog.querySelector('.modal-title').textContent =
+      `Review Consolidations (${items.length})`;
+    if (!items.length) {
+      list.innerHTML = '<div class="cr-review-empty">Nothing left to review.</div>';
+      return;
+    }
+    items.forEach(({ row, origIndex, kind }) => {
+      const el = document.createElement('div');
+      el.className = 'cr-review-row';
+      const url = String(row[urlCol] || '').trim();
+      const title = (titleCol && String(row[titleCol] || '').trim()) || url;
+      const rec = String(row[kkeCol()] || '').trim() || '—';
+      const fin = String(row[finalKkeCol()] || '').trim() || '—';
+      const target = consolidateTargetAddr(row);
+      const notes = String(row[smeNotesCol()] || '').trim();
+      const sme = String(row[smeDecisionCol()] || '').trim();
+
+      const targetText = kind === 'client-override'
+        ? (target ? `Inactive target: ${target}` : '')
+        : (target ? `Target: ${target}` : 'No target yet');
+      el.innerHTML = `
+        <div class="cr-review-head">
+          <span class="cr-review-kind cr-kind-${kind}">${escapeHtml(KIND_TEXT[kind])}</span>
+          <span class="cr-review-title" title="${escapeHtml(url)}">${escapeHtml(title)}</span>
+        </div>
+        <div class="cr-review-meta">Recommended <b>${escapeHtml(rec)}</b> → Final <b>${escapeHtml(fin)}</b>${sme ? ` · SME: ${escapeHtml(sme)}` : ''}</div>
+        <div class="cr-review-target${!target && kind !== 'client-override' ? ' cr-missing' : ''}">${escapeHtml(targetText)}</div>
+        ${notes ? `<div class="cr-review-notes">${escapeHtml(notes)}</div>` : ''}
+        <div class="cr-review-actions"></div>`;
+      const actions = el.querySelector('.cr-review-actions');
+      const mk = (label, cls, fn) => {
+        const b = document.createElement('button');
+        b.className = 'btn btn-sm ' + cls;
+        b.textContent = label;
+        b.addEventListener('click', fn);
+        actions.appendChild(b);
+      };
+      mk('Go to page', 'btn-ghost', () => {
+        api.close();
+        if (_tableViewOpen) closeTableView();
+        if (_navEditorOpen) closeNavEditor();
+        if (_redirectEditorOpen) closeRedirectEditor();
+        if (_menusViewOpen) closeMenusView();
+        selectRow(origIndex);
+      });
+      if (kind === 'client-override') {
+        mk('Keep it (inactive)', 'btn-ghost', () => { markConsolidateReviewed(row); afterEdit(origIndex); });
+        mk('Clear target', 'btn-primary', () => { clearConsolidateTarget(origIndex); markConsolidateReviewed(row); afterEdit(origIndex); });
+      } else {
+        mk(target ? 'Change target…' : 'Choose target…', target ? 'btn-ghost' : 'btn-primary',
+          () => openConsolidatePicker(origIndex, () => afterEdit(origIndex)));
+        if (target) mk('Target is right', 'btn-primary', () => { markConsolidateReviewed(row); afterEdit(origIndex); });
+      }
+      list.appendChild(el);
+    });
+  }
+
+  const api = openModal({
+    title: 'Review Consolidations',
+    body: wrap,
+    width: 720,
+    buttons: [{ label: 'Done', variant: 'primary', primary: true }],
+    onClose: () => { applyFilter(); if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]); },
+  });
+  render();
+}
+
+/** Follow-up after a row's Final_KKE changes. Final_KKE is the effective call,
+ *  so moving it into or out of Consolidate changes what the page actually does:
+ *  into → it needs a target (open the picker, which keeps any target the auditor
+ *  already chose); out of → a stored target is now inactive (offer to clear it). */
+async function afterEffectiveKkeChange(origIndex, wasConsolidate) {
+  const row = state.editedRows[origIndex];
+  const nowConsolidate = rowIsConsolidate(row);
+  if (nowConsolidate && !wasConsolidate) {
+    if (rowConsolidateNeedsTarget(row)) openConsolidatePicker(origIndex);
+    return;
+  }
+  if (wasConsolidate && !nowConsolidate && rowHasInactiveConsolidateTarget(row)) {
+    const target = String(row[CONSOLIDATE_COL] || '').trim() || consolidateTargetAddr(row);
+    const clearIt = await confirmDialog({
+      title: 'Clear the Consolidate target?',
+      message: `This page no longer consolidates, but it still has a target:\n  ${target}\n\n` +
+        'Nothing uses it any more. Clear it, or keep it in case the decision changes back?',
+      confirmLabel: 'Clear target',
+      cancelLabel: 'Keep it (inactive)',
+    });
+    if (clearIt) { clearConsolidateTarget(origIndex); setDirty(true); refreshRowInList(origIndex); }
+  }
 }
 
 // ─── Duplicate-destination guard ──────────────────────────────────────────────
@@ -13226,7 +13523,9 @@ async function maybeWarnDuplicateDestination(origIndex) {
 
 // ─── Consolidate picker ───────────────────────────────────────────────────────
 
-function openConsolidatePicker(sourceIndex) {
+/** `onDone` (optional) runs after a target is set or cleared — not on cancel —
+ *  so a caller like the consolidation review can re-render its list. */
+function openConsolidatePicker(sourceIndex, onDone) {
   const existing = document.getElementById('_cp-modal');
   if (existing) { existing.remove(); document.getElementById('_cp-overlay')?.remove(); return; }
 
@@ -13244,14 +13543,13 @@ function openConsolidatePicker(sourceIndex) {
                  : null;
 
   // Build candidate list: all rows except the source itself
-  const kke = kkeCol();
   // Excluded by URL as well as by index: a crawl can contain the same Address
   // twice, and picking the twin would consolidate the page into itself.
   const allCandidates = state.editedRows.map((row, origIndex) => ({
     origIndex,
     url: String(row[urlCol] || '').trim(),
     title: titleCol ? String(row[titleCol] || '').trim() : '',
-    kke: String(row[kke] || '').trim(),
+    kke: effectiveKke(row),   // what the page will actually do — a client Final_KKE included
   })).filter(c => c.origIndex !== sourceIndex && c.url && !sameConsolidateUrl(c.url, sourceUrl));
 
   const overlay = document.createElement('div');
@@ -13431,9 +13729,10 @@ function openConsolidatePicker(sourceIndex) {
     overlay.remove();
     window.removeEventListener('resize', renderVisible);
   }
-  function confirmAndClose() {
+  async function confirmAndClose() {
     close();
-    if (selectedUrl != null) applyConsolidateTarget(sourceIndex, selectedUrl);
+    if (selectedUrl != null) await applyConsolidateTarget(sourceIndex, selectedUrl);
+    if (typeof onDone === 'function') onDone();
   }
 
   registerModalDismiss(overlay, dialog, () => close());
@@ -13465,6 +13764,8 @@ function openConsolidatePicker(sourceIndex) {
     setDirty(true);
     refreshRowInList(sourceIndex);
     renderMetaFields(row, sourceIndex);
+    if (state.selectedIndex === sourceIndex) updateFinalOverrideChip(row);
+    if (typeof onDone === 'function') onDone();
   });
 
   // Initial render
@@ -24253,6 +24554,18 @@ function renderKkeButtons() {
     btn.className = 'kke-btn';
     btn.dataset.kke = label;
     btn.textContent = label;
+    // The consolidate status dot lives inside the Consolidate button. It used to
+    // be static HTML, which this rebuild destroyed on every file open — leaving
+    // els.consolidateIndicator pointing at a detached node, so the audit bar
+    // never actually showed a missing or dead consolidation target.
+    if (label === 'Consolidate') {
+      const dot = document.createElement('span');
+      dot.id = 'consolidate-indicator';
+      dot.className = 'notes-indicator hidden';
+      btn.appendChild(document.createTextNode(' '));
+      btn.appendChild(dot);
+      els.consolidateIndicator = dot;
+    }
     els.kkeButtons.appendChild(btn);
   });
 
@@ -24284,6 +24597,7 @@ function renderKkeFilterOptions() {
     { value: '_sme-conflicts', text: 'SME Conflicts' },
     { value: '_sme-pending', text: 'Pending Final KKE' },
     { value: '_consolidate-no-target', text: 'Consolidate (no target)' },
+    { value: '_consolidate-review', text: 'Consolidate (client changed — review)' },
     { value: '_consolidate-dead-target', text: 'Consolidate → Kill/Exclude target' },
     { value: '_shared-nav', text: 'Shared sitemap node (2+ pages)' },
     { value: '_needs-placement', text: 'Needs sitemap placement (Keep/Evolve, no node)' },
@@ -29227,7 +29541,23 @@ async function smeImport() {
         openSmeResolveDialog();
       }
     }, 500);
+  } else {
+    setTimeout(maybeOfferConsolidateReview, 500);
   }
+}
+
+/** After SME decisions land in Final_KKE, offer the consolidation review when
+ *  the client changed any. Consolidation is the one decision whose follow-up
+ *  (where does the content go?) the Final_KKE value alone can't carry. */
+async function maybeOfferConsolidateReview() {
+  const n = countConsolidateReview();
+  if (!n) return;
+  if (await confirmDialog({
+    title: 'Review consolidations?',
+    message: `${n} page${n !== 1 ? 's' : ''} where the client's Final KKE changes a consolidation, or the SME left notes on one. Review them now?`,
+    confirmLabel: 'Review',
+    cancelLabel: 'Later',
+  })) openConsolidateReviewDialog();
 }
 
 function openSmeResolveDialog() {
@@ -29241,6 +29571,8 @@ function openSmeResolveDialog() {
   const btnAcceptAll = $('btn-sme-accept-all');
   const btnKeepAll   = $('btn-sme-keep-all');
   const btnClose     = $('btn-sme-resolve-close');
+
+  let changedAny = false;
 
   // Collect conflict rows
   let conflicts = [];
@@ -29311,7 +29643,7 @@ function openSmeResolveDialog() {
         const val = select.value;
         if (!val) { showToast('Select a Final KKE value', 'error'); return; }
         c.row[finalKkeCol()] = val;
-        setDirty(true);
+        setDirty(true); changedAny = true;
         conflicts.splice(idx, 1);
         renderList();
       });
@@ -29338,14 +29670,16 @@ function openSmeResolveDialog() {
     renderVisibleRows();
   }
 
-  function onDone() { cleanup(); }
+  // Offer the consolidation review only when this session actually wrote Final
+  // values — not every time the dialog is merely opened and closed.
+  function onDone() { cleanup(); if (changedAny) setTimeout(maybeOfferConsolidateReview, 200); }
 
   async function onAcceptAll() {
     if (!(await confirmDialog({ title: 'Accept SME suggestions', message: `Set Final KKE to SME's suggestion for all ${conflicts.length} rows?`, confirmLabel: 'Accept all' }))) return;
     conflicts.forEach(c => {
       if (c.suggested) c.row[finalKkeCol()] = c.suggested;
     });
-    setDirty(true);
+    setDirty(true); changedAny = true;
     conflicts = [];
     renderList();
   }
@@ -29355,7 +29689,7 @@ function openSmeResolveDialog() {
     conflicts.forEach(c => {
       c.row[finalKkeCol()] = c.row[kkeCol()] || '';
     });
-    setDirty(true);
+    setDirty(true); changedAny = true;
     conflicts = [];
     renderList();
   }

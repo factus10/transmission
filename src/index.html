@@ -200,6 +200,10 @@
                   </button>
                   <button class="kke-btn" data-kke="Exclude">Exclude</button>
                 </div>
+                <!-- The client's Final_KKE, when it overrides the recommendation above. Always
+                     visible (not behind "Show SME fields"): Final_KKE is what every engine
+                     consumer acts on, so an override must never be invisible here. -->
+                <button type="button" id="final-kke-override" class="final-kke-override hidden"><span class="final-kke-override-label">Final</span><span id="final-kke-override-value"></span></button>
                 <div id="ga-kke-badge" class="ga-kke-badge hidden" title=""></div>
                 <div id="suggested-kke-badge" class="ga-kke-badge suggested-kke-badge hidden" title=""></div>
               </div>
