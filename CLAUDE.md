@@ -88,6 +88,7 @@ src/
 assets/
   icon.icns      — App icon (provide before building)
 package.json     — Dependencies + Electron Builder config
+mcp/             — Standalone read-only MCP server over .transmission files. NOT in the app bundle (electron-builder `files` is `*.js` root-only + `src/**`). Zero deps; needs Node 22.13+. See the MCP server section.
 ```
 
 ---
@@ -1129,6 +1130,32 @@ mapped, so an all-null plan would report "0 blocks exported" on a full board.
   flatten on export.
 - Shape `fillColor` accepts arbitrary hex despite documenting a 16-value palette
   (verified live). Sticky notes, by contrast, are a hard enum.
+
+## MCP server (`mcp/`)
+
+Read-only Model Context Protocol server over a `.transmission` project, for ad hoc questions the Reports menu doesn't answer. Design + Phase 2 plan: **`docs/dev/MCP_SERVER_PROPOSAL.md`**; setup: `mcp/README.md`. `mcp/server.js` is the stdio JSON-RPC transport + tool/resource registry, `mcp/lib/project.js` the loader and query engine, `mcp/lib/semantics.js` the conventions text.
+
+**Two facts decide the design — do not "simplify" either away:**
+- **It does not use `project-store.js`.** `better-sqlite3` is rebuilt against Electron's ABI by `postinstall`, so it won't load in plain `node` (`NODE_MODULE_VERSION` mismatch) — and `ProjectStore.open()` runs `_migrate()`, which stamps `user_version`; an observer must not migrate someone's project. The server reads the same tables through **`node:sqlite`**, opened `readOnly`, holding the connection only for the duration of a load. A test asserts the file is byte-identical after a full battery of tool calls.
+- **It never writes, and direct writes can never be added.** The renderer holds the project in memory and `saveAll()` rewrites `rows` from that copy on the 2s autosave without ever re-reading the file, so an outside edit is silently overwritten. Phase 2 writes are **proposals** in a separate table (`saveAll()` touches only `headers`/`rows`/`nav_nodes`/`settings`/`changelog`/`meta`, so an extra table survives autosave) that the app surfaces for accept/reject through the real write paths — the `_Suggested_Audiences` contract.
+
+**Zero dependencies** — `node:sqlite` plus a hand-rolled newline-delimited JSON-RPC transport instead of `@modelcontextprotocol/sdk` (same reasoning as `callClaudeMessages()` using raw HTTPS). **stdout carries protocol messages only**; a stray `console.log` in `mcp/` corrupts the stream. `sqlite()` swallows node:sqlite's `ExperimentalWarning` (and nothing else) because MCP clients show server stderr to the user as if something were wrong. A failing *tool* returns `isError: true` with a readable message the model can correct from; only protocol faults are JSON-RPC errors.
+
+**Freshness:** `project()` re-stats the db **and its `-wal`** on every call (`fileStamp()`) and reloads when either changed — an autosave lands in the WAL while the main file's mtime stays put, so stat-ing the main file alone would serve stale data indefinitely. Load is ~110ms at 13k rows × 116 columns.
+
+**Mirrors, and how they are kept honest.** `mcp/lib/project.js` re-implements a handful of small app functions rather than lifting them at runtime (brittle in a shipped tool): `computeColumnMap` (minus the per-user prefs tier — only the tiers that travel with the file), `detectUrlColumn`, `renameLegacyNavColumns` (in memory only), `effectiveKke`, `nonContentKind` (→ `@content_kind`, spelled `content` rather than `''`), `rowSiteInScope`/`reportRows` (the default `scope:"in-scope"`), `isFragmentRow`, `navPageCounts` (→ `livePages`; the whole-file reading, like the Sitemap editor — not the in-scope `reportNavPageCounts`), `computeSubtreePageCounts` (→ `subtreeRows`), the `isHub` predicate (→ `netNew`), `parseNavSheet`'s tree assembly, and `fieldFilterMatches`/`fieldFilterCompare`/`fieldFilterNumber`. `test/mcp-server.test.js` carries two **drift tests**: the fixture DB is built from the `CREATE TABLE` text lifted out of `project-store.js` (a schema change the server hasn't followed fails the suite), and the filter port is compared against the originals lifted from `renderer.js` over an operator × cell-shape matrix, plus an assertion that the app's `FIELD_FILTER_OPERATORS` and the server's are the same set. **When you change any function in that list, change the mirror.** Bumping `SCHEMA_VERSION` requires bumping `SUPPORTED_SCHEMA_VERSION` in `mcp/lib/project.js` — the server refuses a newer file rather than misreading it.
+
+**Deliberate behaviors:**
+- **Rows are addressed by URL, never index** — `deleteRows()` shifts every index after a splice. `looseUrl()` (trailing slash / case) is lookup latitude only, never identity.
+- **An unknown field is an error with a did-you-mean**, not a column of blanks: a typo'd field would turn `is-blank` into "matches everything". Names resolve case-insensitively; `KNOWN_AUDIT_COLUMNS` lets a column the project predates read blank (what the app's injection would produce) instead of erroring.
+- **An unsupported special filter refuses the whole saved filter by name.** `SUPPORTED_SPECIAL_FILTERS` is the twelve that need no renderer state; `_duplicates`, `_url-variant`, `_variant-target-missing`, `_redirect-needs-review`, `_cross-site-duplicate`, `_sme-conflicts`, `_consolidate-no-target` / `_consolidate-dead-target` / `_consolidate-review` and `_audience-orphan` are not ported. Dropping one silently would return a confidently wrong row set. Saved-filter status values match the **recommendation** column, exactly as the sidebar does — `@effective_kke` is the separate, explicit way to ask about the resolved decision.
+- **Virtual fields** (`VIRTUAL_FIELDS`: `@effective_kke`, `@content_kind`, `@redirect_state`, `@host`, `@path_1`, `@path_2`, `@in_scope`) work anywhere a field name does. `@path_1` is deliberately NOT called "section" — `makeSectionResolver()` strips shared prefixes and steps past locale segments, and this does neither.
+- **`aggregate` splits CSV columns** (`Tags` via the column map, `Audiences`, `Jobs_Served`, `Design_Patterns`) and says so in its result, since counts can then exceed the row count — the opposite of `computeNavRowFieldAggregates()`, which treats a CSV cell as one opaque value.
+- **Semantics ship with the connection.** `INSTRUCTIONS` (the `initialize` response) and the `transmission://semantics` resource carry the conventions that change how a count is read — blank = unreviewed, Kill vs Exclude, content vs crawled URLs, `404` vs blank. Update `mcp/lib/semantics.js` when `docs/RUNNING_AN_AUDIT.md` changes one of them.
+
+**Not done (Phase 1 scope):** anything the renderer computes live and doesn't store (redirect health, inherited-redirect classes, URL-variant groups, duplicate fingerprints, shape check, real sections) — port per function as a need appears, ideally by extracting a pure shared module the way `src/sitemap-layout.js` was; `.xlsx` files (would drag SheetJS in); the `prefs.columnMappings` tier.
+
+---
 
 ## SME workflow
 
