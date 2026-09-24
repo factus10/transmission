@@ -1610,7 +1610,7 @@ function navSearchMatches(query) {
     const hay = [
       node.label, node.breadcrumb, node.number, node.computedPath, node.path,
       node.url, node.notes, node.buildPattern, node.pageStatus,
-      node.buildAssignee, node.writeAssignee, node.migrateAssignee,
+      node.buildAssignee, node.writeAssignee, node.migrateAssignee, node.audiences,
     ].map(v => String(v == null ? '' : v).toLowerCase()).join('  ');
     if (hay.includes(query)) matches.push({ nodeId: node.id });
   });
@@ -5303,7 +5303,7 @@ function computeSectionAudienceProfiles({ minEvidence = 3, minShare = 0.5 } = {}
   return profiles.sort((a, b) => b.fillable.length - a.fillable.length || a.section.localeCompare(b.section));
 }
 
-function openAudienceInheritDialog() {
+function openAudienceInheritDialog(opts = {}) {
   if (!state.editedRows.length) { showToast('Open a file first', 'error'); return; }
   if (!(state.audienceLibrary || []).length) {
     alertDialog({
@@ -5313,9 +5313,31 @@ function openAudienceInheritDialog() {
     return;
   }
 
+  // The sitemap is an explicit IA decision; section agreement is an inference.
+  // Offer the explicit source first, then carry on with what's left.
+  const smPlan = sitemapAudienceFillPlan();
+  if (smPlan.length && !opts.skipSitemap) {
+    confirmDialog({
+      title: 'Fill from the sitemap first?',
+      message: `${smPlan.length.toLocaleString()} untagged page${smPlan.length !== 1 ? 's are' : ' is'} placed under sitemap nodes that have audiences set. ` +
+        'Fill those from the sitemap before inferring from section agreement?\n\nOnly blanks are filled; one Cmd+Z undoes it.',
+      confirmLabel: 'Fill from sitemap',
+      cancelLabel: 'Skip',
+    }).then(ok => {
+      if (ok) {
+        const n = applySitemapAudienceFill(smPlan, 'fill audiences from sitemap');
+        if (n) showToast(`Filled ${n.toLocaleString()} page${n !== 1 ? 's' : ''} from the sitemap — Cmd+Z to undo`, 'success');
+      }
+      // Having just filled from the sitemap, "nothing to inherit" is not news.
+      openAudienceInheritDialog({ skipSitemap: true, quietIfNothing: !!ok });
+    });
+    return;
+  }
+
   const profiles = computeSectionAudienceProfiles();
   const eligible = profiles.filter(p => p.eligible);
   if (!eligible.length) {
+    if (opts.quietIfNothing) return;
     const anyTagged = profiles.some(p => p.taggedCount > 0);
     alertDialog({
       title: 'Nothing to inherit yet',
@@ -5403,6 +5425,116 @@ function applyAudienceInherit(eligible, api) {
   applyFilter();
   if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
   showToast(`Filled ${filled.toLocaleString()} page${filled !== 1 ? 's' : ''} across ${sections} section${sections !== 1 ? 's' : ''} — Cmd+Z to undo`, 'success');
+}
+
+// ── Audiences on the sitemap ─────────────────────────────────────────────────
+// A sitemap node can carry the audiences it is FOR — IA intent, set in the node
+// editor and stored on the Sitemap sheet's Node_Audiences column. A node with
+// none inherits its nearest ancestor's, so tagging "Academics" once speaks for
+// the whole branch; a child that sets its own overrides it for its subtree.
+//
+// The node value then fills pages placed under it — blanks only, through the
+// same writeAudienceDecision() path as inherit-from-section, one undo entry.
+// Blank still means unreviewed, so the eligibility set is audienceFillTargets()
+// exactly: in scope, untagged, Keep/Evolve/Consolidate/unreviewed. And
+// AUDIENCE_NONE never propagates, for the reason inherit-from-section gives:
+// asserting "serves nobody" onto pages no one has looked at is a Kill vote.
+
+/** A node's OWN audiences (not inherited), restricted to live library names. */
+function nodeOwnAudiences(node) {
+  const lib = new Set((state.audienceLibrary || []).map(a => a.name));
+  return parseAudienceCsv(node && node.audiences).filter(a => a !== AUDIENCE_NONE && lib.has(a));
+}
+
+/** nodeId → { audiences, fromId, fromLabel, own } for every node, resolving
+ *  inheritance by walking state.navTree (the live parent chain — never
+ *  parentNumber, which can be stale after a reorganization). `own` is true when
+ *  the node set them itself. Nodes with nothing in their chain map to []. */
+function navEffectiveAudienceMap() {
+  const out = new Map();
+  (function walk(nodes, inherited) {
+    (nodes || []).forEach(n => {
+      if (!n || out.has(n.id)) return;
+      const own = nodeOwnAudiences(n);
+      const eff = own.length
+        ? { audiences: own, fromId: n.id, fromLabel: n.label || '', own: true }
+        : { audiences: inherited.audiences, fromId: inherited.fromId, fromLabel: inherited.fromLabel, own: false };
+      out.set(n.id, eff);
+      walk(n.children, eff);
+    });
+  })(state.navTree, { audiences: [], fromId: '', fromLabel: '' });
+  return out;
+}
+
+/** Rows the sitemap can fill: eligible per audienceFillTargets(), placed on a
+ *  node whose effective audiences are non-empty. `nodeIds` (a Set) narrows to a
+ *  branch; `origIndexes` (a Set) narrows to specific rows. */
+function sitemapAudienceFillPlan({ nodeIds = null, origIndexes = null } = {}) {
+  const eff = navEffectiveAudienceMap();
+  const plan = [];
+  audienceFillTargets().forEach(({ row, origIndex }) => {
+    if (origIndexes && !origIndexes.has(origIndex)) return;
+    const id = String(row['Sitemap_ID'] || '').trim();
+    if (!id || (nodeIds && !nodeIds.has(id))) return;
+    const e = eff.get(id);
+    if (!e || !e.audiences.length) return;
+    plan.push({ origIndex, audiences: e.audiences.slice(), nodeId: id, fromId: e.fromId });
+  });
+  return plan;
+}
+
+/** Ids of `node` and everything beneath it. */
+function navSubtreeIds(node) {
+  const ids = new Set();
+  (function walk(n) { if (!n || ids.has(n.id)) return; ids.add(n.id); (n.children || []).forEach(walk); })(node);
+  return ids;
+}
+
+/** Write a fill plan as one undoable step. Returns the count filled. */
+function applySitemapAudienceFill(plan, label) {
+  const undoItems = [];
+  let filled = 0;
+  plan.forEach(p => {
+    // Re-check: the row may have been tagged since the plan was built.
+    if (rowAudiences(state.editedRows[p.origIndex]).length) return;
+    if (writeAudienceDecision(p.origIndex, { audiences: p.audiences }, undoItems)) filled++;
+  });
+  if (!filled) return 0;
+  pushBulkEditUndo(undoItems, label || 'fill audiences from sitemap');
+  setDirty(true);
+  applyFilter();
+  if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+  return filled;
+}
+
+/** After a node's audiences change in the editor: offer to fill the untagged
+ *  pages in its branch. Asked, not automatic — a branch can hold hundreds of
+ *  pages, and the user should see that number before it's written. */
+async function maybeOfferNodeAudienceFill(node) {
+  const plan = sitemapAudienceFillPlan({ nodeIds: navSubtreeIds(node) });
+  if (!plan.length) return;
+  const auds = [...new Set(plan.flatMap(p => p.audiences))];
+  const ok = await confirmDialog({
+    title: 'Fill page audiences from the sitemap?',
+    message: `${plan.length.toLocaleString()} untagged page${plan.length !== 1 ? 's' : ''} in “${node.label}” and its branch would be tagged: ${auds.join(', ')}.\n\n` +
+      'Only blank Audiences are filled — pages you have already tagged are not touched. One Cmd+Z undoes it.',
+    confirmLabel: 'Fill pages',
+    cancelLabel: 'Not now',
+  });
+  if (!ok) return;
+  const n = applySitemapAudienceFill(plan, 'fill audiences from sitemap node');
+  if (n) showToast(`Filled ${n.toLocaleString()} page${n !== 1 ? 's' : ''} from “${node.label}” — Cmd+Z to undo`, 'success');
+}
+
+/** A single page just landed on a node: fill it if it's blank and the node (or
+ *  an ancestor) has audiences. One page, shown in the audit bar right away, so
+ *  no confirmation — just a toast that names what happened. */
+function fillRowAudiencesFromSitemap(origIndex) {
+  const plan = sitemapAudienceFillPlan({ origIndexes: new Set([origIndex]) });
+  if (!plan.length) return;
+  if (applySitemapAudienceFill(plan, 'fill audiences from sitemap')) {
+    showToast(`Audiences from the sitemap: ${plan[0].audiences.join(', ')} — Cmd+Z to undo`, 'info');
+  }
 }
 
 // ── AI suggestion (batch) ────────────────────────────────────────────────────
@@ -8254,7 +8386,8 @@ function buildSavePayload({ fullNav = false, drainLog = true } = {}) {
       pageStatus: n.pageStatus || '',
       buildAssignee: n.buildAssignee || '',
       writeAssignee: n.writeAssignee || '',
-      migrateAssignee: n.migrateAssignee || ''
+      migrateAssignee: n.migrateAssignee || '',
+      audiences: n.audiences || ''
     }));
   }
 
@@ -10638,6 +10771,17 @@ function renameAudienceAcrossRows(old, next) {
       r[PRIMARY_AUDIENCE_COL] = next === null ? '' : next;
     }
     touched++;
+  });
+  // Sitemap nodes carry audience names too (Node_Audiences). Not counted in
+  // `touched` — callers report pages — but a rename that skipped them would
+  // leave a node pointing at a name that no longer exists, which
+  // nodeOwnAudiences() then silently drops.
+  (state.navNodes || []).forEach(n => {
+    const list = parseAudienceCsv(n.audiences);
+    if (!list.includes(old)) return;
+    const updated = next === null ? list.filter(a => a !== old) : list.map(a => (a === old ? next : a));
+    n.audiences = updated.join(', ');
+    state.navTreeDirty = true;
   });
   return touched;
 }
@@ -14614,6 +14758,7 @@ async function assignNav() {
     renderMetaFields(row, state.selectedIndex);
     renderVisibleRows();
     showToast('Sitemap child created: ' + childNode.breadcrumb, 'success');
+    fillRowAudiencesFromSitemap(state.selectedIndex);
   } else {
     // Assign directly to the selected node
     const oldEffUrl = effectiveConsolidateUrl(row);
@@ -14631,6 +14776,7 @@ async function assignNav() {
     renderMetaFields(row, state.selectedIndex);
     renderVisibleRows();
     showToast('Sitemap assigned: ' + node.label, 'success');
+    fillRowAudiencesFromSitemap(state.selectedIndex);
     await maybeWarnDuplicateDestination(state.selectedIndex);
   }
 }
@@ -18684,10 +18830,11 @@ function generateNavTreemap(opts) {
     sectionIds: new Set(navSectionRoots().map(n => n.id)),
     fieldDefs: navSitemapFieldDefs(),
     fieldColorMaps: {},
+    audienceMap: navEffectiveAudienceMap(),
   };
   if (colorBy !== 'section' && colorBy !== 'kke') {
     const def = ctx.fieldDefs.find(f => f.key === colorBy);
-    ctx.fieldColorMaps[colorBy] = computeFieldColorMap(colorBy, def);
+    ctx.fieldColorMaps[colorBy] = computeFieldColorMap(colorBy, def, ctx.audienceMap);
   }
 
   const roots = state.navTree.map(sec => buildTreemapNode(sec, sec.label || '(section)', depthLimit, 1, ctx));
@@ -20301,6 +20448,7 @@ async function generateNavSitemap(sitemapOpts = {}) {
   // Which nodes start a new section — see navSectionRoots() for why this isn't
   // simply the tree's top level.
   const sectionIds = new Set(navSectionRoots().map(n => n.id));
+  const audienceMap = navEffectiveAudienceMap();
 
   // Map one sitemap node → a SitemapNode. `topLabel` is the node's top-level section
   // label, stamped onto colorValue so "color by section" tints the whole subtree.
@@ -20327,6 +20475,9 @@ async function generateNavSitemap(sitemapOpts = {}) {
         buildAssignee: node.buildAssignee || '',
         writeAssignee: node.writeAssignee || '',
         migrateAssignee: node.migrateAssignee || '',
+        // Effective (inherited) audiences, so a whole branch colors with the
+        // section that set them. A multi-audience set is its own category.
+        audiences: (audienceMap.get(node.id) || { audiences: [] }).audiences.join(', '),
       },
       // Spreadsheet-derived dimensions, aggregated across the audit rows
       // assigned to this node. `rowFields` is the dominant value per column
@@ -20431,6 +20582,13 @@ function navSitemapFieldDefs() {
     { key: 'writeAssignee', label: 'Writer', source: 'node' },
     { key: 'migrateAssignee', label: 'Migrator', source: 'node' },
   ];
+  // Offered only once a node actually carries audiences — a dimension with
+  // nothing behind it is worse than no dimension.
+  if ((state.navNodes || []).some(n => nodeOwnAudiences(n).length)) {
+    const audColors = {};
+    (state.audienceLibrary || []).forEach(a => { if (a && a.name && a.color) audColors[a.name] = a.color; });
+    nodeDefs.push({ key: 'audiences', label: 'Audience (sitemap)', source: 'node', valueLabels: { '': 'No audience set' }, valueColors: audColors });
+  }
 
   // Only offer row fields whose column actually exists in this file — a
   // dimension with nothing behind it is worse than no dimension.
@@ -20540,9 +20698,21 @@ function computeSectionColorMap() {
 
 /** One color per distinct raw value of `fieldKey` across all nav nodes,
  *  reusing a fieldDef's valueColors (e.g. Page Status's colors) where given. */
-function computeFieldColorMap(fieldKey, fieldDef) {
+/** A node's value for a colorable field. Almost every field is read straight
+ *  off the node; `audiences` is the exception — it inherits down the tree, so
+ *  its value is the node's EFFECTIVE set (see navEffectiveAudienceMap()), or a
+ *  whole branch that was tagged at its section would color as "not set". */
+function navNodeFieldValue(node, key, audienceMap) {
+  if (key === 'audiences') {
+    const m = audienceMap || navEffectiveAudienceMap();
+    return ((m.get(node.id) || {}).audiences || []).join(', ');
+  }
+  return node[key] || '';
+}
+
+function computeFieldColorMap(fieldKey, fieldDef, audienceMap) {
   const palette = SITEMAP_DEFAULT_PALETTE;
-  const values = [...new Set((state.navNodes || []).map(n => n[fieldKey] || ''))];
+  const values = [...new Set((state.navNodes || []).map(n => navNodeFieldValue(n, fieldKey, audienceMap)))];
   values.sort((a, b) => { if (a === '') return 1; if (b === '') return -1; return a < b ? -1 : a > b ? 1 : 0; });
   const map = {};
   values.forEach((v, i) => {
@@ -20561,7 +20731,7 @@ function resolveTreemapNodeColor(node, topLabel, ctx, breakdownOverride) {
     return dom ? treemapKkeColor(dom) : '#9aa0ab';
   }
   const fieldMap = ctx.fieldColorMaps[ctx.colorBy];
-  return (fieldMap && fieldMap[node[ctx.colorBy] || '']) || '#9aa0ab';
+  return (fieldMap && fieldMap[navNodeFieldValue(node, ctx.colorBy, ctx.audienceMap)]) || '#9aa0ab';
 }
 
 /** Which legend category this box belongs to — the join between a box and the
@@ -20572,7 +20742,7 @@ function resolveTreemapNodeColor(node, topLabel, ctx, breakdownOverride) {
 function treemapColorKey(node, topLabel, ctx, breakdownOverride) {
   if (ctx.colorBy === 'section') return topLabel;
   if (ctx.colorBy === 'kke') return dominantKke(breakdownOverride || ctx.kkeBreakdown[node.id] || {}) || '';
-  return node[ctx.colorBy] || '';
+  return navNodeFieldValue(node, ctx.colorBy, ctx.audienceMap);
 }
 
 /** breakdownOverride: see resolveTreemapNodeColor() — same reason. */
@@ -20586,7 +20756,7 @@ function treemapSubtitle(node, value, ctx, breakdownOverride) {
   }
   if (ctx.colorBy === 'section') return pages;
   const def = (ctx.fieldDefs || []).find(f => f.key === ctx.colorBy);
-  const val = node[ctx.colorBy] || '';
+  const val = navNodeFieldValue(node, ctx.colorBy, ctx.audienceMap);
   const label = (def && def.valueLabels && (val in def.valueLabels)) ? def.valueLabels[val] : (val || '(not set)');
   return pages + ' · ' + label;
 }
@@ -22277,11 +22447,22 @@ function buildNavRowBuildIndicators(node) {
   const guidance = String(node.buildGuidance || '').trim();
   const brief    = String(node.writerBrief || '').trim();
   const warnings = computeNodeReadinessWarnings(node);
+  // Only the node's OWN audiences get a chip — marking every inherited
+  // descendant would paint a whole branch and hide where the setting lives.
+  const audiences = nodeOwnAudiences(node);
 
-  if (!status && !pattern && !builder && !writer && !guidance && !brief && warnings.length === 0) return null;
+  if (!status && !pattern && !builder && !writer && !guidance && !brief && !audiences.length && warnings.length === 0) return null;
 
   const wrap = document.createElement('span');
   wrap.className = 'ne-build-indicators';
+
+  if (audiences.length) {
+    const a = document.createElement('span');
+    a.className = 'ne-audience-chip';
+    a.textContent = '👥 ' + audiences[0] + (audiences.length > 1 ? ` +${audiences.length - 1}` : '');
+    a.title = `Audiences for this branch: ${audiences.join(', ')}`;
+    wrap.appendChild(a);
+  }
 
   if (status) {
     const entry = (state.pageStatusLibrary || []).find(s => s.name === status);
@@ -22704,6 +22885,15 @@ function openNavNodeEditor(node) {
         <textarea id="_nne-notes" rows="4" style="width:100%;margin-top:10px;padding:8px 10px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono);resize:vertical;box-sizing:border-box;">${escapeHtml(node.notes || '')}</textarea>
       </div>
 
+      <!-- Audience: who this branch is for (IA intent; fills blank page audiences) -->
+      <div class="nne-section">
+        <div class="nne-section-header">
+          <span class="nne-section-pill nne-pill-audience">Audience</span>
+          <span style="font-size:11px;color:var(--text-muted);">Who this section is for. Applies to its whole branch unless a child sets its own, and fills untagged pages placed here.</span>
+        </div>
+        <div id="_nne-audiences" class="nne-audiences"></div>
+      </div>
+
       <!-- ── Phase 2, Chunk α: Build section ───────────────────────────────── -->
       <div class="nne-section">
         <div class="nne-section-header">
@@ -23047,6 +23237,8 @@ function openNavNodeEditor(node) {
     }
   });
 
+  renderNodeAudiencePicker(dialog.querySelector('#_nne-audiences'), node);
+
   // Node-type hint: explain what each type does (and its downstream effects).
   const nodeTypeSel  = dialog.querySelector('#_nne-node-type');
   const nodeTypeHint = dialog.querySelector('#_nne-node-type-hint');
@@ -23107,6 +23299,21 @@ function openNavNodeEditor(node) {
     if (newWAssignee !== (node.writeAssignee || '')) { node.writeAssignee  = newWAssignee; state.navTreeDirty = true; setDirty(true); }
     if (newMAssignee !== (node.migrateAssignee || '')) { node.migrateAssignee = newMAssignee; state.navTreeDirty = true; setDirty(true); }
 
+    // Audiences — only read when the picker rendered checkboxes (no library →
+    // nothing to read, and the stored value is left exactly as it was).
+    const audBoxes = dialog.querySelectorAll('#_nne-audiences ._nne-aud');
+    if (audBoxes.length) {
+      const newAud = [...audBoxes].filter(b => b.checked).map(b => b.value).join(', ');
+      if (newAud !== nodeOwnAudiences(node).join(', ')) {
+        node.audiences = newAud;
+        state.navTreeDirty = true;
+        setDirty(true);
+        // Offered after the editor's own save/navigation finishes, so the
+        // question lands on top rather than racing the modal's re-render.
+        if (newAud) setTimeout(() => maybeOfferNodeAudienceFill(node), 0);
+      }
+    }
+
     // Breadcrumb-parent / label edits change the on-page breadcrumb for this node
     // and its descendants; the bcParent axis doesn't cascade, so refresh the
     // derived Page_Breadcrumb on every placed row.
@@ -23137,6 +23344,52 @@ function openNavNodeEditor(node) {
   // On a reuse (prev/next), don't steal focus away from any field — just let
   // the new content render. On a fresh open, focus the label for quick edits.
   if (!reusing) setTimeout(() => labelInp.focus(), 0);
+}
+
+/** The node editor's Audience section: tier-grouped checkboxes over the
+ *  project library, plus a note saying what the node inherits when it sets
+ *  nothing itself. `— None` is not offered: "this branch serves nobody" is a
+ *  per-page call, and propagating it would cast Kill votes on unreviewed pages. */
+function renderNodeAudiencePicker(wrap, node) {
+  if (!wrap) return;
+  const lib = sortedAudienceLibrary().filter(a => a.name && a.name !== AUDIENCE_NONE);
+  if (!lib.length) {
+    wrap.innerHTML = '<div class="nne-aud-empty">No audience library yet. Add one in Project Settings → Audience, then set who each section is for here.</div>';
+    return;
+  }
+  const own = new Set(nodeOwnAudiences(node));
+  const eff = navEffectiveAudienceMap().get(node.id) || { audiences: [], own: false };
+  const byTier = new Map();
+  lib.forEach(a => {
+    const t = a.tier || 'Secondary';
+    if (!byTier.has(t)) byTier.set(t, []);
+    byTier.get(t).push(a);
+  });
+  let html = '<div class="nne-aud-inherit" id="_nne-aud-inherit"></div><div class="nne-aud-tiers">';
+  byTier.forEach((list, tier) => {
+    html += `<div class="nne-aud-tier"><div class="nne-aud-tier-label">${escapeHtml(tier)}</div>`;
+    list.forEach(a => {
+      html += `<label class="nne-aud-opt"><input type="checkbox" class="_nne-aud" value="${escapeHtml(a.name)}"${own.has(a.name) ? ' checked' : ''}>` +
+        `<span class="nne-aud-swatch" style="background:${escapeHtml(a.color || 'var(--border)')}"></span>${escapeHtml(a.name)}</label>`;
+    });
+    html += '</div>';
+  });
+  html += '</div>';
+  wrap.innerHTML = html;
+
+  const hint = wrap.querySelector('#_nne-aud-inherit');
+  const update = () => {
+    const any = [...wrap.querySelectorAll('._nne-aud')].some(b => b.checked);
+    if (any) {
+      hint.textContent = 'Set on this node — applies to its branch unless a child sets its own.';
+    } else if (eff.audiences.length && !eff.own) {
+      hint.textContent = `Inherits from “${eff.fromLabel}”: ${eff.audiences.join(', ')}. Check audiences here to override for this branch.`;
+    } else {
+      hint.textContent = 'None set — pages placed here keep whatever they are tagged with.';
+    }
+  };
+  wrap.addEventListener('change', update);
+  update();
 }
 
 /** Walk the live tree to find which children array actually contains `target`.
