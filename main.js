@@ -491,7 +491,6 @@ function buildMenu() {
         { type: 'separator' },
         { label: 'Audience Coverage…',            click: send('menu-report-audience-coverage') },
         { label: 'Audience × Section Matrix…',    click: send('menu-report-audience-matrix') },
-        { label: 'Audience Debt…',                click: send('menu-report-audience-debt') },
         { label: 'Jobs Coverage…',                click: send('menu-report-jobs-coverage') },
         { type: 'separator' },
         { label: 'Site Consolidation Overview…',  click: send('menu-report-site-consolidation') },
@@ -499,6 +498,7 @@ function buildMenu() {
         { type: 'separator' },
         { label: 'Migration Direction Brief…', click: send('menu-report-assignee-brief') },
         { label: 'Migration Checklist…',    click: send('menu-report-migration-checklist') },
+        { label: 'Build Status…',           click: send('menu-report-build-status') },
         { label: 'Net New Content Brief…',  click: send('menu-report-net-new') },
         { label: 'Redirect Map Report…',    click: send('menu-report-redirect-map') }
       ]

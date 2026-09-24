@@ -625,6 +625,9 @@ function bindIPCListeners() {
   if (window.electronAPI.onMenuReportDesignPatterns) {
     window.electronAPI.onMenuReportDesignPatterns(() => reportDesignPatterns());
   }
+  if (window.electronAPI.onMenuReportBuildStatus) {
+    window.electronAPI.onMenuReportBuildStatus(() => reportBuildStatus());
+  }
   if (window.electronAPI.onMenuReportContentCrosswalk) {
     window.electronAPI.onMenuReportContentCrosswalk(() => reportContentTypeCrosswalk());
   }
@@ -662,7 +665,8 @@ function bindIPCListeners() {
     window.electronAPI.onMenuReportAudienceMatrix(() => reportAudienceMatrix());
   }
   if (window.electronAPI.onMenuReportAudienceDebt) {
-    window.electronAPI.onMenuReportAudienceDebt(() => reportAudienceDebt());
+    // Audience Debt was folded into Audience Coverage as its "Risks" section.
+    window.electronAPI.onMenuReportAudienceDebt(() => reportAudienceCoverage());
   }
   if (window.electronAPI.onMenuReportJobsCoverage) {
     window.electronAPI.onMenuReportJobsCoverage(() => reportJobsCoverage());
@@ -6217,6 +6221,37 @@ function audienceReportPreamble(scopeRows) {
 
 /** Report A — Audience Coverage. Per audience, in tier order: how much content
  *  serves them, what we're doing to it, and where it lives. */
+/** Is a row a LANDING page — something sits beneath it? True when its sitemap
+ *  node has children, or when another URL in `rows` lives under its path (same
+ *  host). A site root is always a landing page. Used where a page's breadth is
+ *  judged: serving many audiences is expected of a landing page, not of a
+ *  detail page. Returns a predicate; build it once per report. */
+function makeLandingPageTest(rows) {
+  const urlCol = state.urlColumn || 'Address';
+  const keyOf = (u) => {
+    try { const x = new URL(String(u || '').trim()); return normalizeSourceHost(x.hostname) + x.pathname.replace(/\/+$/, '').toLowerCase(); }
+    catch (_) { return ''; }
+  };
+  // Every proper ancestor path of every URL: a row whose own path is in here
+  // has something beneath it.
+  const ancestors = new Set();
+  (rows || []).forEach(r => {
+    const k = keyOf(r[urlCol]);
+    if (!k) return;
+    const parts = k.split('/');
+    for (let i = 1; i < parts.length; i++) ancestors.add(parts.slice(0, i).join('/'));
+  });
+  const nodeById = new Map((state.navNodes || []).map(n => [n.id, n]));
+  return (row) => {
+    const node = nodeById.get(String(row['Sitemap_ID'] || '').trim());
+    if (node && node.children && node.children.length) return true;
+    const k = keyOf(row[urlCol]);
+    if (!k) return false;
+    if (!k.includes('/')) return true;   // the site root
+    return ancestors.has(k);
+  };
+}
+
 function reportAudienceCoverage() {
   const title = 'Audience Coverage';
   const scopeRows = audienceScopeRows();
@@ -6244,7 +6279,9 @@ function reportAudienceCoverage() {
   // Anything used in the data but missing from the library still gets a line —
   // silently dropping it would hide exactly the drift worth knowing about.
   stats.forEach((_, name) => {
-    if (!ordered.some(a => a.name === name)) ordered.push({ name, tier: 'Secondary', description: '', _adhoc: true });
+    // audienceTier() knows "— None" is "Not a target"; a hard-coded Secondary
+    // mislabelled it.
+    if (!ordered.some(a => a.name === name)) ordered.push({ name, tier: audienceTier(name), description: '', _adhoc: name !== AUDIENCE_NONE });
   });
 
   const rowsHtml = ordered.map(entry => {
@@ -6269,8 +6306,58 @@ function reportAudienceCoverage() {
     </tr>`;
   }).join('');
 
+  // ── Risks (formerly the separate Audience Debt report) ──────────────────────
+  const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
+  const untagged = scopeRows.filter(r => !rowAudiences(r).length);
+  // Reviewed, and everything it serves is off-priority: carrying cost.
+  const offStrategy = scopeRows.filter(r => {
+    const list = rowAudiences(r).filter(a => a !== AUDIENCE_NONE);
+    return list.length && list.every(a => { const t = audienceTier(a); return t === 'Tertiary' || t === 'Not a target'; });
+  });
+  // Explicitly reviewed as serving nobody — a Kill argument, listed apart from
+  // Tertiary-only pages because it's a different finding.
+  const servesNobody = scopeRows.filter(r => { const l = rowAudiences(r); return l.length === 1 && l[0] === AUDIENCE_NONE; });
+  // Priority content being removed — usually worth a second look. Out-of-scope
+  // sites aren't being migrated, so reportRows().
+  const killedPriority = reportRows().filter(r => audEffectiveKke(r) === 'Kill' && rowAudiences(r).some(a => audienceTier(a) === 'Primary'));
+  // Broad pages. Serving four or more audiences is normal for a landing page —
+  // a program hub can rightly serve undergrads, grads, executive-ed and
+  // certificate seekers at once — so only DETAIL pages are flagged: nothing sits
+  // beneath them in the sitemap or in their URL path.
+  const isLanding = makeLandingPageTest(reportRows());
+  const broadDetail = scopeRows.filter(r => rowAudiences(r).filter(a => a !== AUDIENCE_NONE).length >= 4 && !isLanding(r));
+
+  const pageTable = (rows, extraHead, extraCell) => reportTableHtml(
+    ['URL', ...(titleCol ? ['Title'] : []), 'Decision', extraHead],
+    rows.map(r => [String(r[urlCol] || ''), ...(titleCol ? [String(r[titleCol] || '')] : []), audEffectiveKke(r) || '—', extraCell(r)]),
+    { cap: 150, moreNote: 'Use the sidebar filters to work through the full list.' });
+
+  // ── Findings and next steps ────────────────────────────────────────────────
+  const lib = state.audienceLibrary || [];
+  const starvedNames = ordered.filter(entry => {
+    if ((entry.tier || 'Secondary') !== 'Primary') return false;
+    const st = stats.get(entry.name) || { pages: 0 };
+    return st.pages < Math.max(5, Math.round(scopeRows.length * 0.02));
+  }).map(e => e.name);
+  const taggedCount = scopeRows.length - untagged.length;
+  const findings = [], nextSteps = [];
+  if (lib.length && scopeRows.length) {
+    findings.push(`${taggedCount.toLocaleString()} of ${scopeRows.length.toLocaleString()} in-scope pages (${Math.round(taggedCount / scopeRows.length * 100)}%) are tagged with an audience.`);
+    if (starvedNames.length) findings.push(`Priority audience${starvedNames.length !== 1 ? 's' : ''} with very little content aimed at ${starvedNames.length !== 1 ? 'them' : 'it'}: ${starvedNames.join(', ')}.`);
+    if (offStrategy.length) findings.push(`${offStrategy.length.toLocaleString()} page${offStrategy.length !== 1 ? 's serve' : ' serves'} only non-priority audiences.`);
+    if (servesNobody.length) findings.push(`${servesNobody.length.toLocaleString()} page${servesNobody.length !== 1 ? 's were' : ' was'} reviewed as serving no target audience.`);
+    if (killedPriority.length) findings.push(`${killedPriority.length.toLocaleString()} page${killedPriority.length !== 1 ? 's' : ''} aimed at a Primary audience ${killedPriority.length !== 1 ? 'are' : 'is'} marked Kill.`);
+    if (untagged.length) nextSteps.push(`Tag the remaining ${untagged.length.toLocaleString()} page${untagged.length !== 1 ? 's' : ''} (sidebar filter: Needs audience; Project → Fill Audiences from Section helps).`);
+    if (starvedNames.length) nextSteps.push(`Plan content for ${starvedNames.join(', ')} — check Jobs Coverage and the Net New Content Brief for the gaps.`);
+    if (killedPriority.length) nextSteps.push('Re-read the Primary-audience pages marked Kill before the redirect map is signed off.');
+    if (offStrategy.length + servesNobody.length) nextSteps.push('Treat pages serving no priority audience as Kill or Consolidate candidates.');
+  }
+
+  const riskRow = (label, n, what) => `<div class="stat-row"><span class="stat-label">${label}<div style="font-size:11px;color:#777;">${what}</div></span><span class="stat-value">${n.toLocaleString()}</span></div>`;
+
   const body = `
     ${audienceReportPreamble(scopeRows)}
+    ${reportFindingsHtml(findings, nextSteps)}
     <h2 style="font-size:14px;margin:0 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">Coverage by audience</h2>
     <p style="font-size:12px;color:#666;margin:0 0 8px;">
       Ordered by priority tier. <strong>Pages</strong> counts every page that serves the audience at all;
@@ -6288,22 +6375,20 @@ function reportAudienceCoverage() {
       </tr></thead>
       <tbody>${rowsHtml || '<tr><td colspan="6" style="padding:12px;color:#888;">No audiences defined.</td></tr>'}</tbody>
     </table>
-    ${(() => {
-      const untagged = scopeRows.filter(r => !rowAudiences(r).length);
-      if (!untagged.length) return '';
-      return `<h2 style="font-size:14px;margin:24px 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">Not yet reviewed for audience</h2>
-        <p style="font-size:12px;color:#666;margin:0 0 8px;">${untagged.length} in-scope page${untagged.length !== 1 ? 's' : ''} carry no audience tag.
-        These are unreviewed, not "serves nobody" — filter the sidebar by <em>Needs audience</em> to work through them.</p>
-        <table style="width:100%;border-collapse:collapse;font-size:11px;">
-          <thead><tr style="text-align:left;border-bottom:2px solid #ddd;">
-            <th style="padding:6px 8px;">URL</th><th style="padding:6px 8px;">KKE</th></tr></thead>
-          <tbody>${untagged.slice(0, 100).map(r =>
-            `<tr><td style="padding:4px 8px;word-break:break-all;">${escapeHtml(String(r[urlCol] || ''))}</td>
-                 <td style="padding:4px 8px;${audKkeStyle(audEffectiveKke(r))}">${escapeHtml(audEffectiveKke(r) || '—')}</td></tr>`
-          ).join('')}</tbody>
-        </table>
-        ${untagged.length > 100 ? `<p style="font-size:11px;color:#888;margin-top:6px;">Showing the first 100 of ${untagged.length}.</p>` : ''}`;
-    })()}
+
+    ${lib.length ? `<h2>Risks</h2>
+    ${riskRow('Serves only non-priority audiences', offStrategy.length, 'Everything it serves is Tertiary or not a target — content to maintain and migrate that serves no priority. Kill or Consolidate candidates.')}
+    ${riskRow('Reviewed as serving no audience', servesNobody.length, 'Tagged "— None". The strongest Kill argument audience review produces.')}
+    ${riskRow('Priority-audience content marked Kill', killedPriority.length, 'Sometimes right (duplicated or obsolete), but worth re-reading before sign-off.')}
+    ${riskRow('Detail pages serving four or more audiences', broadDetail.length, 'Broad tagging is normal on a landing page; on a single article it can mean the page is doing several jobs. Worth a look, not a defect.')}` : ''}
+
+    ${auditorAppendixHtml([
+      { title: `Not yet tagged (${untagged.length.toLocaleString()})`, intro: 'Unreviewed, not "serves nobody". Sidebar filter: <em>Needs audience</em>.', html: untagged.length ? pageTable(untagged, 'Audiences', () => '') : '' },
+      { title: `Serves only non-priority audiences (${offStrategy.length.toLocaleString()})`, html: offStrategy.length ? pageTable(offStrategy, 'Audiences', r => rowAudiences(r).join(', ')) : '' },
+      { title: `Reviewed as serving no audience (${servesNobody.length.toLocaleString()})`, html: servesNobody.length ? pageTable(servesNobody, 'Audiences', r => rowAudiences(r).join(', ')) : '' },
+      { title: `Priority-audience content marked Kill (${killedPriority.length.toLocaleString()})`, html: killedPriority.length ? pageTable(killedPriority, 'Primary audiences', r => rowAudiences(r).filter(a => audienceTier(a) === 'Primary').join(', ')) : '' },
+      { title: `Detail pages serving four or more audiences (${broadDetail.length.toLocaleString()})`, html: broadDetail.length ? pageTable(broadDetail, 'Audiences', r => rowAudiences(r).join(', ')) : '' },
+    ])}
   `;
 
   showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
@@ -7019,7 +7104,22 @@ function reportSiteConsolidation() {
     </tr>`;
   }).join('');
 
-  const body = `
+  // Findings: who contributes what, and what retiring each costs.
+  const inScopeSites = lib.filter(x => x.inScope !== false);
+  const siteStat = (label) => stats.get(label) || { pages: 0, redirects: 0 };
+  const biggest = inScopeSites.slice().sort((a, b) => siteStat(b.label).pages - siteStat(a.label).pages)[0];
+  const totalOverlap = [...overlap.values()].reduce((a, b) => a + b, 0);
+  const totalRules = inScopeSites.reduce((n, x) => n + siteStat(x.label).redirects, 0);
+  const scFindings = [
+    biggest ? `${biggest.label} contributes the most content: ${siteStat(biggest.label).pages.toLocaleString()} pages.` : '',
+    totalOverlap ? `${totalOverlap.toLocaleString()} page${totalOverlap !== 1 ? 's' : ''} duplicate${totalOverlap === 1 ? 's' : ''} content on another site — see Cross-Site Duplicate Overlap.` : '',
+    totalRules ? `Retiring the in-scope sites needs ${totalRules.toLocaleString()} redirect rule${totalRules !== 1 ? 's' : ''}.` : '',
+  ];
+  const scNext = [
+    totalOverlap ? 'Pick a surviving page for each duplicate set and mark the rest Consolidate.' : '',
+    stats.has('(unattributed)') ? 'Assign the unattributed hosts to a site (Project Settings → Sites).' : '',
+  ];
+  const body = reportFindingsHtml(scFindings, scNext) + `
     <div style="display:flex;gap:20px;margin-bottom:18px;flex-wrap:wrap;">
       <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
         <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Source sites</div>
@@ -7291,78 +7391,6 @@ function hexToRgba(hex, alpha) {
   return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${alpha})`;
 }
 
-/** Report C — Audience Debt. Three worklists that translate straight into scope. */
-function reportAudienceDebt() {
-  const title = 'Audience Debt';
-  const scopeRows = audienceScopeRows();
-  const urlCol = state.urlColumn || 'Address';
-  const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
-
-  const nameOf = r => titleCol ? String(r[titleCol] || '') : '';
-
-  // 1. Serves only non-priority audiences — maintenance cost, no strategic return.
-  const offStrategy = scopeRows.filter(r => {
-    const list = rowAudiences(r);
-    return list.length && list.every(a => a === AUDIENCE_NONE || audienceTier(a) === 'Tertiary' || audienceTier(a) === 'Not a target');
-  });
-
-  // 2. Priority-audience content being removed — usually a mistake worth a second look.
-  const killedPriority = reportRows().filter(r => {   // out-of-scope sites aren't being migrated
-    const eff = audEffectiveKke(r);
-    if (eff !== 'Kill') return false;
-    return rowAudiences(r).some(a => audienceTier(a) === 'Primary');
-  });
-
-  // 3. Serving everybody = serving nobody.
-  const overTagged = scopeRows.filter(r => rowAudiences(r).filter(a => a !== AUDIENCE_NONE).length >= 4);
-
-  const tableOf = (rows, extraHead, extraCell) => rows.length
-    ? `<table style="width:100%;border-collapse:collapse;font-size:11px;">
-        <thead><tr style="text-align:left;border-bottom:2px solid #ddd;">
-          <th style="padding:6px 8px;">URL</th>
-          ${titleCol ? '<th style="padding:6px 8px;">Title</th>' : ''}
-          <th style="padding:6px 8px;">KKE</th>
-          <th style="padding:6px 8px;">${extraHead}</th>
-        </tr></thead>
-        <tbody>${rows.slice(0, 150).map(r => `<tr>
-          <td style="padding:4px 8px;word-break:break-all;">${escapeHtml(String(r[urlCol] || ''))}</td>
-          ${titleCol ? `<td style="padding:4px 8px;">${escapeHtml(nameOf(r))}</td>` : ''}
-          <td style="padding:4px 8px;${audKkeStyle(audEffectiveKke(r))}">${escapeHtml(audEffectiveKke(r) || '—')}</td>
-          <td style="padding:4px 8px;">${extraCell(r)}</td>
-        </tr>`).join('')}</tbody>
-      </table>
-      ${rows.length > 150 ? `<p style="font-size:11px;color:#888;margin-top:6px;">Showing the first 150 of ${rows.length}.</p>` : ''}`
-    : '<p style="font-size:12px;color:#888;margin:0;">Nothing in this category.</p>';
-
-  const body = `
-    ${audienceReportPreamble(scopeRows)}
-
-    <h2 style="font-size:14px;margin:0 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">
-      Serves only non-priority audiences <span style="color:#888;font-weight:400;">(${offStrategy.length})</span></h2>
-    <p style="font-size:12px;color:#666;margin:0 0 8px;">
-      Reviewed for audience, and everything it serves is Tertiary or off-target. This is the carrying cost of the
-      site — content that has to be maintained, migrated, and QA'd without serving anyone your organization
-      ranked as a priority. Strong Kill / Consolidate candidates.</p>
-    ${tableOf(offStrategy, 'Audiences', r => escapeHtml(rowAudiences(r).join(', ')))}
-
-    <h2 style="font-size:14px;margin:24px 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">
-      Priority-audience content marked Kill <span style="color:#888;font-weight:400;">(${killedPriority.length})</span></h2>
-    <p style="font-size:12px;color:#666;margin:0 0 8px;">
-      These pages serve a Primary audience but are slated for removal. Sometimes correct (duplicated elsewhere,
-      genuinely obsolete) — but this is the list to re-read before the redirect map is signed off.</p>
-    ${tableOf(killedPriority, 'Primary audiences', r =>
-      escapeHtml(rowAudiences(r).filter(a => audienceTier(a) === 'Primary').join(', ')))}
-
-    <h2 style="font-size:14px;margin:24px 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">
-      Serving four or more audiences <span style="color:#888;font-weight:400;">(${overTagged.length})</span></h2>
-    <p style="font-size:12px;color:#666;margin:0 0 8px;">
-      A page written for everyone is usually written for no one. Either it is a genuine hub, or it is doing several
-      jobs at once and should be split — and occasionally it just means the audience library has grown too broad.</p>
-    ${tableOf(overTagged, 'Audiences', r => `${rowAudiences(r).length} — ${escapeHtml(rowAudiences(r).join(', '))}`)}
-  `;
-
-  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
-}
 
 function reportContentTypeCrosswalk() {
   const rows = reportRows() || [];
@@ -26019,6 +26047,11 @@ const REPORT_CSS = `
   .section-box { background: #fafafa; border: 1px solid #eee; border-radius: 6px; padding: 12px 16px; margin: 12px 0; }
   .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #ddd; font-size: 11px; color: #999; }
   .page-break { page-break-before: always; }
+  .report-findings { background: #f0f7ff; border-left: 3px solid #2563eb; border-radius: 4px; padding: 10px 14px; margin: 0 0 18px; font-size: 13px; }
+  .report-findings-head { font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #1e3a8a; margin: 4px 0 4px; }
+  .report-findings ul, .report-findings ol { margin: 0 0 6px; padding-left: 20px; }
+  .report-findings li { margin: 2px 0; }
+  .auditor-appendix { border-top: 2px dashed #bbb; margin-top: 28px; padding-top: 4px; }
   @media print { .report-wrap { padding: 16px; } }
 `;
 
@@ -26093,6 +26126,41 @@ function scopeDisclosureHtml() {
 
 /** `opts.rawShell` — a template-rendered report that draws its own cover and
  *  header; don't add the standard one on top (matches exportReport's option). */
+// ─── Report building blocks: findings, next steps, audit-team appendix ───────
+
+/** "Key findings" and "Next steps" at the top of a report — what the numbers
+ *  below mean, and what to do about them. Most reports used to be tables with
+ *  no takeaway; the reader had to work out the story. Items are plain strings
+ *  (escaped here) or { html } for pre-built markup. Empty lists render nothing. */
+function reportFindingsHtml(findings = [], nextSteps = []) {
+  const item = (f) => `<li>${typeof f === 'string' ? escapeHtml(f) : f.html}</li>`;
+  const f = findings.filter(Boolean), n = nextSteps.filter(Boolean);
+  if (!f.length && !n.length) return '';
+  return `<div class="report-findings">
+    ${f.length ? `<div class="report-findings-head">Key findings</div><ul>${f.map(item).join('')}</ul>` : ''}
+    ${n.length ? `<div class="report-findings-head">Next steps</div><ol>${n.map(item).join('')}</ol>` : ''}
+  </div>`;
+}
+
+/** Working lists for the audit team — untagged pages, pages to re-check — kept
+ *  out of the client-facing body. They sit in one marked appendix at the end,
+ *  and the export leaves it out unless "Include audit-team appendix" is ticked.
+ *  sections: [{ title, intro?, html }]; empty sections are dropped. */
+function auditorAppendixHtml(sections) {
+  const live = (sections || []).filter(s => s && s.html);
+  if (!live.length) return '';
+  return `<!--auditor-appendix-start--><div class="auditor-appendix page-break">
+    <h2>For the audit team</h2>
+    <p style="font-size:12px;color:#666;">Working lists behind the findings above. Left out of exports unless you choose to include them.</p>
+    ${live.map(s => `<h3>${escapeHtml(s.title)}</h3>${s.intro ? `<p style="font-size:12px;color:#666;">${s.intro}</p>` : ''}${s.html}`).join('')}
+  </div><!--auditor-appendix-end-->`;
+}
+
+/** Remove the audit-team appendix from a report body. */
+function stripAuditorAppendix(html) {
+  return String(html).replace(/<!--auditor-appendix-start-->[\s\S]*?<!--auditor-appendix-end-->/g, '');
+}
+
 function showReport(title, bodyHtml, exporterFn, opts = {}) {
   bodyHtml = scopeDisclosureHtml() + bodyHtml;
   // Report bodies are built with colors hardcoded for a white background
@@ -26108,6 +26176,14 @@ function showReport(title, bodyHtml, exporterFn, opts = {}) {
   $('btn-progress-export-html').classList.remove('hidden');
   $('btn-progress-export-pdf').textContent = 'PDF';
   _progressModalExporter = exporterFn;
+  // Only reports with an audit-team appendix offer the toggle; it resets to
+  // "leave it out" each time, so a client export is the default.
+  const appendixToggle = $('progress-appendix-toggle');
+  if (appendixToggle) {
+    appendixToggle.classList.toggle('hidden', !bodyHtml.includes('<!--auditor-appendix-start-->'));
+    const cb = $('progress-include-appendix');
+    if (cb) cb.checked = false;
+  }
   const titleEl = $('progress-modal-title');
   if (titleEl) titleEl.textContent = title;
   $('progress-overlay').classList.remove('hidden');
@@ -26123,6 +26199,8 @@ function buildReportShellRaw(title, bodyHtml) {
 }
 
 async function exportReport(title, bodyHtml, defaultName, format, opts = {}) {
+  const includeAppendix = opts.includeAppendix != null ? opts.includeAppendix : !!($('progress-include-appendix') || {}).checked;
+  if (!includeAppendix) bodyHtml = stripAuditorAppendix(bodyHtml);
   // The exported PDF/HTML is what actually reaches the client, so the same
   // disclosure has to travel with it.
   if (!opts.noScopeBanner) bodyHtml = scopeDisclosureHtml() + bodyHtml;
@@ -26231,6 +26309,21 @@ function reportExecutiveSummary() {
     if (noLinks > 0) findings.push(`${noLinks.toLocaleString()} content pages being kept have no internal links pointing to them (orphan pages)`);
   }
 
+  // What to do next — the open items a client (or the team) should know about.
+  const nextSteps = [];
+  if (stats.contentUnreviewed > 0) nextSteps.push(`Finish reviewing the ${stats.contentUnreviewed.toLocaleString()} content page${stats.contentUnreviewed !== 1 ? 's' : ''} still pending.`);
+  const smePending = reportRows().filter(r => !String(r[finalKkeCol()] || '').trim()
+    && parseSmeDecision(r[smeDecisionCol()], String(r[kkeCol()] || '').trim()).changed).length;
+  if (smePending > 0) nextSteps.push(`Resolve ${smePending.toLocaleString()} SME change request${smePending !== 1 ? 's' : ''} (SME → Resolve Conflicts).`);
+  resolveRedirectDestinations();
+  const tbdCount = reportRows().filter(r => { const e = redirectEntryForRow(r); return e && e.kind === 'tbd'; }).length;
+  if (tbdCount > 0) nextSteps.push(`Give ${tbdCount.toLocaleString()} page${tbdCount !== 1 ? 's' : ''} being removed a redirect destination.`);
+  if (state.navNodes && state.navNodes.length) {
+    const pc = reportNavPageCounts();
+    const toWrite = state.navNodes.filter(n => navNodeContentStatus(n, pc) === 'hub').length;
+    if (toWrite > 0) nextSteps.push(`Brief writers on ${toWrite.toLocaleString()} new section landing page${toWrite !== 1 ? 's' : ''} (Net New Content Brief).`);
+  }
+
   // Only shown when the crawl actually contains non-content URLs, so a clean
   // 200-only inventory reads exactly as it did before.
   const ncRows = stats.nonContent > 0 ? `
@@ -26247,6 +26340,7 @@ function reportExecutiveSummary() {
     : '';
 
   let body = `
+    ${reportFindingsHtml(findings, nextSteps)}
     <h2>Overview</h2>
     ${ncRows}
     <div class="stat-row"><span class="stat-label">Content pages audited</span><span class="stat-value">${cTotal}</span></div>
@@ -26254,9 +26348,6 @@ function reportExecutiveSummary() {
     ${ncNote}
     ${kkeBarHtml(cCounts, cTotal)}
     ${kkeStatsRows(cCounts, cTotal)}
-
-    <h2>Key Findings</h2>
-    <ul>${findings.map(f => `<li>${escapeHtml(f)}</li>`).join('')}</ul>
   `;
 
   if (stats.smeReviewed > 0) {
@@ -26295,7 +26386,17 @@ function reportContentInventory() {
   const tally = sectionTally(all, { contentOnly: true });
   const nonContent = all.length - tally.total;
 
-  let body = `<h2>Summary</h2>
+  // Findings: where the content is, and where it's changing most.
+  const big = tally.sections[0];
+  const churn = tally.sections.filter(t => t.total >= 10)
+    .map(t => ({ t, gone: ((t.kke.Kill || 0) + (t.kke.Consolidate || 0)) / t.total }))
+    .sort((a, b) => b.gone - a.gone)[0];
+  const invFindings = [
+    big ? `The largest section is ${big.name} (${big.total.toLocaleString()} pages, ${Math.round(big.total / Math.max(tally.total, 1) * 100)}% of content).` : '',
+    churn && churn.gone >= 0.25 ? `${churn.t.name} changes most: ${Math.round(churn.gone * 100)}% of its pages are being removed or merged.` : '',
+    tally.ungrouped.total ? `${tally.ungrouped.total.toLocaleString()} page${tally.ungrouped.total !== 1 ? 's have' : ' has'} no section.` : '',
+  ];
+  let body = reportFindingsHtml(invFindings, tally.ungrouped.total ? ['Give the pages with no section a Group, so they show up in the right place here.'] : []) + `<h2>Summary</h2>
     <div class="stat-row"><span class="stat-label">Content pages</span><span class="stat-value">${tally.total.toLocaleString()}</span></div>
     ${nonContent ? `<div class="stat-row"><span class="stat-label">Not counted: redirects and dead URLs (3xx / 4xx)</span><span class="stat-value">${nonContent.toLocaleString()}</span></div>` : ''}
     <div class="stat-row"><span class="stat-label">Sections</span><span class="stat-value">${tally.sections.length.toLocaleString()}</span></div>
@@ -26361,7 +26462,19 @@ function reportSmeStatus() {
     }
   });
 
-  let body = `
+  const conflictsN = reportRows().filter(r => !String(r[finalKkeCol()] || '').trim()
+    && parseSmeDecision(r[smeDecisionCol()], String(r[kkeCol()] || '').trim()).changed).length;
+  const slowOwners = Object.entries(byOwner).filter(([o, d]) => o !== 'Unassigned' && d.assigned && d.reviewed === 0).map(([o]) => o);
+  const unassignedOwner = (byOwner['Unassigned'] || { assigned: 0 }).assigned;
+  let body = reportFindingsHtml([
+    `SMEs have reviewed ${stats.smeReviewed.toLocaleString()} of ${stats.smeTotal.toLocaleString()} pages (${stats.smePct}%).`,
+    stats.smeChanged ? `They asked for ${stats.smeChanged.toLocaleString()} change${stats.smeChanged !== 1 ? 's' : ''}; ${conflictsN.toLocaleString()} ${conflictsN !== 1 ? 'are' : 'is'} still unresolved.` : '',
+    slowOwners.length ? `${slowOwners.length} owner${slowOwners.length !== 1 ? 's have' : ' has'} not reviewed anything yet: ${slowOwners.slice(0, 8).join(', ')}${slowOwners.length > 8 ? '…' : ''}.` : '',
+  ], [
+    conflictsN ? 'Resolve the open change requests (SME → Resolve Conflicts).' : '',
+    slowOwners.length ? 'Follow up with the owners who haven\u2019t started.' : '',
+    unassignedOwner ? `Assign a content owner to ${unassignedOwner.toLocaleString()} page${unassignedOwner !== 1 ? 's' : ''}.` : '',
+  ]) + `
     <h2>Overall Progress</h2>
     <div class="stat-row"><span class="stat-label">Pages requiring SME review</span><span class="stat-value">${stats.smeTotal}</span></div>
     <div class="stat-row"><span class="stat-label">SME reviews received</span><span class="stat-value">${stats.smeReviewed} (${stats.smePct}%)</span></div>
@@ -26455,7 +26568,18 @@ function reportRedirectMap() {
   const chains = computeRedirectChains().map(c => ({ source: c.sourceUrl, dest: c.destUrl }));
 
   const csvNote = 'The full list is in the redirect CSV (Migration → Export Redirect Map) and the Migration Tracker.';
-  let body = `
+  const sitesN = new Set(entries.map(e => e.site).filter(Boolean)).size;
+  const rmFindings = [
+    `${rules.toLocaleString()} redirect rule${rules !== 1 ? 's' : ''} to deploy${sitesN > 1 ? `, across ${sitesN} source sites` : ''}.`,
+    by.tbd.length ? `${by.tbd.length.toLocaleString()} page${by.tbd.length !== 1 ? 's are' : ' is'} going away with no destination yet.` : '',
+    chains.length ? `${chains.length.toLocaleString()} rule${chains.length !== 1 ? 's point' : ' points'} at another redirect.` : '',
+  ];
+  const rmNext = [
+    by.tbd.length ? 'Give every page in "Need a destination" a destination, a sitemap placement, or an explicit 404.' : '',
+    chains.length ? 'Repoint the chained rules at their final destination.' : '',
+    (!by.tbd.length && !chains.length) ? 'Export the redirect CSV (Migration → Export Redirect Map) and hand it to whoever deploys it.' : '',
+  ];
+  let body = reportFindingsHtml(rmFindings, rmNext) + `
     <p style="font-size:12px;color:#666;">Every redirect rule this migration needs, built from the same rules as the redirect CSV and the Migration Tracker's Redirects sheet. <strong>Deploy from the CSV or the Tracker</strong>; this report is for review.</p>
     <h2>Summary</h2>
     <div class="stat-row"><span class="stat-label">Redirect rules (301)</span><span class="stat-value">${rules.toLocaleString()}</span></div>
@@ -26506,76 +26630,208 @@ function reportRedirectMap() {
 
 // ─── Report: Net New Content Brief ───────────────────────────────────────────
 
+/** Build Status — the weekly PM view: where every page of the new site is in
+ *  the build, by section and by person. Page Status × builder / writer /
+ *  migrator used to exist only inside the Migration Tracker spreadsheet.
+ *  Counts nodes that are pages of the current build: not Header (structural),
+ *  not phased (a later release), not external links or aliases. */
+function buildStatusNodes() {
+  return (state.navNodes || []).filter(n =>
+    n.nodeType !== 'Header' && !String(n.phase || '').trim() && !String(n.url || '').trim() && !n.refNodeId);
+}
+
+function reportBuildStatus() {
+  if (!state.navNodes || !state.navNodes.length) { showToast('No sitemap loaded — Build Status reports on the new site’s pages', 'error'); return; }
+  const nodes = sortNodesForNavigation(buildStatusNodes());
+  const phased = (state.navNodes || []).filter(n => String(n.phase || '').trim()).length;
+  const NOT_SET = 'Not set';
+  const statusOf = (n) => String(n.pageStatus || '').trim() || NOT_SET;
+  // Status columns in the project's own order, then any status in use that the
+  // library doesn't know, then Not set.
+  const lib = (state.pageStatusLibrary || []).map(s => s.name);
+  const used = new Set(nodes.map(statusOf));
+  const statuses = lib.filter(x => used.has(x))
+    .concat([...used].filter(x => x !== NOT_SET && !lib.includes(x)))
+    .concat(used.has(NOT_SET) ? [NOT_SET] : []);
+  const colorOf = (st) => ((state.pageStatusLibrary || []).find(s => s.name === st) || {}).color || '#94a3b8';
+  const tally = (list) => { const t = {}; list.forEach(n => { const st = statusOf(n); t[st] = (t[st] || 0) + 1; }); return t; };
+  const total = tally(nodes);
+  const isDone = (st) => /^(published|built|done|complete)/i.test(st);
+  const isBlocked = (st) => /blocked/i.test(st);
+  const done = nodes.filter(n => isDone(statusOf(n))).length;
+  const blocked = nodes.filter(n => isBlocked(statusOf(n)));
+  const notSet = total[NOT_SET] || 0;
+  const noBuilder = nodes.filter(n => !String(n.buildAssignee || '').trim()).length;
+
+  const cells = (t, n) => statuses.map(st => `<td style="text-align:right;">${t[st] ? t[st].toLocaleString() : '—'}</td>`).join('');
+  const head = (first) => `<tr><th>${first}</th><th style="text-align:right;">Pages</th>${statuses.map(st => `<th style="text-align:right;color:${escapeHtml(colorOf(st))};">${escapeHtml(st)}</th>`).join('')}</tr>`;
+
+  // By section
+  const sectionOf = navSectionLabelMap();
+  const bySection = new Map();
+  nodes.forEach(n => { const k = sectionOf.get(n.id) || '(top level)'; if (!bySection.has(k)) bySection.set(k, []); bySection.get(k).push(n); });
+  const sections = [...bySection.entries()].sort((a, b) => b[1].length - a[1].length);
+
+  // By person — every role they hold on a node.
+  const people = new Map();
+  const addRole = (name, role, n) => {
+    name = String(name || '').trim();
+    if (!name) return;
+    if (!people.has(name)) people.set(name, { build: 0, write: 0, migrate: 0, nodes: new Set() });
+    const p = people.get(name);
+    p[role]++;
+    p.nodes.add(n);
+  };
+  nodes.forEach(n => { addRole(n.buildAssignee, 'build', n); addRole(n.writeAssignee, 'write', n); addRole(n.migrateAssignee, 'migrate', n); });
+
+  const findings = [
+    `${done.toLocaleString()} of ${nodes.length.toLocaleString()} pages (${nodes.length ? Math.round(done / nodes.length * 100) : 0}%) are built or published.`,
+    blocked.length ? `${blocked.length.toLocaleString()} page${blocked.length !== 1 ? 's are' : ' is'} blocked.` : '',
+    notSet ? `${notSet.toLocaleString()} page${notSet !== 1 ? 's have' : ' has'} no status yet.` : '',
+    phased ? `${phased.toLocaleString()} phased node${phased !== 1 ? 's' : ''} (a later release) ${phased !== 1 ? 'are' : 'is'} not counted.` : '',
+  ];
+  const nextSteps = [
+    blocked.length ? `Unblock the ${blocked.length.toLocaleString()} blocked page${blocked.length !== 1 ? 's' : ''} listed below.` : '',
+    noBuilder ? `Assign a builder to ${noBuilder.toLocaleString()} page${noBuilder !== 1 ? 's' : ''} (Sitemap → Build filter: no assignee).` : '',
+    notSet ? 'Set a Page Status on the rest so progress can be tracked.' : '',
+  ];
+
+  let body = reportFindingsHtml(findings, nextSteps);
+  body += `<h2>Overall</h2><table>${head('')}<tr><td><strong>All pages</strong></td><td style="text-align:right;"><strong>${nodes.length.toLocaleString()}</strong></td>${cells(total)}</tr></table>`;
+
+  body += `<h2>By section</h2><table>${head('Section')}`;
+  sections.slice(0, 30).forEach(([name, list]) => { body += `<tr><td>${escapeHtml(name)}</td><td style="text-align:right;">${list.length.toLocaleString()}</td>${cells(tally(list))}</tr>`; });
+  if (sections.length > 30) {
+    const rest = sections.slice(30).flatMap(([, l]) => l);
+    body += `<tr style="color:#666;"><td>${sections.length - 30} other sections</td><td style="text-align:right;">${rest.length.toLocaleString()}</td>${cells(tally(rest))}</tr>`;
+  }
+  body += `</table>`;
+
+  if (people.size) {
+    body += `<h2>By person</h2>
+      <p style="font-size:12px;color:#666;">Pages each person is on in any role — building, writing or migrating — and where those pages are.</p>
+      <table><tr><th>Person</th><th style="text-align:right;">Build</th><th style="text-align:right;">Write</th><th style="text-align:right;">Migrate</th>${statuses.map(st => `<th style="text-align:right;color:${escapeHtml(colorOf(st))};">${escapeHtml(st)}</th>`).join('')}</tr>`;
+    [...people.entries()].sort((a, b) => b[1].nodes.size - a[1].nodes.size || a[0].localeCompare(b[0])).forEach(([name, p]) => {
+      body += `<tr><td>${escapeHtml(name)}</td><td style="text-align:right;">${p.build || '—'}</td><td style="text-align:right;">${p.write || '—'}</td><td style="text-align:right;">${p.migrate || '—'}</td>${cells(tally([...p.nodes]))}</tr>`;
+    });
+    body += `</table>`;
+  }
+
+  if (blocked.length) {
+    body += `<h2>Blocked (${blocked.length.toLocaleString()})</h2>`;
+    body += reportTableHtml(['Page', 'Builder', 'Writer', 'Notes'],
+      blocked.map(n => [n.breadcrumb || n.label, n.buildAssignee || '', n.writeAssignee || '', String(n.notes || '').slice(0, 160)]), { cap: 100 });
+  }
+
+  body += auditorAppendixHtml([
+    { title: `No status yet (${notSet.toLocaleString()})`, intro: 'Set Page Status in the sitemap node editor → Build.',
+      html: notSet ? reportTableHtml(['Page', 'Builder', 'Writer'], nodes.filter(n => statusOf(n) === NOT_SET).map(n => [n.breadcrumb || n.label, n.buildAssignee || '', n.writeAssignee || '']), { cap: 200 }) : '' },
+  ]);
+
+  const title = 'Build Status';
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
+}
+
+/** What has to be WRITTEN for the new site, as a hand-off to writers: grouped
+ *  by writer, then section, each with its status, template and writer brief.
+ *  Three kinds of item, all in the sitemap's own order:
+ *   - hub      — a section landing page: pages exist beneath it, it has none
+ *   - empty    — a planned page nothing on the current site maps to
+ *   - promoted — a hub already given a placeholder page (tagged net-new),
+ *                still listed until its status says it's published
+ *  It used to list only hubs, so the pages a sitemap plans from scratch — the
+ *  truest net-new content — never appeared, and a promoted hub vanished before
+ *  anyone had written it. */
 function reportNetNewBrief() {
   if (!state.navNodes || state.navNodes.length === 0) { showToast('No sitemap loaded', 'error'); return; }
 
-  // Kill/Consolidate-excluding, in-scope counts — a page being killed or
-  // consolidated away doesn't count as content living at that node.
   const pageCounts = reportNavPageCounts();
-
   const urlCol = state.urlColumn || 'Address';
   const titleCol = state.headers.includes('Title 1') ? 'Title 1' : 'Title';
+  const sectionOf = navSectionLabelMap();
 
-  // Index rows by their sitemap node once. This used to re-scan every row for
-  // every node in every net-new subtree — O(nodes × rows), which on a
-  // multi-thousand-row crawl with a few hundred nodes is millions of comparisons
-  // (and, once reportRows() filtered, an array allocation per node too).
+  // Live rows per node — the same Kill/Consolidate exclusion as the counts, so
+  // "pages beneath it" matches what makes a node a hub.
   const rowsByNodeId = new Map();
   reportRows().forEach(r => {
     const id = r['Sitemap_ID'];
     if (!id) return;
-    // Same exclusion as the counts, so "N child pages" matches what makes it a hub.
     const eff = effectiveKke(r);
     if (eff === 'Kill' || eff === 'Consolidate') return;
     if (!rowsByNodeId.has(id)) rowsByNodeId.set(id, []);
     rowsByNodeId.get(id).push(r);
   });
+  const isNetNewTagged = (r) => String(r[tagsCol()] || '').split(',').map(t => t.trim().toLowerCase()).includes('net-new');
+  const published = (node) => /^published$/i.test(String(node.pageStatus || '').trim());
 
-  // Find net new nodes (have descendant pages but no direct pages)
-  const netNew = [];
-  // Same definition as the Sitemap tree's NEW badge — Header, Fragment, phased,
-  // external-link and alias nodes are not pages anyone has to write.
+  const items = [];
   sortNodesForNavigation(state.navNodes).forEach(node => {
-    if (navNodeContentStatus(node, pageCounts) === 'hub') {
-      // Find child pages
-      const childPages = [];
-      function collectChildPages(n) {
-        const hit = rowsByNodeId.get(n.id);
-        if (hit) childPages.push(...hit);
-        (n.children || []).forEach(collectChildPages);
-      }
-      node.children.forEach(collectChildPages);
-
-      netNew.push({ node, childPages });
-    }
+    const status = navNodeContentStatus(node, pageCounts);
+    let kind = '';
+    if (status === 'hub') kind = 'hub';
+    else if (status === 'empty') kind = 'empty';
+    else if ((rowsByNodeId.get(node.id) || []).some(isNetNewTagged) && !published(node)) kind = 'promoted';
+    if (!kind) return;
+    const below = [];
+    if (kind === 'hub') (node.children || []).forEach(function collect(n) { below.push(...(rowsByNodeId.get(n.id) || [])); (n.children || []).forEach(collect); });
+    items.push({ node, kind, below, writer: String(node.writeAssignee || '').trim(), section: sectionOf.get(node.id) || '' });
   });
 
-  let body = `
-    <h2>Summary</h2>
-    <div class="stat-row"><span class="stat-label">Net new pages needed</span><span class="stat-value">${netNew.length}</span></div>
-    <p style="font-size:13px;color:#666;">These sitemap nodes have child pages assigned from the existing site audit but no page of their own. New content needs to be developed for each.</p>
-  `;
+  const KIND_LABEL = {
+    hub: 'Section landing page — its sub-pages exist, it doesn’t',
+    empty: 'New page — nothing on the current site maps here',
+    promoted: 'Placeholder page created — content still to write',
+  };
+  const byKind = (k) => items.filter(x => x.kind === k).length;
+  const unassigned = items.filter(x => !x.writer).length;
+  const noBrief = items.filter(x => !String(x.node.writerBrief || '').trim()).length;
 
-  netNew.forEach(({ node, childPages }) => {
-    body += `<div class="section-box">`;
-    body += `<h3 style="margin:0 0 4px;">${escapeHtml(node.breadcrumb || node.label)}</h3>`;
-    const meta = [
-      `Path: <code>${escapeHtml(node.computedPath || '—')}</code>`,
-      node.pageStatus ? `Status: <strong>${escapeHtml(node.pageStatus)}</strong>` : '',
-      node.writeAssignee ? `Writer: <strong>${escapeHtml(node.writeAssignee)}</strong>` : '',
-    ].filter(Boolean).join(' · ');
-    body += `<p style="font-size:12px;color:#666;margin:0 0 8px;">${meta}</p>`;
-    body += `<p style="font-size:12px;margin:0 0 4px;"><strong>${childPages.length}</strong> child page${childPages.length !== 1 ? 's' : ''} assigned underneath:</p>`;
-    body += `<ul style="font-size:12px;margin:4px 0 0;">`;
-    childPages.slice(0, 8).forEach(r => {
-      body += `<li>${escapeHtml(r[titleCol] || r[urlCol] || '(untitled)')}</li>`;
+  const findings = [];
+  if (items.length) {
+    findings.push(`${items.length.toLocaleString()} page${items.length !== 1 ? 's' : ''} to write: ${byKind('hub').toLocaleString()} section landing page${byKind('hub') !== 1 ? 's' : ''}, ${byKind('empty').toLocaleString()} new page${byKind('empty') !== 1 ? 's' : ''} with no source content${byKind('promoted') ? `, ${byKind('promoted').toLocaleString()} placeholder${byKind('promoted') !== 1 ? 's' : ''} in progress` : ''}.`);
+  }
+  const nextSteps = [];
+  if (unassigned) nextSteps.push(`Assign a writer to ${unassigned.toLocaleString()} page${unassigned !== 1 ? 's' : ''} (sitemap node editor → Write).`);
+  if (noBrief) nextSteps.push(`Add a writer brief to ${noBrief.toLocaleString()} page${noBrief !== 1 ? 's' : ''} — audience, purpose, key messages.`);
+  if (byKind('empty')) nextSteps.push('Check the new pages are really wanted: a planned page with no content can also be a node to remove.');
+
+  let body = reportFindingsHtml(findings, nextSteps);
+  body += `<h2>Summary</h2>
+    <div class="stat-row"><span class="stat-label">Pages to write</span><span class="stat-value">${items.length.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Section landing pages</span><span class="stat-value">${byKind('hub').toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;New pages with no source content</span><span class="stat-value">${byKind('empty').toLocaleString()}</span></div>
+    ${byKind('promoted') ? `<div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Placeholders still to write</span><span class="stat-value">${byKind('promoted').toLocaleString()}</span></div>` : ''}
+    <div class="stat-row"><span class="stat-label">No writer assigned</span><span class="stat-value">${unassigned.toLocaleString()}</span></div>`;
+
+  // By writer (unassigned last), then section, in sitemap order within each.
+  const writers = [...new Set(items.map(x => x.writer))].sort((a, b) => (!a) - (!b) || a.localeCompare(b));
+  const PER_WRITER = 100;
+  writers.forEach(w => {
+    const mine = items.filter(x => x.writer === w);
+    body += `<h2 class="page-break">${w ? escapeHtml(w) : 'No writer assigned'} <span style="font-weight:400;color:#888;">(${mine.length.toLocaleString()})</span></h2>`;
+    let lastSection = null;
+    mine.slice(0, PER_WRITER).forEach(({ node, kind, below, section }) => {
+      if (section !== lastSection) { body += `<h3>${escapeHtml(section || '(top level)')}</h3>`; lastSection = section; }
+      const meta = [
+        escapeHtml(KIND_LABEL[kind]),
+        `Path: <code>${escapeHtml(node.computedPath || '—')}</code>`,
+        node.pageStatus ? `Status: <strong>${escapeHtml(node.pageStatus)}</strong>` : '',
+        node.buildPattern ? `Template: ${escapeHtml(node.buildPattern)}` : '',
+      ].filter(Boolean).join(' · ');
+      const brief = String(node.writerBrief || '').trim();
+      body += `<div class="section-box">
+        <strong>${escapeHtml(node.breadcrumb || node.label)}</strong>
+        <div style="font-size:12px;color:#666;margin:2px 0 6px;">${meta}</div>
+        ${brief ? `<div style="font-size:12px;white-space:pre-wrap;border-left:3px solid #c4b5fd;padding-left:8px;margin:4px 0;">${escapeHtml(brief.length > 800 ? brief.slice(0, 800) + '…' : brief)}</div>`
+                : '<div style="font-size:12px;color:#b45309;">No writer brief yet.</div>'}
+        ${below.length ? `<div style="font-size:12px;margin-top:6px;">Pages beneath it (${below.length.toLocaleString()}): ${below.slice(0, 5).map(r => escapeHtml(r[titleCol] || r[urlCol] || '(untitled)')).join(' · ')}${below.length > 5 ? ` · …and ${(below.length - 5).toLocaleString()} more` : ''}</div>` : ''}
+      </div>`;
     });
-    if (childPages.length > 8) body += `<li style="color:#999;">… and ${childPages.length - 8} more</li>`;
-    body += `</ul></div>`;
+    if (mine.length > PER_WRITER) body += `<p style="font-size:12px;color:#666;">…and ${(mine.length - PER_WRITER).toLocaleString()} more. The Migration Tracker's Sitemap Plan sheet lists them all.</p>`;
   });
 
-  if (netNew.length === 0) {
-    body += `<p style="color:#228b22;">No net new pages needed — all sitemap nodes have content assigned.</p>`;
+  if (!items.length) {
+    body += `<p style="color:#228b22;">Nothing to write — every sitemap node has content assigned.</p>`;
   }
 
   // Unserved jobs are the other half of "what's missing". The IA-derived list
@@ -27207,14 +27463,18 @@ function buildArchiveSheet() {
   };
 }
 
+/** The migration on one page: what happens to the pages, how many redirects,
+ *  what has to be written, and whether it's ready to hand off. It used to repeat
+ *  the Redirect Map Report's rule table and every page to update; now it links
+ *  out to the Redirect Map (the rules) and the Pre-Handoff Check (the gate),
+ *  and keeps the page list in the audit-team appendix. */
 function reportMigrationChecklist() {
   if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
   resolveRedirectDestinations();
   const urlCol = state.urlColumn || 'Address';
   const titleCol = state.headers.includes('Title 1') ? 'Title 1' : 'Title';
 
-  // Decisions by the EFFECTIVE KKE (a client's Final_KKE wins), every state —
-  // Consolidate and custom states used to fall into an unlabelled "Other".
+  // Decisions by the EFFECTIVE KKE (a client's Final_KKE wins), every state.
   const rows = reportRows();
   const byDecision = new Map();
   allKkeStates().forEach(st => byDecision.set(st, []));
@@ -27229,44 +27489,69 @@ function reportMigrationChecklist() {
 
   const entries = rows.map(redirectEntryForRow).filter(Boolean);
   const count = (k) => entries.filter(e => e.kind === k).length;
-  const rules = entries.filter(e => e.status === '301');
+  const rules = entries.filter(e => e.status === '301').length;
+  const tbd = count('tbd');
 
   const pageCounts = reportNavPageCounts();
-  const netNewCount = (state.navNodes || []).filter(n => navNodeContentStatus(n, pageCounts) === 'hub').length;
+  const nodes = state.navNodes || [];
+  const netNew = nodes.filter(n => navNodeContentStatus(n, pageCounts) === 'hub').length;
+  const emptyNodes = nodes.filter(n => navNodeContentStatus(n, pageCounts) === 'empty').length;
+  const consolidateNoTarget = rows.filter(rowConsolidateNeedsTarget).length;
+  const chains = computeRedirectChains().length;
 
-  const DECISION_LABELS = { Keep: 'Pages to retain (Keep)', Kill: 'Pages to remove (Kill)', Evolve: 'Pages to update (Evolve)', Consolidate: 'Pages to merge into another (Consolidate)', Exclude: 'Pages excluded' };
-  let body = `
-    <h2>Migration Summary</h2>
-    <div class="stat-row"><span class="stat-label">Total pages audited</span><span class="stat-value">${rows.length.toLocaleString()}</span></div>
-  `;
+  // Readiness — the headline blockers from the Pre-Handoff Check, counted here.
+  const blockers = [
+    [unreviewed.length, 'page', 'still undecided'],
+    [tbd, 'page', 'going away with no redirect destination'],
+    [consolidateNoTarget, 'Consolidate page', 'with no target'],
+    [chains, 'redirect', 'pointing at another redirect'],
+  ].filter(([n]) => n > 0);
+
+  const DECISION_LABELS = { Keep: 'Keep as is', Kill: 'Remove (Kill)', Evolve: 'Update (Evolve)', Consolidate: 'Merge into another page (Consolidate)', Exclude: 'Out of scope (Exclude)' };
+  const pct = (n) => rows.length ? ` <span style="color:#888;font-weight:400;">(${n / rows.length * 100 < 1 && n ? '<1' : Math.round(n / rows.length * 100)}%)</span>` : '';
+
+  const findings = [];
+  const keepish = (byDecision.get('Keep') || []).length + evolve.length;
+  if (rows.length) findings.push(`${keepish.toLocaleString()} of ${rows.length.toLocaleString()} pages move to the new site (${(byDecision.get('Keep') || []).length.toLocaleString()} as they are, ${evolve.length.toLocaleString()} updated).`);
+  if (rules) findings.push(`${rules.toLocaleString()} redirect rule${rules !== 1 ? 's' : ''} to deploy.`);
+  if (netNew) findings.push(`${netNew.toLocaleString()} new page${netNew !== 1 ? 's' : ''} to write.`);
+  const nextSteps = blockers.length
+    ? blockers.map(([n, noun, what]) => `Resolve ${n.toLocaleString()} ${noun}${n !== 1 ? 's' : ''} ${what}.`)
+        .concat(['Run Migration → Pre-Handoff Check for the full list.'])
+    : ['Run Migration → Pre-Handoff Check to confirm, then export the redirect CSV and the Migration Tracker.'];
+
+  let body = reportFindingsHtml(findings, nextSteps);
+  body += `<div class="section-box" style="border-color:${blockers.length ? '#d97706' : '#15803d'};">
+    <strong style="color:${blockers.length ? '#b45309' : '#15803d'};">${blockers.length ? `⚠ Not ready to hand off — ${blockers.length} open item${blockers.length !== 1 ? 's' : ''}` : '✓ No blocking issues found'}</strong>
+  </div>`;
+
+  body += `<h2>What happens to the pages</h2>
+    <div class="stat-row"><span class="stat-label">Pages audited</span><span class="stat-value">${rows.length.toLocaleString()}</span></div>`;
   byDecision.forEach((list, st) => {
     if (!list.length && !DECISION_LABELS[st]) return;
-    body += `<div class="stat-row"><span class="stat-label">${escapeHtml(DECISION_LABELS[st] || st)}</span><span class="stat-value">${list.length.toLocaleString()}</span></div>`;
+    body += `<div class="stat-row"><span class="stat-label">${escapeHtml(DECISION_LABELS[st] || st)}</span><span class="stat-value">${list.length.toLocaleString()}${pct(list.length)}</span></div>`;
   });
-  if (unreviewed.length) body += `<div class="stat-row"><span class="stat-label">Not yet decided</span><span class="stat-value">${unreviewed.length.toLocaleString()}</span></div>`;
-  if (netNewCount) body += `<div class="stat-row"><span class="stat-label">Net new pages to create</span><span class="stat-value">${netNewCount.toLocaleString()}</span></div>`;
+  if (unreviewed.length) body += `<div class="stat-row"><span class="stat-label">Not yet decided</span><span class="stat-value">${unreviewed.length.toLocaleString()}${pct(unreviewed.length)}</span></div>`;
 
-  body += `
-    <h2>Redirects</h2>
-    <div class="stat-row"><span class="stat-label">Redirect rules (301)</span><span class="stat-value">${rules.length.toLocaleString()}</span></div>
-    <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Removed / consolidated / URL changed</span><span class="stat-value">${count('kill').toLocaleString()} / ${count('consolidate').toLocaleString()} / ${count('moved').toLocaleString()}</span></div>
-    <div class="stat-row"><span class="stat-label">Still need a destination</span><span class="stat-value"${count('tbd') ? ' style="color:#b91c1c;"' : ''}>${count('tbd').toLocaleString()}</span></div>
+  body += `<h2>Redirects</h2>
+    <div class="stat-row"><span class="stat-label">Redirect rules to deploy (301)</span><span class="stat-value">${rules.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;removed / merged / URL changed</span><span class="stat-value">${count('kill').toLocaleString()} / ${count('consolidate').toLocaleString()} / ${count('moved').toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">Still need a destination</span><span class="stat-value"${tbd ? ' style="color:#b91c1c;"' : ''}>${tbd.toLocaleString()}</span></div>
     <div class="stat-row"><span class="stat-label">Intentional 404s (no rule)</span><span class="stat-value">${count('404').toLocaleString()}</span></div>
-    <p style="font-size:12px;color:#666;">The Redirect Map Report reviews these rules in detail; deploy from the redirect CSV or the Migration Tracker.</p>
-  `;
+    <p style="font-size:12px;color:#666;">The rules are listed in the <strong>Redirect Map Report</strong>; deploy from the redirect CSV or the Migration Tracker.</p>`;
 
-  if (evolve.length > 0) {
-    body += `<h2 class="page-break">Pages to Update (${evolve.length.toLocaleString()})</h2>`;
-    body += reportTableHtml(['Title', 'URL', 'Notes'],
-      evolve.map(r => [r[titleCol] || '', r[urlCol] || '', r[notesCol()] || '']),
-      { moreNote: 'Filter the sidebar to Evolve for the full list.' });
+  if (nodes.length) {
+    body += `<h2>New sitemap</h2>
+      <div class="stat-row"><span class="stat-label">Sitemap nodes</span><span class="stat-value">${nodes.length.toLocaleString()}</span></div>
+      <div class="stat-row"><span class="stat-label">New pages to write</span><span class="stat-value">${netNew.toLocaleString()}</span></div>
+      <div class="stat-row"><span class="stat-label">Empty nodes (no content yet)</span><span class="stat-value">${emptyNodes.toLocaleString()}</span></div>
+      <p style="font-size:12px;color:#666;">The <strong>Net New Content Brief</strong> has what to write; <strong>Build Status</strong> tracks progress.</p>`;
   }
 
-  if (rules.length > 0) {
-    body += `<h2 class="page-break">Redirect Map (${rules.length.toLocaleString()})</h2>`;
-    body += reportTableHtml(['Source URL', 'Destination', 'Reason'], rules.map(e => [e.source, e.dest, e.reason]),
-      { moreNote: 'The full list is in the redirect CSV (Migration → Export Redirect Map) and the Migration Tracker.' });
-  }
+  body += auditorAppendixHtml([
+    { title: `Pages to update (${evolve.length.toLocaleString()})`, html: evolve.length ? reportTableHtml(['Title', 'URL', 'Notes'],
+      evolve.map(r => [r[titleCol] || '', r[urlCol] || '', r[notesCol()] || '']), { moreNote: 'Filter the sidebar to Evolve for the full list.' }) : '' },
+  ]);
 
   const title = 'Migration Checklist';
   showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
@@ -28625,7 +28910,18 @@ function showNavCoverageReport() {
   });
 
   const nodeLabel = (n) => n.breadcrumb || n.label || n.number || '(unnamed)';
-  let body = `
+  const covFindings = [
+    `${placed.length.toLocaleString()} page${placed.length !== 1 ? 's are' : ' is'} placed on ${state.navNodes.length.toLocaleString()} sitemap nodes.`,
+    needsPlacement.length ? `${needsPlacement.length.toLocaleString()} page${needsPlacement.length !== 1 ? 's' : ''} being kept still ${needsPlacement.length !== 1 ? 'have' : 'has'} no place in the new sitemap.` : '',
+    hubs.length ? `${hubs.length.toLocaleString()} section landing page${hubs.length !== 1 ? 's' : ''} need${hubs.length === 1 ? 's' : ''} new content.` : '',
+    emptyNodes.length ? `${emptyNodes.length.toLocaleString()} node${emptyNodes.length !== 1 ? 's have' : ' has'} no content anywhere in ${emptyNodes.length !== 1 ? 'their' : 'its'} branch.` : '',
+  ];
+  const covNext = [
+    needsPlacement.length ? 'Place the remaining kept pages (sidebar filter: Needs placement).' : '',
+    hubs.length ? 'Brief writers on the new landing pages (Net New Content Brief).' : '',
+    emptyNodes.length ? 'For each empty node: assign content, give it a Phase, or remove it.' : '',
+  ];
+  let body = reportFindingsHtml(covFindings, covNext) + `
     <h2>Summary</h2>
     <div class="stat-row"><span class="stat-label">Sitemap nodes</span><span class="stat-value">${state.navNodes.length.toLocaleString()}</span></div>
     <div class="stat-row"><span class="stat-label">Pages placed on the sitemap</span><span class="stat-value">${placed.length.toLocaleString()}</span></div>
@@ -28634,12 +28930,6 @@ function showNavCoverageReport() {
     <div class="stat-row"><span class="stat-label">Empty nodes</span><span class="stat-value">${emptyNodes.length.toLocaleString()}</span></div>
   `;
 
-  if (needsPlacement.length) {
-    body += `<h2>Pages that still need a place (${needsPlacement.length.toLocaleString()})</h2>
-      <p style="font-size:12px;color:#666;">Kept or evolved pages with no sitemap home. Use the <strong>Needs placement</strong> sidebar filter to work through them.</p>`;
-    body += reportTableHtml(['URL', 'Decision'], needsPlacement.map(r => [r[urlCol] || '', effectiveKke(r)]),
-      { cap: 50, moreNote: 'The Needs placement filter lists them all.' });
-  }
   if (hubs.length) {
     body += `<h2>Net new pages (${hubs.length.toLocaleString()})</h2>
       <p style="font-size:12px;color:#666;">Nodes with pages beneath them but none of their own — the client needs to create this content. The Net New Content Brief has the detail.</p>`;
@@ -28663,6 +28953,11 @@ function showNavCoverageReport() {
   if (!needsPlacement.length && !hubs.length && !emptyNodes.length && !overloaded.length && !pathMismatches.length) {
     body += `<p style="color:#15803d;">Every node has content and every kept page has a place. No issues found.</p>`;
   }
+  // The page-by-page worklist is for the audit team, not the client.
+  body += auditorAppendixHtml([
+    { title: `Pages that still need a place (${needsPlacement.length.toLocaleString()})`, intro: 'Kept or evolved pages with no sitemap home. Sidebar filter: <em>Needs placement</em>.',
+      html: needsPlacement.length ? reportTableHtml(['URL', 'Decision'], needsPlacement.map(r => [r[urlCol] || '', effectiveKke(r)]), { moreNote: 'The Needs placement filter lists them all.' }) : '' },
+  ]);
 
   const title = 'Sitemap Coverage Report';
   showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
