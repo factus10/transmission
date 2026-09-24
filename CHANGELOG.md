@@ -6,6 +6,10 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Added
+
+- **Audiences on the sitemap.** When your IA already says who each section is for, you can now say it once, on the section. The sitemap node editor has an **Audience** section. A node with none set inherits from its nearest ancestor, so tagging *Academics* covers its whole branch, and a child can override it for its own branch. Node audiences fill **untagged** pages placed under them. Pages you've tagged are never overwritten, and Kill/Exclude pages and out-of-scope sites are skipped. Saving a node asks before filling its branch and shows the page count. Assigning a single page from the audit bar fills it right away. Either way, one Cmd+Z undoes it. **Fill Audiences from Section** now offers the sitemap as the first source. The tree shows which nodes set audiences, and the Visual Sitemap and Treemap can color by the inherited value. Stored in a new `Node_Audiences` column on the Sitemap sheet.
+
 ## [2.18.1] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Fixed
