@@ -6002,7 +6002,6 @@ function openDesignPatternLibraryEditor() {
 function reportDesignPatterns() {
   const rows = reportRows();
   const urlCol = state.urlColumn || 'Address';
-  const kkeColName = kkeCol();
 
   // 1. Count pages per pattern
   const patternCounts = {}; // name → { count, pages: [{url, kke, pageType}] }
@@ -6014,7 +6013,7 @@ function reportDesignPatterns() {
       patternCounts[p].count++;
       patternCounts[p].pages.push({
         url: row[urlCol] || '',
-        kke: row[kkeColName] || '',
+        kke: effectiveKke(row),   // a client's Final_KKE wins, as everywhere else
         pageType: row['Page_Type'] || '',
       });
     });
@@ -6170,7 +6169,13 @@ function audEffectiveKke(row) {
  *  tagged audit and make the reports look like the work never happened.
  */
 function audienceScopeRows() {
+  // Content pages only. An undecided row stays in scope (it still owes an
+  // audience answer) — but an untriaged 3xx or 4xx is a URL, not a page, and
+  // counting it put every crawl's redirects into every audience denominator,
+  // disagreeing with the Executive Summary's content-page total.
+  const scCol = statusCodeCol();
   return reportRows().filter(r => {
+    if (nonContentKind(r, scCol)) return false;
     const eff = audEffectiveKke(r);
     return eff === 'Keep' || eff === 'Evolve' || eff === 'Consolidate' || !eff;
   });
@@ -6912,11 +6917,24 @@ async function applyUrlVariantTriage(ordered, api) {
  *  computes — the engine exists, it just never grouped by site, which is the
  *  form the question takes in a merger ("what do these sites both have?").
  *  Returns [{ fingerprint, sites: [...], rows: [...] }], biggest overlap first. */
+/** Which fields the duplicate match actually compared — the report used to
+ *  claim "title, H1 and meta description" even on a crawl that only had titles,
+ *  where the match is far looser. */
+function crossSiteDupFieldsLabel() {
+  const names = { 'Title 1': 'title', 'H1-1': 'H1', 'Meta Description 1': 'meta description' };
+  const f = ['Title 1', 'H1-1', 'Meta Description 1'].filter(x => state.headers.includes(x)).map(x => names[x]);
+  return f.length <= 1 ? (f[0] || 'title') : f.slice(0, -1).join(', ') + ' and ' + f[f.length - 1];
+}
+
 function crossSiteDuplicateGroups() {
   const dupFields = ['Title 1', 'H1-1', 'Meta Description 1'].filter(f => state.headers.includes(f));
   if (!dupFields.length) return [];
   const groups = new Map();
+  const scCol = statusCodeCol();
   reportRows().forEach(r => {
+    // A redirect or a dead URL isn't content to consolidate — and 404 pages share
+    // a template title ("Page not found") across sites, forming false groups.
+    if (nonContentKind(r, scCol)) return;
     const fp = dupFields.map(f => String(r[f] || '').trim().toLowerCase()).join('||');
     if (!fp.replace(/\|/g, '')) return;              // entirely blank — not a duplicate
     if (!groups.has(fp)) groups.set(fp, []);
@@ -6953,15 +6971,21 @@ function reportSiteConsolidation() {
   });
 
   const stats = new Map();
+  const scCol = statusCodeCol();
   // Out-of-scope sites are kept out of every TOTAL, but still get an honest page
   // count on their own row — showing 0 would read as "this site is empty".
+  // Pages and the decision mix are CONTENT pages, like the Executive Summary; a
+  // site's existing redirects and dead URLs are counted beside them, not in them.
   state.editedRows.forEach(r => {
     const label = String(r[SOURCE_SITE_COL] || '').trim() || '(unattributed)';
-    if (!stats.has(label)) stats.set(label, { pages: 0, kke: {}, audiences: new Set(), redirects: 0 });
+    if (!stats.has(label)) stats.set(label, { pages: 0, nonContent: 0, kke: {}, audiences: new Set(), redirects: 0 });
     const st = stats.get(label);
-    st.pages++;
-    const eff = audEffectiveKke(r) || '(unreviewed)';
-    st.kke[eff] = (st.kke[eff] || 0) + 1;
+    if (nonContentKind(r, scCol)) st.nonContent++;
+    else {
+      st.pages++;
+      const eff = audEffectiveKke(r) || '(unreviewed)';
+      st.kke[eff] = (st.kke[eff] || 0) + 1;
+    }
     rowAudiences(r).forEach(a => { if (a !== AUDIENCE_NONE) st.audiences.add(a); });
     // The count that matters is "how many redirect rules does retiring this site
     // require" — which includes rules still awaiting a destination. Counting only
@@ -6971,9 +6995,12 @@ function reportSiteConsolidation() {
   });
 
   const ordered = lib.slice().sort((a, b) => (stats.get(b.label)?.pages || 0) - (stats.get(a.label)?.pages || 0));
+  // Rows no site claims used to be tallied and then never shown, so the table
+  // didn't add up. Show them, last.
+  if (stats.has('(unattributed)')) ordered.push({ label: '(unattributed)', hosts: ['pages whose host is in no site entry'], inScope: true });
 
   const bodyRows = ordered.map(site => {
-    const st = stats.get(site.label) || { pages: 0, kke: {}, audiences: new Set(), redirects: 0 };
+    const st = stats.get(site.label) || { pages: 0, nonContent: 0, kke: {}, audiences: new Set(), redirects: 0 };
     const kkeHtml = Object.entries(st.kke).sort((a, b) => b[1] - a[1])
       .map(([k, n]) => `<span style="${audKkeStyle(k)}">${escapeHtml(k)}</span>×${n}`).join(' · ') || '—';
     const ov = overlap.get(site.label) || 0;
@@ -6984,7 +7011,7 @@ function reportSiteConsolidation() {
         <div style="font-size:11px;color:#777;">${escapeHtml((site.hosts || []).join(', '))}</div>
         ${site.cms || site.owner ? `<div style="font-size:11px;color:#999;">${
           [site.cms, site.owner].filter(Boolean).map(escapeHtml).join(' · ')}</div>` : ''}</td>
-      <td><strong>${st.pages}</strong></td>
+      <td><strong>${st.pages.toLocaleString()}</strong>${st.nonContent ? `<div style="font-size:11px;color:#888;">+${st.nonContent.toLocaleString()} redirects / dead URLs</div>` : ''}</td>
       <td style="font-size:11px;">${kkeHtml}</td>
       <td style="font-size:11px;">${st.audiences.size ? escapeHtml([...st.audiences].slice(0, 4).join(', ')) + (st.audiences.size > 4 ? ` +${st.audiences.size - 4}` : '') : '—'}</td>
       <td>${ov ? `<strong>${ov}</strong> <span style="color:#888;font-size:11px;">(${Math.round((ov / Math.max(st.pages, 1)) * 100)}%)</span>` : '—'}</td>
@@ -7000,8 +7027,8 @@ function reportSiteConsolidation() {
         <div style="font-size:11px;color:#888;">${lib.filter(s => s.inScope !== false).length} in scope</div>
       </div>
       <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
-        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Pages in scope</div>
-        <div style="font-size:28px;font-weight:700;">${rows.length}</div>
+        <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Content pages in scope</div>
+        <div style="font-size:28px;font-weight:700;">${rows.filter(r => !nonContentKind(r, scCol)).length.toLocaleString()}</div>
       </div>
       <div style="background:#f8f9fa;border-radius:6px;padding:12px 20px;min-width:150px;">
         <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em;">Pages duplicated across sites</div>
@@ -7067,7 +7094,7 @@ function reportCrossSiteDuplicates() {
       </div>
     </div>
     <p style="font-size:12px;color:#666;margin:0 0 12px;">
-      Pages whose <strong>title, H1 and meta description</strong> are identical across two or more source sites.
+      Content pages whose <strong>${escapeHtml(crossSiteDupFieldsLabel())}</strong> ${crossSiteDupFieldsLabel().includes(' and ') ? 'are' : 'is'} identical across two or more source sites.
       In a consolidation each set collapses to one surviving page — pick the master, mark the rest
       <strong>Consolidate</strong> pointing at it, and the redirect map writes itself. Content that merely
       overlaps in subject won't appear here; this is exact-match only, so treat it as a floor, not a ceiling.
@@ -7266,7 +7293,7 @@ function reportAudienceDebt() {
   });
 
   // 2. Priority-audience content being removed — usually a mistake worth a second look.
-  const killedPriority = state.editedRows.filter(r => {
+  const killedPriority = reportRows().filter(r => {   // out-of-scope sites aren't being migrated
     const eff = audEffectiveKke(r);
     if (eff !== 'Kill') return false;
     return rowAudiences(r).some(a => audienceTier(a) === 'Primary');
@@ -19032,20 +19059,11 @@ function renderNavEditor() {
   const assignedNodeCount = currentNodes.filter(n => (pageCounts[n.id] || 0) > 0).length;
 
   // Net new = current non-alias, non-header interior nodes with no direct pages but descendants that have pages
-  const hubCount = currentNodes.filter(n => {
-    if (n.refNodeId) return false;
-    if (n.nodeType === 'Header' || n.nodeType === 'Fragment') return false;
-    const c = pageCounts[n.id] || 0;
-    const hc = n.children && n.children.length > 0;
-    return c === 0 && hc && hasDescendantPages(n, pageCounts);
-  }).length;
+  const hubCount = currentNodes.filter(n => navNodeContentStatus(n, pageCounts) === 'hub').length;
 
   // Empty = current non-alias, non-header, non-fragment leaf nodes with no pages
-  const orphanCount = currentNodes.filter(n => {
-    if (n.refNodeId) return false;
-    if (n.nodeType === 'Header' || n.nodeType === 'Fragment') return false;
-    return !pageCounts[n.id] && (!n.children || n.children.length === 0);
-  }).length;
+  // Empty branches count too — the tree marks them with the same ○.
+  const orphanCount = currentNodes.filter(n => navNodeContentStatus(n, pageCounts) === 'empty').length;
 
   const phaseCounts = {};
   state.navNodes.forEach(n => {
@@ -20306,11 +20324,12 @@ function renderNavEditorNode(node, pageCounts, depth, dupSlugs, depthFilter) {
   const isPhased = !!String(node.phase || '').trim();
 
   // Determine node status indicators
-  const isHub = !isHeader && !isFragment && !isPhased && count === 0 && hasChildren && hasDescendantPages(node, pageCounts);
+  const contentStatus = navNodeContentStatus(node, pageCounts);
+  const isHub = contentStatus === 'hub';
   // Treat "leaf with no pages" AND "parent of an entirely empty subtree" the same — both are
   // empty branches with no content anywhere. The structural distinction (has children vs not)
   // doesn't help an auditor cleaning up: in both cases the answer is "remove or assign content".
-  const isOrphanLeaf = !isHeader && !isFragment && !isPhased && count === 0 && !isHub;
+  const isOrphanLeaf = contentStatus === 'empty';
 
   // Left section: grip + toggle + number + label (indented by depth)
   const leftSection = document.createElement('span');
@@ -21381,6 +21400,29 @@ function cascadeNavChangesToRows(oldPaths) {
 
 /** Check if any descendant of a node has pages assigned. Reference (alias) nodes
  *  are skipped — their target's pages don't logically belong to this branch. */
+/** A sitemap node's content status — the ONE definition behind the tree's NEW
+ *  and ○ badges, the stats bar, the node editor, the Migration Tracker's Net New
+ *  column, and every report. There used to be several, and they disagreed: the
+ *  Net New Brief listed Header and phased nodes as pages to write, Sitemap
+ *  Coverage dropped the has-pages-below test, the stats bar only counted empty
+ *  leaves while the tree also marked empty branches.
+ *    'hub'   — a current-build page node with no page of its own but pages
+ *              below it: content somebody has to create (the NEW badge).
+ *    'empty' — a current-build page node with no page anywhere in its branch.
+ *    ''      — it has pages, or it isn't a page to write at all: a Header,
+ *              Fragment, phased node, external link, or alias.
+ *  `pageCounts` is nodeId → live page count (Kill/Consolidate excluded), i.e.
+ *  _navPageCountsCache() or navPageCounts(rows). */
+function navNodeContentStatus(node, pageCounts) {
+  if (!node) return '';
+  if (node.nodeType === 'Header' || node.nodeType === 'Fragment') return '';
+  if (String(node.phase || '').trim()) return '';
+  if (String(node.url || '').trim() || node.refNodeId) return '';
+  if (pageCounts[node.id]) return '';
+  const hasChildren = !!(node.children && node.children.length);
+  return hasChildren && hasDescendantPages(node, pageCounts) ? 'hub' : 'empty';
+}
+
 function hasDescendantPages(node, pageCounts) {
   if (!node.children) return false;
   for (const child of node.children) {
@@ -21858,19 +21900,34 @@ function computeNodeReadinessWarnings(node) {
 }
 
 let _navPageCountsCacheMap = null;
-function _navPageCountsCache() {
-  if (_navPageCountsCacheMap) return _navPageCountsCacheMap;
-  _navPageCountsCacheMap = {};
-  // Exclude Kill/Consolidate rows — those pages are going away; their Sitemap_ID is a
-  // redirect hint, not evidence that the page lives at that node.
-  (state.editedRows || []).forEach(r => {
+/** nodeId → live page count over `rows`. Excludes Kill/Consolidate rows —
+ *  those pages are going away; their Sitemap_ID is a redirect hint, not
+ *  evidence that the page lives at that node. */
+function navPageCounts(rows) {
+  const out = {};
+  (rows || []).forEach(r => {
     const id = String(r['Sitemap_ID'] || '').trim();
     if (!id) return;
     const effective = String(r[finalKkeCol()] || r[kkeCol()] || '').trim().toLowerCase();
     if (effective === 'kill' || effective === 'consolidate') return;
-    _navPageCountsCacheMap[id] = (_navPageCountsCacheMap[id] || 0) + 1;
+    out[id] = (out[id] || 0) + 1;
   });
+  return out;
+}
+
+/** The Sitemap editor's counts — every row, since it's a working tool. */
+function _navPageCountsCache() {
+  if (_navPageCountsCacheMap) return _navPageCountsCacheMap;
+  _navPageCountsCacheMap = navPageCounts(state.editedRows);
   return _navPageCountsCacheMap;
+}
+
+/** Report counts — only in-scope sites, matching the banner every report prints
+ *  ("pages on out-of-scope sites are excluded from every figure below"). When
+ *  nothing is out of scope reportRows() IS state.editedRows, so reuse the cache. */
+function reportNavPageCounts() {
+  const rows = reportRows();
+  return rows === state.editedRows ? _navPageCountsCache() : navPageCounts(rows);
 }
 function invalidateNavPageCountsCache() { _navPageCountsCacheMap = null; }
 
@@ -22026,8 +22083,7 @@ function openNavNodeEditor(node) {
   const bcParentNode = (node.breadcrumbParentId && node.breadcrumbParentId !== BREADCRUMB_ROOT)
     ? state.navNodes.find(n => n.id === node.breadcrumbParentId) : null;
   const pageCount = state.editedRows.filter(r => String(r['Sitemap_ID'] || '') === node.id).length;
-  const isHubNode = pageCount === 0 && node.nodeType !== 'Header' && node.nodeType !== 'Fragment' && !String(node.phase || '').trim()
-    && node.children && node.children.length > 0 && hasDescendantPages(node, _navPageCountsCache());
+  const isHubNode = navNodeContentStatus(node, _navPageCountsCache()) === 'hub';
 
   if (!reusing) {
     overlay = document.createElement('div');
@@ -23820,7 +23876,7 @@ function gatherProgressStats() {
   let unreviewed = 0, flagged = 0, tagged = 0, noted = 0;
   const groupCounts = {};
 
-  let smeReviewed = 0, smeApproved = 0, smeChanged = 0, finalResolved = 0;
+  let smeReviewed = 0, smeApproved = 0, smeChanged = 0, finalResolved = 0, smeTotal = 0;
 
   // Content vs non-content, tallied alongside the all-rows numbers rather than
   // replacing them. Both readings are legitimate and they answer different
@@ -23842,7 +23898,15 @@ function gatherProgressStats() {
   let nonContentRedirects = 0, nonContentGone = 0;
 
   rows.forEach(row => {
-    const kke = String(row[kkeCol()] || '').trim();
+    // Decision counts use the EFFECTIVE KKE: once a client's Final_KKE is set, it
+    // is what the migration does, and it's what every engine consumer (redirects,
+    // the Tracker, the audience reports) already reads. Counting the auditor's
+    // recommendation here put SME-overridden pages in the wrong bucket on the
+    // dashboard, the Executive Summary and SME Review Status.
+    const kke = effectiveKke(row);
+    // The SME workflow compares against the auditor's recommendation — that is
+    // the thing the SME approves or changes — so it keeps reading the raw column.
+    const rec = String(row[kkeCol()] || '').trim();
     const nc = nonContentKind(row, scCol);
     if (nc === 'redirect') nonContentRedirects++;
     else if (nc === 'gone') nonContentGone++;
@@ -23864,20 +23928,26 @@ function gatherProgressStats() {
     const g = String(row[groupCol()] || '').trim();
     if (g) groupCounts[g] = (groupCounts[g] || 0) + 1;
 
-    const decision = parseSmeDecision(row[smeDecisionCol()], kke);
-    if (decision.reviewed) {
-      smeReviewed++;
-      if (decision.agree) smeApproved++;
-      else if (decision.changed) smeChanged++;
+    // The SME-reviewable set is rows the auditor has made a call on. Counting
+    // SME answers and Final values over that same set keeps every SME
+    // percentage between 0 and 100 — finalResolved used to count Final values
+    // on rows with no recommendation, and could exceed its own denominator.
+    if (rec) {
+      smeTotal++;
+      const decision = parseSmeDecision(row[smeDecisionCol()], rec);
+      if (decision.reviewed) {
+        smeReviewed++;
+        if (decision.agree) smeApproved++;
+        else if (decision.changed) smeChanged++;
+      }
+      if (String(row[finalKkeCol()] || '').trim()) finalResolved++;
     }
-    if (String(row[finalKkeCol()] || '').trim()) finalResolved++;
   });
 
   const reviewed = total - unreviewed;
   const pct = total > 0 ? Math.round((reviewed / total) * 100) : 0;
   const groups = Object.entries(groupCounts).sort((a, b) => b[1] - a[1]);
   const contentGroups = Object.entries(contentGroupCounts).sort((a, b) => b[1] - a[1]);
-  const smeTotal = reviewed; // reviewable set = rows with KKE decision
   const smePct = smeTotal > 0 ? Math.round((smeReviewed / smeTotal) * 100) : 0;
   const finalPct = smeTotal > 0 ? Math.round((finalResolved / smeTotal) * 100) : 0;
 
@@ -23960,7 +24030,7 @@ function openProgressDashboard() {
   kkeLabelsFor(stats.kkeCounts).forEach(label => {
     const count = stats.kkeCounts[label] || 0;
     const widthPct = (count / stats.total * 100).toFixed(1);
-    html += `<div class="progress-bar-seg" style="width:${widthPct}%;background:${kkeColor(label)}20;border-right:1px solid ${kkeColor(label)};"></div>`;
+    html += `<div class="progress-bar-seg" style="width:${widthPct}%;background:color-mix(in srgb, ${kkeColor(label)} 13%, transparent);border-right:1px solid ${kkeColor(label)};"></div>`;
   });
 
   html += `</div>
@@ -25915,6 +25985,8 @@ const REPORT_TOKENS = `
   --font-mono: 'SF Mono', Menlo, monospace;
 `;
 
+// Mirrored for the in-app preview as `.report-preview-surface …` rules in
+// styles.css — change both together.
 const REPORT_CSS = `
   :root { ${REPORT_TOKENS} }
   body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; color: #222; margin: 0; padding: 0; }
@@ -26041,14 +26113,23 @@ function kkeBarHtml(counts, total) {
   return html;
 }
 
-function kkeStatsRows(counts) {
+/** `total` (optional) adds each state's share, plus a "Not yet decided" row for
+ *  whatever the decided states don't cover — otherwise the bar above shows an
+ *  unexplained gap where the unreviewed pages are. */
+function kkeStatsRows(counts, total) {
   let html = '';
+  const pct = (n) => (total ? ` (${n / total * 100 < 1 ? '<1' : Math.round(n / total * 100)}%)` : '');
+  let decided = 0;
   kkeLabelsFor(counts).forEach(label => {
     const count = counts[label] || 0;
     if (count === 0) return;
+    decided += count;
     const color = resolvedKkeColor(label);
-    html += `<div class="stat-row"><span class="stat-label" style="color:${color}">${escapeHtml(label)}</span><span class="stat-value">${count}</span></div>`;
+    html += `<div class="stat-row"><span class="stat-label" style="color:${color}">${escapeHtml(label)}</span><span class="stat-value">${count.toLocaleString()}${pct(count)}</span></div>`;
   });
+  if (total && total > decided) {
+    html += `<div class="stat-row"><span class="stat-label" style="color:#666;">Not yet decided</span><span class="stat-value">${(total - decided).toLocaleString()}${pct(total - decided)}</span></div>`;
+  }
   return html;
 }
 
@@ -26066,24 +26147,48 @@ function reportExecutiveSummary() {
   // name, rather than folded into a total that overstates the migration.
   const cTotal = stats.contentTotal;
   const cCounts = stats.contentKkeCounts;
-  const killPct = cTotal > 0 ? Math.round((cCounts['Kill'] || 0) / cTotal * 100) : 0;
-  const evolveCount = cCounts['Evolve'] || 0;
-  const keepCount = cCounts['Keep'] || 0;
+  // "<1%" rather than 0% — a real share rounding to zero read as "none" and
+  // used to drop the finding entirely.
+  const pctOf = (n) => { if (!cTotal || !n) return '0%'; const p = n / cTotal * 100; return p < 1 ? '<1%' : Math.round(p) + '%'; };
 
-  // Auto-generate findings
+  // One finding per decision that actually occurs — every state, custom ones
+  // included, each with its share. It used to cover only Kill, Evolve and Keep,
+  // so a migration that was mostly consolidation said nothing about it.
+  const FINDING_TEXT = {
+    Kill: 'recommended for removal',
+    Evolve: 'need content updates or improvements',
+    Consolidate: 'will be merged into another page',
+    Keep: 'are valuable and will be carried over as they are',
+    Exclude: 'are out of scope for this migration',
+  };
   const findings = [];
-  if (killPct > 0) findings.push(`${killPct}% of content pages (${cCounts['Kill']}) recommended for removal`);
-  if (evolveCount > 0) findings.push(`${evolveCount} pages need content updates or improvements`);
-  if (keepCount > 0) findings.push(`${keepCount} pages are valuable and should be retained`);
-  if (stats.contentUnreviewed > 0) findings.push(`${stats.contentUnreviewed} content pages still pending review`);
+  allKkeStates().forEach(st => {
+    const n = cCounts[st] || 0;
+    if (!n) return;
+    findings.push(`${pctOf(n)} of content pages (${n.toLocaleString()}) ${FINDING_TEXT[st] || 'are marked ' + st}`);
+  });
+  Object.keys(cCounts).forEach(st => {   // a value that isn't a defined state is still a decision
+    if (allKkeStates().includes(st) || !cCounts[st]) return;
+    findings.push(`${pctOf(cCounts[st])} of content pages (${cCounts[st].toLocaleString()}) are marked ${st}`);
+  });
+  if (stats.contentUnreviewed > 0) findings.push(`${stats.contentUnreviewed.toLocaleString()} content pages (${pctOf(stats.contentUnreviewed)}) still pending review`);
   if (stats.nonContentRedirects > 0) {
     findings.push(`${stats.nonContentRedirects} crawled URL${stats.nonContentRedirects !== 1 ? 's are' : ' is'} an existing redirect, not a page — each needs a carry-forward decision, but none is content to migrate`);
   }
 
-  // Check for low-link pages
+  // Orphans: live content pages the crawl found no internal link to. Scoped like
+  // every other figure here — content only, and not pages already being removed
+  // or excluded — and a BLANK inlinks cell is "not measured", not zero.
   if (state.headers.includes('Unique Inlinks')) {
-    const noLinks = reportRows().filter(r => parseInt(r['Unique Inlinks'] || '0') === 0).length;
-    if (noLinks > 0) findings.push(`${noLinks} pages have no internal links (orphan pages)`);
+    const scCol = statusCodeCol();
+    const noLinks = reportRows().filter(r => {
+      if (nonContentKind(r, scCol)) return false;
+      const eff = effectiveKke(r);
+      if (eff === 'Kill' || eff === 'Exclude') return false;
+      const raw = String(r['Unique Inlinks'] ?? '').trim();
+      return raw !== '' && parseInt(raw, 10) === 0;
+    }).length;
+    if (noLinks > 0) findings.push(`${noLinks.toLocaleString()} content pages being kept have no internal links pointing to them (orphan pages)`);
   }
 
   // Only shown when the crawl actually contains non-content URLs, so a clean
@@ -26108,7 +26213,7 @@ function reportExecutiveSummary() {
     <div class="stat-row"><span class="stat-label">Content pages reviewed</span><span class="stat-value">${stats.contentReviewed} (${stats.contentPct}%)</span></div>
     ${ncNote}
     ${kkeBarHtml(cCounts, cTotal)}
-    ${kkeStatsRows(cCounts)}
+    ${kkeStatsRows(cCounts, cTotal)}
 
     <h2>Key Findings</h2>
     <ul>${findings.map(f => `<li>${escapeHtml(f)}</li>`).join('')}</ul>
@@ -26126,11 +26231,23 @@ function reportExecutiveSummary() {
 
   // Content groups, so the per-section counts add up to the content-page figure
   // in the Overview rather than to the raw crawl.
+  // Capped, with the remainder and ungrouped pages named, so the list always
+  // adds up to the content total instead of silently falling short of it.
   if (stats.contentGroups.length > 0) {
+    const SHOW = 25;
     body += `<h2>By Section</h2>`;
-    stats.contentGroups.forEach(([g, c]) => {
-      body += `<div class="stat-row"><span class="stat-label">${escapeHtml(g)}</span><span class="stat-value">${c} pages</span></div>`;
+    stats.contentGroups.slice(0, SHOW).forEach(([g, c]) => {
+      body += `<div class="stat-row"><span class="stat-label">${escapeHtml(g)}</span><span class="stat-value">${c.toLocaleString()} pages</span></div>`;
     });
+    const rest = stats.contentGroups.slice(SHOW);
+    if (rest.length) {
+      const n = rest.reduce((sum, [, c]) => sum + c, 0);
+      body += `<div class="stat-row"><span class="stat-label">${rest.length} other section${rest.length !== 1 ? 's' : ''}</span><span class="stat-value">${n.toLocaleString()} pages</span></div>`;
+    }
+    const grouped = stats.contentGroups.reduce((sum, [, c]) => sum + c, 0);
+    if (cTotal > grouped) {
+      body += `<div class="stat-row"><span class="stat-label">No section assigned</span><span class="stat-value">${(cTotal - grouped).toLocaleString()} pages</span></div>`;
+    }
   }
 
   const title = 'Executive Summary';
@@ -26144,10 +26261,18 @@ function reportContentInventory() {
   const urlCol = state.urlColumn || 'Address';
   const titleCol = state.headers.includes('Title 1') ? 'Title 1' : 'Title';
 
+  // Content pages only, matching the Executive Summary: a client reading both
+  // should see the same page total. Redirects and dead URLs are named in the
+  // summary, not counted as inventory.
+  const scCol = statusCodeCol();
+  const all = reportRows();
+  const rows_ = all.filter(r => !nonContentKind(r, scCol));
+  const nonContent = all.length - rows_.length;
+
   // Group rows
   const groups = {};
   const ungrouped = [];
-  reportRows().forEach(row => {
+  rows_.forEach(row => {
     const g = String(row[groupCol()] || '').trim();
     if (g) {
       if (!groups[g]) groups[g] = [];
@@ -26158,7 +26283,8 @@ function reportContentInventory() {
   });
 
   let body = `<h2>Summary</h2>
-    <div class="stat-row"><span class="stat-label">Total pages</span><span class="stat-value">${reportRows().length}</span></div>
+    <div class="stat-row"><span class="stat-label">Content pages</span><span class="stat-value">${rows_.length.toLocaleString()}</span></div>
+    ${nonContent ? `<div class="stat-row"><span class="stat-label">Not counted: redirects and dead URLs (3xx / 4xx)</span><span class="stat-value">${nonContent.toLocaleString()}</span></div>` : ''}
     <div class="stat-row"><span class="stat-label">Groups</span><span class="stat-value">${Object.keys(groups).length}</span></div>
     <div class="stat-row"><span class="stat-label">Ungrouped pages</span><span class="stat-value">${ungrouped.length}</span></div>
   `;
@@ -26170,7 +26296,7 @@ function reportContentInventory() {
     allKkeStates().forEach(s => kkeCounts[s] = 0);
     let noted = 0;
     rows.forEach(r => {
-      const k = String(r[kkeCol()] || '').trim();
+      const k = effectiveKke(r);
       // Tally any non-blank value, including a rogue (typo'd / removed) state —
       // kkeBarHtml/kkeStatsRows iterate kkeLabelsFor() and surface it. The old
       // hasOwnProperty gate dropped rogue rows, so a section's bar and stat rows
@@ -26181,14 +26307,14 @@ function reportContentInventory() {
 
     body += `<h2>${escapeHtml(name)} (${rows.length} pages)</h2>`;
     body += kkeBarHtml(kkeCounts, rows.length);
-    body += kkeStatsRows(kkeCounts);
+    body += kkeStatsRows(kkeCounts, rows.length);
     if (noted > 0) body += `<div class="stat-row"><span class="stat-label">Pages with notes</span><span class="stat-value">${noted}</span></div>`;
 
     // Sample pages (first 5)
     const sample = rows.slice(0, 5);
     body += `<table><tr><th>Title</th><th>URL</th><th>KKE</th></tr>`;
     sample.forEach(r => {
-      body += `<tr><td>${escapeHtml(r[titleCol] || '')}</td><td style="font-size:11px;color:#666;">${escapeHtml(r[urlCol] || '')}</td><td>${escapeHtml(r[kkeCol()] || '')}</td></tr>`;
+      body += `<tr><td>${escapeHtml(r[titleCol] || '')}</td><td style="font-size:11px;color:#666;">${escapeHtml(r[urlCol] || '')}</td><td>${escapeHtml(effectiveKke(r))}</td></tr>`;
     });
     if (rows.length > 5) body += `<tr><td colspan="3" style="color:#999;">… and ${rows.length - 5} more</td></tr>`;
     body += `</table>`;
@@ -26199,7 +26325,7 @@ function reportContentInventory() {
     const sample = ungrouped.slice(0, 10);
     body += `<table><tr><th>Title</th><th>URL</th><th>KKE</th></tr>`;
     sample.forEach(r => {
-      body += `<tr><td>${escapeHtml(r[titleCol] || '')}</td><td style="font-size:11px;color:#666;">${escapeHtml(r[urlCol] || '')}</td><td>${escapeHtml(r[kkeCol()] || '')}</td></tr>`;
+      body += `<tr><td>${escapeHtml(r[titleCol] || '')}</td><td style="font-size:11px;color:#666;">${escapeHtml(r[urlCol] || '')}</td><td>${escapeHtml(effectiveKke(r))}</td></tr>`;
     });
     if (ungrouped.length > 10) body += `<tr><td colspan="3" style="color:#999;">… and ${ungrouped.length - 10} more</td></tr>`;
     body += `</table>`;
@@ -26219,9 +26345,14 @@ function reportSmeStatus() {
   const byOwner = {};
   reportRows().forEach(row => {
     const owner = String(row[contentOwnerCol()] || '').trim() || 'Unassigned';
-    if (!byOwner[owner]) byOwner[owner] = { assigned: 0, reviewed: 0, approved: 0, changed: 0, conflicts: 0 };
+    // Same reviewable set as the overall figures (gatherProgressStats): pages the
+    // auditor has made a call on. An SME answer on a page with no
+    // recommendation used to count as "reviewed" without counting as
+    // "assigned", pushing an owner past 100%.
     const kke = String(row[kkeCol()] || '').trim();
-    if (kke) byOwner[owner].assigned++;
+    if (!kke) return;
+    if (!byOwner[owner]) byOwner[owner] = { assigned: 0, reviewed: 0, approved: 0, changed: 0, conflicts: 0 };
+    byOwner[owner].assigned++;
     const decision = parseSmeDecision(row[smeDecisionCol()], kke);
     if (decision.reviewed) {
       byOwner[owner].reviewed++;
@@ -26245,7 +26376,7 @@ function reportSmeStatus() {
 
     <h2>By Content Owner</h2>
     <table>
-      <tr><th>Owner</th><th>Assigned</th><th>Reviewed</th><th>%</th><th>Approved</th><th>Changed</th><th>Unresolved</th></tr>
+      <tr><th>Owner</th><th>Pages to review</th><th>Reviewed</th><th>%</th><th>Approved</th><th>Changed</th><th>Unresolved</th></tr>
   `;
 
   Object.entries(byOwner).sort((a, b) => b[1].assigned - a[1].assigned).forEach(([owner, d]) => {
@@ -26262,13 +26393,15 @@ function reportSmeStatus() {
   if (conflicts.length > 0) {
     const urlCol = state.urlColumn || 'Address';
     const titleCol = state.headers.includes('Title 1') ? 'Title 1' : 'Title';
+    // Grouped by owner (that's who gets chased) and identifiable: a title alone
+    // is often blank or shared, so the URL and the SME's own note come along.
+    const ownerOf = (r) => String(r[contentOwnerCol()] || '').trim() || 'Unassigned';
+    conflicts.sort((a, b) => ownerOf(a).localeCompare(ownerOf(b)));
     body += `<h2>Unresolved Conflicts (${conflicts.length})</h2>`;
-    body += `<table><tr><th>Title</th><th>KKE</th><th>SME Decision</th><th>Owner</th></tr>`;
-    conflicts.slice(0, 30).forEach(r => {
-      body += `<tr><td>${escapeHtml(r[titleCol] || '')}</td><td>${escapeHtml(r[kkeCol()] || '')}</td><td>${escapeHtml(r[smeDecisionCol()] || '')}</td><td>${escapeHtml(r[contentOwnerCol()] || '')}</td></tr>`;
-    });
-    if (conflicts.length > 30) body += `<tr><td colspan="4" style="color:#999;">… and ${conflicts.length - 30} more</td></tr>`;
-    body += `</table>`;
+    body += `<p style="font-size:12px;color:#666;">The SME disagreed with the recommendation and no Final KKE has been set. Resolve them in SME → Resolve Conflicts….</p>`;
+    body += reportTableHtml(['Owner', 'Page', 'Recommended', 'SME decision', 'SME notes'],
+      conflicts.map(r => [ownerOf(r), (r[titleCol] || '') + (r[titleCol] ? ' — ' : '') + (r[urlCol] || ''), r[kkeCol()] || '', r[smeDecisionCol()] || '', r[smeNotesCol()] || '']),
+      { cap: 100, moreNote: 'SME → Resolve Conflicts… lists them all.' });
   }
 
   const title = 'SME Review Status';
@@ -26277,102 +26410,87 @@ function reportSmeStatus() {
 
 // ─── Report: Redirect Map Report ─────────────────────────────────────────────
 
+// A report table that stays readable on a real audit. Past `cap` rows it stops
+// and says how many were left out and where the full list lives — a 3,000-row
+// table is a hundred PDF pages nobody reads, and nothing is lost when the
+// complete list is one click away in an export or a sidebar filter.
+const REPORT_TABLE_CAP = 200;
+function reportTableHtml(headers, rows, { cap = REPORT_TABLE_CAP, moreNote = '' } = {}) {
+  let html = '<table><tr>' + headers.map(h => `<th>${escapeHtml(h)}</th>`).join('') + '</tr>';
+  rows.slice(0, cap).forEach(cells => {
+    html += '<tr>' + cells.map(c => `<td style="font-size:11px;">${escapeHtml(c == null ? '' : String(c))}</td>`).join('') + '</tr>';
+  });
+  if (rows.length > cap) {
+    html += `<tr><td colspan="${headers.length}" style="font-size:11px;color:#666;font-style:italic;">…and ${(rows.length - cap).toLocaleString()} more.${moreNote ? ' ' + escapeHtml(moreNote) : ''}</td></tr>`;
+  }
+  return html + '</table>';
+}
+
 function reportRedirectMap() {
   if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
-  const urlCol = state.urlColumn || 'Address';
-  const destCol = 'Redirect_Destination';
-  const defaultDest = state.projectSettings.defaultRedirectUrl || '';
+  // Same resolve-then-read path as the CSV and the Tracker, so the three agree.
+  resolveRedirectDestinations();
 
-  // Collect redirect entries
-  const killRedirects = [];
-  const movedRedirects = [];
-  const fourOhFours = []; // intentional deindex (Redirect_Destination === '404')
-  const chains = [];
-
-  const urlMap = new Map();
-  reportRows().forEach((row, i) => {
-    const url = String(row[urlCol] || '').trim().toLowerCase();
-    if (url) urlMap.set(url, row);
-  });
-
+  const titleOf = (row) => row['Title 1'] || row['Title'] || '';
+  const entries = [];
   reportRows().forEach(row => {
-    const kke = String(row[kkeCol()] || '').trim();
-    const url = String(row[urlCol] || '').trim();
-    const dest = String(row[destCol] || '').trim();
-    const computed = String(row['Computed Path'] || '').trim();
-
-    // Intentional 404 — bucket separately, no redirect rule
-    if (dest === '404') {
-      fourOhFours.push({ url, title: row['Title 1'] || row['Title'] || '', kke });
-      return;
-    }
-
-    if (kke === 'Kill') {
-      // Mirrors resolveRedirectDestinations()'s precedence: explicit value, else the
-      // nav path, else the project default — and blank when there is none. It used to
-      // fall back to '/', reporting a homepage redirect the engine never writes.
-      const finalDest = dest || computedPathToUrl(computed) || defaultDest;
-      killRedirects.push({ url, dest: finalDest, title: row['Title 1'] || row['Title'] || '' });
-      // Check chain
-      if (finalDest && urlMap.has(finalDest.toLowerCase())) {
-        const target = urlMap.get(finalDest.toLowerCase());
-        if (String(target[kkeCol()] || '').trim() === 'Kill') {
-          chains.push({ url, dest: finalDest });
-        }
-      }
-    } else if (computed) {
-      let srcPath = '';
-      try { srcPath = new URL(url).pathname.replace(/\/+$/, ''); } catch (_) { srcPath = url; }
-      const destPath = '/' + computed.replace(/^\//, '').replace(/\/+$/, '');
-      if (srcPath !== destPath) {
-        movedRedirects.push({ url, dest: computedPathToUrl(destPath), title: row['Title 1'] || row['Title'] || '' });
-      }
-    }
+    const e = redirectEntryForRow(row);
+    if (e) entries.push(Object.assign(e, { title: titleOf(row) }));
   });
 
-  const total = killRedirects.length + movedRedirects.length;
+  const by = { kill: [], consolidate: [], moved: [], tbd: [], '404': [] };
+  entries.forEach(e => by[e.kind].push(e));
+  const rules = by.kill.length + by.consolidate.length + by.moved.length;
 
+  // The resolver collapses the chains it derived; what's left is usually a
+  // hand-typed destination pointing at a page that has since moved.
+  const chains = computeRedirectChains().map(c => ({ source: c.sourceUrl, dest: c.destUrl }));
+
+  const csvNote = 'The full list is in the redirect CSV (Migration → Export Redirect Map) and the Migration Tracker.';
   let body = `
+    <p style="font-size:12px;color:#666;">Every redirect rule this migration needs, built from the same rules as the redirect CSV and the Migration Tracker's Redirects sheet. <strong>Deploy from the CSV or the Tracker</strong>; this report is for review.</p>
     <h2>Summary</h2>
-    <div class="stat-row"><span class="stat-label">Total redirects needed</span><span class="stat-value">${total}</span></div>
-    <div class="stat-row"><span class="stat-label">Kill pages</span><span class="stat-value">${killRedirects.length}</span></div>
-    <div class="stat-row"><span class="stat-label">URL-changed pages</span><span class="stat-value">${movedRedirects.length}</span></div>
-    <div class="stat-row"><span class="stat-label">Intentional 404s (no redirect)</span><span class="stat-value">${fourOhFours.length}</span></div>
+    <div class="stat-row"><span class="stat-label">Redirect rules (301)</span><span class="stat-value">${rules.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Removed pages (Kill)</span><span class="stat-value">${by.kill.length.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Consolidated pages</span><span class="stat-value">${by.consolidate.length.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Pages whose URL changes</span><span class="stat-value">${by.moved.length.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">Still need a destination</span><span class="stat-value"${by.tbd.length ? ' style="color:#b91c1c;"' : ''}>${by.tbd.length.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">Intentional 404s (no rule)</span><span class="stat-value">${by['404'].length.toLocaleString()}</span></div>
   `;
 
-  if (chains.length > 0) {
-    body += `<div class="section-box" style="border-color:#e8a308;"><strong style="color:#e8a308;">⚠ ${chains.length} redirect chain${chains.length !== 1 ? 's' : ''} detected</strong> — these redirect to another page that is also being redirected.`;
-    chains.slice(0, 5).forEach(c => { body += `<br><span style="font-size:12px;">${escapeHtml(c.url)} → ${escapeHtml(c.dest)}</span>`; });
+  if (by.tbd.length) {
+    body += `<div class="section-box" style="border-color:#b91c1c;"><strong style="color:#b91c1c;">⚠ ${by.tbd.length.toLocaleString()} page${by.tbd.length !== 1 ? 's are' : ' is'} going away with nowhere to redirect.</strong> They ship in the CSV as <code>(TBD)</code>. Give each one a destination (Redirect Editor), a sitemap placement, or an explicit 404 before handoff.</div>`;
+  }
+  if (chains.length) {
+    body += `<div class="section-box" style="border-color:#e8a308;"><strong style="color:#e8a308;">⚠ ${chains.length.toLocaleString()} redirect chain${chains.length !== 1 ? 's' : ''}</strong> — these point at a page that is itself being redirected, so a visitor takes two hops. Point them at the final destination.`;
+    chains.slice(0, 10).forEach(c => { body += `<br><span style="font-size:12px;">${escapeHtml(c.source)} → ${escapeHtml(c.dest)}</span>`; });
+    if (chains.length > 10) body += `<br><span style="font-size:12px;color:#666;">…and ${chains.length - 10} more.</span>`;
     body += `</div>`;
   }
 
-  if (killRedirects.length > 0) {
-    body += `<h2>Kill Page Redirects (${killRedirects.length})</h2>`;
-    body += `<table><tr><th>Source URL</th><th>Destination</th></tr>`;
-    killRedirects.forEach(r => {
-      body += `<tr><td style="font-size:11px;">${escapeHtml(r.url)}</td><td style="font-size:11px;">${escapeHtml(r.dest)}</td></tr>`;
-    });
-    body += `</table>`;
+  // Each retiring domain deploys its own redirect config, so show the split.
+  const sites = [...new Set(entries.map(e => e.site).filter(Boolean))];
+  if (sites.length > 1) {
+    body += `<h2>By source site</h2>`;
+    body += reportTableHtml(['Source site', '301 rules', 'Need a destination', 'Intentional 404s'],
+      sites.map(site => {
+        const es = entries.filter(e => e.site === site);
+        return [site, es.filter(e => e.status === '301').length, es.filter(e => e.kind === 'tbd').length, es.filter(e => e.kind === '404').length];
+      }), { cap: 50 });
   }
 
-  if (movedRedirects.length > 0) {
-    body += `<h2>URL-Changed Redirects (${movedRedirects.length})</h2>`;
-    body += `<table><tr><th>Current URL</th><th>New URL</th></tr>`;
-    movedRedirects.forEach(r => {
-      body += `<tr><td style="font-size:11px;">${escapeHtml(r.url)}</td><td style="font-size:11px;">${escapeHtml(r.dest)}</td></tr>`;
-    });
-    body += `</table>`;
-  }
-
-  if (fourOhFours.length > 0) {
-    body += `<h2 class="page-break">Intentional 404s (${fourOhFours.length})</h2>`;
-    body += `<p style="font-size:12px;color:#666;">These URLs are marked to return a 404 — search engines should deindex them. <strong>No redirect rule should be written</strong> for these URLs.</p>`;
-    body += `<table><tr><th>URL</th><th>Title</th></tr>`;
-    fourOhFours.forEach(r => {
-      body += `<tr><td style="font-size:11px;">${escapeHtml(r.url)}</td><td style="font-size:11px;">${escapeHtml(r.title)}</td></tr>`;
-    });
-    body += `</table>`;
-  }
+  const section = (key, heading, headers, map, extra = '') => {
+    const list = by[key];
+    if (!list.length) return;
+    body += `<h2>${heading} (${list.length.toLocaleString()})</h2>${extra}`;
+    body += reportTableHtml(headers, list.map(map), { moreNote: csvNote });
+  };
+  section('tbd', 'Need a destination', ['URL', 'Title', 'Decision'], e => [e.source, e.title, e.kke]);
+  section('kill', 'Removed pages (Kill)', ['Source URL', 'Destination'], e => [e.source, e.dest]);
+  section('consolidate', 'Consolidated pages', ['Source URL', 'Destination'], e => [e.source, e.dest]);
+  section('moved', 'Pages whose URL changes', ['Current URL', 'New URL'], e => [e.source, e.dest]);
+  section('404', 'Intentional 404s', ['URL', 'Title'], e => [e.source, e.title],
+    `<p style="font-size:12px;color:#666;">These URLs are marked to return a 404 so search engines deindex them. <strong>No redirect rule should be written</strong> for them.</p>`);
 
   const title = 'Redirect Map Report';
   showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
@@ -26383,9 +26501,9 @@ function reportRedirectMap() {
 function reportNetNewBrief() {
   if (!state.navNodes || state.navNodes.length === 0) { showToast('No sitemap loaded', 'error'); return; }
 
-  // Canonical, Kill/Consolidate-excluding cache — a page being killed/consolidated
-  // away doesn't count as content actually living at that node.
-  const pageCounts = _navPageCountsCache();
+  // Kill/Consolidate-excluding, in-scope counts — a page being killed or
+  // consolidated away doesn't count as content living at that node.
+  const pageCounts = reportNavPageCounts();
 
   const urlCol = state.urlColumn || 'Address';
   const titleCol = state.headers.includes('Title 1') ? 'Title 1' : 'Title';
@@ -26398,16 +26516,19 @@ function reportNetNewBrief() {
   reportRows().forEach(r => {
     const id = r['Sitemap_ID'];
     if (!id) return;
+    // Same exclusion as the counts, so "N child pages" matches what makes it a hub.
+    const eff = effectiveKke(r);
+    if (eff === 'Kill' || eff === 'Consolidate') return;
     if (!rowsByNodeId.has(id)) rowsByNodeId.set(id, []);
     rowsByNodeId.get(id).push(r);
   });
 
   // Find net new nodes (have descendant pages but no direct pages)
   const netNew = [];
-  state.navNodes.forEach(node => {
-    const count = pageCounts[node.id] || 0;
-    const hasChildren = node.children && node.children.length > 0;
-    if (count === 0 && hasChildren && hasDescendantPages(node, pageCounts)) {
+  // Same definition as the Sitemap tree's NEW badge — Header, Fragment, phased,
+  // external-link and alias nodes are not pages anyone has to write.
+  sortNodesForNavigation(state.navNodes).forEach(node => {
+    if (navNodeContentStatus(node, pageCounts) === 'hub') {
       // Find child pages
       const childPages = [];
       function collectChildPages(n) {
@@ -26430,7 +26551,12 @@ function reportNetNewBrief() {
   netNew.forEach(({ node, childPages }) => {
     body += `<div class="section-box">`;
     body += `<h3 style="margin:0 0 4px;">${escapeHtml(node.breadcrumb || node.label)}</h3>`;
-    body += `<p style="font-size:12px;color:#666;margin:0 0 8px;">Path: <code>${escapeHtml(node.computedPath || '—')}</code></p>`;
+    const meta = [
+      `Path: <code>${escapeHtml(node.computedPath || '—')}</code>`,
+      node.pageStatus ? `Status: <strong>${escapeHtml(node.pageStatus)}</strong>` : '',
+      node.writeAssignee ? `Writer: <strong>${escapeHtml(node.writeAssignee)}</strong>` : '',
+    ].filter(Boolean).join(' · ');
+    body += `<p style="font-size:12px;color:#666;margin:0 0 8px;">${meta}</p>`;
     body += `<p style="font-size:12px;margin:0 0 4px;"><strong>${childPages.length}</strong> child page${childPages.length !== 1 ? 's' : ''} assigned underneath:</p>`;
     body += `<ul style="font-size:12px;margin:4px 0 0;">`;
     childPages.slice(0, 8).forEach(r => {
@@ -26779,17 +26905,13 @@ function navExportDefaultColumnKeys() { return navExportColumnDefs().map(d => d.
 /** Shared context object the column getters need (page counts, URL builder, net-new test). */
 function navExportContext() {
   invalidateNavPageCountsCache();
-  const pageCounts = _navPageCountsCache();
+  const pageCounts = reportNavPageCounts();
   const baseUrl = getRedirectBaseUrl ? getRedirectBaseUrl() : '';
   const nodeUrl = (n) => {
     const cp = String(n.computedPath || '').replace(/^\//, '');
     return baseUrl ? baseUrl + '/' + cp : '/' + cp;
   };
-  const isNetNew = (n) => {
-    const c = pageCounts[n.id] || 0;
-    const hc = n.children && n.children.length > 0;
-    return c === 0 && hc && hasDescendantPages(n, pageCounts);
-  };
+  const isNetNew = (n) => navNodeContentStatus(n, pageCounts) === 'hub';
   // Source-page URL(s) assigned to each node — same Kill/Consolidate exclusion as the
   // page count, so the URL list matches the Source Page Count column. Also keep the
   // assigned rows per node so we can resolve consolidations into them below.
@@ -26938,20 +27060,57 @@ function buildSourcePagesSheet(sourceOpts) {
 
 /** The redirect rule for one row, or null when it needs none.
  *  Extracted so the tracker sheets and the CSV export can't drift apart. */
-function redirectRuleForRow(r) {
+// ─── Redirect rules: one definition for every output ─────────────────────────
+// The redirect CSV, the Migration Tracker's Redirects sheet, the Redirect Map
+// Report and the Migration Checklist all list redirect rules. They used to each
+// decide for themselves which rows were rules and where they pointed, and they
+// drifted: the two reports read the raw recommendation instead of the effective
+// KKE, derived destinations from Computed Path instead of the stored (resolved,
+// possibly hand-typed) Redirect_Destination, and dropped Consolidate pages — so
+// the report a client reviewed could list different rules from the CSV that got
+// deployed. Every one of them now reads this. Callers run
+// resolveRedirectDestinations() first so the stored value is current.
+//
+// kind: 'kill' | 'consolidate' | 'moved' (a 301 each), 'tbd' (the page is going
+// away but has no destination yet — ships as "(TBD)" and must be decided before
+// handoff), '404' (intentional deindex: no rule is written).
+const REDIRECT_KIND_LABELS = {
+  kill: 'Removed (Kill) → 301',
+  consolidate: 'Consolidated → 301',
+  moved: 'URL changed → 301',
+  tbd: 'Needs a destination',
+  '404': 'Intentional 404 (no rule)',
+};
+
+function redirectEntryForRow(r) {
   const urlCol = state.urlColumn || 'Address';
   const source = String(r[urlCol] || '').trim();
   if (!source) return null;
   if (isFragmentRow(r)) return null;   // fragments have no public URL
-  const kke = String(r[finalKkeCol()] || r[kkeCol()] || '').trim();
-  const dest = String(r['Redirect_Destination'] || '').trim();
-  if (kke === 'Kill') {
-    if (dest === '404') return [source, '(404)', '404 — intentional deindex', 'Kill'];
-    if (dest) return [source, dest, '301', 'Kill'];
-    return [source, '', '(TBD)', 'Kill, no destination set'];
+  const kke = effectiveKke(r);
+  const dest = String(r[REDIRECT_DEST_COL] || '').trim();
+  const base = { source, site: String(r[SOURCE_SITE_COL] || '').trim(), kke };
+  if (kke === 'Kill' || kke === 'Consolidate') {
+    const killed = kke === 'Kill';
+    if (dest === '404') return Object.assign(base, { dest: '', status: '404', kind: '404', reason: killed ? 'Page marked Kill — intentional deindex' : 'Consolidated — intentional deindex' });
+    if (dest) return Object.assign(base, { dest, status: '301', kind: killed ? 'kill' : 'consolidate', reason: killed ? 'Page marked Kill' : 'Consolidated into another page' });
+    // Consolidate with no destination used to vanish from every list: it isn't
+    // Kill, and it has no destination to show. It is exactly as unfinished as a
+    // Kill with none, so it ships the same way.
+    return Object.assign(base, { dest: '', status: '(TBD)', kind: 'tbd', reason: killed ? 'Kill, no destination set' : 'Consolidate, no destination set' });
   }
-  if (dest && dest !== '404') return [source, dest, '301', 'URL changed'];
+  if (dest === '404') return Object.assign(base, { dest: '', status: '404', kind: '404', reason: 'Intentional deindex' });
+  if (dest) return Object.assign(base, { dest, status: '301', kind: 'moved', reason: 'URL changed' });
   return null;
+}
+
+/** The Migration Tracker's row shape — [source, destination, disposition, reason]. */
+function redirectRuleForRow(r) {
+  const e = redirectEntryForRow(r);
+  if (!e) return null;
+  if (e.kind === '404') return [e.source, '(404)', '404 — intentional deindex', e.reason];
+  if (e.kind === 'tbd') return [e.source, '', '(TBD)', e.reason];
+  return [e.source, e.dest, '301', e.reason];
 }
 
 const REDIRECT_SHEET_HEADER = ['Source URL', 'Destination', 'Disposition', 'Reason'];
@@ -27042,98 +27201,63 @@ function buildArchiveSheet() {
 
 function reportMigrationChecklist() {
   if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
+  resolveRedirectDestinations();
   const urlCol = state.urlColumn || 'Address';
   const titleCol = state.headers.includes('Title 1') ? 'Title 1' : 'Title';
-  const destCol = 'Redirect_Destination';
 
-  const keep = [], kill = [], evolve = [], exclude = [], other = [];
-  const redirects = [];
-  const urlChanged = [];
-
-  reportRows().forEach(row => {
-    const kke = String(row[kkeCol()] || '').trim();
-    const url = String(row[urlCol] || '').trim();
-    const computed = String(row['Computed Path'] || '').trim();
-    const dest = String(row[destCol] || '').trim();
-
-    if (kke === 'Keep') keep.push(row);
-    else if (kke === 'Kill') {
-      kill.push(row);
-      // Skip intentional 404s from the redirect manifest — they get a separate handling.
-      if (dest !== '404') {
-        const finalDest = dest || computedPathToUrl(computed) || state.projectSettings.defaultRedirectUrl || '';
-        redirects.push({ url, dest: finalDest, title: row[titleCol] || '' });
-      }
-    }
-    else if (kke === 'Evolve') evolve.push(row);
-    else if (kke === 'Exclude') exclude.push(row);
-    else if (kke) other.push(row);
-
-    // URL-changed pages (not Kill)
-    if (kke !== 'Kill' && computed) {
-      let srcPath = '';
-      try { srcPath = new URL(url).pathname.replace(/\/+$/, ''); } catch (_) { srcPath = url; }
-      const destPath = '/' + computed.replace(/^\//, '').replace(/\/+$/, '');
-      if (srcPath !== destPath) {
-        const newUrl = computedPathToUrl(destPath);
-        urlChanged.push({ url, newUrl, title: row[titleCol] || '' });
-        redirects.push({ url, dest: newUrl, title: row[titleCol] || '' });
-      }
-    }
+  // Decisions by the EFFECTIVE KKE (a client's Final_KKE wins), every state —
+  // Consolidate and custom states used to fall into an unlabelled "Other".
+  const rows = reportRows();
+  const byDecision = new Map();
+  allKkeStates().forEach(st => byDecision.set(st, []));
+  const unreviewed = [];
+  rows.forEach(row => {
+    const eff = effectiveKke(row);
+    if (!eff) { unreviewed.push(row); return; }
+    if (!byDecision.has(eff)) byDecision.set(eff, []);
+    byDecision.get(eff).push(row);
   });
+  const evolve = byDecision.get('Evolve') || [];
 
-  // Net new count
-  let netNewCount = 0;
-  if (state.navNodes) {
-    const pageCounts = _navPageCountsCache();
-    state.navNodes.forEach(n => {
-      const c = pageCounts[n.id] || 0;
-      const hc = n.children && n.children.length > 0;
-      if (c === 0 && hc && hasDescendantPages(n, pageCounts)) netNewCount++;
-    });
-  }
+  const entries = rows.map(redirectEntryForRow).filter(Boolean);
+  const count = (k) => entries.filter(e => e.kind === k).length;
+  const rules = entries.filter(e => e.status === '301');
 
+  const pageCounts = reportNavPageCounts();
+  const netNewCount = (state.navNodes || []).filter(n => navNodeContentStatus(n, pageCounts) === 'hub').length;
+
+  const DECISION_LABELS = { Keep: 'Pages to retain (Keep)', Kill: 'Pages to remove (Kill)', Evolve: 'Pages to update (Evolve)', Consolidate: 'Pages to merge into another (Consolidate)', Exclude: 'Pages excluded' };
   let body = `
     <h2>Migration Summary</h2>
-    <div class="stat-row"><span class="stat-label">Total pages audited</span><span class="stat-value">${reportRows().length}</span></div>
-    <div class="stat-row"><span class="stat-label">Pages to retain</span><span class="stat-value">${keep.length}</span></div>
-    <div class="stat-row"><span class="stat-label">Pages to remove</span><span class="stat-value">${kill.length}</span></div>
-    <div class="stat-row"><span class="stat-label">Pages to update</span><span class="stat-value">${evolve.length}</span></div>
-    <div class="stat-row"><span class="stat-label">Pages excluded</span><span class="stat-value">${exclude.length}</span></div>
-    ${other.length > 0 ? `<div class="stat-row"><span class="stat-label">Other status</span><span class="stat-value">${other.length}</span></div>` : ''}
-    <div class="stat-row"><span class="stat-label">Total redirects needed</span><span class="stat-value">${redirects.length}</span></div>
-    <div class="stat-row"><span class="stat-label">URL changes (non-Kill)</span><span class="stat-value">${urlChanged.length}</span></div>
-    ${netNewCount > 0 ? `<div class="stat-row"><span class="stat-label">Net new pages to create</span><span class="stat-value">${netNewCount}</span></div>` : ''}
+    <div class="stat-row"><span class="stat-label">Total pages audited</span><span class="stat-value">${rows.length.toLocaleString()}</span></div>
+  `;
+  byDecision.forEach((list, st) => {
+    if (!list.length && !DECISION_LABELS[st]) return;
+    body += `<div class="stat-row"><span class="stat-label">${escapeHtml(DECISION_LABELS[st] || st)}</span><span class="stat-value">${list.length.toLocaleString()}</span></div>`;
+  });
+  if (unreviewed.length) body += `<div class="stat-row"><span class="stat-label">Not yet decided</span><span class="stat-value">${unreviewed.length.toLocaleString()}</span></div>`;
+  if (netNewCount) body += `<div class="stat-row"><span class="stat-label">Net new pages to create</span><span class="stat-value">${netNewCount.toLocaleString()}</span></div>`;
+
+  body += `
+    <h2>Redirects</h2>
+    <div class="stat-row"><span class="stat-label">Redirect rules (301)</span><span class="stat-value">${rules.length.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Removed / consolidated / URL changed</span><span class="stat-value">${count('kill').toLocaleString()} / ${count('consolidate').toLocaleString()} / ${count('moved').toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">Still need a destination</span><span class="stat-value"${count('tbd') ? ' style="color:#b91c1c;"' : ''}>${count('tbd').toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">Intentional 404s (no rule)</span><span class="stat-value">${count('404').toLocaleString()}</span></div>
+    <p style="font-size:12px;color:#666;">The Redirect Map Report reviews these rules in detail; deploy from the redirect CSV or the Migration Tracker.</p>
   `;
 
-  // Pages to Evolve (with notes)
   if (evolve.length > 0) {
-    body += `<h2 class="page-break">Pages to Update (${evolve.length})</h2>`;
-    body += `<table><tr><th>Title</th><th>URL</th><th>Notes</th></tr>`;
-    evolve.forEach(r => {
-      body += `<tr><td>${escapeHtml(r[titleCol] || '')}</td><td style="font-size:11px;color:#666;">${escapeHtml(r[urlCol] || '')}</td><td style="font-size:11px;">${escapeHtml(r[notesCol()] || '')}</td></tr>`;
-    });
-    body += `</table>`;
+    body += `<h2 class="page-break">Pages to Update (${evolve.length.toLocaleString()})</h2>`;
+    body += reportTableHtml(['Title', 'URL', 'Notes'],
+      evolve.map(r => [r[titleCol] || '', r[urlCol] || '', r[notesCol()] || '']),
+      { moreNote: 'Filter the sidebar to Evolve for the full list.' });
   }
 
-  // Redirects
-  if (redirects.length > 0) {
-    body += `<h2 class="page-break">Redirect Map (${redirects.length})</h2>`;
-    body += `<table><tr><th>Source URL</th><th>Destination</th></tr>`;
-    redirects.forEach(r => {
-      body += `<tr><td style="font-size:11px;">${escapeHtml(r.url)}</td><td style="font-size:11px;">${escapeHtml(r.dest)}</td></tr>`;
-    });
-    body += `</table>`;
-  }
-
-  // Pages to Keep with URL changes
-  if (urlChanged.length > 0) {
-    body += `<h2 class="page-break">URL Changes (${urlChanged.length})</h2>`;
-    body += `<table><tr><th>Current URL</th><th>New URL</th></tr>`;
-    urlChanged.forEach(r => {
-      body += `<tr><td style="font-size:11px;">${escapeHtml(r.url)}</td><td style="font-size:11px;">${escapeHtml(r.newUrl)}</td></tr>`;
-    });
-    body += `</table>`;
+  if (rules.length > 0) {
+    body += `<h2 class="page-break">Redirect Map (${rules.length.toLocaleString()})</h2>`;
+    body += reportTableHtml(['Source URL', 'Destination', 'Reason'], rules.map(e => [e.source, e.dest, e.reason]),
+      { moreNote: 'The full list is in the redirect CSV (Migration → Export Redirect Map) and the Migration Tracker.' });
   }
 
   const title = 'Migration Checklist';
@@ -27180,7 +27304,7 @@ function reportMenus() {
   const menus = getMenus();
   if (!menus.length) { showToast('No menus to report — build one in the Menus view first', 'error'); return; }
 
-  const pageCounts = _navPageCountsCache();
+  const pageCounts = reportNavPageCounts();   // in-scope, like every report
   const redirectCounts = {}; // not meaningful for menus
   const sectionNodes = menus.map(_menuToReportSection);
 
@@ -27260,7 +27384,7 @@ function _navIaPreviewSubtree(nodes, pageCounts, redirectCounts, depth) {
     const isLeaf = inMenuChildren.length === 0;
     const isHeader = node.nodeType === 'Header';
     // Truly empty: leaf with no live pages AND no redirect-only pages
-    const isEmpty = isLeaf && directCount === 0 && redirectCount === 0 && !isHeader;
+    const isEmpty = isLeaf && directCount === 0 && redirectCount === 0 && !isHeader && !_menuRefIsHub(node, pageCounts);
     // Redirect-only: leaf with no live pages but has Kill/Consolidate pages redirecting through it
     const isRedirectOnly = isLeaf && directCount === 0 && redirectCount > 0 && !isHeader;
     const isAlias = !!node.refNodeId;
@@ -27347,14 +27471,12 @@ function _navIaExportHtml(sectionNodes, pageCounts, redirectCounts) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${title}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root { --page-bg: #F4F5F7; --card-bg: #FFFFFF; --text: #1A1A2E; --muted: #6B7280; --line: #D1D5DB; --radius: 6px; }
-  body { font-family: 'DM Sans', sans-serif; background: var(--page-bg); color: var(--text); padding: 40px 36px 72px; font-size: 13px; line-height: 1.5; }
+  body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; background: var(--page-bg); color: var(--text); padding: 40px 36px 72px; font-size: 13px; line-height: 1.5; }
   .page-header { margin-bottom: 28px; border-bottom: 2px solid #1D3E6E; padding-bottom: 14px; }
-  .page-header h1 { font-family: 'DM Serif Display', serif; font-size: 21px; color: #1D3E6E; }
+  .page-header h1 { font-family: Georgia, 'Times New Roman', serif; font-size: 21px; color: #1D3E6E; }
   .page-header .sub { font-size: 11.5px; color: var(--muted); margin-top: 3px; font-weight: 300; }
   .internal-badge { display: inline-block; background: #FEF3C7; color: #92400E; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 8px; border-radius: 3px; border: 1px solid #FCD34D; margin-top: 7px; }
   .stats-strip { background: #E8ECF2; border: 1px solid #C8D0DC; border-radius: var(--radius); padding: 9px 14px; margin-bottom: 20px; display: flex; align-items: center; gap: 20px; font-size: 11.5px; color: #374151; flex-wrap: wrap; }
@@ -27362,9 +27484,9 @@ function _navIaExportHtml(sectionNodes, pageCounts, redirectCounts) {
   .sections-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
   .section-card.wide { grid-column: span 2; }
   .section-card { background: var(--card-bg); border-radius: var(--radius); border: 1px solid var(--line); overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
-  .section-header { background: var(--accent); color: white; padding: 9px 13px; font-family: 'DM Serif Display', serif; font-size: 13.5px; display: flex; align-items: center; gap: 7px; }
-  .section-num { font-family: 'DM Sans', sans-serif; font-size: 9.5px; font-weight: 600; letter-spacing: 0.08em; opacity: 0.7; background: rgba(255,255,255,0.15); padding: 1px 5px; border-radius: 3px; }
-  .section-total { margin-left: auto; font-family: 'DM Sans', sans-serif; font-size: 10.5px; font-weight: 400; opacity: 0.75; }
+  .section-header { background: var(--accent); color: white; padding: 9px 13px; font-family: Georgia, 'Times New Roman', serif; font-size: 13.5px; display: flex; align-items: center; gap: 7px; }
+  .section-num { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; font-size: 9.5px; font-weight: 600; letter-spacing: 0.08em; opacity: 0.7; background: rgba(255,255,255,0.15); padding: 1px 5px; border-radius: 3px; }
+  .section-total { margin-left: auto; font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; font-size: 10.5px; font-weight: 400; opacity: 0.75; }
   .section-body { padding: 11px 13px 13px; }
   .two-col-body { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
   .tree { list-style: none; }
@@ -27392,8 +27514,7 @@ function _navIaExportHtml(sectionNodes, pageCounts, redirectCounts) {
 <body>
 <div class="page-header">
   <h1>${title}</h1>
-  <div class="sub">Jakala · CMS Migration &amp; Consolidation · ${escapeHtml(dateStr)}</div>
-  <div class="internal-badge">Internal — Not for client distribution</div>
+  <div class="sub">${escapeHtml([(state.projectSettings || {}).clientName, (state.projectSettings || {}).projectName, dateStr].filter(Boolean).join(' · '))}</div>
 </div>
 <div class="stats-strip">
   <span><strong>${sectionNodes.length}</strong> menu${sectionNodes.length !== 1 ? 's' : ''}</span>
@@ -27409,6 +27530,15 @@ ${cardsHtml}
 </div>
 </body>
 </html>`;
+}
+
+/** A menu item pointing at a sitemap HUB (no page of its own, pages below it)
+ *  is not empty — it's net-new content, and the Sitemap tree says NEW. The menu
+ *  item has no children of its own, so the leaf test alone used to badge it
+ *  "empty". */
+function _menuRefIsHub(item, pageCounts) {
+  const n = (state.navNodes || []).find(x => x.id === item.id);
+  return !!n && navNodeContentStatus(n, pageCounts) === 'hub';
 }
 
 // Render a single L2 node (with its subtree) for the export HTML
@@ -27441,7 +27571,7 @@ function _navIaExportItem(node, pageCounts, redirectCounts, depth) {
   const redirectCount = (redirectCounts || {})[node.id] || 0;
   const isLeaf = inMenuChildren.length === 0;
   const isHeader = node.nodeType === 'Header';
-  const isEmpty = isLeaf && directCount === 0 && redirectCount === 0 && !isHeader;
+  const isEmpty = isLeaf && directCount === 0 && redirectCount === 0 && !isHeader && !_menuRefIsHub(node, pageCounts);
   const isRedirectOnly = isLeaf && directCount === 0 && redirectCount > 0 && !isHeader;
   const isAlias = !!node.refNodeId;
 
@@ -27473,30 +27603,33 @@ function _navIaExportItem(node, pageCounts, redirectCounts, depth) {
 // ─── Redirect Chain Detection ─────────────────────────────────────────────────
 
 /** Find Kill pages whose redirect destination is itself a Kill page (a broken chain). */
+/** 301 rules whose destination is itself being redirected (or is going away
+ *  with no destination yet), so a visitor takes two hops or lands on nothing.
+ *  Built on redirectEntryForRow(), so it covers Consolidate and moved pages as
+ *  well as Kill, reads the effective KKE, and skips out-of-scope sites — the
+ *  old version checked Kill→Kill on the raw recommendation over every row. */
 function computeRedirectChains() {
   const urlCol = state.urlColumn || 'Address';
-  const destCol = 'Redirect_Destination';
-  const urlMap = new Map();
-  state.editedRows.forEach((row, i) => {
+  const inScope = new Set(reportRows());
+  const entryByUrl = new Map();
+  state.editedRows.forEach(row => {
+    if (!inScope.has(row)) return;
     const url = String(row[urlCol] || '').trim().toLowerCase();
-    if (url) urlMap.set(url, { row, origIndex: i });
+    if (url) entryByUrl.set(url, redirectEntryForRow(row));
   });
   const chains = [];
   state.editedRows.forEach((row, origIndex) => {
-    const dest = String(row[destCol] || '').trim();
-    if (!dest) return;
-    if (String(row[kkeCol()] || '').trim() !== 'Kill') return;
-    const target = urlMap.get(dest.toLowerCase());
-    if (!target) return;
-    if (String(target.row[kkeCol()] || '').trim() === 'Kill') {
-      const targetDest = String(target.row[destCol] || '').trim();
-      chains.push({
-        origIndex,
-        sourceUrl: row[urlCol],
-        destUrl: dest,
-        issue: targetDest ? `Chains to another redirect (→ ${targetDest})` : 'Redirects to a Kill page with no destination'
-      });
-    }
+    if (!inScope.has(row)) return;
+    const e = redirectEntryForRow(row);
+    if (!e || e.status !== '301') return;
+    const t = entryByUrl.get(e.dest.toLowerCase());
+    if (!t || t.kind === '404') return;
+    chains.push({
+      origIndex,
+      sourceUrl: e.source,
+      destUrl: e.dest,
+      issue: t.kind === 'tbd' ? 'Redirects to a page that is going away with no destination' : `Chains to another redirect (→ ${t.dest})`,
+    });
   });
   return chains;
 }
@@ -27564,7 +27697,7 @@ function checkRedirectChains() {
     body += `
       <h2>Redirect chains</h2>
       <p style="font-size:13px;">
-        ${chains.length} redirect${chains.length !== 1 ? 's point' : ' points'} at another page that is also being killed.
+        ${chains.length} redirect${chains.length !== 1 ? 's point' : ' points'} at a page that is itself being redirected, or is going away with no destination. Point them at the final destination.
         Fix these in the Redirect Editor so each rule lands on a surviving page in one hop.
       </p>` +
       chains.slice(0, 25).map(c => `
@@ -27875,30 +28008,42 @@ function runPreHandoffCheck() {
   const hasNav = !!(state.navNodes && state.navNodes.length);
   const checks = [];
 
-  const unreviewed = state.editedRows.filter(r => !String(r[kkeCol()] || '').trim());
+  // Scope matches the banner every report prints: out-of-scope sites are not
+  // being migrated, so they can't block a handoff. Decisions are effective KKE.
+  const rows = reportRows();
+  const unreviewed = rows.filter(r => !effectiveKke(r));
   checks.push({
     title: 'Every page has a KKE decision',
     items: unreviewed.map(u),
     fix: `Filter the sidebar to "Unreviewed" and assign a status (or run a Suggested-KKE pass).`,
   });
 
-  const noTarget = state.editedRows.filter(rowConsolidateNeedsTarget);
+  const noTarget = rows.filter(rowConsolidateNeedsTarget);
   checks.push({
     title: 'Consolidate pages point to a target',
     items: noTarget.map(u),
     fix: `Use the "Consolidate (no target)" sidebar filter; click each row's Consolidate button to pick a destination.`,
   });
 
-  const deadTarget = state.editedRows.filter(rowConsolidateHasDeadTarget);
+  const deadTarget = rows.filter(rowConsolidateHasDeadTarget);
   checks.push({
     title: 'Consolidate targets are live (not Kill/Exclude)',
     items: deadTarget.map(u),
     fix: `Use the "Consolidate -> Kill/Exclude target" filter; set the target back to Evolve, or repoint the source.`,
   });
 
+  // The rows the redirect CSV ships as "(TBD)": a page is going away and
+  // nothing says where its visitors go. Nothing else caught these before handoff.
+  const tbd = rows.filter(r => { const e = redirectEntryForRow(r); return e && e.kind === 'tbd'; });
+  checks.push({
+    title: 'Pages going away have a redirect destination',
+    items: tbd.map(u),
+    fix: `Open the Redirect Editor (or the Redirect Map Report's "Need a destination" list) and give each a destination, a sitemap placement, or an explicit 404.`,
+  });
+
   const chains = computeRedirectChains();
   checks.push({
-    title: 'No redirect chains (Kill redirecting to a Kill page)',
+    title: 'No redirect chains (a redirect pointing at another redirect)',
     items: chains.map(c => `${escapeHtml(c.sourceUrl)} &rarr; ${escapeHtml(c.destUrl)} <span style="color:var(--text-muted);">(${escapeHtml(c.issue)})</span>`),
     fix: `Open the Redirect Editor and repoint these to a live destination.`,
   });
@@ -27942,16 +28087,12 @@ function runPreHandoffCheck() {
       fix: `Open the Sitemap and click the duplicate-ID warning in the stats bar to auto-renumber.`,
     });
 
-    const pageCounts = _navPageCountsCache();
-    const emptyLeaves = state.navNodes.filter(n =>
-      (pageCounts[n.id] || 0) === 0 &&
-      !(n.children && n.children.length) &&
-      !String(n.phase || '').trim() &&
-      !String(n.url || '').trim() &&
-      !String(n.refNodeId || '').trim()
-    );
+    const pageCounts = reportNavPageCounts();
+    // Same definition as the tree's ○ badge: empty branches count, and Header /
+    // Fragment nodes (which have no page by design) don't.
+    const emptyLeaves = state.navNodes.filter(n => navNodeContentStatus(n, pageCounts) === 'empty');
     checks.push({
-      title: 'No empty sitemap leaves',
+      title: 'No empty sitemap nodes',
       items: emptyLeaves.map(n => escapeHtml(n.breadcrumb || n.label || n.number || '(unnamed)')),
       fix: `Assign pages to these nodes, mark them Net New, give them a Phase, or remove them before handoff.`,
     });
@@ -28208,7 +28349,7 @@ function gatherAssigneeBriefData(role, person) {
   // Live source pages assigned to each sitemap node (exclude Kill/Consolidate — those are going away).
   const pageCounts = {};
   const assignedByNav = new Map();
-  state.editedRows.forEach(r => {
+  reportRows().forEach(r => {   // out-of-scope sites aren't being migrated
     const id = String(r['Sitemap_ID'] || '').trim();
     if (!id) return;
     const eff = String(r[finalKkeCol()] || r[kkeCol()] || '').trim().toLowerCase();
@@ -28221,7 +28362,7 @@ function gatherAssigneeBriefData(role, person) {
   // Pages being consolidated INTO another page, keyed by the master's stable Address identity.
   // Lets each surviving page show how many old pages it absorbs ("merges N").
   const consolidateInto = new Map();
-  state.editedRows.forEach(r => {
+  reportRows().forEach(r => {   // out-of-scope sites aren't being migrated
     if (!rowIsConsolidate(r)) return;
     const tgt = consolidateTargetAddr(r);
     if (!tgt) return;
@@ -28410,7 +28551,7 @@ function assigneeBriefContext(data, title) {
 async function buildAssigneeBriefReport(role, person, templatePath) {
   const data = gatherAssigneeBriefData(role, person);
   if (!data) return; // toast already shown
-  const title = `${data.roleLabel} Brief — ${person}`;
+  const title = `Migration Direction Brief — ${data.roleLabel}: ${person}`;
 
   if (templatePath) {
     const ctx = assigneeBriefContext(data, title);
@@ -28435,111 +28576,87 @@ function showNavCoverageReport() {
   }
 
   const urlCol = state.urlColumn || 'Address';
+  const rows = reportRows();
+  // In-scope, Kill/Consolidate-excluding counts, and the Sitemap tree's own
+  // hub/empty definition — this report used to have its own, which disagreed
+  // with the NEW and ○ badges the auditor sees in the tree.
+  const pageCounts = reportNavPageCounts();
+  const ordered = sortNodesForNavigation(state.navNodes);
 
-  // Canonical, Kill/Consolidate-excluding cache — see _navPageCountsCache().
-  const pageCounts = _navPageCountsCache();
+  const emptyNodes = ordered.filter(n => navNodeContentStatus(n, pageCounts) === 'empty');
+  const hubs = ordered.filter(n => navNodeContentStatus(n, pageCounts) === 'hub');
+  const overloaded = ordered.map(node => ({ node, count: pageCounts[node.id] || 0 }))
+    .filter(x => x.count > 5).sort((a, b) => b.count - a.count);
 
-  // Analyze
-  const emptyLeaves = [];  // nodes with no pages and no children
-  const hubs = [];         // nodes with no pages but children have pages
-  const overloaded = [];   // nodes with many pages
-  const pathMismatches = []; // pages whose URL doesn't match their computed path
-
-  state.navNodes.forEach(node => {
-    // Header / Fragment nodes are intentionally page-less — not coverage gaps.
-    if (node.nodeType === 'Header' || node.nodeType === 'Fragment') return;
-    const count = pageCounts[node.id] || 0;
-    const hasChildren = node.children && node.children.length > 0;
-
-    if (count === 0 && !hasChildren) {
-      emptyLeaves.push(node);
-    } else if (count === 0 && hasChildren) {
-      hubs.push(node);
-    } else if (count > 5) {
-      overloaded.push({ node, count });
-    }
+  // Needs placement — the same set as the sidebar's "Needs placement" filter:
+  // pages being carried forward (Keep/Evolve) with no sitemap home. Kill,
+  // Exclude, Consolidate and fragments were counted as "unassigned" before,
+  // which inflated the gap with pages that should never be placed.
+  const needsPlacement = rows.filter(r => {
+    if (String(r['Sitemap_ID'] || '').trim()) return false;
+    if (isFragmentRow(r)) return false;
+    const eff = effectiveKke(r);
+    return eff === 'Keep' || eff === 'Evolve';
   });
+  const placed = rows.filter(r => String(r['Sitemap_ID'] || '').trim());
 
-  // Check path mismatches
-  state.editedRows.forEach((row, origIndex) => {
-    const navID = row['Sitemap_ID'] || '';
-    if (!navID) return;
+  // Pages staying on the site whose URL doesn't match their sitemap path — i.e.
+  // their URL changes. Pages going away are expected to differ.
+  const pathMismatches = [];
+  placed.forEach(row => {
+    const eff = effectiveKke(row);
+    if (eff === 'Kill' || eff === 'Consolidate' || eff === 'Exclude') return;
     const computed = String(row['Computed Path'] || '').trim();
     const url = String(row[urlCol] || '').trim();
     if (!computed || !url) return;
     try {
-      const u = new URL(url);
-      const urlPath = u.pathname.replace(/\/+$/, '');
-      if (computed && !urlPath.endsWith(computed)) {
-        pathMismatches.push({ origIndex, url, computed });
-      }
+      const urlPath = new URL(url).pathname.replace(/\/+$/, '');
+      if (!urlPath.endsWith(computed)) pathMismatches.push({ url, computed });
     } catch (_) {}
   });
 
-  // Build report
-  const totalNodes = state.navNodes.length;
-  const assignedPages = state.editedRows.filter(r => String(r['Sitemap_ID'] || '').trim()).length;
-  const unassigned = state.editedRows.length - assignedPages;
+  const nodeLabel = (n) => n.breadcrumb || n.label || n.number || '(unnamed)';
+  let body = `
+    <h2>Summary</h2>
+    <div class="stat-row"><span class="stat-label">Sitemap nodes</span><span class="stat-value">${state.navNodes.length.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">Pages placed on the sitemap</span><span class="stat-value">${placed.length.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">Pages being kept that still need a place</span><span class="stat-value"${needsPlacement.length ? ' style="color:#b91c1c;"' : ''}>${needsPlacement.length.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">Net new pages (content to create)</span><span class="stat-value">${hubs.length.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">Empty nodes</span><span class="stat-value">${emptyNodes.length.toLocaleString()}</span></div>
+  `;
 
-  let html = `<div style="padding:16px;font-size:13px;line-height:1.6;">`;
-  html += `<div style="font-weight:600;margin-bottom:12px;">Sitemap Coverage Report</div>`;
-  html += `<div style="margin-bottom:8px;"><strong>${totalNodes}</strong> sitemap nodes | <strong>${assignedPages}</strong> pages assigned | <strong>${unassigned}</strong> unassigned</div>`;
-
-  if (emptyLeaves.length > 0) {
-    html += `<div style="margin-top:12px;font-weight:600;color:var(--kke-kill);">Empty Leaves (${emptyLeaves.length})</div>`;
-    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Nodes with no pages and no children — may need content or removal</div>`;
-    emptyLeaves.slice(0, 20).forEach(n => {
-      html += `<div style="font-size:12px;padding:2px 0;">${escapeHtml(n.breadcrumb || n.label)}</div>`;
-    });
-    if (emptyLeaves.length > 20) html += `<div style="font-size:12px;color:var(--text-muted);">… and ${emptyLeaves.length - 20} more</div>`;
+  if (needsPlacement.length) {
+    body += `<h2>Pages that still need a place (${needsPlacement.length.toLocaleString()})</h2>
+      <p style="font-size:12px;color:#666;">Kept or evolved pages with no sitemap home. Use the <strong>Needs placement</strong> sidebar filter to work through them.</p>`;
+    body += reportTableHtml(['URL', 'Decision'], needsPlacement.map(r => [r[urlCol] || '', effectiveKke(r)]),
+      { cap: 50, moreNote: 'The Needs placement filter lists them all.' });
+  }
+  if (hubs.length) {
+    body += `<h2>Net new pages (${hubs.length.toLocaleString()})</h2>
+      <p style="font-size:12px;color:#666;">Nodes with pages beneath them but none of their own — the client needs to create this content. The Net New Content Brief has the detail.</p>`;
+    body += reportTableHtml(['Node', 'Status', 'Writer'], hubs.map(n => [nodeLabel(n), n.pageStatus || '', n.writeAssignee || '']), { cap: 50 });
+  }
+  if (emptyNodes.length) {
+    body += `<h2>Empty nodes (${emptyNodes.length.toLocaleString()})</h2>
+      <p style="font-size:12px;color:#666;">No page anywhere in the branch. Assign content, give the node a Phase, or remove it.</p>`;
+    body += reportTableHtml(['Node'], emptyNodes.map(n => [nodeLabel(n)]), { cap: 50 });
+  }
+  if (overloaded.length) {
+    body += `<h2>Crowded nodes (${overloaded.length.toLocaleString()})</h2>
+      <p style="font-size:12px;color:#666;">More than 5 live pages on one node — often a sign it should be split, or that some of them are consolidation candidates (Sitemap → Consolidation Candidates…).</p>`;
+    body += reportTableHtml(['Node', 'Pages'], overloaded.map(({ node, count }) => [nodeLabel(node), count]), { cap: 50 });
+  }
+  if (pathMismatches.length) {
+    body += `<h2>URLs that change (${pathMismatches.length.toLocaleString()})</h2>
+      <p style="font-size:12px;color:#666;">Pages staying on the site whose current URL doesn't match their sitemap path. Each needs a redirect — they appear in the Redirect Map Report.</p>`;
+    body += reportTableHtml(['Current URL', 'New path'], pathMismatches.map(m => [m.url, m.computed]), { cap: 50 });
+  }
+  if (!needsPlacement.length && !hubs.length && !emptyNodes.length && !overloaded.length && !pathMismatches.length) {
+    body += `<p style="color:#15803d;">Every node has content and every kept page has a place. No issues found.</p>`;
   }
 
-  if (hubs.length > 0) {
-    html += `<div style="margin-top:12px;font-weight:600;color:var(--kke-evolve);">Net New Pages (${hubs.length})</div>`;
-    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Nodes with children assigned from the audit but no page of their own — client needs to develop content</div>`;
-    hubs.slice(0, 20).forEach(n => {
-      html += `<div style="font-size:12px;padding:2px 0;">${escapeHtml(n.breadcrumb || n.label)}</div>`;
-    });
-    if (hubs.length > 20) html += `<div style="font-size:12px;color:var(--text-muted);">… and ${hubs.length - 20} more</div>`;
-  }
-
-  if (overloaded.length > 0) {
-    html += `<div style="margin-top:12px;font-weight:600;">Overloaded Nodes (${overloaded.length})</div>`;
-    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Nodes with more than 5 pages — consider splitting</div>`;
-    overloaded.forEach(({ node, count }) => {
-      html += `<div style="font-size:12px;padding:2px 0;">${escapeHtml(node.breadcrumb || node.label)} — <strong>${count}</strong> pages</div>`;
-    });
-  }
-
-  if (pathMismatches.length > 0) {
-    html += `<div style="margin-top:12px;font-weight:600;color:var(--kke-kill);">Path Mismatches (${pathMismatches.length})</div>`;
-    html += `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Pages whose URL doesn't end with their computed sitemap path</div>`;
-    pathMismatches.slice(0, 15).forEach(({ url, computed }) => {
-      html += `<div style="font-size:12px;padding:2px 0;"><code>${escapeHtml(computed)}</code> ← ${escapeHtml(url)}</div>`;
-    });
-    if (pathMismatches.length > 15) html += `<div style="font-size:12px;color:var(--text-muted);">… and ${pathMismatches.length - 15} more</div>`;
-  }
-
-  if (emptyLeaves.length === 0 && hubs.length === 0 && overloaded.length === 0 && pathMismatches.length === 0) {
-    html += `<div style="color:var(--kke-keep);margin-top:12px;">All sitemap nodes have page assignments. No issues detected.</div>`;
-  }
-
-  html += `</div>`;
-
-  // Reuse progress modal for display
-  $('progress-body').innerHTML = html;
-  $('btn-progress-export-pdf').classList.remove('hidden');
-  $('btn-progress-export-pdf').textContent = 'Export PDF';
-  _progressModalExporter = exportNavCoveragePdf;
-  $('progress-overlay').classList.remove('hidden');
-  $('progress-modal').classList.remove('hidden');
-}
-
-async function exportNavCoveragePdf(format) {
-  const bodyHtml = $('progress-body').innerHTML;
   const title = 'Sitemap Coverage Report';
-  const defaultName = reportDefaultName(title);
-  await exportReport(title, bodyHtml, defaultName, format || 'pdf');
+  showReport(title, body, (fmt) => exportReport(title, body, reportDefaultName(title), fmt));
 }
 
 // ─── SME Review Workflow ──────────────────────────────────────────────────────
@@ -30424,66 +30541,13 @@ async function exportRedirectMap() {
   // handling, no '404' sentinel handling, and no Fragment guard — see SWEEP_FINDINGS.md.
   resolveRedirectDestinations();
 
-  const urlCol = state.urlColumn || 'Address';
-  const redirectRows = [];
-
-  for (const row of reportRows()) {
-    const sourceUrl = String(row[urlCol] || '').trim();
-    if (!sourceUrl) continue;
-    // Fragments / embeddable content objects have no public URL — never need a redirect.
-    if (isFragmentRow(row)) continue;
-
-    const kke = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
-    const dest = String(row[REDIRECT_DEST_COL] || '').trim();
-
-    if (kke === 'Kill') {
-      if (dest === '404') {
-        redirectRows.push({
-        '_site': String(row[SOURCE_SITE_COL] || ''),
-          'Source URL': sourceUrl,
-          'Destination URL': '(404)',
-          'Status Code': '404',
-          'Reason': 'Page marked Kill — intentional deindex'
-        });
-      } else if (dest) {
-        redirectRows.push({
-        '_site': String(row[SOURCE_SITE_COL] || ''),
-          'Source URL': sourceUrl,
-          'Destination URL': dest,
-          'Status Code': '301',
-          'Reason': 'Page marked Kill'
-        });
-      } else {
-        redirectRows.push({
-        '_site': String(row[SOURCE_SITE_COL] || ''),
-          'Source URL': sourceUrl,
-          'Destination URL': '',
-          'Status Code': '(TBD)',
-          'Reason': 'Kill, no destination set'
-        });
-      }
-      continue;
-    }
-
-    // Consolidate, or a non-Kill page whose URL moved via nav mapping
-    if (dest === '404') {
-      redirectRows.push({
-        '_site': String(row[SOURCE_SITE_COL] || ''),
-        'Source URL': sourceUrl,
-        'Destination URL': '(404)',
-        'Status Code': '404',
-        'Reason': 'Intentional deindex'
-      });
-    } else if (dest) {
-      redirectRows.push({
-        '_site': String(row[SOURCE_SITE_COL] || ''),
-        'Source URL': sourceUrl,
-        'Destination URL': dest,
-        'Status Code': '301',
-        'Reason': kke === 'Consolidate' ? 'Consolidated into another page' : 'URL changed by sitemap mapping'
-      });
-    }
-  }
+  const redirectRows = reportRows().map(redirectEntryForRow).filter(Boolean).map(e => ({
+    '_site': e.site,
+    'Source URL': e.source,
+    'Destination URL': e.kind === '404' ? '(404)' : e.dest,
+    'Status Code': e.status,
+    'Reason': e.reason,
+  }));
 
   if (redirectRows.length === 0) {
     showToast('No redirects needed — no Kill pages or URL mismatches found', 'error');

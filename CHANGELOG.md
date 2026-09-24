@@ -6,6 +6,34 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Redirect Map Report now matches the redirect CSV.** The report derived its own rules, and they could differ from the file you deploy:
+  - It read your recommendation instead of the client's Final KKE.
+  - It took destinations from the sitemap path, ignoring redirects you typed or inherited.
+  - It dropped consolidated pages.
+
+  The report and the Migration Checklist now use the same rules as the CSV and the Migration Tracker, so all four agree. The report lists pages that **still need a destination** first, and splits rules by source site on a merger. Long lists stop at 200 rows with a pointer to the full CSV, so the PDF is no longer hundreds of pages.
+- **Consolidated pages with no destination are flagged.** A Consolidate page with nowhere to redirect used to disappear from every redirect list. It now ships as `(TBD)` like a Kill with no destination. The **Pre-Handoff Check** has a new check for both.
+- **Reports count the client's decision.** The progress dashboard, its PDF, the Executive Summary, SME Review Status, Component Inventory, the redirect chain check and the Pre-Handoff Check counted your recommendation even after an SME had set a Final KKE. They now count the Final KKE. SME percentages can no longer go over 100%.
+- **Reports agree on what counts.**
+  - Audience reports, Content Inventory, Site Consolidation and Cross-Site Duplicates now count content pages. Existing redirects and dead URLs are no longer counted, so their totals match the Executive Summary.
+  - Reports that said out-of-scope sites were excluded now actually exclude them. That covers the Menu Report, Sitemap Coverage, Net New Brief, Audience Debt, redirect chains, Pre-Handoff and the Migration Direction Brief.
+- **One definition of "net new".** The Sitemap tree, its stats bar, the Net New Brief, Sitemap Coverage, the Migration Checklist and the Migration Tracker each counted net-new and empty pages differently. They now all match the tree's NEW and ○ badges. As a result, the stats bar's "empty" count now includes empty branches, not just empty leaves.
+- **Executive Summary.**
+  - Findings now cover every decision, Consolidate and custom states included, each with its percentage.
+  - The orphan-page count only counts content pages being kept.
+  - By Section adds up to the page total.
+- **Smaller fixes:**
+  - The progress dashboard's bar segments are filled in again.
+  - Report previews in the app are styled like the exported file.
+  - Sitemap Coverage uses the standard report layout, and no longer shows the previous report's title.
+  - The Migration Checklist no longer lists URL changes twice, and counts Consolidate on its own line.
+  - Site Consolidation shows pages that belong to no site.
+  - Cross-Site Duplicates names the fields it actually matched.
+  - SME Review Status lists conflicts with URL and SME notes, grouped by owner.
+  - The Menu Report export no longer carries a hard-coded agency name or an "Internal — not for client distribution" badge. Its header shows the client and project names, and it no longer needs Google Fonts.
+
 ## [2.18.1] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Fixed
