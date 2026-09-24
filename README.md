@@ -72,7 +72,7 @@ The View menu mirrors these and adds **Audit Progress…** (`Cmd+P`), zoom contr
 - **View** — view switcher mirrors + Audit Progress + zoom
 - **Project** — Project Settings · Glossary · **Audience Library** · Content Type Registry · Target Spec Library · Component Library · **AI Suggest for Unreviewed** · Run Rubric · Refresh GA KKE · Recompute Suggested KKE · Triage Non-200 Pages
 - **Migration** (export & validation tools) — **Pre-Handoff Check** · Migration Tracker · Export Redirect Map (CSV) · Redirect Chain Check · **Redirect Health Check**
-- **Reports** (all reports, grouped) — Executive Summary · Content Inventory · SME Review Status · Menu Report · Sitemap Coverage · Component Inventory · **Audience Coverage · Audience × Section Matrix · Audience Debt · Site Consolidation Overview · Cross-Site Duplicate Overlap** · Migration Checklist · Net New Content Brief · Redirect Map Report
+- **Reports** (all reports, grouped) — Executive Summary · Content Inventory · SME Review Status · Menu Report · Sitemap Coverage · Component Inventory · **Audience Coverage · Audience × Section Matrix · Site Consolidation Overview · Cross-Site Duplicate Overlap** · Migration Checklist · **Build Status** · Net New Content Brief · Redirect Map Report
 - **SME** — Export · Import · **Compare KKE vs SME** · Resolve Conflicts
 - **Help** — Getting Started · Product Tour · Keyboard Shortcuts (`Cmd+/`) · Transmission Help · Online Documentation · Check for Updates… · Help
 
@@ -427,7 +427,7 @@ Makes audience prioritization and jobs-to-be-done workshop output a real input t
 - **Fill Audiences from Section…** spreads audiences you have already tagged in a section onto that section's untagged pages. Free, no API key, only fills blanks, and reverses with one **Cmd+Z**. A section needs at least 3 tagged pages with an audience on half of them before it may speak for the rest.
 - **Suggest Audiences with AI…** reads each page's title, H1, meta description, URL and section against *your* audience library and proposes who it serves. **It never writes the `Audiences` column** — suggestions land in a review queue grouped by answer, so a few thousand pages collapse into a few dozen judgements. Accept per group, or take them one at a time from the audit bar. Runs on your own Claude API key; Opus 5 / Sonnet 5 / Haiku 4.5.
 - **Feeds Suggested_KKE** as a weighted source, colors the Visual Sitemap and Treemap by Primary Audience, and rides along in the Migration Tracker and SME export.
-- **Three reports** — Audience Coverage, Audience × Section Matrix, Audience Debt.
+- **Reports** — Audience Coverage (with a Risks section) and Audience × Section Matrix.
 
 ### URL Variant Triage
 A crawl is not a content inventory. On a CMS-driven site much of it is alternate views of the same page — pagination, sorting, faceted filters, tracking parameters. **Project → Triage URL Variants…** groups those by the page they point at and disposes of them in bulk.
@@ -507,8 +507,9 @@ Client-facing reports available from the Reports menu, all exportable as PDF or 
 - **Content Inventory by Section** — per-group breakdown with KKE distribution, sample pages, notes counts
 - **SME Review Status** — overall SME completion, per-Content Owner table (assigned/reviewed/%/approved/changed/unresolved), unresolved conflicts list
 - **Redirect Map Report** — summary (total/kill/URL-changed), redirect chain warnings, full redirect tables grouped by type
-- **Net New Content Brief** — list of sitemap nodes that need new content (have child pages assigned but no page of their own), with breadcrumb paths, computed URLs, and child page context
-- **Migration Checklist** — combined summary: pages to retain, remove, update, redirect; URL changes; net new pages; full tables for evolve pages with notes, redirect map, and URL changes
+- **Net New Content Brief** — the writer hand-off: section landing pages, new pages with no source content, and placeholders still to write, grouped by writer and section with status, template and writer brief
+- **Migration Checklist** — the migration on one page: readiness, what happens to the pages, redirect totals, pages to write
+- **Build Status** — Page Status by section and by person (builder / writer / migrator), with blocked pages listed
 - **Component Inventory** — summary stats (pages audited, distinct patterns, one-off count), full per-pattern table (category, complexity, page count, KKE breakdown), one-off pattern flags, and top co-occurring pattern pairs
 - **Content Type Crosswalk** — one row per current content type → renders-as → target (new-CMS) content type → target spec → migration track, with page volume, KKE breakdown, and a "no crosswalk" flag for current types lacking a registry entry. For the CMS architect planning the type migration.
 - **Migration Direction Brief** — a per-person worklist for the Writer, Builder, or Migrator role, grouped by spec, leading with the type-level reference (writer brief / build guidance / migration mapping) and listing the pages that follow it.
