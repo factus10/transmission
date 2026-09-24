@@ -8,6 +8,8 @@ major-version codenames drawn from The Smiths.
 
 ### Fixed
 
+- **Site Domain only accepts one URL.** On a merger it's natural to type both source sites into Site Domain, but every redirect is built by putting a page's path after that value, so every destination came out as `https://a.edu; https://b.edu/about`. That isn't a URL. The field now rejects anything that isn't a single URL and shows why. Opening a project whose saved Site Domain is malformed shows a warning. When you correct it, redirects built on the old value are rewritten to the new one.
+- **App-derived Kill and Consolidate redirects now follow changes.** A destination the app derived for a Kill or Consolidate page stayed frozen once anything it was derived from changed, such as the Site Domain or the page it points at. Keep/Evolve redirects already updated on save; these now do too. **Re-derive from sitemap** also covers unplaced Kill/Consolidate rows, such as retired 301s and consolidated pages; before, it skipped every row without a sitemap assignment. Destinations you typed or picked yourself are still never touched.
 - **Multi-paragraph dialogs no longer run together.** A modal body with more than one paragraph rendered as a single block — most visibly the update dialog, where "Transmission vX is available" ran straight into the release note beneath it. The global CSS reset zeroes every margin and nothing restored it for dialog text.
 
 ## [2.18.0] — "Please, Please, Please, Let Me Get What I Want"

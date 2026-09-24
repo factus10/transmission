@@ -434,7 +434,7 @@
           </label>
           <input id="redirect-search" type="text" class="re-search-input" placeholder="Filter by URL or title…">
           <button id="btn-redirect-find-replace" class="btn btn-sm btn-ghost" title="Find and replace in destination URLs">Find/Replace</button>
-          <button id="btn-redirect-resync-nav" class="btn btn-sm btn-ghost" title="For every Kill/Consolidate row placed on the sitemap, recompute its redirect destination from the current sitemap path. Rows not on the sitemap are left untouched.">Re-derive from sitemap</button>
+          <button id="btn-redirect-resync-nav" class="btn btn-sm btn-ghost" title="Recompute redirect destinations from the current sitemap: every row placed on it, plus unplaced Kill/Consolidate rows whose destination the app derived (from a consolidation target or the live 3xx). Destinations you typed or picked are left untouched.">Re-derive from sitemap</button>
           <span style="flex:1"></span>
           <span id="redirect-editor-stats"></span>
         </div>
@@ -878,8 +878,9 @@
           </div>
           <div class="setting-divider"></div>
           <div class="setting-group">
-            <label class="setting-label">Site domain <span class="setting-hint">(target domain for redirects and sitemap paths)</span></label>
+            <label class="setting-label">Site domain <span class="setting-hint">(the one domain the new site lives on: redirects and sitemap paths are built on it)</span></label>
             <input type="text" id="ps-site-domain" class="setting-input" placeholder="e.g. https://example.com">
+            <div id="ps-site-domain-error" class="setting-error hidden" role="alert"></div>
           </div>
           <div class="setting-group">
             <label class="setting-label">Default redirect destination <span class="setting-hint">(fallback when no sitemap node assigned)</span></label>
