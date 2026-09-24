@@ -77,7 +77,7 @@ The session must use current names everywhere. Common traps:
 | Say this | NOT this | Note |
 |---|---|---|
 | **Content Type** | Page Type | UI label; column is still `Page_Type` under the hood |
-| **Renders as** (Page / Fragment (embeddable) / Generated) | Nature / Content Object | stored value for Fragment is still `Content Object` |
+| **Renders as** (Page / Record / Fragment / Generated) | Nature / Content Object | Record is stored as `Content Object`; Fragment as `Fragment` |
 | **Target Spec Library** | Page Template Library / Pattern Library | sheet is still `PatternLibrary` |
 | **Migration Direction Brief** | Writer / Builder Brief | now covers 3 roles |
 | **Migrator** (3rd role) | — | alongside Builder / Writer |

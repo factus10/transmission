@@ -114,7 +114,7 @@ Quick-toggle chips in the field-bar-top: `SME`, `Migrate`, `Components`
 - **Dead target warning**: amber dot on Consolidate button + `_consolidate-dead-target` filter when target is Kill/Exclude
 
 ### Migration classification (Phase 1)
-- `Content_Nature`: Page / Content Object / Generated
+- `Content_Nature`: Page / Content Object (Record) / Fragment / Generated
 - `Migration_Track`: Scripted / Migrate Records / Configure / Manual Rebuild / Merge / Kill/Redirect
 - Ghost suggestion derived from KKE + Content_Nature (or ContentTypeRegistry fallback)
 - ContentTypeRegistry: per-project Page_Type → { Default_Content_Nature, Default_Migration_Track }
