@@ -94,7 +94,7 @@ The unified Export dialog (`File → Export…`) is a single chooser for: Filter
 Two separate concerns, kept distinct: **what the content *is*** (its type) and **how it *renders*** (page / fragment / generated).
 
 - **Content Type** (the audit field formerly labeled "Page Type") — the data shape of each page. Every page has a *current* content type and maps to a *target* (new-CMS) content type.
-- **Renders as** (the field formerly labeled "Nature") — **Page** (has a URL + breadcrumb, built from a page template), **Fragment (embeddable)** (no URL — embedded into pages via components, e.g. an AEM experience fragment), or **Generated** (a template over a query/feed). Stored values are unchanged for backward compatibility.
+- **Renders as** (the field formerly labeled "Nature") — **Page** (has a URL + breadcrumb, built from a page template), **Record (own page)** (a structured entry such as a news post, event or profile, which still has a URL and needs a redirect), **Fragment (embeddable, no URL)** (embedded into pages via components, e.g. an AEM experience fragment; no redirect, no placement), or **Generated** (a template over a query/feed). Record is stored as `Content Object`, Fragment as `Fragment`. Files from before the split are repaired once on open: crawled `Content Object` rows stay records and uncrawled ones become Fragment.
 - **Target Content Type** — the new-CMS type each page maps to. Auto-filled (blanks only) from the Content Type Registry when Content Type changes; an inline `→ Target` hint appears in the audit bar.
 - **Content Type Registry → crosswalk** (`Project → Content Type Registry`): per current content type, set its **Renders as** default, **Target Content Type**, **→ Target Spec**, and **Migration Track** default. Ships with curated defaults via an opt-in seed banner. The editor surfaces content types **in use without a crosswalk** as fillable rows (split-aware, so `Article / blog post` counts as covered by an `Article` entry) plus a **Show all pick-list types** toggle for unused global dropdown values; untouched surfaced rows aren't saved. Adding a type via the audit-bar **+ New content type…** seeds a registry stub automatically, keeping the global dropdown and the per-project crosswalk in sync.
 
@@ -365,7 +365,7 @@ The audit bar is structured as a **vertical flow of labeled cluster cards**. Eac
 - **Tags** — chip input for multiple labels
 
 **Cluster: MIGRATE (amber, toggleable)** — delivery classification
-- **Nature** — Page / Content Object / Generated
+- **Nature** — Page / Content Object (Record) / Fragment / Generated
 - **Track** — Scripted / Migrate Records / Configure / Manual Rebuild / Merge / Kill/Redirect, with a ghost suggestion derived from KKE + Content_Nature
 
 **Cluster: CMS (green)** — admin links into both CMSes
@@ -621,7 +621,7 @@ The app injects these columns if not already present:
 | `Content_Theme` | Single-select site-specific theme — picks from a per-project library |
 | `GA_KKE_Recommendation` | Analytics-derived Keep/Kill/Evolve (populated by GA KKE feature) |
 | `GA_Score` | Composite 0–1 score backing `GA_KKE_Recommendation` |
-| `Content_Nature` | **Renders as** (UI label): Page / Content Object (= "Fragment (embeddable)") / Generated — how the row surfaces in the new CMS |
+| `Content_Nature` | **Renders as** (UI label): Page / Content Object (= "Record (own page)") / Fragment / Generated — how the row surfaces in the new CMS |
 | `Migration_Track` | Scripted / Migrate Records / Configure / Manual Rebuild / Merge / Kill/Redirect |
 | `Target_Content_Type` | The new-CMS content type this page maps to; auto-filled (blanks only) from the Content Type Registry crosswalk, overridable per row |
 | `Suggested_KKE` | Computed unified suggestion (GA + Rubric; folded in from standalone rubric) |

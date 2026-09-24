@@ -47,7 +47,7 @@ function finalKkeCol() { return 'Final_KKE'; }
 function consolidateTargetAddr(row) {
   return String(row['_ConsolidateTargetId'] || '').trim() || String(row['Consolidate_Into'] || '').trim();
 }
-function isFragmentRow(row) { return String(row['Content_Nature'] || '') === 'Content Object'; }
+function isFragmentRow(row) { return String(row['Content_Nature'] || '') === 'Fragment'; }
 function getRedirectBaseUrl() { return 'https://example.edu'; }
 function reportRows() { return state.editedRows; }
 function normalizeSourceHost(h) { return String(h || '').toLowerCase().replace(/^www\./, ''); }
