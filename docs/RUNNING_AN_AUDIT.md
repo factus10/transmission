@@ -247,6 +247,8 @@ This is what feeds **Reports → Migration Direction Brief…**, which prints on
 
 **Migration menu** — `Pre-Handoff Check…` runs every pre-flight check at once; run it before you ship anything. `Migration Tracker…` is the engineering hand-off. `Export Redirect Map (CSV)…` is the redirect config itself, split per source domain when there's more than one.
 
+**Questions no report answers** — the MCP server (`mcp/server.js`, developer preview) lets Claude Desktop or Claude Code read the project and answer ad hoc questions with real counts: *Kill pages by section, content only; which sections the SME overturned; what serves the Alumni audience*. Read-only, safe beside the open app, and it carries the conventions above (blank = unreviewed, Kill vs Exclude, content vs crawled URLs) so the answers are read the way the reports are. Setup in the User Guide §16.
+
 **File → Package for Handoff…** zips the project with a README for the receiving team. **File → Export…** covers everything else — filtered rows, audit decisions, or a client-facing column subset via export profiles.
 
 ---
@@ -266,6 +268,7 @@ This is what feeds **Reports → Migration Direction Brief…**, which prints on
 | Sitemap / redirects | Content audit only, no migration |
 | Menus | You're handing over an inventory, not an IA |
 | Build planning (step 7) | You're not staffing or sequencing the build |
+| MCP server | Nobody needs answers beyond what the reports give, or the engagement's data terms don't allow the project file near a model |
 
 ---
 
