@@ -6,7 +6,17 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Added
+
+- **SME → Review Consolidations….** Clients often have their own view of which pages overlap and where the content belongs. This list collects every consolidation their Final KKE changed: pages they asked to consolidate that you didn't, pages you consolidated that they kept (their old target is still stored), and pages where you both agreed but the SME left notes. That last group is where "merge it into X instead" usually gets written. For each page you can choose or change the target, confirm it, or clear the target nobody uses anymore. A page leaves the list once you've reviewed it, and comes back if the decision or target changes later. The app offers the review after an SME import or a Resolve session, and the **Consolidate (client changed — review)** sidebar filter finds the same pages.
+
 ### Fixed
+
+- **A client's Final KKE now decides whether a page consolidates.** If you recommended Consolidate and the client's Final KKE said Keep, the page was still treated as consolidating. It kept its target, it kept the redirect that merges it into another page, and it stayed in the consolidate worklists. Every other part of the app already put Final KKE first; consolidation now does too. The reverse case works as well: a client Final of Consolidate over your Keep now counts as a consolidation, and the audit bar asks where it should go.
+
+- **The audit bar shows when the client overrode your call.** The KKE buttons show your recommendation, and nothing showed that a Final KKE had replaced it unless you had turned on the SME fields. A **Final** chip now appears next to the buttons whenever the two differ. Click it to pick the target (for a Consolidate) or to open the Final dropdown. In the sidebar, the KKE badge is struck through when a Final overrides it, and a consolidate flag the client overrode is shown as inactive.
+
+- **The Consolidate button's status dot is back.** The red dot (no target) and the amber dot (target is being killed) inside the Consolidate button disappeared as soon as a file opened, because the buttons were rebuilt without them. Both show again.
 
 - **The Redirect Map Report now matches the redirect CSV.** The report derived its own rules, and they could differ from the file you deploy:
   - It read your recommendation instead of the client's Final KKE.
@@ -14,16 +24,22 @@ major-version codenames drawn from The Smiths.
   - It dropped consolidated pages.
 
   The report and the Migration Checklist now use the same rules as the CSV and the Migration Tracker, so all four agree. The report lists pages that **still need a destination** first, and splits rules by source site on a merger. Long lists stop at 200 rows with a pointer to the full CSV, so the PDF is no longer hundreds of pages.
+
 - **Consolidated pages with no destination are flagged.** A Consolidate page with nowhere to redirect used to disappear from every redirect list. It now ships as `(TBD)` like a Kill with no destination. The **Pre-Handoff Check** has a new check for both.
+
 - **Reports count the client's decision.** The progress dashboard, its PDF, the Executive Summary, SME Review Status, Component Inventory, the redirect chain check and the Pre-Handoff Check counted your recommendation even after an SME had set a Final KKE. They now count the Final KKE. SME percentages can no longer go over 100%.
+
 - **Reports agree on what counts.**
   - Audience reports, Content Inventory, Site Consolidation and Cross-Site Duplicates now count content pages. Existing redirects and dead URLs are no longer counted, so their totals match the Executive Summary.
   - Reports that said out-of-scope sites were excluded now actually exclude them. That covers the Menu Report, Sitemap Coverage, Net New Brief, Audience Debt, redirect chains, Pre-Handoff and the Migration Direction Brief.
+
 - **One definition of "net new".** The Sitemap tree, its stats bar, the Net New Brief, Sitemap Coverage, the Migration Checklist and the Migration Tracker each counted net-new and empty pages differently. They now all match the tree's NEW and ○ badges. As a result, the stats bar's "empty" count now includes empty branches, not just empty leaves.
+
 - **Executive Summary.**
   - Findings now cover every decision, Consolidate and custom states included, each with its percentage.
   - The orphan-page count only counts content pages being kept.
   - By Section adds up to the page total.
+
 - **Smaller fixes:**
   - The progress dashboard's bar segments are filled in again.
   - Report previews in the app are styled like the exported file.

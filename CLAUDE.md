@@ -152,6 +152,7 @@ A `.transmission` file is a **SQLite database** (better-sqlite3, WAL mode) that 
 | main → renderer | `menu-sme-export` | none                                          |
 | main → renderer | `menu-sme-import` | none                                          |
 | main → renderer | `menu-sme-resolve` | none                                         |
+| main → renderer | `menu-consolidate-review` | none — SME → Review Consolidations… (`openConsolidateReviewDialog()`) |
 | renderer → main | `sme-export`       | `{ headers, rows, settings }` → `{ success, filePath?, error? }` — uses ExcelJS for xlsx with data validation |
 | renderer → main | `import-audit-merge-open` | none → `{ filePath, sheetNames }` — opens file picker, returns available sheets |
 | renderer → main | `import-audit-merge-read-sheet` | `{ filePath, sheetName }` → `{ headers, rows }` — reads a specific sheet for merge |
@@ -556,6 +557,37 @@ and its redirect go — so three checks sit on the write path:
   or "Set to Evolve" would silently do nothing on an SME-resolved row. Skipped
   when the target is already `Evolve`, or is itself `Consolidate` (a chain — the
   cycle and dead-target checks already speak to that).
+- **Consolidation follows the EFFECTIVE KKE.** `rowIsConsolidate()` is
+  `effectiveKke(row) === 'Consolidate'` (Final_KKE wins). It used to OR the two
+  columns, so a client Final of Keep over a recommended Consolidate was ignored:
+  the page kept its target, redirect and worklist entries. `rowMentionsConsolidate()`
+  keeps the old OR for the load-time identity migration only (a stored target
+  must not be dropped because a client since overrode it);
+  `rowHasInactiveConsolidateTarget()` names the leftover. `applyConsolidateTarget()`
+  confirms before overriding a non-Consolidate Final, since writing only
+  `KKE_Recommendation` would store a target nothing acts on. `afterEffectiveKkeChange()`
+  runs after a Final dropdown edit: into Consolidate → opens the picker; out of it →
+  offers to clear the now-inactive target. The audit bar's `#final-kke-override`
+  chip (`updateFinalOverrideChip()`) shows a differing Final beside the
+  recommendation-bound buttons, always visible (not behind Show SME fields). The
+  sidebar KKE badge gets `.kke-badge-overridden` in that case, and an overridden
+  target's `C` gets `.row-ind-inactive`.
+- **Consolidation review (SME → Review Consolidations…, `menu-consolidate-review`
+  → `openConsolidateReviewDialog()`)**: `consolidateReviewKindRaw()` returns
+  `client-consolidate` (Final Consolidate, recommendation not), `client-override`
+  (recommendation Consolidate, Final not, target still stored) or `client-notes`
+  (both Consolidate, SME_Notes non-blank). Reviewed rows are recorded in
+  `projectSettings.consolidateReviewed[address] = consolidateReviewSignature(row)`
+  (recommendation + Final + target), so a row comes back when any of those change:
+  approving one decision says nothing about the next. `applyConsolidateTarget()`
+  marks a row reviewed. The `_consolidate-review` filter backs it, and
+  `maybeOfferConsolidateReview()` runs after an SME import (when there are no
+  conflicts left) and after a Resolve session that wrote Final values.
+  `openConsolidatePicker(i, onDone)` takes an optional callback, fired after a
+  target is set or cleared (not on cancel).
+- **The Consolidate status dot is rebuilt by `renderKkeButtons()`.** It used to be
+  static HTML inside the Consolidate button, which that rebuild destroyed on every
+  file open, leaving `els.consolidateIndicator` pointing at a detached node.
 - **Finding the unfinished ones**: the `_consolidate-no-target` filter and the
   Pre-Handoff Check's "Consolidate pages point to a target" check both predate
   this, but a filter buried in a checkbox list is only found by someone who
