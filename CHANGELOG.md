@@ -6,6 +6,8 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.19.0] — "Please, Please, Please, Let Me Get What I Want"
+
 ### Added
 
 - **SME → Review Consolidations….** Clients often have their own view of which pages overlap and where the content belongs. This list collects every consolidation their Final KKE changed: pages they asked to consolidate that you didn't, pages you consolidated that they kept (their old target is still stored), and pages where you both agreed but the SME left notes. That last group is where "merge it into X instead" usually gets written. For each page you can choose or change the target, confirm it, or clear the target nobody uses anymore. A page leaves the list once you've reviewed it, and comes back if the decision or target changes later. The app offers the review after an SME import or a Resolve session, and the **Consolidate (client changed — review)** sidebar filter finds the same pages.
