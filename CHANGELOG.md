@@ -16,6 +16,12 @@ major-version codenames drawn from The Smiths.
 
 - **Audiences on the sitemap.** When your IA already says who each section is for, you can now say it once, on the section. The sitemap node editor has an **Audience** section. A node with none set inherits from its nearest ancestor, so tagging *Academics* covers its whole branch, and a child can override it for its own branch. Node audiences fill **untagged** pages placed under them. Pages you've tagged are never overwritten, and Kill/Exclude pages and out-of-scope sites are skipped. Saving a node asks before filling its branch and shows the page count. Assigning a single page from the audit bar fills it right away. Either way, one Cmd+Z undoes it. **Fill Audiences from Section** now offers the sitemap as the first source. The tree shows which nodes set audiences, and the Visual Sitemap and Treemap can color by the inherited value. Stored in a new `Node_Audiences` column on the Sitemap sheet.
 
+- **Build Status report** (Reports → Build Status…). The weekly progress view of the new site. It shows every page by Page Status, broken down by section and by person (builder, writer, migrator), with blocked pages listed. Until now this only existed inside the Migration Tracker spreadsheet.
+
+- **Key findings and next steps.** Most reports now open with what the numbers mean and what to do about them. This covers the Executive Summary, Content Inventory, SME Review Status, Sitemap Coverage, Audience Coverage, Site Consolidation, the Migration Checklist, the Net New Brief, Build Status and the Redirect Map.
+
+- **An audit-team appendix, left out of client exports.** Page-by-page working lists (untagged pages, pages still needing a place, pages to update, pages with no build status) move to a marked **For the audit team** section at the end of the report. Exports leave it out unless you tick **Include audit-team appendix in export**.
+
 ### Changed
 
 - **Every report has the same header.** It shows client · project, the date the report was generated, and the dates the site was crawled (read from Screaming Frog's **Crawl Timestamp** column when the export has it). The local file name is gone from exported reports. The in-app preview now shows the same header as the exported file.
@@ -31,6 +37,14 @@ major-version codenames drawn from The Smiths.
 - **Audience × Section Matrix shading is clearer.** Cells are shaded by their share of the section's *tagged* pages, and a new **Untagged** column shows what's left. A mostly-untagged section used to look pale everywhere, so the shading tracked tagging progress rather than who the section serves.
 
 - **The Menu Report export** shows the same header details and out-of-scope notice as every other report.
+
+- **Audience Debt is now part of Audience Coverage**, as a **Risks** section, so there's one audience report instead of two with the same preamble. The Audience Debt menu item is gone.
+
+- **Serving four or more audiences is no longer flagged on landing pages.** A program landing page can rightly serve prospective undergraduates, graduate students, executive-education seekers and certificate seekers at once. Only detail pages count: pages with nothing beneath them in the sitemap or URL path. They're described as worth a look, not as a defect.
+
+- **The Migration Checklist is one page.** It gives a ready / not-ready headline, what happens to the pages, redirect totals and pages to write. It points to the Redirect Map Report and the Pre-Handoff Check instead of repeating their tables.
+
+- **The Net New Content Brief is a hand-off to writers.** It's grouped by writer and section, and each page shows its status, template and writer brief. Besides section landing pages, it now lists new pages nothing on the current site maps to, and placeholder pages still to be written. Before, it only listed landing pages, so the pages a sitemap plans from scratch never appeared.
 
 ### Fixed
 
