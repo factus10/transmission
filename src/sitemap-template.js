@@ -49,6 +49,9 @@
     //    localStorage (client mode).
     var S = Object.assign({
       vertDepth: 2, childThresh: 3,
+      // 'center' = parent centred over its children (the long-standing look);
+      // 'left' = parent at the left edge of its children's span.
+      parentAlign: 'center',
       cardWidth: 148, cardHeight: 70,
       hGap: 40, vRow: 60, vlGap: 12, vlDrop: 32, vlHgap: 20, pad: 72,
       cardRadius: 5, cardPadX: 7, cardPadY: 5,
@@ -157,6 +160,12 @@
         showCounts: countMode !== 'off',
         countMode: countMode,
         cardRadius: S.cardRadius, cardPadX: S.cardPadX, cardPadY: S.cardPadY,
+        parentAlign: S.parentAlign,
+        // Connector settings were never reported back, so the host dropped
+        // them: they reset on every reopen and every export (PDF/PNG/Miro is
+        // rebuilt from this state) drew the default grey uniform lines.
+        connectorColor: S.connectorColor, connectorWeight: S.connectorWeight,
+        connectorWidth: S.connectorWidth, connectorMaxWidth: S.connectorMaxWidth,
         colorRules: S.colorRules,
         baseCardStyle: S.baseCardStyle,
         legendLabels: S.legendLabels,
@@ -656,7 +665,9 @@
       var vw = viewport.clientWidth, vh = viewport.clientHeight, margin = 32;
       scale = Math.max(MIN_FIT, fitScaleFor(vw, vh, margin));
       var w = canvasW * scale, h = canvasH * scale;
-      tx = w <= vw - margin * 2 ? (vw - w) / 2 : margin;
+      // Left-aligned trees anchor at the left edge even when they fit — the
+      // point of that layout is the root sitting top-left, not a centred block.
+      tx = (w <= vw - margin * 2 && S.parentAlign !== 'left') ? (vw - w) / 2 : margin;
       ty = h <= vh - margin * 2 ? (vh - h) / 2 : margin;
       applyXform();
     }
@@ -769,7 +780,7 @@
       });
       $('sp-reset').addEventListener('click', function () {
         if (!APP_DEFAULTS) return;
-        ['vertDepth', 'childThresh', 'cardWidth', 'cardHeight', 'hGap', 'vRow', 'vlGap', 'vlDrop', 'vlHgap', 'pad'].forEach(function (kk) {
+        ['vertDepth', 'childThresh', 'parentAlign', 'cardWidth', 'cardHeight', 'hGap', 'vRow', 'vlGap', 'vlDrop', 'vlHgap', 'pad'].forEach(function (kk) {
           if (APP_DEFAULTS[kk] != null) S[kk] = APP_DEFAULTS[kk];
         });
         if (APP_DEFAULTS.colorRules) S.colorRules = JSON.parse(JSON.stringify(APP_DEFAULTS.colorRules));
@@ -825,7 +836,14 @@
           ? 'Each line\u2019s thickness reflects how many pages sit beneath it. A parent\u2019s shared run carries its whole branch; each drop carries that child\u2019s share. The scale is compressed, so small sections stay legible next to a large one. Menus have no page counts, so they draw at the base width.'
           : 'Every line draws at the base width. Switch to <b>By content volume</b> to size each line by the pages beneath it.') +
         ' Both settings carry into the HTML, PDF, PNG and Miro exports.</p>';
-      return '<div class="sp-grid">' + rows + '</div>' +
+      var left = S.parentAlign === 'left';
+      var align =
+        '<div class="sp-grid"><label class="sp-field"><span>Parent position</span>' +
+          '<select data-align="parentAlign">' +
+            '<option value="center"' + (left ? '' : ' selected') + '>Centered over children</option>' +
+            '<option value="left"' + (left ? ' selected' : '') + '>Left-aligned (tree grows right)</option>' +
+          '</select></label></div>';
+      return align + '<div class="sp-grid">' + rows + '</div>' +
         '<p class="sp-help">Layout dimensions in pixels. Changes preview live. ' +
         'Note for Miro export: corner radius exports as square vs rounded only (Miro has no radius setting), ' +
         'and inner padding is app-only \u2014 Miro centres shape text itself.</p>' + conn;
@@ -845,6 +863,11 @@
           if (String(v) !== inp.value) inp.value = String(v);
           S[key] = v; render(); pushState();
         });
+      });
+      var al = document.querySelector('#sp-body [data-align]');
+      if (al) al.addEventListener('change', function () {
+        S.parentAlign = al.value === 'left' ? 'left' : 'center';
+        render(); pushState(); fitToScreen();
       });
       // Connector controls are wired apart from the dimension fields above:
       // those parseInt everything, and base width is deliberately fractional
