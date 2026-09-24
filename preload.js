@@ -133,6 +133,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMenuReportSiteConsolidation:(cb) => ipcRenderer.on('menu-report-site-consolidation', () => cb()),
   onMenuReportCrossSiteDupes:   (cb) => ipcRenderer.on('menu-report-cross-site-dupes',   () => cb()),
   onMenuReportContentCrosswalk: (cb) => ipcRenderer.on('menu-report-content-crosswalk',  () => cb()),
+  onMenuReportBuildStatus:      (cb) => ipcRenderer.on('menu-report-build-status',       () => cb()),
   exportReportHtml:           (payload) => ipcRenderer.invoke('export-report-html', payload),
   exportSitemapPdf:           (payload) => ipcRenderer.invoke('export-sitemap-pdf', payload),
   exportVizPng:               (payload) => ipcRenderer.invoke('export-viz-png', payload),
