@@ -74,7 +74,7 @@ const NAV = [
   { number: '1', id: 'n1', label: 'Home', parentNumber: '', computedPath: '', breadcrumb: 'Home' },
   { number: '1.1', id: 'n2', label: 'Newsroom', parentNumber: '1', computedPath: 'newsroom', breadcrumb: 'Home > Newsroom' },
   { number: '1.1.1', id: 'n3', label: 'Articles', parentNumber: '1.1', computedPath: 'newsroom/articles', breadcrumb: 'Home > Newsroom > Articles', pageStatus: 'In Progress' },
-  { number: '1.2', id: 'n4', label: 'Later', parentNumber: '1', computedPath: 'later', phase: 'Future' }
+  { number: '1.2', id: 'n4', label: 'Later', parentNumber: '1', computedPath: 'later', phase: 'Future', audiences: 'Alumni, Donors' }
 ];
 
 const SETTINGS = {
@@ -412,6 +412,7 @@ describe('sitemap', () => {
     assert.equal(home.netNew, undefined, 'has a page of its own');
     assert.equal(later.netNew, undefined);
     assert.equal(later.phase, 'Future');
+    assert.equal(later.audiences, 'Alumni, Donors', 'node-level audiences (2.19.0) are exposed');
   });
 
   test('depth limits the tree and says what it left out; rootId drills in', () => {

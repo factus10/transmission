@@ -774,7 +774,7 @@ class Project {
     this._navCounts = null;
   }
 
-  /** `live` mirrors _navPageCountsCache() — direct pages, Kill/Consolidate
+  /** `live` mirrors navPageCounts() (behind _navPageCountsCache()) — direct pages, Kill/Consolidate
    *  excluded, since those Sitemap_IDs are redirect hints rather than pages that
    *  will live there. `subtree` mirrors computeSubtreePageCounts() — every row
    *  anywhere beneath, whatever its decision: how much content is under here. */
@@ -825,7 +825,8 @@ class Project {
       const o = compact({
         id: node.id, number: node.number, label: node.label, path: node.computedPath,
         nodeType: type, phase: node.phase, pageStatus: node.pageStatus, externalUrl: node.url,
-        refNodeId: node.refNodeId, builder: node.buildAssignee, writer: node.writeAssignee, migrator: node.migrateAssignee
+        refNodeId: node.refNodeId, builder: node.buildAssignee, writer: node.writeAssignee, migrator: node.migrateAssignee,
+        audiences: node.audiences   // who the section is for (CSV), set on the node itself
       });
       o.livePages = direct;
       o.subtreeRows = subtree.get(node.id) || 0;
