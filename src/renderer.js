@@ -1089,6 +1089,19 @@ function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, she
 
   // Project settings (from KKE_Settings sheet)
   state.projectSettings = projectSettings || {};
+  // One-time: 'Content Object' stops doubling as "fragment". Needs projectSettings (its run-once flag)
+  // loaded above. See splitContentObjectFragments().
+  {
+    const split = splitContentObjectFragments();
+    if (split.records || split.fragments) {
+      const parts = [];
+      if (split.records) parts.push(`${split.records} "Content Object" row${split.records !== 1 ? 's' : ''} now count${split.records === 1 ? 's' : ''} as records with their own page, so they get redirects and sitemap-placement checks (they were treated as embeddable fragments)`);
+      if (split.fragments) parts.push(`${split.fragments} uncrawled row${split.fragments !== 1 ? 's were' : ' was'} set to Fragment, as before`);
+      showToast(parts.join('; ') + '. Save to keep.', 'info');
+      setDirty(true);
+    }
+  }
+
   // Content Theme library is per-project; live in projectSettings.contentThemeLibrary
   state.contentThemeLibrary = Array.isArray(state.projectSettings.contentThemeLibrary)
     ? state.projectSettings.contentThemeLibrary
@@ -1758,6 +1771,50 @@ function lookupContentTypeRegistry(pageType) {
  *  Falls back to the ContentTypeRegistry's defaultMigrationTrack when Content_Nature
  *  is blank. Returns '' when no confident suggestion can be made.
  */
+/** Content_Nature ("Renders as") vocabulary: stored value → label. `short` is
+ *  for tight spots (report cells). The stored values are what every consumer
+ *  keys on; only the labels are for people. */
+const CONTENT_NATURE_OPTIONS = ['', 'Page', 'Content Object', 'Fragment', 'Generated'];
+function contentNatureLabel(v, short = false) {
+  const LONG  = { '': '—', 'Page': 'Page', 'Content Object': 'Record (own page)', 'Fragment': 'Fragment (embeddable, no URL)', 'Generated': 'Generated' };
+  const SHORT = { '': '—', 'Page': 'Page', 'Content Object': 'Record', 'Fragment': 'Fragment', 'Generated': 'Generated' };
+  const key = String(v || '').trim();
+  const map = short ? SHORT : LONG;
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : key;
+}
+
+/** One-time repair for files written before 'Fragment' existed. 'Content Object'
+ *  used to mean BOTH a structured record with its own page (the default registry
+ *  seeds News/Article/Event/Faculty Profile with it, which is why it maps to the
+ *  Migrate Records track) AND — via a later UI label, "Fragment (embeddable)" —
+ *  content with no URL, which isFragmentRow() dropped from redirects, placement
+ *  checks and sitemap coverage. So every news post seeded from the registry was
+ *  silently treated as a fragment (614 rows on a real audit, none of them one).
+ *
+ *  'Content Object' now means record; genuine fragments get 'Fragment'. For
+ *  existing values the crawl is the evidence: a row with a status code was
+ *  reached at its own URL, so it cannot be a no-URL fragment and stays a record.
+ *  A row with no status code keeps its old fragment treatment (→ 'Fragment'),
+ *  so nothing changes for rows the data can't vouch for. Runs once per project
+ *  (projectSettings.contentNatureSplit) — re-running would override a person
+ *  who later set an uncrawled row back to Record.
+ *  Returns { records, fragments } — counts of rows kept / converted. */
+function splitContentObjectFragments() {
+  const out = { records: 0, fragments: 0 };
+  if (state.projectSettings.contentNatureSplit) return out;
+  const sc = statusCodeCol();
+  state.editedRows.forEach((row, origIndex) => {
+    if (String(row['Content_Nature'] || '').trim() !== 'Content Object') return;
+    const crawled = sc && String(row[sc] || '').trim();
+    if (crawled) { out.records++; return; }
+    row['Content_Nature'] = 'Fragment';
+    logChange(origIndex, 'Content_Nature', 'Content Object', 'Fragment');
+    out.fragments++;
+  });
+  state.projectSettings.contentNatureSplit = true;
+  return out;
+}
+
 function deriveMigrationTrackSuggestion(row) {
   if (!row) return '';
   const finalKke = String(row['Final_KKE'] || '').trim();
@@ -1776,6 +1833,7 @@ function deriveMigrationTrackSuggestion(row) {
     const effectiveNature = nature || (registryEntry ? registryEntry.defaultContentNature : '');
     if (effectiveNature === 'Page')           return 'Scripted';
     if (effectiveNature === 'Content Object') return 'Migrate Records';
+    if (effectiveNature === 'Fragment')       return 'Migrate Records';
     if (effectiveNature === 'Generated')      return 'Configure';
     // Keep with no nature info — fall back to registry's track if it has one
     if (registryEntry && registryEntry.defaultMigrationTrack) return registryEntry.defaultMigrationTrack;
@@ -4141,7 +4199,8 @@ function summarizeAudience(row) {
   return jobs ? `${base} · ${jobs} job${jobs !== 1 ? 's' : ''}` : base;
 }
 function summarizeMigrate(row) {
-  const parts = [row['Content_Nature'], row['Migration_Track']]
+  const nature = String(row['Content_Nature'] || '').trim();
+  const parts = [nature ? contentNatureLabel(nature, true) : '', row['Migration_Track']]
     .map(v => String(v || '').trim()).filter(Boolean);
   return parts.join(' · ') || '—';
 }
@@ -7266,7 +7325,7 @@ function reportAudienceDebt() {
 
 function reportContentTypeCrosswalk() {
   const rows = reportRows() || [];
-  const NATURE_LABEL = { '': '—', 'Page': 'Page', 'Content Object': 'Fragment', 'Generated': 'Generated' };
+  const NATURE_LABEL = Object.fromEntries(CONTENT_NATURE_OPTIONS.map(v => [v, contentNatureLabel(v, true)]));
   const registry = (state.projectSettings && Array.isArray(state.projectSettings.contentTypeRegistry))
     ? state.projectSettings.contentTypeRegistry : [];
 
@@ -11742,9 +11801,9 @@ function openContentTypeRegistryEditor() {
   };
   _addStubs(Object.keys(usageCount), 'inuse');
 
-  const NATURE_OPTIONS = ['', 'Page', 'Content Object', 'Generated'];
-  // Display labels (values stay as stored — "Content Object" reads as "Fragment").
-  const NATURE_LABEL = { '': '—', 'Page': 'Page', 'Content Object': 'Fragment (embeddable)', 'Generated': 'Generated' };
+  const NATURE_OPTIONS = CONTENT_NATURE_OPTIONS;
+  // Display labels (values stay as stored — see contentNatureLabel()).
+  const NATURE_LABEL = Object.fromEntries(CONTENT_NATURE_OPTIONS.map(v => [v, contentNatureLabel(v)]));
   const TRACK_OPTIONS  = ['', 'Scripted', 'Migrate Records', 'Configure', 'Manual Rebuild', 'Merge', 'Kill/Redirect'];
 
   const selectHtml = (opts, val, labels) => opts.map(o =>
@@ -25493,11 +25552,14 @@ function resolveConsolidateIntoUrls() {
   refreshAllConsolidateDisplays();
 }
 
-/** A row "renders as" a Fragment (embeddable content object) — no public URL,
- *  so it is excluded from redirects and from nav-placement checks. Stored value
- *  is 'Content Object' (UI label "Fragment (embeddable)"). */
+/** A row "renders as" a Fragment (embeddable, no URL of its own), so it is
+ *  excluded from redirects and from nav-placement checks. Stored value is
+ *  'Fragment'. NOT 'Content Object': that value means a structured record that
+ *  renders as its own page (a news post, an event, a profile) and needs a
+ *  redirect like any page. The two used to share 'Content Object' — see
+ *  splitContentObjectFragments(). */
 function isFragmentRow(row) {
-  return String(row['Content_Nature'] || '').trim() === 'Content Object';
+  return String(row['Content_Nature'] || '').trim() === 'Fragment';
 }
 
 // Shared resolver — the single place that knows how to chase a redirect destination
@@ -26824,7 +26886,7 @@ function buildSourcePagesSheet(sourceOpts) {
   const navById = new Map();
   (state.navNodes || []).forEach(n => navById.set(n.id, n));
 
-  const NATURE_LABEL = { '': '', 'Page': 'Page', 'Content Object': 'Fragment', 'Generated': 'Generated' };
+  const NATURE_LABEL = Object.fromEntries(CONTENT_NATURE_OPTIONS.map(v => [v, v ? contentNatureLabel(v, true) : '']));
   const aoa = [[
     'Source URL', 'Title', 'KKE', 'Final KKE', 'Suggested KKE',
     'Content Type', 'Renders As', 'Target Content Type',

@@ -730,7 +730,7 @@ The report's **Best page** column is the page you'd send someone to for that job
 Migration asks two genuinely different things about a page, and Transmission keeps them apart on purpose:
 
 - **What is it?** Its **Content Type** — the data shape (Article, Faculty Profile, Landing Page). Every page has a *current* type and maps to a *target* (new-CMS) type. This is the **key** everything else hangs off.
-- **How does it render?** Its **Renders as** value — a **Page** (its own URL and breadcrumb), a **Fragment (embeddable)** (no URL of its own; dropped into pages via components, like an AEM experience fragment), or **Generated** (a template drawn over a feed or query).
+- **How does it render?** Its **Renders as** value — a **Page** (its own URL and breadcrumb), a **Record (own page)** (a structured entry, like a news post, event or profile, that still has its own URL), a **Fragment (embeddable, no URL)** (no URL of its own; dropped into pages via components, like an AEM experience fragment), or **Generated** (a template drawn over a feed or query).
 
 The **Content Type Registry** is the crosswalk that ties them together. Define the mapping **once per content type**, and every page of that type inherits it — without ever overwriting something you set by hand.
 
@@ -745,7 +745,7 @@ In the **Classify** cluster, set each page's **Content Type**. A small **→** h
 Open **Project → Content Type Registry…**. Each row maps one current content type to its targets:
 
 - **Content Type** (current) — the key
-- **Renders as** — Page / Fragment (embeddable) / Generated
+- **Renders as** — Page / Record (own page) / Fragment (embeddable, no URL) / Generated
 - **Target Content Type** — what it becomes in the new CMS
 - **→ Target Spec** — the spec it's built from (see [Build & Direction](#14-build--direction))
 - **Migration Track** — its default delivery track
@@ -780,7 +780,7 @@ In the **Migrate** cluster, the **Track** field shows a dashed ghost suggestion 
 
 **The Migrate cluster fields.** These appear once you turn on **Show Migration fields**:
 
-- **Renders as** (stored as `Content_Nature`) — **Page** (a hand-authored standalone), **Content Object** (a record like an article or bio, shown in the UI as "Fragment (embeddable)"), or **Generated** (a system-rendered view over records). This is a *delivery* concern, not a quality one — a page can be Keep and any of the three.
+- **Renders as** (stored as `Content_Nature`) — **Page** (a hand-authored standalone), **Record** (stored as `Content Object`: a structured entry like an article, event or bio that still has its own page), **Fragment** (stored as `Fragment`: embedded into other pages, no URL of its own, so it gets no redirect and needs no sitemap placement), or **Generated** (a system-rendered view over records). Don't confuse Record with Fragment: a news post migrated as a record is still a page people link to, and it needs a redirect like any other page. This is a *delivery* concern, not a quality one — a page can be Keep and any of the three.
 - **Migration Track** — Scripted, Migrate Records, Configure, Manual Rebuild, Merge, or Kill/Redirect. The technical architect owns this call; the registry and the ghost suggestion just give it a head start.
 
 **Fragments have no public URL.** In the Sitemap editor you can set a node's **Node type → Fragment / shared content**. A Fragment keeps a computed path as a repository location but has no menu entry, breadcrumb, or redirect; it shows a `FRAG` badge and sits outside the net-new/empty counts. Anything that renders as a Fragment is automatically left out of the redirect plan (no URL to redirect) and the needs-placement check (a fragment has no sitemap home by design — that's correct, not a gap).
@@ -1806,7 +1806,7 @@ Injected into every file on open if not already present.
 | **Page_Type** | UI "Content Type"; key into the crosswalk |
 | **Content_Theme** | Per-project theme |
 | **Target_Content_Type** | New-CMS content type (auto-filled from the crosswalk) |
-| **Content_Nature** | UI "Renders as": Page / Content Object (Fragment) / Generated |
+| **Content_Nature** | UI "Renders as": Page / Content Object (Record) / Fragment / Generated |
 | **Migration_Track** | Scripted / Migrate Records / Configure / Manual Rebuild / Merge / Kill/Redirect |
 | **Suggested_KKE** | Unified suggestion (GA + Rubric + Audience) |
 | **Suggested_KKE_Sources** | JSON per-source breakdown for the badge |

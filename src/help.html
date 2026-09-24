@@ -458,7 +458,7 @@
 
     <h2 id="content-types">7. Content Types &amp; the Crosswalk</h2>
     <section class="help-section">
-      <p class="help-mm"><strong>Mental model —</strong> three linked attributes: <strong>Content Type</strong> (what it is — the key), <strong>Renders as</strong> (Page / Fragment (embeddable) / Generated), <strong>Target Content Type</strong> (what it becomes). The <strong>Content Type Registry</strong> is the crosswalk — define once per type, every page inherits it, non-destructively.</p>
+      <p class="help-mm"><strong>Mental model —</strong> three linked attributes: <strong>Content Type</strong> (what it is — the key), <strong>Renders as</strong> (Page / Record (own page) / Fragment (embeddable, no URL) / Generated &mdash; a news post migrated as a record is a Record, not a Fragment: it still needs a redirect), <strong>Target Content Type</strong> (what it becomes). The <strong>Content Type Registry</strong> is the crosswalk — define once per type, every page inherits it, non-destructively.</p>
       <ul>
         <li>Set <strong>Content Type</strong> as you audit (a <code>&rarr;</code> hint shows the mapped target). This is the one classification worth doing on the main pass.</li>
         <li><strong>Project &rarr; Content Type Registry…</strong> &mdash; per type: Renders as · Target Content Type · &rarr; Target Spec · Migration Track · Notes. <strong>Seed with defaults</strong> stages ~20. The editor also lists content types <strong>in use without a crosswalk</strong> (flagged &ldquo;in use · no crosswalk&rdquo;) so gaps are fillable; a <strong>Show all pick-list types</strong> toggle adds unused global dropdown values. Untouched surfaced rows aren't saved &mdash; only mapped ones persist.</li>
@@ -776,7 +776,7 @@
         <tr><td><code>Page_Type</code></td><td>Controlled</td><td><strong>Content Type</strong> (UI label) &mdash; broad page category; key into the registry crosswalk</td></tr>
         <tr><td><code>Content_Theme</code></td><td>Controlled</td><td>Per-project content theme</td></tr>
         <tr><td><code>Published_Status</code></td><td>Controlled</td><td>Published / Unpublished / Draft / 404</td></tr>
-        <tr><td><code>Content_Nature</code></td><td>Controlled</td><td><strong>Renders as</strong> (UI label): Page / Content Object (= "Fragment (embeddable)") / Generated</td></tr>
+        <tr><td><code>Content_Nature</code></td><td>Controlled</td><td><strong>Renders as</strong> (UI label): Page / Content Object (= "Record (own page)") / Fragment / Generated</td></tr>
         <tr><td><code>Target_Content_Type</code></td><td>Text</td><td>New-CMS content type; auto-filled (blanks only) from the registry crosswalk, overridable per row</td></tr>
         <tr><td><code>Migration_Track</code></td><td>Controlled</td><td>Scripted / Migrate Records / Configure / Manual Rebuild / Merge / Kill/Redirect</td></tr>
         <tr><td><code>Suggested_KKE</code></td><td>Computed</td><td>Unified suggestion combining GA + Rubric + AI</td></tr>

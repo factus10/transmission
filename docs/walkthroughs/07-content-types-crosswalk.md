@@ -11,7 +11,7 @@ How to classify each page for migration: what type it is *today*, how it should 
 Three linked attributes describe a page's migration shape:
 
 - **Content Type** — what the page *is* in the current CMS (Article, Faculty Profile, Landing Page…). This is the **key**.
-- **Renders as** — how it will *surface* in the new CMS: **Page**, **Fragment (embeddable)**, or **Generated**.
+- **Renders as** — how it will *surface* in the new CMS: **Page**, **Record (own page)** (a structured entry such as a news post that still has its URL), **Fragment (embeddable, no URL)**, or **Generated**.
 - **Target Content Type** — what it maps *to* in the new system.
 
 The **Content Type Registry** is the **crosswalk** that connects them. Define the mapping **once per content type** there, and every page of that type inherits its defaults — non-destructively, so your hand-entered values are never overwritten.
@@ -33,7 +33,7 @@ In the **Classify** cluster, set **Content Type** (its UI label; the underlying 
 | Column | Meaning |
 |---|---|
 | **Content Type** (current) | the key |
-| **Renders as** | default Page / Fragment (embeddable) / Generated |
+| **Renders as** | default Page / Record / Fragment / Generated |
 | **Target Content Type** | the new-CMS type it becomes |
 | **→ Target Spec** | the spec it's built from (Target Spec Library) |
 | **Migration Track** | default delivery track |
@@ -50,7 +50,7 @@ When a row's **Content Type** is set (or changed), the app looks it up in the re
 - Lookup is case-insensitive exact match first; if that misses, it splits compound types (`Article / blog post`) on separators and tries each token — so you don't have to register every variant.
 - The **Migrate** cluster shows **Renders as** and **Track**, plus a **ghost suggestion** next to Track when it's blank (derived from KKE + Renders as) — click to accept.
 
-> **Renders as = Fragment (embeddable)** (stored `Content Object`) marks content with no public URL — it's skipped in redirects and sitemap coverage downstream.
+> **Renders as = Fragment (embeddable, no URL)** marks content with no public URL — it's skipped in redirects and sitemap coverage downstream. A news post, event or profile migrated as a structured record is **Record**, not Fragment: it still has a page and needs a redirect.
 
 ---
 
