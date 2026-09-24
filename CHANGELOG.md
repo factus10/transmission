@@ -6,6 +6,8 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.18.1] — "Please, Please, Please, Let Me Get What I Want"
+
 ### Fixed
 
 - **News posts, events and profiles are no longer treated as fragments.** The Renders as value `Content Object` did double duty. The built-in Content Type Registry uses it for records like news posts, events and faculty profiles, which have their own pages. But the dropdown labeled it "Fragment (embeddable)", and the app treated every such row as having no URL. Those pages were left out of redirects, redirect exports, sitemap-placement checks and Sitemap Coverage (614 rows on one real audit). Renders as now has separate **Record (own page)** and **Fragment (embeddable, no URL)** options, and only Fragment is skipped. Existing projects are repaired once when opened: `Content Object` rows the crawl reached at a URL become records, and rows the crawl never reached keep their fragment treatment. A notice gives the counts.
