@@ -16,6 +16,22 @@ major-version codenames drawn from The Smiths.
 
 - **Audiences on the sitemap.** When your IA already says who each section is for, you can now say it once, on the section. The sitemap node editor has an **Audience** section. A node with none set inherits from its nearest ancestor, so tagging *Academics* covers its whole branch, and a child can override it for its own branch. Node audiences fill **untagged** pages placed under them. Pages you've tagged are never overwritten, and Kill/Exclude pages and out-of-scope sites are skipped. Saving a node asks before filling its branch and shows the page count. Assigning a single page from the audit bar fills it right away. Either way, one Cmd+Z undoes it. **Fill Audiences from Section** now offers the sitemap as the first source. The tree shows which nodes set audiences, and the Visual Sitemap and Treemap can color by the inherited value. Stored in a new `Node_Audiences` column on the Sitemap sheet.
 
+### Changed
+
+- **Every report has the same header.** It shows client · project, the date the report was generated, and the dates the site was crawled (read from Screaming Frog's **Crawl Timestamp** column when the export has it). The local file name is gone from exported reports. The in-app preview now shows the same header as the exported file.
+
+- **Section counts agree everywhere.** The Executive Summary's By Section, Content Inventory and the progress dashboard now read one shared tally.
+  - By Section is now a table showing each decision's share per section.
+  - Content Inventory is now one ranked table of every section, plus a closer look at the ten largest. It used to produce one block per section, which ran to hundreds of pages on a large site.
+
+- **The Audit Progress export uses the standard report layout.** It gains the content / redirect split, the SME review figures, and a by-section table, all of which the dashboard already showed.
+
+- **Long tables are capped.** The Audience × Section Matrix shows the 40 largest sections, and SME Review Status shows the 30 owners furthest from done. The rest are rolled into one row, so totals still add up.
+
+- **Audience × Section Matrix shading is clearer.** Cells are shaded by their share of the section's *tagged* pages, and a new **Untagged** column shows what's left. A mostly-untagged section used to look pale everywhere, so the shading tracked tagging progress rather than who the section serves.
+
+- **The Menu Report export** shows the same header details and out-of-scope notice as every other report.
+
 ### Fixed
 
 - **A client's Final KKE now decides whether a page consolidates.** If you recommended Consolidate and the client's Final KKE said Keep, the page was still treated as consolidating. It kept its target, it kept the redirect that merges it into another page, and it stayed in the consolidate worklists. Every other part of the app already put Final KKE first; consolidation now does too. The reverse case works as well: a client Final of Consolidate over your Keep now counts as a consolidation, and the audit bar asks where it should go.
