@@ -7210,10 +7210,12 @@ function reportAudienceMatrix() {
   const sectionOf = makeSectionResolver();
   scopeRows.forEach(r => {
     const sec = sectionOf(r) || '(unplaced)';
-    if (!sections.has(sec)) sections.set(sec, { total: 0, byAudience: {} });
+    if (!sections.has(sec)) sections.set(sec, { total: 0, tagged: 0, byAudience: {} });
     const s = sections.get(sec);
     s.total++;
-    rowAudiences(r).forEach(a => { s.byAudience[a] = (s.byAudience[a] || 0) + 1; });
+    const auds = rowAudiences(r);
+    if (auds.length) s.tagged++;
+    auds.forEach(a => { s.byAudience[a] = (s.byAudience[a] || 0) + 1; });
   });
 
   // Only audiences actually in use get a column. An unused audience contributes
@@ -7223,7 +7225,12 @@ function reportAudienceMatrix() {
   sections.forEach(s => Object.keys(s.byAudience).forEach(n => inUse.add(n)));
   const audiences = sortedAudienceLibrary()
     .filter(a => a.name !== AUDIENCE_NONE && inUse.has(a.name));
-  const sectionList = [...sections.entries()].sort((a, b) => b[1].total - a[1].total);
+  const allSections = [...sections.entries()].sort((a, b) => b[1].total - a[1].total);
+  // A large multi-site crawl produces hundreds of sections; past the cap they
+  // fold into one row, so the table stays readable and still adds up.
+  const MATRIX_ROWS = 40;
+  const sectionList = allSections.slice(0, MATRIX_ROWS);
+  const restSections = allSections.slice(MATRIX_ROWS);
 
   const headCells = audiences.map(a =>
     `<th style="padding:6px 4px;font-size:10px;text-align:center;vertical-align:bottom;">
@@ -7234,22 +7241,28 @@ function reportAudienceMatrix() {
     const cells = audiences.map(a => {
       const n = s.byAudience[a.name] || 0;
       if (!n) return '<td style="text-align:center;color:#ddd;">·</td>';
-      const share = s.total ? n / s.total : 0;
+      // Share of the section's TAGGED pages. Dividing by every page made a
+      // mostly-untagged section pale across the board, so the shading measured
+      // tagging progress instead of who the section serves — the Untagged
+      // column now carries that separately.
+      const share = s.tagged ? n / s.tagged : 0;
       // Cell weight tracks the share of the section serving that audience, so
       // the dominant audience of each section reads off the page directly.
       const bg = a.color ? hexToRgba(a.color, 0.12 + share * 0.55) : `rgba(37,99,235,${0.12 + share * 0.55})`;
       return `<td style="text-align:center;background:${bg};font-weight:${share > 0.5 ? 700 : 400};">${n}</td>`;
     }).join('');
+    const untagged = s.total - s.tagged;
     return `<tr><td style="white-space:nowrap;"><strong>${escapeHtml(sec)}</strong>
-      <span style="color:#888;font-size:11px;">${s.total}</span></td>${cells}</tr>`;
-  }).join('');
+      <span style="color:#888;font-size:11px;">${s.total}</span></td>${cells}
+      <td style="text-align:center;color:#888;">${untagged ? untagged : '·'}</td></tr>`;
+  }).join('') + (restSections.length ? `<tr><td colspan="${audiences.length + 2}" style="font-size:11px;color:#666;font-style:italic;">…and ${restSections.length.toLocaleString()} smaller section${restSections.length !== 1 ? 's' : ''} (${restSections.reduce((n, [, s]) => n + s.total, 0).toLocaleString()} pages).</td></tr>` : '');
 
   const body = `
     ${audienceReportPreamble(scopeRows)}
     <h2 style="font-size:14px;margin:0 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">Who each section serves</h2>
     <p style="font-size:12px;color:#666;margin:0 0 10px;">
       Rows are top-level site sections; columns are audiences in priority order. Cell shading is the share of
-      that section's pages serving that audience — a dark column far from where you'd expect it is the finding
+      that section's <em>tagged</em> pages serving that audience — a dark column far from where you'd expect it is the finding
       (an Alumni section written mostly for prospective students, say). Counts overlap: one page serving three
       audiences is counted in all three.
     </p>
@@ -7261,9 +7274,10 @@ function reportAudienceMatrix() {
     <div style="overflow-x:auto;">
     <table style="width:100%;border-collapse:collapse;font-size:12px;">
       <thead><tr style="text-align:left;border-bottom:2px solid #ddd;">
-        <th style="padding:6px 8px;">Section</th>${headCells}
+<th style="padding:6px 8px;">Section</th>${headCells}
+        <th style="padding:6px 4px;font-size:10px;text-align:center;vertical-align:bottom;color:#888;">Untagged</th>
       </tr></thead>
-      <tbody>${bodyRows || `<tr><td colspan="${audiences.length + 1}" style="padding:12px;color:#888;">Nothing tagged yet.</td></tr>`}</tbody>
+      <tbody>${bodyRows || `<tr><td colspan="${audiences.length + 2}" style="padding:12px;color:#888;">Nothing tagged yet.</td></tr>`}</tbody>
     </table>
     </div>
   `;
@@ -23857,6 +23871,67 @@ function setupProgress() {
 }
 
 /** Gather all progress stats into a plain object for rendering and PDF export */
+/** Per-section tally — the ONE helper behind the Executive Summary's By Section,
+ *  Content Inventory, and the progress dashboard's By group. Three copies over
+ *  two row sets used to give three different answers to "how big is News?".
+ *  A section is the row's Group. `contentOnly` drops existing redirects and dead
+ *  URLs (3xx/4xx), for the client-facing surfaces. Decisions are the effective
+ *  KKE. Returns { sections: [{name, total, kke, undecided, rows}] (largest
+ *  first), ungrouped: {…same shape}, total }. */
+function sectionTally(rows, { contentOnly = false } = {}) {
+  const scCol = statusCodeCol();
+  const blank = (name) => ({ name, total: 0, kke: {}, undecided: 0, rows: [] });
+  const by = new Map();
+  const ungrouped = blank('');
+  let total = 0;
+  (rows || []).forEach(r => {
+    if (contentOnly && nonContentKind(r, scCol)) return;
+    total++;
+    const g = String(r[groupCol()] || '').trim();
+    let t = ungrouped;
+    if (g) { if (!by.has(g)) by.set(g, blank(g)); t = by.get(g); }
+    t.total++;
+    t.rows.push(r);
+    const k = effectiveKke(r);
+    if (k) t.kke[k] = (t.kke[k] || 0) + 1;
+    else t.undecided++;
+  });
+  const sections = [...by.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, undefined, { numeric: true }));
+  return { sections, ungrouped, total };
+}
+
+/** A ranked section table: pages and each decision's share. Capped at `cap`
+ *  sections plus an "N other sections" row and a "No section" row, so it always
+ *  adds up to the tally's total however many groups a crawl has. */
+function sectionTallyTableHtml(tally, { cap = 25 } = {}) {
+  if (!tally.total) return '';
+  const all = [...tally.sections, tally.ungrouped];
+  const present = new Set();
+  all.forEach(t => Object.keys(t.kke).forEach(k => present.add(k)));
+  const states = allKkeStates().filter(st => present.has(st))
+    .concat([...present].filter(k => !allKkeStates().includes(k)));   // rogue values stay visible
+  const anyUndecided = all.some(t => t.undecided);
+  const pct = (n, of) => (!n ? '—' : (n / of * 100 < 1 ? '<1%' : Math.round(n / of * 100) + '%'));
+  const row = (label, t, style = '') => `<tr${style}><td>${escapeHtml(label)}</td><td style="text-align:right;">${t.total.toLocaleString()}</td>` +
+    states.map(st => `<td style="text-align:right;">${pct(t.kke[st] || 0, t.total)}</td>`).join('') +
+    (anyUndecided ? `<td style="text-align:right;">${pct(t.undecided, t.total)}</td>` : '') + '</tr>';
+  let html = '<table><tr><th>Section</th><th style="text-align:right;">Pages</th>' +
+    states.map(st => `<th style="text-align:right;color:${resolvedKkeColor(st)};">${escapeHtml(st)}</th>`).join('') +
+    (anyUndecided ? '<th style="text-align:right;">Undecided</th>' : '') + '</tr>';
+  tally.sections.slice(0, cap).forEach(t => { html += row(t.name, t); });
+  const rest = tally.sections.slice(cap);
+  if (rest.length) {
+    const merged = { total: 0, kke: {}, undecided: 0 };
+    rest.forEach(t => {
+      merged.total += t.total; merged.undecided += t.undecided;
+      Object.entries(t.kke).forEach(([k, n]) => { merged.kke[k] = (merged.kke[k] || 0) + n; });
+    });
+    html += row(`${rest.length} other section${rest.length !== 1 ? 's' : ''}`, merged, ' style="color:#666;"');
+  }
+  if (tally.ungrouped.total) html += row('No section assigned', tally.ungrouped, ' style="color:#666;"');
+  return html + '</table>';
+}
+
 function gatherProgressStats() {
   // reportRows(), not state.editedRows. Its own contract is "excluded from every
   // report denominator — otherwise a site that isn't being migrated still drags
@@ -23874,7 +23949,6 @@ function gatherProgressStats() {
   BUILTIN_KKE.forEach(s => kkeCounts[s] = 0);
   state.customKkeStates.forEach(s => kkeCounts[s.label] = 0);
   let unreviewed = 0, flagged = 0, tagged = 0, noted = 0;
-  const groupCounts = {};
 
   let smeReviewed = 0, smeApproved = 0, smeChanged = 0, finalResolved = 0, smeTotal = 0;
 
@@ -23885,12 +23959,10 @@ function gatherProgressStats() {
   // pick the one they mean instead of a single number silently standing for
   // both — see isNonContentRow().
   const scCol = statusCodeCol();
-  // Sections are tallied twice on purpose. The dashboard's "By group" belongs to
-  // the auditor and matches the auditor's own all-rows total; the Executive
-  // Summary's "By Section" says "N pages" to a client and must therefore agree
-  // with the content-page figure above it. One shared tally would contradict
-  // whichever surface it wasn't built for.
-  const contentGroupCounts = {};
+  // Sections are tallied twice on purpose (both through sectionTally(), below).
+  // The dashboard's "By group" belongs to the auditor and matches the auditor's
+  // own all-rows total; the Executive Summary's "By Section" says "N pages" to a
+  // client and must therefore agree with the content-page figure above it.
   const contentKkeCounts = {};
   BUILTIN_KKE.forEach(s => contentKkeCounts[s] = 0);
   state.customKkeStates.forEach(s => contentKkeCounts[s.label] = 0);
@@ -23914,8 +23986,6 @@ function gatherProgressStats() {
       contentTotal++;
       if (!kke) contentUnreviewed++;
       else contentKkeCounts[kke] = (contentKkeCounts[kke] || 0) + 1;
-      const cg = String(row[groupCol()] || '').trim();
-      if (cg) contentGroupCounts[cg] = (contentGroupCounts[cg] || 0) + 1;
     }
     // Only a blank KKE is unreviewed — matching the sidebar's _unreviewed filter.
     // A rogue (typo/undefined) value is a decision someone made; tally it under its
@@ -23925,8 +23995,6 @@ function gatherProgressStats() {
     if (String(row['_Flagged'] || '').trim() === '1') flagged++;
     if (String(row[tagsCol()] || '').trim()) tagged++;
     if (String(row[notesCol()] || '').trim()) noted++;
-    const g = String(row[groupCol()] || '').trim();
-    if (g) groupCounts[g] = (groupCounts[g] || 0) + 1;
 
     // The SME-reviewable set is rows the auditor has made a call on. Counting
     // SME answers and Final values over that same set keeps every SME
@@ -23946,8 +24014,12 @@ function gatherProgressStats() {
 
   const reviewed = total - unreviewed;
   const pct = total > 0 ? Math.round((reviewed / total) * 100) : 0;
-  const groups = Object.entries(groupCounts).sort((a, b) => b[1] - a[1]);
-  const contentGroups = Object.entries(contentGroupCounts).sort((a, b) => b[1] - a[1]);
+  // Both section readings come from the shared sectionTally(), so the
+  // dashboard, the Executive Summary and Content Inventory agree by construction.
+  const sectionsAll = sectionTally(rows);
+  const sectionsContent = sectionTally(rows, { contentOnly: true });
+  const groups = sectionsAll.sections.map(t => [t.name, t.total]);
+  const contentGroups = sectionsContent.sections.map(t => [t.name, t.total]);
   const smePct = smeTotal > 0 ? Math.round((smeReviewed / smeTotal) * 100) : 0;
   const finalPct = smeTotal > 0 ? Math.round((finalResolved / smeTotal) * 100) : 0;
 
@@ -23958,7 +24030,7 @@ function gatherProgressStats() {
   return { total, reviewed, pct, kkeCounts, unreviewed, flagged, tagged, noted, groups,
            smeTotal, smeReviewed, smePct, smeApproved, smeChanged, finalResolved, finalPct,
            contentTotal, contentKkeCounts, contentUnreviewed, contentReviewed, contentPct,
-           contentGroups, nonContent, nonContentRedirects, nonContentGone };
+           contentGroups, sectionsContent, nonContent, nonContentRedirects, nonContentGone };
 }
 
 /** KKE color map (CSS variable values resolved at call time) */
@@ -24091,107 +24163,46 @@ function closeProgressDashboard() {
   $('progress-body').style.height = '';
 }
 
+/** The progress dashboard's export. Built on the shared report shell (header,
+ *  scope banner, styling) like every other report — it used to hand-build its
+ *  own document, which printed the local file name, left out the content split
+ *  and the SME section the dashboard shows, and wrote its own scope banner. */
 async function exportProgressPdf(format) {
   const stats = gatherProgressStats();
   if (stats.total === 0) { showToast('No data to export', 'error'); return; }
 
-  const ps = state.projectSettings;
-  const clientName = ps.clientName || '';
-  const projectName = ps.projectName || '';
-  const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  // Auditor progress covers every row (a redirect still has to be triaged); the
+  // content split underneath says how much of that is actual content.
+  let body = `
+    <h2>Progress</h2>
+    <div class="stat-row"><span class="stat-label">URLs in the audit</span><span class="stat-value">${stats.total.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">Decided</span><span class="stat-value">${stats.reviewed.toLocaleString()} (${stats.pct}%)</span></div>
+    ${stats.nonContent ? `
+    <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Content pages</span><span class="stat-value">${stats.contentTotal.toLocaleString()} — ${stats.contentReviewed.toLocaleString()} decided (${stats.contentPct}%)</span></div>
+    <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Existing redirects (3xx)</span><span class="stat-value">${stats.nonContentRedirects.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Not found / gone (4xx)</span><span class="stat-value">${stats.nonContentGone.toLocaleString()}</span></div>` : ''}
+    ${kkeBarHtml(stats.kkeCounts, stats.total)}
+    ${kkeStatsRows(stats.kkeCounts, stats.total)}
+  `;
 
-  // Build bar segments
-  let barHtml = '';
-  kkeLabelsFor(stats.kkeCounts).forEach(label => {
-    const count = stats.kkeCounts[label] || 0;
-    const widthPct = (count / stats.total * 100).toFixed(1);
-    const bgColor = resolvedKkeBgColor(label);
-    const borderColor = resolvedKkeColor(label);
-    barHtml += `<div style="width:${widthPct}%;background:${bgColor};border-right:1px solid ${borderColor};height:100%"></div>`;
-  });
-
-  // Build status rows
-  let statusHtml = '';
-  kkeLabelsFor(stats.kkeCounts).forEach(label => {
-    const color = resolvedKkeColor(label);
-    statusHtml += `<tr><td>${escapeHtml(label)}</td><td style="color:${color};font-weight:600;text-align:right">${stats.kkeCounts[label] || 0}</td></tr>`;
-  });
-  statusHtml += `<tr><td>Unreviewed</td><td style="text-align:right">${stats.unreviewed}</td></tr>`;
-
-  // Build group rows
-  let groupHtml = '';
-  if (stats.groups.length > 0) {
-    groupHtml = '<h3 style="margin:18px 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#888">By Group</h3><table style="width:100%;border-collapse:collapse">';
-    stats.groups.forEach(([g, c]) => {
-      groupHtml += `<tr><td>${escapeHtml(g)}</td><td style="text-align:right;font-weight:600">${c}</td></tr>`;
-    });
-    groupHtml += '</table>';
+  if (stats.smeReviewed > 0 || stats.finalResolved > 0) {
+    body += `
+      <h2>SME review</h2>
+      <div class="stat-row"><span class="stat-label">SME reviews received</span><span class="stat-value">${stats.smeReviewed.toLocaleString()} of ${stats.smeTotal.toLocaleString()} (${stats.smePct}%)</span></div>
+      <div class="stat-row"><span class="stat-label">Approved</span><span class="stat-value">${stats.smeApproved.toLocaleString()}</span></div>
+      <div class="stat-row"><span class="stat-label">Changes requested</span><span class="stat-value">${stats.smeChanged.toLocaleString()}</span></div>
+      <div class="stat-row"><span class="stat-label">Final decisions set</span><span class="stat-value">${stats.finalResolved.toLocaleString()} (${stats.finalPct}%)</span></div>
+    `;
   }
 
-  // Same disclosure the reports get from showReport() — this PDF is a client
-  // deliverable and must say what it is not counting.
-  const scopeInfo = outOfScopeSiteInfo();
-  const scopeNote = (scopeInfo && scopeInfo.rows)
-    ? `<div style="background:#fffbeb;border-left:3px solid #d97706;padding:9px 12px;font-size:12px;margin:16px 0 0;">
-         <strong>${scopeInfo.rows} page${scopeInfo.rows !== 1 ? 's are' : ' is'} excluded from every figure below.</strong>
-         ${escapeHtml(scopeInfo.sites.join(', '))} ${scopeInfo.sites.length !== 1 ? 'are' : 'is'} marked out of scope.
-       </div>`
-    : '';
-
-  const pdfHtml = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><style>
-  body { font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; color: #222; margin: 40px; line-height: 1.5; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  h2 { font-size: 14px; color: #666; font-weight: 400; margin: 0 0 24px; }
-  h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #888; margin: 18px 0 8px; }
-  .meta { font-size: 13px; color: #555; margin-bottom: 4px; }
-  table { width: 100%; border-collapse: collapse; }
-  td { padding: 6px 0; font-size: 13px; border-bottom: 1px solid #eee; }
-  td:last-child { font-family: 'SF Mono', 'Menlo', monospace; font-size: 13px; }
-  .bar-wrap { height: 20px; background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; overflow: hidden; display: flex; margin: 10px 0 16px; }
-  .summary-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 14px; border-bottom: 1px solid #eee; }
-  .summary-value { font-weight: 600; font-family: 'SF Mono', 'Menlo', monospace; }
-  .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #ddd; font-size: 11px; color: #999; }
-</style></head><body>
-  <h1>Content Audit Progress Report</h1>
-  <h2>${clientName ? escapeHtml(clientName) + (projectName ? ' — ' + escapeHtml(projectName) : '') : (projectName ? escapeHtml(projectName) : '')}</h2>
-  ${clientName || projectName ? '' : '<div style="margin-bottom:24px"></div>'}
-  <div class="meta">Report date: ${dateStr}</div>
-  <div class="meta">File: ${escapeHtml(state.filePath ? state.filePath.split('/').pop() : 'Unknown')}</div>
-
-  ${scopeNote}
-  <div style="margin-top:20px">
-    <div class="summary-row"><span>Total pages</span><span class="summary-value">${stats.total}</span></div>
-    <div class="summary-row"><span>Reviewed</span><span class="summary-value">${stats.reviewed} (${stats.pct}%)</span></div>
-  </div>
-
-  <div class="bar-wrap">${barHtml}</div>
-
-  <h3>By Status</h3>
-  <table>${statusHtml}</table>
-
-  <h3>Other</h3>
-  <table>
-    <tr><td>Flagged</td><td style="text-align:right;font-weight:600">${stats.flagged}</td></tr>
-    <tr><td>Tagged</td><td style="text-align:right;font-weight:600">${stats.tagged}</td></tr>
-    <tr><td>With notes</td><td style="text-align:right;font-weight:600">${stats.noted}</td></tr>
-  </table>
-
-  ${groupHtml}
-
-  <div class="footer">Generated by Transmission</div>
-</body></html>`;
-
-  const baseName = [clientName, projectName, 'audit-progress'].filter(Boolean).join('-').replace(/\s+/g, '-').toLowerCase();
-  if (format === 'html') {
-    const result = await window.electronAPI.exportReportHtml({ html: pdfHtml, defaultName: baseName + '.html' });
-    if (result.success) showToast('HTML saved');
-    else if (result.error !== 'Cancelled') showToast('Export failed: ' + result.error, 'error');
-  } else {
-    const result = await window.electronAPI.exportProgressPdf({ html: pdfHtml, defaultName: baseName + '.pdf' });
-    if (result.success) showToast('PDF saved');
-    else if (result.error !== 'Cancelled') showToast('Export failed: ' + result.error, 'error');
+  const byGroup = sectionTally(reportRows());
+  if (byGroup.sections.length) {
+    body += `<h2>By section</h2>`;
+    body += sectionTallyTableHtml(byGroup, { cap: 25 });
   }
+
+  const title = 'Audit Progress';
+  await exportReport(title, body, reportDefaultName(title), format || 'pdf');
 }
 
 // ─── Dynamic KKE buttons ──────────────────────────────────────────────────────
@@ -26011,18 +26022,45 @@ const REPORT_CSS = `
   @media print { .report-wrap { padding: 16px; } }
 `;
 
-function buildReportShell(title, bodyHtml) {
-  const ps = state.projectSettings;
+/** The crawl's date range, from Screaming Frog's `Crawl Timestamp` column
+ *  ("2026-05-01 10:22:33"). This is the real "data as of" for a report: the
+ *  audit decisions are always current (a report reflects every unsaved edit),
+ *  but the page data is only as fresh as the crawl. '' when the export has no
+ *  timestamp column. */
+function crawlDateRangeText() {
+  const col = (state.headers || []).find(h => /^crawl timestamp$/i.test(String(h).trim()));
+  if (!col) return '';
+  let lo = '', hi = '';
+  (state.editedRows || []).forEach(r => {
+    const d = String(r[col] || '').trim().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+    if (!lo || d < lo) lo = d;
+    if (!hi || d > hi) hi = d;
+  });
+  if (!lo) return '';
+  const fmt = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  return lo === hi ? fmt(lo) : `${fmt(lo)} – ${fmt(hi)}`;
+}
+
+/** The meta lines under a report's title — shared by the export shell and the
+ *  in-app preview, so what you review is what you send. The local file name
+ *  used to be printed here: it meant nothing to a client and exposed internal
+ *  naming. */
+function reportHeaderMetaHtml() {
+  const ps = state.projectSettings || {};
   const clientProject = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
   const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  const fileName = state.filePath ? state.filePath.split('/').pop() : '';
+  const crawl = crawlDateRangeText();
+  return (clientProject ? `<p class="report-meta">${escapeHtml(clientProject)}</p>` : '') +
+    `<p class="report-date">Generated ${dateStr}${crawl ? ' · Site crawled ' + escapeHtml(crawl) : ''}</p>`;
+}
 
+function buildReportShell(title, bodyHtml) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
 <style>${REPORT_CSS}</style></head><body>
 <div class="report-wrap">
   <h1>${escapeHtml(title)}</h1>
-  ${clientProject ? `<p class="report-meta">${escapeHtml(clientProject)}</p>` : ''}
-  <p class="report-date">${dateStr}${fileName ? ' · ' + escapeHtml(fileName) : ''}</p>
+  ${reportHeaderMetaHtml()}
   ${bodyHtml}
   <div class="footer">Generated by Transmission</div>
 </div></body></html>`;
@@ -26053,7 +26091,9 @@ function scopeDisclosureHtml() {
   </div>`;
 }
 
-function showReport(title, bodyHtml, exporterFn) {
+/** `opts.rawShell` — a template-rendered report that draws its own cover and
+ *  header; don't add the standard one on top (matches exportReport's option). */
+function showReport(title, bodyHtml, exporterFn, opts = {}) {
   bodyHtml = scopeDisclosureHtml() + bodyHtml;
   // Report bodies are built with colors hardcoded for a white background
   // (they're designed to double as the exported HTML/PDF, which always
@@ -26063,7 +26103,7 @@ function showReport(title, bodyHtml, exporterFn) {
   // illegible. See .report-preview-surface in styles.css. REPORT_TOKENS pins
   // the same print palette the export gets, so the bodies that do use design
   // tokens don't resolve them against the app's live theme here.
-  $('progress-body').innerHTML = `<div class="report-preview-surface" style="${REPORT_TOKENS}padding:16px;font-size:13px;line-height:1.6;">${bodyHtml}</div>`;
+  $('progress-body').innerHTML = `<div class="report-preview-surface" style="${REPORT_TOKENS}padding:16px;font-size:13px;line-height:1.6;">${opts.rawShell ? '' : reportHeaderMetaHtml()}${bodyHtml}</div>`;
   $('btn-progress-export-pdf').classList.remove('hidden');
   $('btn-progress-export-html').classList.remove('hidden');
   $('btn-progress-export-pdf').textContent = 'PDF';
@@ -26229,25 +26269,11 @@ function reportExecutiveSummary() {
     `;
   }
 
-  // Content groups, so the per-section counts add up to the content-page figure
-  // in the Overview rather than to the raw crawl.
-  // Capped, with the remainder and ungrouped pages named, so the list always
-  // adds up to the content total instead of silently falling short of it.
-  if (stats.contentGroups.length > 0) {
-    const SHOW = 25;
+  // Content pages per section with each decision's share, from the same tally
+  // Content Inventory uses — capped, and always adding up to the content total.
+  if (stats.sectionsContent.sections.length > 0) {
     body += `<h2>By Section</h2>`;
-    stats.contentGroups.slice(0, SHOW).forEach(([g, c]) => {
-      body += `<div class="stat-row"><span class="stat-label">${escapeHtml(g)}</span><span class="stat-value">${c.toLocaleString()} pages</span></div>`;
-    });
-    const rest = stats.contentGroups.slice(SHOW);
-    if (rest.length) {
-      const n = rest.reduce((sum, [, c]) => sum + c, 0);
-      body += `<div class="stat-row"><span class="stat-label">${rest.length} other section${rest.length !== 1 ? 's' : ''}</span><span class="stat-value">${n.toLocaleString()} pages</span></div>`;
-    }
-    const grouped = stats.contentGroups.reduce((sum, [, c]) => sum + c, 0);
-    if (cTotal > grouped) {
-      body += `<div class="stat-row"><span class="stat-label">No section assigned</span><span class="stat-value">${(cTotal - grouped).toLocaleString()} pages</span></div>`;
-    }
+    body += sectionTallyTableHtml(stats.sectionsContent, { cap: 25 });
   }
 
   const title = 'Executive Summary';
@@ -26263,72 +26289,42 @@ function reportContentInventory() {
 
   // Content pages only, matching the Executive Summary: a client reading both
   // should see the same page total. Redirects and dead URLs are named in the
-  // summary, not counted as inventory.
-  const scCol = statusCodeCol();
+  // summary, not counted as inventory. Sections come from the shared
+  // sectionTally(), so this and the Executive Summary's By Section agree.
   const all = reportRows();
-  const rows_ = all.filter(r => !nonContentKind(r, scCol));
-  const nonContent = all.length - rows_.length;
-
-  // Group rows
-  const groups = {};
-  const ungrouped = [];
-  rows_.forEach(row => {
-    const g = String(row[groupCol()] || '').trim();
-    if (g) {
-      if (!groups[g]) groups[g] = [];
-      groups[g].push(row);
-    } else {
-      ungrouped.push(row);
-    }
-  });
+  const tally = sectionTally(all, { contentOnly: true });
+  const nonContent = all.length - tally.total;
 
   let body = `<h2>Summary</h2>
-    <div class="stat-row"><span class="stat-label">Content pages</span><span class="stat-value">${rows_.length.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">Content pages</span><span class="stat-value">${tally.total.toLocaleString()}</span></div>
     ${nonContent ? `<div class="stat-row"><span class="stat-label">Not counted: redirects and dead URLs (3xx / 4xx)</span><span class="stat-value">${nonContent.toLocaleString()}</span></div>` : ''}
-    <div class="stat-row"><span class="stat-label">Groups</span><span class="stat-value">${Object.keys(groups).length}</span></div>
-    <div class="stat-row"><span class="stat-label">Ungrouped pages</span><span class="stat-value">${ungrouped.length}</span></div>
+    <div class="stat-row"><span class="stat-label">Sections</span><span class="stat-value">${tally.sections.length.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">Pages with no section</span><span class="stat-value">${tally.ungrouped.total.toLocaleString()}</span></div>
+
+    <h2>Sections</h2>
+    <p style="font-size:12px;color:#666;">Largest first. Each decision column is that share of the section's pages.</p>
+    ${sectionTallyTableHtml(tally, { cap: 50 })}
   `;
 
-  const sortedGroups = Object.entries(groups).sort((a, b) => b[1].length - a[1].length);
-
-  sortedGroups.forEach(([name, rows]) => {
-    const kkeCounts = {};
-    allKkeStates().forEach(s => kkeCounts[s] = 0);
-    let noted = 0;
-    rows.forEach(r => {
-      const k = effectiveKke(r);
-      // Tally any non-blank value, including a rogue (typo'd / removed) state —
-      // kkeBarHtml/kkeStatsRows iterate kkeLabelsFor() and surface it. The old
-      // hasOwnProperty gate dropped rogue rows, so a section's bar and stat rows
-      // under-totalled against its own "(N pages)" heading.
-      if (k) kkeCounts[k] = (kkeCounts[k] || 0) + 1;
-      if (String(r[notesCol()] || '').trim()) noted++;
+  // A closer look at the largest sections — one block per section used to run
+  // to hundreds of pages on a large site. The rest are one click away: filter
+  // the sidebar by Group.
+  const DETAIL = 10;
+  if (tally.sections.length) {
+    body += `<h2 class="page-break">The ${Math.min(DETAIL, tally.sections.length)} largest sections</h2>`;
+    tally.sections.slice(0, DETAIL).forEach(t => {
+      let noted = 0;
+      t.rows.forEach(r => { if (String(r[notesCol()] || '').trim()) noted++; });
+      body += `<h3>${escapeHtml(t.name)} (${t.total.toLocaleString()} pages)</h3>`;
+      body += kkeBarHtml(t.kke, t.total);
+      body += kkeStatsRows(t.kke, t.total);
+      if (noted > 0) body += `<div class="stat-row"><span class="stat-label">Pages with notes</span><span class="stat-value">${noted.toLocaleString()}</span></div>`;
+      body += reportTableHtml(['Title', 'URL', 'Decision'], t.rows.map(r => [r[titleCol] || '', r[urlCol] || '', effectiveKke(r)]),
+        { cap: 5, moreNote: `Filter the sidebar by the “${t.name}” group for the full list.` });
     });
-
-    body += `<h2>${escapeHtml(name)} (${rows.length} pages)</h2>`;
-    body += kkeBarHtml(kkeCounts, rows.length);
-    body += kkeStatsRows(kkeCounts, rows.length);
-    if (noted > 0) body += `<div class="stat-row"><span class="stat-label">Pages with notes</span><span class="stat-value">${noted}</span></div>`;
-
-    // Sample pages (first 5)
-    const sample = rows.slice(0, 5);
-    body += `<table><tr><th>Title</th><th>URL</th><th>KKE</th></tr>`;
-    sample.forEach(r => {
-      body += `<tr><td>${escapeHtml(r[titleCol] || '')}</td><td style="font-size:11px;color:#666;">${escapeHtml(r[urlCol] || '')}</td><td>${escapeHtml(effectiveKke(r))}</td></tr>`;
-    });
-    if (rows.length > 5) body += `<tr><td colspan="3" style="color:#999;">… and ${rows.length - 5} more</td></tr>`;
-    body += `</table>`;
-  });
-
-  if (ungrouped.length > 0) {
-    body += `<h2>Ungrouped (${ungrouped.length} pages)</h2>`;
-    const sample = ungrouped.slice(0, 10);
-    body += `<table><tr><th>Title</th><th>URL</th><th>KKE</th></tr>`;
-    sample.forEach(r => {
-      body += `<tr><td>${escapeHtml(r[titleCol] || '')}</td><td style="font-size:11px;color:#666;">${escapeHtml(r[urlCol] || '')}</td><td>${escapeHtml(effectiveKke(r))}</td></tr>`;
-    });
-    if (ungrouped.length > 10) body += `<tr><td colspan="3" style="color:#999;">… and ${ungrouped.length - 10} more</td></tr>`;
-    body += `</table>`;
+    if (tally.sections.length > DETAIL) {
+      body += `<p style="font-size:12px;color:#666;">${(tally.sections.length - DETAIL).toLocaleString()} more section${tally.sections.length - DETAIL !== 1 ? 's are' : ' is'} summarized in the table above.</p>`;
+    }
   }
 
   const title = 'Content Inventory by Section';
@@ -26379,10 +26375,22 @@ function reportSmeStatus() {
       <tr><th>Owner</th><th>Pages to review</th><th>Reviewed</th><th>%</th><th>Approved</th><th>Changed</th><th>Unresolved</th></tr>
   `;
 
-  Object.entries(byOwner).sort((a, b) => b[1].assigned - a[1].assigned).forEach(([owner, d]) => {
+  // Owners furthest from done first — that's the chase-up order. Capped, with
+  // the rest folded into one row so the table still adds up.
+  const ownerRows = Object.entries(byOwner).sort((a, b) =>
+    (b[1].assigned - b[1].reviewed) - (a[1].assigned - a[1].reviewed) || b[1].assigned - a[1].assigned);
+  const OWNERS = 30;
+  const ownerRow = (owner, d, style = '') => {
     const pct = d.assigned > 0 ? Math.round(d.reviewed / d.assigned * 100) : 0;
-    body += `<tr><td>${escapeHtml(owner)}</td><td>${d.assigned}</td><td>${d.reviewed}</td><td>${pct}%</td><td>${d.approved}</td><td>${d.changed}</td><td>${d.conflicts || '—'}</td></tr>`;
-  });
+    return `<tr${style}><td>${escapeHtml(owner)}</td><td>${d.assigned.toLocaleString()}</td><td>${d.reviewed.toLocaleString()}</td><td>${pct}%</td><td>${d.approved.toLocaleString()}</td><td>${d.changed.toLocaleString()}</td><td>${d.conflicts ? d.conflicts.toLocaleString() : '—'}</td></tr>`;
+  };
+  ownerRows.slice(0, OWNERS).forEach(([owner, d]) => { body += ownerRow(owner, d); });
+  if (ownerRows.length > OWNERS) {
+    const rest = ownerRows.slice(OWNERS);
+    const m = { assigned: 0, reviewed: 0, approved: 0, changed: 0, conflicts: 0 };
+    rest.forEach(([, d]) => Object.keys(m).forEach(k => { m[k] += d[k]; }));
+    body += ownerRow(`${rest.length} other owner${rest.length !== 1 ? 's' : ''}`, m, ' style="color:#666;"');
+  }
   body += `</table>`;
 
   // Unresolved conflicts
@@ -27514,8 +27522,9 @@ function _navIaExportHtml(sectionNodes, pageCounts, redirectCounts) {
 <body>
 <div class="page-header">
   <h1>${title}</h1>
-  <div class="sub">${escapeHtml([(state.projectSettings || {}).clientName, (state.projectSettings || {}).projectName, dateStr].filter(Boolean).join(' · '))}</div>
+  <div class="sub">${escapeHtml([(state.projectSettings || {}).clientName, (state.projectSettings || {}).projectName, 'Generated ' + dateStr, crawlDateRangeText() ? 'Site crawled ' + crawlDateRangeText() : ''].filter(Boolean).join(' · '))}</div>
 </div>
+${scopeDisclosureHtml()}
 <div class="stats-strip">
   <span><strong>${sectionNodes.length}</strong> menu${sectionNodes.length !== 1 ? 's' : ''}</span>
   <span><strong>${itemCount}</strong> items</span>
@@ -28560,7 +28569,7 @@ async function buildAssigneeBriefReport(role, person, templatePath) {
       showToast('Template error: ' + ((res && res.error) || 'unknown'), 'error');
       return;
     }
-    showReport(title, res.html, (fmt) => exportReport(title, res.html, reportDefaultName(title), fmt, { rawShell: true }));
+    showReport(title, res.html, (fmt) => exportReport(title, res.html, reportDefaultName(title), fmt, { rawShell: true }), { rawShell: true });
   } else {
     const html = assigneeBriefBuiltinHtml(data);
     showReport(title, html, (fmt) => exportReport(title, html, reportDefaultName(title), fmt));
