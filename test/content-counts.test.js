@@ -58,6 +58,9 @@ vm.runInThisContext(
   extract('reportRows') +
   // Decision counts read the effective KKE (Final_KKE wins) — real, not stubbed.
   extract('effectiveKke') +
+  // Sections come from the shared tally that Content Inventory and the
+  // Executive Summary also read.
+  extract('sectionTally') +
   extract('gatherProgressStats')
 );
 
@@ -288,7 +291,7 @@ describe('the Executive Summary reports the content figures', () => {
       'the KKE bar is no longer computed over content pages');
     assert.ok(!/stat-label">Total pages audited/.test(body),
       'the old crawl-total headline is back');
-    assert.ok(body.includes('stats.contentGroups'),
+    assert.ok(body.includes('stats.sectionsContent'),
       'By Section is back to counting non-content rows');
   });
 });
@@ -316,5 +319,30 @@ describe('gatherProgressStats — the decision that counts is the effective one'
     assert.equal(s.smeTotal, 1);
     assert.equal(s.finalResolved, 1);
     assert.ok(s.finalPct <= 100);
+  });
+});
+
+describe('sectionTally — one section count for every report', () => {
+  test('sections plus the no-section bucket add up to the total', () => {
+    seed([['200', 'Keep', 'News'], ['200', 'Kill', 'News'], ['200', '', 'About'], ['200', 'Keep', ''], ['301', 'Kill', 'News']]);
+    const t = sectionTally(state.editedRows);
+    assert.equal(t.total, 5);
+    assert.equal(t.sections[0].name, 'News');
+    assert.equal(t.sections[0].total, 3);
+    assert.equal(t.sections.reduce((n, x) => n + x.total, 0) + t.ungrouped.total, t.total);
+  });
+  test('content-only drops 3xx/4xx, and decisions are the effective KKE', () => {
+    seed([['200', 'Kill', 'News'], ['301', 'Kill', 'News'], ['404', 'Kill', 'News']]);
+    state.editedRows[0].Final_KKE = 'Keep';
+    const t = sectionTally(state.editedRows, { contentOnly: true });
+    assert.equal(t.total, 1);
+    assert.deepEqual(t.sections[0].kke, { Keep: 1 });
+  });
+  test('gatherProgressStats reads its section counts from the same tally', () => {
+    seed([['200', 'Keep', 'News'], ['301', 'Kill', 'News'], ['200', 'Kill', 'About']]);
+    const s = gatherProgressStats();
+    assert.deepEqual(s.groups, [['News', 2], ['About', 1]]);
+    assert.deepEqual(s.contentGroups, [['About', 1], ['News', 1]]);
+    assert.equal(s.sectionsContent.total, s.contentTotal);
   });
 });

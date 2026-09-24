@@ -2903,6 +2903,8 @@ body.dragging-popover iframe { pointer-events: none !important; }
    Keep the two in step. */
 .report-preview-surface h2 { font-size: 16px; margin: 24px 0 8px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
 .report-preview-surface h3 { font-size: 14px; margin: 16px 0 6px; }
+.report-preview-surface .report-meta { font-size: 13px; color: #666; margin: 0 0 4px; }
+.report-preview-surface .report-date { font-size: 12px; color: #999; margin: 0 0 16px; }
 .report-preview-surface table { border-collapse: collapse; width: 100%; margin: 8px 0 16px; font-size: 12px; }
 .report-preview-surface th { text-align: left; font-weight: 600; border-bottom: 2px solid #ddd; padding: 6px 8px; }
 .report-preview-surface td { border-bottom: 1px solid #eee; padding: 5px 8px; }
