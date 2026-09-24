@@ -440,6 +440,26 @@ html, body {
 .col-header-cell.url-col { color: var(--accent); }
 .col-header-cell.sortable { cursor: pointer; user-select: none; }
 .col-header-cell.sortable:hover { color: var(--text-primary); }
+.col-header-cell.url-col { display: flex; align-items: center; gap: 6px; }
+.col-header-cell.url-col .col-header-label { overflow: hidden; text-overflow: ellipsis; }
+/* Site-order toggle, inside the Address header (sidebar sort) */
+.site-order-btn {
+  flex: none;
+  margin-left: auto;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 0 6px;
+  height: 17px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.site-order-btn:hover { color: var(--text-primary); border-color: var(--text-muted); }
+.site-order-btn.active { background: var(--accent-bg); color: var(--accent-text); border-color: var(--accent); }
 
 /* Row list */
 #row-list-wrap { flex: 1; overflow-y: auto; overflow-x: hidden; }
