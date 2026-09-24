@@ -14,6 +14,8 @@ major-version codenames drawn from The Smiths.
 
 - **Left-aligned Visual Sitemap.** Settings → Layout → **Parent position** can put each parent at the left edge of its children instead of centered over them. The root anchors the top-left corner and the tree grows to the right. Fit keeps it against the left edge, and the setting carries into every export, Miro included.
 
+- **Audiences on the sitemap.** When your IA already says who each section is for, you can now say it once, on the section. The sitemap node editor has an **Audience** section. A node with none set inherits from its nearest ancestor, so tagging *Academics* covers its whole branch, and a child can override it for its own branch. Node audiences fill **untagged** pages placed under them. Pages you've tagged are never overwritten, and Kill/Exclude pages and out-of-scope sites are skipped. Saving a node asks before filling its branch and shows the page count. Assigning a single page from the audit bar fills it right away. Either way, one Cmd+Z undoes it. **Fill Audiences from Section** now offers the sitemap as the first source. The tree shows which nodes set audiences, and the Visual Sitemap and Treemap can color by the inherited value. Stored in a new `Node_Audiences` column on the Sitemap sheet.
+
 ### Changed
 
 - **Every report has the same header.** It shows client · project, the date the report was generated, and the dates the site was crawled (read from Screaming Frog's **Crawl Timestamp** column when the export has it). The local file name is gone from exported reports. The in-app preview now shows the same header as the exported file.
