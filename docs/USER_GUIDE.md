@@ -935,6 +935,14 @@ Two sidebar filters keep consolidations honest — clear both before you ship:
 - **Consolidate (no target)** — marked Consolidate but no target chosen yet. You don't have to remember to check: when there are any, a red **"⚠ N Consolidate: no target"** chip appears in the sidebar toolbar next to the row count, and clicking it applies this filter. It's there because a Consolidate with no target is the one call that isn't a finished decision — it says the page goes away without saying where its content and its redirect go — and it's the shape an SME import routinely leaves behind.
 - **Consolidate (dead target)** — the target is missing or is itself Kill/Exclude (the source shows an amber dot).
 
+### When the client changes a consolidation
+
+SME review is where consolidation decisions get revisited most. The client knows which pages overlap in ways a crawl can't show, and may have a different idea of where the content belongs. Their **Final KKE** always wins: whether a page consolidates follows the Final KKE, not your recommendation.
+
+- The KKE buttons still show **your** recommendation. When the Final KKE differs, a **Final** chip appears beside the buttons. Click it to pick a target (for a Consolidate) or to open the Final dropdown. In the sidebar, your KKE badge is struck through when a Final overrides it.
+- Setting a page's Final KKE to **Consolidate** opens the target picker. If you had already picked a target, it's kept. Changing a Final *away* from Consolidate offers to clear the old target, or you can keep it (inactive) in case the decision changes back.
+- **SME → Review Consolidations…** lists every consolidation the client touched: pages they asked to consolidate that you didn't, pages you consolidated that they kept, and pages where you both said Consolidate but the SME left notes. For each one you can choose or change the target, confirm it's right, or clear an unused target. A reviewed page leaves the list until its decision or target changes again. The app offers this review after an SME import or a Resolve Conflicts session. The **Consolidate (client changed — review)** filter finds the same pages.
+
 ### Quick self-check
 
 - [ ] Every Consolidate page has a **live** target
