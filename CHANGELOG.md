@@ -8,29 +8,45 @@ major-version codenames drawn from The Smiths.
 
 ### Added
 
+- **SME → Review Consolidations….** Clients often have their own view of which pages overlap and where the content belongs. This list collects every consolidation their Final KKE changed: pages they asked to consolidate that you didn't, pages you consolidated that they kept (their old target is still stored), and pages where you both agreed but the SME left notes. That last group is where "merge it into X instead" usually gets written. For each page you can choose or change the target, confirm it, or clear the target nobody uses anymore. A page leaves the list once you've reviewed it, and comes back if the decision or target changes later. The app offers the review after an SME import or a Resolve session, and the **Consolidate (client changed — review)** sidebar filter finds the same pages.
+
 - **Build Status report** (Reports → Build Status…). The weekly progress view of the new site. It shows every page by Page Status, broken down by section and by person (builder, writer, migrator), with blocked pages listed. Until now this only existed inside the Migration Tracker spreadsheet.
+
 - **Key findings and next steps.** Most reports now open with what the numbers mean and what to do about them. This covers the Executive Summary, Content Inventory, SME Review Status, Sitemap Coverage, Audience Coverage, Site Consolidation, the Migration Checklist, the Net New Brief, Build Status and the Redirect Map.
+
 - **An audit-team appendix, left out of client exports.** Page-by-page working lists (untagged pages, pages still needing a place, pages to update, pages with no build status) move to a marked **For the audit team** section at the end of the report. Exports leave it out unless you tick **Include audit-team appendix in export**.
 
 ### Changed
 
-- **Audience Debt is now part of Audience Coverage**, as a **Risks** section, so there's one audience report instead of two with the same preamble. The Audience Debt menu item is gone.
-- **Serving four or more audiences is no longer flagged on landing pages.** A program landing page can rightly serve prospective undergraduates, graduate students, executive-education seekers and certificate seekers at once. Only detail pages count: pages with nothing beneath them in the sitemap or URL path. They're described as worth a look, not as a defect.
-- **The Migration Checklist is one page.** It gives a ready / not-ready headline, what happens to the pages, redirect totals and pages to write. It points to the Redirect Map Report and the Pre-Handoff Check instead of repeating their tables.
-- **The Net New Content Brief is a hand-off to writers.** It's grouped by writer and section, and each page shows its status, template and writer brief. Besides section landing pages, it now lists new pages nothing on the current site maps to, and placeholder pages still to be written. Before, it only listed landing pages, so the pages a sitemap plans from scratch never appeared.
-
-### Changed
-
 - **Every report has the same header.** It shows client · project, the date the report was generated, and the dates the site was crawled (read from Screaming Frog's **Crawl Timestamp** column when the export has it). The local file name is gone from exported reports. The in-app preview now shows the same header as the exported file.
+
 - **Section counts agree everywhere.** The Executive Summary's By Section, Content Inventory and the progress dashboard now read one shared tally.
   - By Section is now a table showing each decision's share per section.
   - Content Inventory is now one ranked table of every section, plus a closer look at the ten largest. It used to produce one block per section, which ran to hundreds of pages on a large site.
+
 - **The Audit Progress export uses the standard report layout.** It gains the content / redirect split, the SME review figures, and a by-section table, all of which the dashboard already showed.
+
 - **Long tables are capped.** The Audience × Section Matrix shows the 40 largest sections, and SME Review Status shows the 30 owners furthest from done. The rest are rolled into one row, so totals still add up.
+
 - **Audience × Section Matrix shading is clearer.** Cells are shaded by their share of the section's *tagged* pages, and a new **Untagged** column shows what's left. A mostly-untagged section used to look pale everywhere, so the shading tracked tagging progress rather than who the section serves.
+
 - **The Menu Report export** shows the same header details and out-of-scope notice as every other report.
 
+- **Audience Debt is now part of Audience Coverage**, as a **Risks** section, so there's one audience report instead of two with the same preamble. The Audience Debt menu item is gone.
+
+- **Serving four or more audiences is no longer flagged on landing pages.** A program landing page can rightly serve prospective undergraduates, graduate students, executive-education seekers and certificate seekers at once. Only detail pages count: pages with nothing beneath them in the sitemap or URL path. They're described as worth a look, not as a defect.
+
+- **The Migration Checklist is one page.** It gives a ready / not-ready headline, what happens to the pages, redirect totals and pages to write. It points to the Redirect Map Report and the Pre-Handoff Check instead of repeating their tables.
+
+- **The Net New Content Brief is a hand-off to writers.** It's grouped by writer and section, and each page shows its status, template and writer brief. Besides section landing pages, it now lists new pages nothing on the current site maps to, and placeholder pages still to be written. Before, it only listed landing pages, so the pages a sitemap plans from scratch never appeared.
+
 ### Fixed
+
+- **A client's Final KKE now decides whether a page consolidates.** If you recommended Consolidate and the client's Final KKE said Keep, the page was still treated as consolidating. It kept its target, it kept the redirect that merges it into another page, and it stayed in the consolidate worklists. Every other part of the app already put Final KKE first; consolidation now does too. The reverse case works as well: a client Final of Consolidate over your Keep now counts as a consolidation, and the audit bar asks where it should go.
+
+- **The audit bar shows when the client overrode your call.** The KKE buttons show your recommendation, and nothing showed that a Final KKE had replaced it unless you had turned on the SME fields. A **Final** chip now appears next to the buttons whenever the two differ. Click it to pick the target (for a Consolidate) or to open the Final dropdown. In the sidebar, the KKE badge is struck through when a Final overrides it, and a consolidate flag the client overrode is shown as inactive.
+
+- **The Consolidate button's status dot is back.** The red dot (no target) and the amber dot (target is being killed) inside the Consolidate button disappeared as soon as a file opened, because the buttons were rebuilt without them. Both show again.
 
 - **The Redirect Map Report now matches the redirect CSV.** The report derived its own rules, and they could differ from the file you deploy:
   - It read your recommendation instead of the client's Final KKE.
@@ -38,16 +54,22 @@ major-version codenames drawn from The Smiths.
   - It dropped consolidated pages.
 
   The report and the Migration Checklist now use the same rules as the CSV and the Migration Tracker, so all four agree. The report lists pages that **still need a destination** first, and splits rules by source site on a merger. Long lists stop at 200 rows with a pointer to the full CSV, so the PDF is no longer hundreds of pages.
+
 - **Consolidated pages with no destination are flagged.** A Consolidate page with nowhere to redirect used to disappear from every redirect list. It now ships as `(TBD)` like a Kill with no destination. The **Pre-Handoff Check** has a new check for both.
+
 - **Reports count the client's decision.** The progress dashboard, its PDF, the Executive Summary, SME Review Status, Component Inventory, the redirect chain check and the Pre-Handoff Check counted your recommendation even after an SME had set a Final KKE. They now count the Final KKE. SME percentages can no longer go over 100%.
+
 - **Reports agree on what counts.**
   - Audience reports, Content Inventory, Site Consolidation and Cross-Site Duplicates now count content pages. Existing redirects and dead URLs are no longer counted, so their totals match the Executive Summary.
   - Reports that said out-of-scope sites were excluded now actually exclude them. That covers the Menu Report, Sitemap Coverage, Net New Brief, Audience Debt, redirect chains, Pre-Handoff and the Migration Direction Brief.
+
 - **One definition of "net new".** The Sitemap tree, its stats bar, the Net New Brief, Sitemap Coverage, the Migration Checklist and the Migration Tracker each counted net-new and empty pages differently. They now all match the tree's NEW and ○ badges. As a result, the stats bar's "empty" count now includes empty branches, not just empty leaves.
+
 - **Executive Summary.**
   - Findings now cover every decision, Consolidate and custom states included, each with its percentage.
   - The orphan-page count only counts content pages being kept.
   - By Section adds up to the page total.
+
 - **Smaller fixes:**
   - The progress dashboard's bar segments are filled in again.
   - Report previews in the app are styled like the exported file.

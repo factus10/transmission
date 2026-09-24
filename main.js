@@ -512,7 +512,8 @@ function buildMenu() {
         { label: 'Import SME Decisions…',   click: send('menu-sme-import') },
         { type: 'separator' },
         { label: 'Compare KKE vs SME…',     click: send('menu-kke-vs-sme') },
-        { label: 'Resolve Conflicts…',      click: send('menu-sme-resolve') }
+        { label: 'Resolve Conflicts…',      click: send('menu-sme-resolve') },
+        { label: 'Review Consolidations…',  click: send('menu-consolidate-review') }
       ]
     },
 
