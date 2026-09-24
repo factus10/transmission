@@ -30,6 +30,11 @@ The list below is a feature catalog, not a how-to.
 - **Package for Handoff** — **File → Package for Handoff…** saves, checkpoints, and zips the project (with a README for the recipient) in one step, then reveals the zip in Finder. The other auditor unzips and double-clicks; their edits join the same change history under their username. A rolling safety copy of each project is also kept in the app's support folder on every open.
 - **Client Export profiles** — **File → Export… → Client Export** exports just the columns an audience needs (filtered or all rows). Ships with **Client Summary** and **Full** built-ins; save your own named profiles and they travel with the project.
 
+### Ask an AI about the audit (MCP server)
+- **Read-only MCP server** — `mcp/server.js` exposes a `.transmission` project to any Model Context Protocol client (Claude Desktop, Claude Code), so the questions the Reports menu doesn't answer — *how many Keep pages under `/news` have no audience? which sections did the SME overturn most?* — get a real number instead of an Excel pivot. Counts grouped by any columns, filtered with the same field filters (and saved filters) the sidebar uses; one page's full record with its change history; the sitemap with page counts; redirects with who wrote them; the audit trail.
+- **Safe beside the running app** — opens the project read-only, never migrates it, and picks up each autosave on its next call. It cannot change anything; writes are planned as proposals you accept in the app.
+- **No install** — needs Node 22.13+, has no dependencies, and is not part of the app bundle. Setup in [`mcp/README.md`](mcp/README.md); design in [`docs/dev/MCP_SERVER_PROPOSAL.md`](docs/dev/MCP_SERVER_PROPOSAL.md).
+
 ### Core Audit Workflow
 - **Open any spreadsheet** (.xlsx, .xls, .xlsm, .ods, .csv) or a `.transmission` project — designed for Screaming Frog exports
 - **File → Open Recent** — submenu of the 10 most recent files (newest first), with "Clear Recent Files" at the bottom. Files that have moved/been deleted show with `(missing)` and are disabled. Useful when juggling multiple projects.
