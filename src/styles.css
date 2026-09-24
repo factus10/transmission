@@ -5331,12 +5331,34 @@ body.dragging-modal, body.dragging-modal * { cursor: grabbing !important; }
 .nne-pill-build      { background: #dbeafe; color: #1e40af; }
 .nne-pill-write      { background: #f3e8ff; color: #6b21a8; }
 .nne-pill-migrate    { background: #fef3c7; color: #92400e; }
+.nne-pill-audience   { background: #ffe4e6; color: #9f1239; }
 :root[data-theme="dark"] .nne-pill-identity   { background: #334155; color: #cbd5e1; }
 :root[data-theme="dark"] .nne-pill-addressing { background: #134e4a; color: #5eead4; }
 :root[data-theme="dark"] .nne-pill-notes      { background: #334155; color: #cbd5e1; }
 :root[data-theme="dark"] .nne-pill-build      { background: #172554; color: #93c5fd; }
 :root[data-theme="dark"] .nne-pill-write      { background: #2e1065; color: #c4b5fd; }
 :root[data-theme="dark"] .nne-pill-migrate    { background: #422006; color: #fcd34d; }
+:root[data-theme="dark"] .nne-pill-audience   { background: #4c0519; color: #fda4af; }
+
+/* Node editor — Audience section */
+.nne-audiences { margin-top: 8px; }
+.nne-aud-empty, .nne-aud-inherit { font-size: 11px; color: var(--text-muted); }
+.nne-aud-inherit { margin-bottom: 6px; }
+.nne-aud-tiers { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.nne-aud-tier { min-width: 180px; }
+.nne-aud-tier-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 3px; }
+.nne-aud-opt { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-primary); padding: 1px 0; cursor: pointer; }
+.nne-aud-opt input { margin: 0; }
+.nne-aud-swatch { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+
+/* Sitemap tree row — audiences set on this node */
+.ne-audience-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; padding: 0 6px; border-radius: 8px; height: 16px;
+  background: #ffe4e6; color: #9f1239; white-space: nowrap; max-width: 140px;
+  overflow: hidden; text-overflow: ellipsis;
+}
+:root[data-theme="dark"] .ne-audience-chip { background: #4c0519; color: #fda4af; }
 /* Read-only context block at the top of the nav-node editor — tinted panel so it
    visually reads as reference info, distinct from the editable sections below. */
 .nne-context-panel {
