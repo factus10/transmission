@@ -77,7 +77,7 @@ Set a node's **Node type** to **Fragment / shared content** for content that's e
 - are excluded from hub / empty / net-new counts and get their own stats tally;
 - render with a **FRAG** badge in the tree.
 
-A row whose **Renders as** = **Fragment (embeddable)** (stored as `Content Object`) is treated the same way downstream — skipped in redirect resolution and sitemap-coverage checks.
+A row whose **Renders as** = **Fragment (embeddable, no URL)** is treated the same way downstream — skipped in redirect resolution and sitemap-coverage checks.
 
 ---
 

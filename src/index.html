@@ -327,11 +327,12 @@
               <span class="cluster-pill" title="Click to collapse / expand"><span class="cluster-chev">▾</span>Migrate</span>
               <span class="cluster-summary" aria-hidden="true"></span>
               <div class="audit-group audit-group-compact">
-                <label class="audit-label" title="How this content surfaces in the new CMS — a full Page, an embeddable Fragment, or a Generated view">Renders as</label>
+                <label class="audit-label" title="How this content surfaces in the new CMS: a Page; a Record (a structured entry such as a news post, event or profile that still has its own page and URL); a Fragment (embedded in other pages, no URL of its own, so no redirect); or a Generated view">Renders as</label>
                 <select id="content-nature-select" class="content-nature-select">
                   <option value="">—</option>
                   <option value="Page">Page</option>
-                  <option value="Content Object">Fragment (embeddable)</option>
+                  <option value="Content Object">Record (own page)</option>
+                  <option value="Fragment">Fragment (embeddable, no URL)</option>
                   <option value="Generated">Generated</option>
                 </select>
               </div>
