@@ -826,7 +826,9 @@ class Project {
         id: node.id, number: node.number, label: node.label, path: node.computedPath,
         nodeType: type, phase: node.phase, pageStatus: node.pageStatus, externalUrl: node.url,
         refNodeId: node.refNodeId, builder: node.buildAssignee, writer: node.writeAssignee, migrator: node.migrateAssignee,
-        audiences: node.audiences   // who the section is for (CSV), set on the node itself
+        audiences: node.audiences,  // who the section is for (CSV), set on the node itself
+        // Left out of the Visual Sitemap diagram only; still a real node.
+        hiddenInDiagram: node.hideInVisual === 'Y' || node.hideInVisual === true
       });
       o.livePages = direct;
       o.subtreeRows = subtree.get(node.id) || 0;

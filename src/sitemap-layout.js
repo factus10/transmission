@@ -75,6 +75,12 @@
       function shouldBeVert(node, depth) {
         var ov = (settings.nodeOverrides || {})[node.id];
         if (ov && ov.layout) return ov.layout === 'vert';
+        // A top-level node is exempt from the child-count rule below, so a
+        // homepage's sections fan out across the top in the classic sitemap
+        // shape. That exemption is wrong for a root carrying a long flat list
+        // (Eberly's "User": 106 profiles in one 15,000px row), so roots get
+        // their own, much higher bar. 0 / unset = off.
+        if (depth === 0 && settings.rootVertOver > 0 && node.children && node.children.length > settings.rootVertOver) return true;
         if (settings.vertDepth !== 99 && depth >= settings.vertDepth) return true;
         if (settings.childThresh !== 99 && depth >= 1 && node.children && node.children.length >= settings.childThresh) return true;
         return false;
@@ -409,7 +415,32 @@
       };
     }
 
-    return { create: create, ROOT_GAP: ROOT_GAP, HEADING_H: HEADING_H, SHADOW: SHADOW };
+    // Branches that open collapsed because they are too big to draw usefully:
+    // every node below the top level with more than `autoCollapseOver` direct
+    // children (0 / unset = off). A client sitemap shows "News", not 1,378
+    // headlines; the collapsed card still says how many pages it hides.
+    //
+    // Roots are never auto-collapsed — collapsing a homepage would hide the
+    // whole site. A wide root is what `rootVertOver` is for.
+    //
+    // Shared so the webview, the exports and the host's shape check agree on
+    // exactly which nodes this is. It is a DISPLAY default: the host must not
+    // write it back to the nodes' own Collapse flags.
+    function autoCollapseIds(roots, settings) {
+      var over = settings && settings.autoCollapseOver;
+      var out = [];
+      if (!(over > 0)) return out;
+      (function walk(nodes, depth) {
+        (nodes || []).forEach(function (n) {
+          var kids = n.children || [];
+          if (depth >= 1 && kids.length > over) out.push(n.id);
+          walk(kids, depth + 1);
+        });
+      })(roots, 0);
+      return out;
+    }
+
+    return { create: create, autoCollapseIds: autoCollapseIds, ROOT_GAP: ROOT_GAP, HEADING_H: HEADING_H, SHADOW: SHADOW };
   }
 
   var api = sitemapLayoutCore();
