@@ -1,0 +1,1 @@
+If your Visual Sitemap has ever opened as an empty white box, update: large sitemaps now draw. A long flat list such as a news archive or staff directory opens collapsed with a count of the pages it holds, and a node can be hidden from the diagram while staying in the sitemap for mapping. The Visual Sitemap also gains zoom controls with a one-click 100%.
