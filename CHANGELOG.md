@@ -14,8 +14,14 @@ major-version codenames drawn from The Smiths.
 
   Not part of the app bundle: it needs Node 22.13+ and has no dependencies. Setup is in `mcp/README.md`; the design, and what Phase 2 looks like, in `docs/dev/MCP_SERVER_PROPOSAL.md`.
 
+- **Hide a sitemap node from the diagram.** Some nodes belong in the sitemap so they can be mapped to the new CMS, but shouldn't appear in a client diagram: user profile pages, a feed, a search page. The node editor now has **Hide in diagram**. Tick it and that node and everything under it leave the Visual Sitemap and its exports. The node keeps its pages, URL, redirects and report rows. It's saved in a new `Hide_In_Visual_Sitemap` column on the Sitemap sheet.
+- **Large branches stay drawable in the Visual Sitemap.** A branch with more than 25 direct children now opens collapsed, and its card says how many pages it hides, so a news archive or a staff directory no longer stretches the diagram to hundreds of thousands of pixels. Expanding one lasts until you close the diagram and doesn't touch the Sitemap editor's Collapse checkboxes. A top-level node with more than 30 children now stacks them in a column instead of one very wide row; a homepage's sections still spread across the top. Both numbers are in Settings → Layout → **Large branches** (0 turns either off), and both carry into every export.
+- **Zoom controls in the Visual Sitemap.** The toolbar now shows the current zoom between **−** and **+** buttons, with one decimal place below 10% so 0.4% and 2% no longer both read as zero. **100%** jumps to actual size and keeps the cards you were looking at centered. Clicking the readout does the same. Keyboard: Shift+0 for 100%, Shift+1 to fit, +/− to step.
+
 ### Fixed
 
+- **Large sitemaps no longer open as a blank diagram.** A Visual Sitemap past about 1.2 MB of page data, roughly a few thousand nodes, opened as an empty white box with no toolbar. The browser engine refused the oversized address the diagram was loaded through. Large diagrams now load from a temporary file. The same fix applies to the Treemap, Content Flow, and the PDF and PNG exports.
+- **Collapse all no longer leaves the Visual Sitemap looking empty.** On a large site the expanded tree fits at about 2%, and Collapse all kept that zoom, so the collapsed tree drew as a few pixels in a blank canvas. Expand all and Collapse all now re-fit the view. A single +/− toggle keeps your position unless the tree would end up off-screen or too small to see.
 - **Multi-paragraph dialogs no longer run together.** A modal body with more than one paragraph rendered as a single block — most visibly the update dialog, where "Transmission vX is available" ran straight into the release note beneath it. The global CSS reset zeroes every margin and nothing restored it for dialog text.
 
 ## [2.18.0] — "Please, Please, Please, Let Me Get What I Want"
