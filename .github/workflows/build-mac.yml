@@ -113,6 +113,32 @@ jobs:
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
           echo "APPLE_API_KEY=$API_KEY_PATH" >> "$GITHUB_ENV"
 
+      # Prove Apple accepts the API key BEFORE the build. A rejected key surfaces
+      # inside electron-builder as `"Error: HTT"... is not valid JSON` — the
+      # notarize library tries to parse notarytool's error text as JSON and the
+      # real message (401 bad key / 403 agreement pending) is lost. That's what
+      # the first CI run showed. Values are never printed; GitHub also masks them.
+      - name: Check notarization credentials
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -uo pipefail
+          bad=0
+          [[ "$APPLE_API_KEY_ID" =~ ^[A-Z0-9]{10}$ ]] \
+            || { echo "::error::APPLE_API_KEY_ID isn't a 10-character key ID (length ${#APPLE_API_KEY_ID}; check for spaces or a newline)"; bad=1; }
+          [[ "$APPLE_API_ISSUER" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] \
+            || { echo "::error::APPLE_API_ISSUER isn't an issuer UUID (length ${#APPLE_API_ISSUER})"; bad=1; }
+          head -1 "$APPLE_API_KEY" | grep -q -- '-----BEGIN PRIVATE KEY-----' \
+            || { echo "::error::APPLE_API_KEY_BASE64 doesn't decode to a .p8 private key"; bad=1; }
+          [ "$bad" = 0 ] || exit 1
+          if ! out="$(xcrun notarytool history --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" 2>&1)"; then
+            echo "$out"
+            echo "::error::Apple rejected the notarization credentials (401 = wrong key/ID/issuer; 403 = accept the latest agreement in App Store Connect)"
+            exit 1
+          fi
+          echo "Apple accepts the notarization credentials."
+
       # electron-builder signs with the keychain identity and, with the three
       # APPLE_API_* variables set, notarizes and staples the .app.
       - name: Build, sign and notarize the app
