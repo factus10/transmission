@@ -49,6 +49,9 @@
     //    localStorage (client mode).
     var S = Object.assign({
       vertDepth: 2, childThresh: 3,
+      // Large branches (see SitemapLayout.autoCollapseIds / shouldBeVert).
+      // "More than N children"; 0 = off.
+      autoCollapseOver: 25, rootVertOver: 30,
       // 'center' = parent centred over its children (the long-standing look);
       // 'left' = parent at the left edge of its children's span.
       parentAlign: 'center',
@@ -128,6 +131,37 @@
       // app + print both honor the caller's collapse state (print = what-you-see).
       DATA.initialCollapsed.forEach(function (id) { collapsed.add(id); });
     }
+    // The caller's own collapse state, before auto-collapse layers on top —
+    // what a branch reverts to when a threshold change drops it out of AUTO.
+    var initialSet = new Set(DATA.initialCollapsed || []);
+
+    // Auto-collapsed branches. Applied on top of the caller's state on every
+    // open, except where this session (or an export of it) expanded one —
+    // `autoExpanded` is session state, deliberately not persisted, so the
+    // default comes back next time. Skipped when a client viewer's saved view
+    // was restored: that set is already exact.
+    var AUTO = new Set();
+    var restoredClientView = false;
+    try { restoredClientView = MODE === 'client' && !!localStorage.getItem(LS_KEY); } catch (e) {}
+    function computeAuto() {
+      var Lib = window.__SITEMAP_LAYOUT__;   // the inlined layout module — see build()
+      return new Set(Lib && Lib.autoCollapseIds ? Lib.autoCollapseIds(ROOTS, S) : []);
+    }
+    AUTO = computeAuto();
+    if (!restoredClientView) {
+      var autoExpandedInit = new Set(DATA.autoExpanded || []);
+      AUTO.forEach(function (id) { if (!autoExpandedInit.has(id)) collapsed.add(id); });
+    }
+    // Threshold changed in the Layout tab: newly-large branches collapse,
+    // branches no longer large go back to the caller's own state for them.
+    function refreshAuto() {
+      var next = computeAuto();
+      AUTO.forEach(function (id) {
+        if (!next.has(id)) { if (initialSet.has(id)) collapsed.add(id); else collapsed.delete(id); }
+      });
+      next.forEach(function (id) { if (!AUTO.has(id)) collapsed.add(id); });
+      AUTO = next;
+    }
 
     // ════════════════════════════════════════════════════════════════════════
     // Host messaging (app mode). The host listens on the webview's
@@ -141,6 +175,11 @@
     function currentState() {
       return {
         collapsed: [].concat.apply([], [Array.from(collapsed)]),
+        // Auto-collapse is a display default, not the user's Collapse flag:
+        // the host skips `autoIds` when writing collapse back to the nodes,
+        // and hands `autoExpanded` to exports so they draw what's on screen.
+        autoIds: Array.from(AUTO),
+        autoExpanded: Array.from(AUTO).filter(function (id) { return !collapsed.has(id); }),
         showNumbers: showNumbers,
         showCounts: countMode !== 'off',
         countMode: countMode,
@@ -150,6 +189,7 @@
     function serializableSettings() {
       return {
         vertDepth: S.vertDepth, childThresh: S.childThresh,
+        autoCollapseOver: S.autoCollapseOver, rootVertOver: S.rootVertOver,
         cardWidth: S.cardWidth, cardHeight: S.cardHeight,
         hGap: S.hGap, vRow: S.vRow, vlGap: S.vlGap, vlDrop: S.vlDrop,
         vlHgap: S.vlHgap, pad: S.pad,
@@ -465,7 +505,7 @@
         dot.addEventListener('click', function (e) {
           e.stopPropagation();
           if (collapsed.has(node.id)) collapsed.delete(node.id); else collapsed.add(node.id);
-          render(); pushState();
+          render(); pushState(); ensureContentVisible();
         });
         card.appendChild(dot);
       }
@@ -606,7 +646,58 @@
       var canvas = document.getElementById('canvas');
       canvas.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')';
       var zl = document.getElementById('zoom-label');
-      if (zl) zl.textContent = Math.round(scale * 100) + '%';
+      if (zl) zl.textContent = zoomText(scale);
+    }
+    // Below 10% a whole-number readout lies: 0.4% and 2% both round to
+    // something that looks like "basically nothing", and on a flat site the
+    // difference between them is the difference between a texture you can
+    // zoom into and a few stray pixels.
+    function zoomText(s) {
+      var pct = s * 100;
+      return (pct < 10 ? (Math.round(pct * 10) / 10) : Math.round(pct)) + '%';
+    }
+    // Zoom to `ns` keeping the screen point (px, py) fixed.
+    function zoomAbout(ns, px, py) {
+      ns = Math.min(MAX_ZOOM, Math.max(zoomFloor(), ns));
+      tx = px - (px - tx) * (ns / scale);
+      ty = py - (py - ty) * (ns / scale);
+      scale = ns; applyXform();
+    }
+    // The point to zoom around for the toolbar buttons: the viewport centre,
+    // pulled onto the drawn canvas. A tree anchored at the margin can leave the
+    // centre over empty space, and zooming to 100% about empty space lands you
+    // somewhere with no cards in it — the exact failure this control is for.
+    function zoomFocus() {
+      var viewport = document.getElementById('viewport');
+      var vw = viewport.clientWidth, vh = viewport.clientHeight;
+      var cx = Math.min(Math.max(vw / 2, tx), tx + canvasW * scale);
+      var cy = Math.min(Math.max(vh / 2, ty), ty + canvasH * scale);
+      return { x: cx, y: cy, vw: vw, vh: vh };
+    }
+    function zoomStep(factor) {
+      var f = zoomFocus();
+      zoomAbout(scale * factor, f.x, f.y);
+    }
+    // Jump to 100%, then centre the focused content so the cards you were
+    // looking at stay in view rather than flying off to one side.
+    function zoomTo100() {
+      var f = zoomFocus();
+      zoomAbout(1, f.x, f.y);
+      tx += f.vw / 2 - f.x; ty += f.vh / 2 - f.y;
+      applyXform();
+    }
+    // A structural change (collapse/expand) resizes the canvas under a fixed
+    // transform. If the drawn content no longer overlaps the viewport — or has
+    // shrunk to a speck — the view looks empty even though nothing is wrong,
+    // so re-fit. Single toggles that leave cards on screen keep their position.
+    function ensureContentVisible() {
+      var viewport = document.getElementById('viewport');
+      if (!viewport) return;
+      var vw = viewport.clientWidth, vh = viewport.clientHeight;
+      var w = canvasW * scale, h = canvasH * scale;
+      var offscreen = tx > vw || ty > vh || tx + w < 0 || ty + h < 0;
+      var speck = scale < 0.25 && w < vw * 0.25 && h < vh * 0.25;
+      if (offscreen || speck) fitToScreen();
     }
     function setupPanZoom() {
       var viewport = document.getElementById('viewport');
@@ -617,10 +708,7 @@
         var MAX = 80;
         var raw = Math.max(-MAX, Math.min(MAX, e.deltaY));
         var factor = 1 + (raw / MAX) * 0.18;
-        var ns = Math.min(3, Math.max(zoomFloor(), scale * factor));
-        tx = mx - (mx - tx) * (ns / scale);
-        ty = my - (my - ty) * (ns / scale);
-        scale = ns; applyXform();
+        zoomAbout(scale * factor, mx, my);
       }, { passive: false });
       viewport.addEventListener('pointerdown', function (e) {
         if (e.button !== 0 || e.target.closest('.node-card') || e.target.closest('.ctx-menu')) return;
@@ -650,6 +738,7 @@
     // centring an axis that overflows is what pushed the content away. (The
     // y-axis already had this via its Math.max; x never did.)
     var MIN_FIT = 0.02;
+    var MAX_ZOOM = 3;
     function fitScaleFor(vw, vh, margin) {
       return Math.min(1, Math.min((vw - margin * 2) / canvasW, (vh - margin * 2) / canvasH));
     }
@@ -675,15 +764,34 @@
     // ════════════════════════════════════════════════════════════════════════
     // Toolbar wiring + settings panel + legend
     // ════════════════════════════════════════════════════════════════════════
-    function expandAll() { collapsed.clear(); render(); pushState(); }
+    // Both re-fit. They change the canvas by orders of magnitude (the Alpha
+    // audit: 20,000 x 183,000px expanded, 308 x 364px collapsed), and keeping
+    // the old transform left a collapsed tree drawn at the 2% floor the
+    // expanded one needed — two cards about 6px across, i.e. "nothing there".
+    function expandAll() { collapsed.clear(); render(); pushState(); fitToScreen(); }
     function collapseAll() {
       function mark(n) { if (n.collapsible) collapsed.add(n.id); if (n.children) n.children.forEach(mark); }
-      ROOTS.forEach(mark); render(); pushState();
+      ROOTS.forEach(mark); render(); pushState(); fitToScreen();
     }
 
     function $(id) { return document.getElementById(id); }
     function wireToolbar() {
       if ($('btn-fit')) $('btn-fit').addEventListener('click', fitToScreen);
+      if ($('btn-zoom-100')) $('btn-zoom-100').addEventListener('click', zoomTo100);
+      if ($('zoom-label')) $('zoom-label').addEventListener('click', zoomTo100);
+      if ($('btn-zoom-in')) $('btn-zoom-in').addEventListener('click', function () { zoomStep(1.25); });
+      if ($('btn-zoom-out')) $('btn-zoom-out').addEventListener('click', function () { zoomStep(1 / 1.25); });
+      // Figma's bindings: Shift+0 = 100%, Shift+1 = fit, +/- step. Cmd+0 is
+      // left alone — it belongs to the app's View menu.
+      document.addEventListener('keydown', function (e) {
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        var t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        if (e.code === 'Digit0' && e.shiftKey) { e.preventDefault(); zoomTo100(); }
+        else if (e.code === 'Digit1' && e.shiftKey) { e.preventDefault(); fitToScreen(); }
+        else if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomStep(1.25); }
+        else if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomStep(1 / 1.25); }
+      });
       if ($('btn-expand')) $('btn-expand').addEventListener('click', expandAll);
       if ($('btn-collapse')) $('btn-collapse').addEventListener('click', collapseAll);
       if ($('btn-reset')) $('btn-reset').addEventListener('click', function () {
@@ -780,12 +888,13 @@
       });
       $('sp-reset').addEventListener('click', function () {
         if (!APP_DEFAULTS) return;
-        ['vertDepth', 'childThresh', 'parentAlign', 'cardWidth', 'cardHeight', 'hGap', 'vRow', 'vlGap', 'vlDrop', 'vlHgap', 'pad'].forEach(function (kk) {
+        ['vertDepth', 'childThresh', 'autoCollapseOver', 'rootVertOver', 'parentAlign', 'cardWidth', 'cardHeight', 'hGap', 'vRow', 'vlGap', 'vlDrop', 'vlHgap', 'pad'].forEach(function (kk) {
           if (APP_DEFAULTS[kk] != null) S[kk] = APP_DEFAULTS[kk];
         });
         if (APP_DEFAULTS.colorRules) S.colorRules = JSON.parse(JSON.stringify(APP_DEFAULTS.colorRules));
         if (APP_DEFAULTS.legendLabels) S.legendLabels = Object.assign({}, APP_DEFAULTS.legendLabels);
-        render(); fillLegend(); pushState(); renderSettingsBody();
+        refreshAuto();
+        render(); fillLegend(); pushState(); renderSettingsBody(); fitToScreen();
       });
       Array.prototype.forEach.call(ov.querySelectorAll('.sp-tab'), function (t) {
         t.addEventListener('click', function () { settingsTab = t.getAttribute('data-tab'); renderSettingsBody(); });
@@ -843,7 +952,18 @@
             '<option value="center"' + (left ? '' : ' selected') + '>Centered over children</option>' +
             '<option value="left"' + (left ? ' selected' : '') + '>Left-aligned (tree grows right)</option>' +
           '</select></label></div>';
-      return align + '<div class="sp-grid">' + rows + '</div>' +
+      var large =
+        '<div class="sp-subhead">Large branches</div>' +
+        '<div class="sp-grid">' +
+          '<label class="sp-field"><span>Collapse if children &gt;</span>' +
+            '<input type="number" min="0" step="1" data-large="autoCollapseOver" value="' + (S.autoCollapseOver || 0) + '"></label>' +
+          '<label class="sp-field"><span>Stack top level if &gt;</span>' +
+            '<input type="number" min="0" step="1" data-large="rootVertOver" value="' + (S.rootVertOver || 0) + '"></label>' +
+        '</div>' +
+        '<p class="sp-help">A branch with more direct children than the first number opens collapsed, and its card says how many pages it hides. ' +
+        'Expanding one lasts until you close the diagram; it doesn\u2019t change the branch\u2019s Collapse checkbox in the Sitemap editor. ' +
+        'Top-level nodes normally lay their children out in a row; the second number stacks them in a column instead. 0 turns either off.</p>';
+      return align + large + '<div class="sp-grid">' + rows + '</div>' +
         '<p class="sp-help">Layout dimensions in pixels. Changes preview live. ' +
         'Note for Miro export: corner radius exports as square vs rounded only (Miro has no radius setting), ' +
         'and inner padding is app-only \u2014 Miro centres shape text itself.</p>' + conn;
@@ -862,6 +982,18 @@
           if (key === 'cardRadius') v = Math.min(v, Math.floor(Math.min(S.cardWidth, S.cardHeight) / 2));
           if (String(v) !== inp.value) inp.value = String(v);
           S[key] = v; render(); pushState();
+        });
+      });
+      // Large-branch thresholds re-fit: either can change the canvas by orders
+      // of magnitude. Debounced, since typing "40" passes through "4".
+      var largeTimer = null;
+      Array.prototype.forEach.call(document.querySelectorAll('#sp-body input[data-large]'), function (inp) {
+        inp.addEventListener('input', function () {
+          var v = parseInt(inp.value, 10);
+          if (isNaN(v) || v < 0) return;
+          S[inp.getAttribute('data-large')] = v;
+          clearTimeout(largeTimer);
+          largeTimer = setTimeout(function () { refreshAuto(); render(); pushState(); fitToScreen(); }, 350);
         });
       });
       var al = document.querySelector('#sp-body [data-align]');
@@ -1440,7 +1572,14 @@ body{display:flex;flex-direction:column;}
 .spacer{display:none;}
 .tb-btn{padding:3px 10px;font-size:11px;font-family:inherit;border:1px solid var(--border-dk);border-radius:4px;background:var(--white);color:var(--text-mid);cursor:pointer;white-space:nowrap;transition:background .12s,color .12s;}
 .tb-btn:hover{background:#eef0f4;color:var(--text);}
-#zoom-label{font-size:11px;color:var(--text-dim);min-width:36px;text-align:right;}
+/* Zoom readout sits between -/+ as one segmented control. The readout is a
+   button (click = 100%) so it is never mistaken for static text. */
+.tb-zoom{display:flex;align-items:center;}
+.tb-zoom .tb-btn{border-radius:0;margin-left:-1px;}
+.tb-zoom .tb-btn:first-child{border-radius:4px 0 0 4px;margin-left:0;}
+.tb-zoom .tb-btn:last-child{border-radius:0 4px 4px 0;}
+#btn-zoom-out,#btn-zoom-in{padding:3px 8px;font-weight:600;}
+#zoom-label{min-width:54px;text-align:center;font-variant-numeric:tabular-nums;color:var(--text);}
 .tb-sep{width:1px;height:18px;background:var(--border);flex-shrink:0;}
 .tb-label{font-size:11px;color:var(--text-mid);display:flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;}
 #vd-wrap{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-mid);white-space:nowrap;}
@@ -1601,8 +1740,13 @@ body.printing #canvas{transform:none!important;position:static;}
       toolbar += '<button class="tb-btn" id="btn-expand">Expand all</button>';
       toolbar += '<button class="tb-btn" id="btn-collapse">Collapse all</button>';
       if (mode === 'client') toolbar += '<button class="tb-btn" id="btn-reset">Reset view</button>';
-      toolbar += '<button class="tb-btn" id="btn-fit">Fit</button>';
-      toolbar += '<span id="zoom-label">100%</span>';
+      toolbar += '<div class="tb-zoom">'
+        + '<button class="tb-btn" id="btn-zoom-out" title="Zoom out (\u2212)">\u2212</button>'
+        + '<button class="tb-btn" id="zoom-label" title="Current zoom \u2014 click for 100% (Shift+0)">100%</button>'
+        + '<button class="tb-btn" id="btn-zoom-in" title="Zoom in (+)">+</button>'
+        + '</div>';
+      toolbar += '<button class="tb-btn" id="btn-fit" title="Fit the whole tree (Shift+1)">Fit</button>';
+      toolbar += '<button class="tb-btn" id="btn-zoom-100" title="Actual size (Shift+0)">100%</button>';
       toolbar += '<div class="tb-sep"></div>';
       if (mode === 'app') {
         toolbar += '<button class="tb-btn" id="btn-settings">Settings</button>';
@@ -1618,7 +1762,7 @@ body.printing #canvas{transform:none!important;position:static;}
       toolbar += '</div>';
     }
 
-    var hint = (mode === 'print') ? '' : '<div id="hint">Scroll to zoom · Drag to pan · Click section cards to collapse</div>';
+    var hint = (mode === 'print') ? '' : '<div id="hint">Scroll to zoom · Drag to pan · Shift+0 100% · Shift+1 fit</div>';
 
     var html = '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
       + '<title>' + escAttr(title) + '</title>'
