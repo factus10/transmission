@@ -80,6 +80,44 @@ broke.
 again — one wasted round trip each, and a stale file sitting where a glob might
 pick it up.
 
+## Building in GitHub Actions instead
+
+`.github/workflows/build-mac.yml` (*Build signed macOS app*) does the whole
+signed build on a GitHub-hosted Mac. It runs on any `v*` tag push, or by hand
+from the Actions tab (`gh workflow run build-mac.yml --ref <branch>`). It:
+
+1. runs `npm ci` and `npm test`, and for a tag checks it matches `package.json` and `package-lock.json`;
+2. imports the signing cert into a throwaway keychain;
+3. builds the universal app (electron-builder signs, notarizes and staples the `.app`);
+4. notarizes and staples the `.dmg` itself, as `build-signed-mac.sh` does;
+5. runs `publish-release.sh`'s artifact checks: dmg and app stapled, Gatekeeper `Notarized Developer ID`, bundle version, universal binary;
+6. uploads the `.dmg` and `.zip` as the `transmission-mac` artifact, kept 30 days.
+
+It **does not publish**. Download the artifact into an empty `dist/` and
+release as usual:
+
+```bash
+rm -f dist/*.dmg dist/*.zip
+gh run download <run-id> --name transmission-mac --dir dist
+npm run release:publish -- --manifest-notes release-notes/<version>.txt
+```
+
+It reads five repository secrets, the same names the ts2068-disk-browser
+workflow uses. Set each from the file in `~/Documents/Apple Dev/` without
+pasting a value: `base64 -i <file> | gh secret set <NAME>`, or
+`gh secret set <NAME>` to type it at a hidden prompt.
+
+| Secret | Value |
+|---|---|
+| `MAC_CERT_P12_BASE64` | base64 of `Certificates.p12` (Developer ID Application cert + private key) |
+| `MAC_CERT_PASSWORD` | that `.p12`'s password |
+| `APPLE_API_KEY_BASE64` | base64 of `AuthKey_<KEY_ID>.p8` |
+| `APPLE_API_KEY_ID` | the Key ID (`uuid.txt`) |
+| `APPLE_API_ISSUER` | the Issuer UUID (`uuid.txt`) |
+
+The sandbox workaround below doesn't apply on a hosted runner. That runner has
+no `com.apple.provenance` problem, so the workflow builds in place.
+
 ## Which build command to run
 
 `cd ~/Documents/github/transmission` (or whichever worktree) first.
