@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   captureScreenshot: (payload) => ipcRenderer.invoke('capture-screenshot', payload),
   checkLinks:        (payload) => ipcRenderer.invoke('check-links', payload),
   saveTextFile:      (payload) => ipcRenderer.invoke('save-text-file', payload),
+  stageViewHtml:     (html)    => ipcRenderer.invoke('stage-view-html', html),
   copyToClipboard:   (text)    => ipcRenderer.invoke('copy-to-clipboard', text),
   exportProgressPdf: (payload) => ipcRenderer.invoke('export-progress-pdf', payload),
 

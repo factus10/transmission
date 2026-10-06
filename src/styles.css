@@ -4279,6 +4279,22 @@ select.mi-kind { cursor: pointer; font-family: var(--font-sans); border: 1px sol
   color: var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
 }
+/* "Hide in diagram" — still a real sitemap node, just not drawn in the Visual
+   Sitemap. Muted rather than struck through: nothing about the node is wrong. */
+.ne-visual-hidden-badge {
+  margin-left: 6px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--text-muted);
+  border: 1px dashed var(--border);
+  white-space: nowrap;
+}
+.ne-row-visual-hidden .ne-label-text {
+  color: var(--text-muted);
+}
 .ne-row-fragment {
   background: color-mix(in srgb, var(--accent) 4%, transparent);
 }

@@ -8387,7 +8387,8 @@ function buildSavePayload({ fullNav = false, drainLog = true } = {}) {
       buildAssignee: n.buildAssignee || '',
       writeAssignee: n.writeAssignee || '',
       migrateAssignee: n.migrateAssignee || '',
-      audiences: n.audiences || ''
+      audiences: n.audiences || '',
+      hideInVisual: n.hideInVisual || ''
     }));
   }
 
@@ -17436,6 +17437,8 @@ const SITEMAP_MSG_PREFIX = '@@SITEMAP@@';   // must match MSG_PREFIX in the engi
 function sitemapAppDefaults() {
   return Object.assign({
     vertDepth: 2, childThresh: 3, cardWidth: 148, cardHeight: 70,
+    // Large branches — must mirror the engine's defaults (sitemap-template.js).
+    autoCollapseOver: 25, rootVertOver: 30,
     hGap: 40, vRow: 60, vlGap: 12, vlDrop: 32, vlHgap: 20, pad: 72,
     parentAlign: 'center',
     // Must mirror the engine's own defaults in sitemap-template.js, or the
@@ -17515,6 +17518,23 @@ function sitemapMaxDepth(roots) {
   return max;
 }
 
+// Load generated HTML into a <webview>. A data: URL over Chromium's 2 MB URL
+// cap loads as a blank page — no toolbar, no error — which is what a large
+// sitemap (the Eberly audit: 3.2 MB encoded) did. Past the threshold, main
+// writes the page to a temp file and the webview loads that. Must match
+// VIEW_DATA_URL_MAX in main.js.
+const VIEW_DATA_URL_MAX = 1.5 * 1024 * 1024;
+function setWebviewHtml(wv, html) {
+  const enc = encodeURIComponent(html);
+  if (enc.length <= VIEW_DATA_URL_MAX || !window.electronAPI.stageViewHtml) {
+    wv.setAttribute('src', 'data:text/html;charset=utf-8,' + enc);
+    return;
+  }
+  window.electronAPI.stageViewHtml(html)
+    .then(url => wv.setAttribute('src', url))
+    .catch(err => showToast('Could not open the diagram: ' + (err && err.message || err), 'error'));
+}
+
 // Opens the interactive sitemap modal for a built tree.
 // opts: { context, title, rootHeadings, roots, slug, defaultColorRules,
 //         palette, rootColor, initialCollapsed }
@@ -17535,6 +17555,7 @@ function openSitemapView(opts) {
     appDefaults: sitemapAppDefaults(),
     settings: {
       vertDepth: eff.vertDepth, childThresh: eff.childThresh,
+      autoCollapseOver: eff.autoCollapseOver, rootVertOver: eff.rootVertOver,
       cardWidth: eff.cardWidth, cardHeight: eff.cardHeight,
       hGap: eff.hGap, vRow: eff.vRow, vlGap: eff.vlGap, vlDrop: eff.vlDrop,
       vlHgap: eff.vlHgap, pad: eff.pad, showNumbers: eff.showNumbers !== false,
@@ -17574,7 +17595,7 @@ function openSitemapView(opts) {
 
   const html = window.SitemapTemplate.build(Object.assign({ mode: 'app' }, baseData));
   const wv = document.createElement('webview');
-  wv.setAttribute('src', 'data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  setWebviewHtml(wv, html);
   wv.style.cssText = 'width:100%;height:100%;border:0;flex:1;';
 
   const container = document.createElement('div');
@@ -17589,7 +17610,7 @@ function openSitemapView(opts) {
       persist();
       // Collapsing/expanding a node in the view writes back to node.collapse so the
       // Nav Tree checkbox stays in sync (nav only).
-      if (opts.collapseToNavNodes) applySitemapCollapseToNav(lastState.collapsed || []);
+      if (opts.collapseToNavNodes) applySitemapCollapseToNav(lastState.collapsed || [], lastState.autoIds);
     } else if (msg.type === 'saveDefaults') {
       state.sitemapDefaults = Object.assign({}, state.sitemapDefaults, msg.settings);
       window.electronAPI.savePrefs({ sitemapDefaults: state.sitemapDefaults });
@@ -17611,13 +17632,17 @@ function openSitemapView(opts) {
 // children, so a node absent from the set is genuinely expanded → clear its flag.
 // Mutates the live navTree node objects (which Save serializes), keeps the
 // Sitemap sheet's Collapse column and the Nav Tree checkboxes in sync.
-function applySitemapCollapseToNav(collapsedIds) {
+// Auto-collapsed branches (`autoIds` — too many children to draw, see
+// SitemapLayout.autoCollapseIds) are skipped: their collapse is a display
+// default, and writing it would tick 60 Collapse checkboxes the user never set.
+function applySitemapCollapseToNav(collapsedIds, autoIds) {
   const set = new Set(collapsedIds || []);
+  const auto = new Set(autoIds || []);
   let changed = false;
   (function walk(nodes) {
     if (!nodes) return;
     nodes.forEach(n => {
-      if (n.children && n.children.length) {
+      if (n.children && n.children.length && !auto.has(n.id)) {
         const want = set.has(n.id) ? 'Y' : '';
         const cur = (n.collapse === 'Y' || n.collapse === true) ? 'Y' : '';
         if (want !== cur) { n.collapse = want; changed = true; }
@@ -18680,7 +18705,8 @@ async function sitemapExportClient(baseData, st, slug, templateModule) {
   const data = Object.assign({}, baseData, {
     mode: 'client',
     settings: (st && st.settings) || baseData.settings,
-    initialCollapsed: (st && st.collapsed) || baseData.initialCollapsed
+    initialCollapsed: (st && st.collapsed) || baseData.initialCollapsed,
+    autoExpanded: (st && st.autoExpanded) || []
   });
   const html = (templateModule || window.SitemapTemplate).build(data);
   const r = await window.electronAPI.saveTextFile({
@@ -18696,7 +18722,8 @@ async function sitemapExportPdf(baseData, st, slug, templateModule) {
   const data = Object.assign({}, baseData, {
     mode: 'print',
     settings: (st && st.settings) || baseData.settings,
-    initialCollapsed: (st && st.collapsed) || baseData.initialCollapsed
+    initialCollapsed: (st && st.collapsed) || baseData.initialCollapsed,
+    autoExpanded: (st && st.autoExpanded) || []
   });
   const html = (templateModule || window.SitemapTemplate).build(data);
   showToast('Generating PDF…');
@@ -18712,7 +18739,8 @@ async function sitemapExportPng(baseData, st, slug, templateModule) {
   const data = Object.assign({}, baseData, {
     mode: 'print',
     settings: (st && st.settings) || baseData.settings,
-    initialCollapsed: (st && st.collapsed) || baseData.initialCollapsed
+    initialCollapsed: (st && st.collapsed) || baseData.initialCollapsed,
+    autoExpanded: (st && st.autoExpanded) || []
   });
   const html = (templateModule || window.SitemapTemplate).build(data);
   showToast('Generating PNG…');
@@ -18757,7 +18785,7 @@ function openTreemapView(opts) {
 
   const html = window.TreemapTemplate.build(Object.assign({ mode: 'app' }, baseData));
   const wv = document.createElement('webview');
-  wv.setAttribute('src', 'data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  setWebviewHtml(wv, html);
   wv.style.cssText = 'width:100%;height:100%;border:0;flex:1;';
 
   const container = document.createElement('div');
@@ -19257,7 +19285,7 @@ function openSankeyView(opts) {
 
   const html = window.SankeyTemplate.build(Object.assign({ mode: 'app' }, baseData));
   const wv = document.createElement('webview');
-  wv.setAttribute('src', 'data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  setWebviewHtml(wv, html);
   wv.style.cssText = 'width:100%;height:100%;border:0;flex:1;';
 
   const container = document.createElement('div');
@@ -19877,6 +19905,34 @@ const SITEMAP_MANY_ROOTS = 40;
  *  Miro exporter share — rather than estimating, so the size reported here is
  *  the size that renders. Verified against a live render of a 1,755-node tree:
  *  37,908 × 104,982 px, identical to the DOM. */
+// "Hide in diagram" (Sitemap column Hide_In_Visual_Sitemap). A node that's
+// part of the IA for mapping purposes — /user/NNN profiles, a feed, a search
+// page — but would only clutter the box tree. Hiding a node hides its whole
+// subtree from the Visual Sitemap and its exports (HTML, PDF, PNG, Miro) and
+// from the shape check that predicts it. NOTHING ELSE reads it: the node keeps
+// its pages, path, redirects, menu references and report rows, and the
+// Treemap / Content Flow still count it, because those measure content.
+function isNavHiddenInVisual(node) {
+  return !!node && (node.hideInVisual === 'Y' || node.hideInVisual === true);
+}
+
+// The tree as the Visual Sitemap draws it: hidden branches pruned. Returns
+// lightweight {id, stacked, children} skeletons — enough for the layout engine,
+// and copies, so pruning never touches state.navTree.
+function navVisualSkeleton(nodes) {
+  return (nodes || []).filter(n => !isNavHiddenInVisual(n)).map(n => ({
+    id: n.id, stacked: n.stacked, children: navVisualSkeleton(n.children),
+  }));
+}
+
+// Nodes the Visual Sitemap will open collapsed because they have too many
+// children — the engine applies the same rule (SitemapLayout.autoCollapseIds),
+// so the shape check measures the diagram that actually opens.
+function sitemapAutoCollapsedIds(roots) {
+  if (!window.SitemapLayout || !window.SitemapLayout.autoCollapseIds) return new Set();
+  return new Set(window.SitemapLayout.autoCollapseIds(navVisualSkeleton(roots), sitemapEffectiveSettings('nav', [])));
+}
+
 function measureSitemapLayout(roots, collapsedIds) {
   // The sitemap view is a 94vw × 80vh modal; its toolbar and padding take a
   // little more. Close enough that the percentage quoted matches what opens.
@@ -19885,6 +19941,7 @@ function measureSitemapLayout(roots, collapsedIds) {
   // fitScale null means "not measured", never "fits fine" — a missing layout
   // module reporting 100% would make the shape check confidently declare a
   // 105,000px tree healthy, which is worse than admitting it can't tell.
+  roots = navVisualSkeleton(roots);   // measure what's drawn, not what's hidden
   if (!window.SitemapLayout || !roots || !roots.length) return { canvasW: 0, canvasH: 0, fitScale: null };
   const r = window.SitemapLayout.create({
     roots,
@@ -19912,8 +19969,11 @@ function sitemapFitVerdict(fitScale) {
  *            verdict, withSiteRoot, singletons, artifacts, wide }.
  *  Pure — reads state, writes nothing. */
 function computeSitemapShape(opts = {}) {
-  const tree = state.navTree || [];
-  const all = state.navNodes || [];
+  // The diagram's shape, so branches hidden from it ("Hide in diagram") are
+  // left out of every count here — that's the point of hiding them.
+  const visibleKids = n => (n.children || []).filter(c => !isNavHiddenInVisual(c));
+  const tree = (state.navTree || []).filter(n => !isNavHiddenInVisual(n));
+  const all = [];
 
   const depthCounts = [];
   let maxDepth = 0;
@@ -19921,7 +19981,7 @@ function computeSitemapShape(opts = {}) {
     if (!nodes || !nodes.length) return;
     depthCounts[d] = (depthCounts[d] || 0) + nodes.length;
     if (d > maxDepth) maxDepth = d;
-    nodes.forEach(n => walk(n.children, d + 1));
+    nodes.forEach(n => { all.push(n); walk(visibleKids(n), d + 1); });
   })(tree, 0);
 
   // Every assigned row, Kill and Consolidate included — "is this section one
@@ -19935,7 +19995,7 @@ function computeSitemapShape(opts = {}) {
   const singletons = [];
   const artifacts = [];
   tree.forEach(node => {
-    const kids = (node.children || []).length;
+    const kids = visibleKids(node).length;
     const slug = String(node.path || '').trim().toLowerCase();
     if (SITEMAP_ARTIFACT_SLUGS.has(slug)) { artifacts.push(node); return; }
     if (!kids && (direct[node.id] || 0) <= 1) singletons.push(node);
@@ -19945,11 +20005,13 @@ function computeSitemapShape(opts = {}) {
   // many is what turns a canvas very wide. The threshold is the engine's own
   // vertical-flip rule read backwards: below `vertDepth` children still spread
   // sideways however many there are.
+  // Auto-collapsed branches already open folded, so they're not "wide".
+  const autoSet = sitemapAutoCollapsedIds(tree);
   const wide = [];
   const wideAt = opts.wideThreshold || 12;
   all.forEach(n => {
-    const kids = (n.children || []).length;
-    if (kids >= wideAt && !(n.collapse === 'Y' || n.collapse === true)) wide.push({ node: n, children: kids });
+    const kids = visibleKids(n).length;
+    if (kids >= wideAt && !autoSet.has(n.id) && !(n.collapse === 'Y' || n.collapse === true)) wide.push({ node: n, children: kids });
   });
   wide.sort((a, b) => b.children - a.children);
 
@@ -19966,6 +20028,7 @@ function computeSitemapShape(opts = {}) {
   // Predict the render using the same engine, settings and collapse set the view
   // will use, so these numbers are not an approximation of the layout.
   const collapsed = new Set(all.filter(n => n.collapse === 'Y' || n.collapse === true).map(n => n.id));
+  autoSet.forEach(id => collapsed.add(id));
   const plain = measureSitemapLayout(tree, collapsed);
   // Answers the obvious first guess — "did we forget a root node?". Wrapping N
   // sections under one synthetic site root trades height for width, because the
@@ -20128,9 +20191,10 @@ function projectSitemapShape(shape, keys) {
   const grouping = keys.includes('singletons') && shape.singletons.length > 0;
   if (grouping) shape.singletons.forEach(n => drop.add(n));
 
-  const roots = (state.navTree || []).filter(n => !drop.has(n));
+  const roots = (state.navTree || []).filter(n => !drop.has(n) && !isNavHiddenInVisual(n));
   const collapsed = new Set((state.navNodes || [])
     .filter(n => n.collapse === 'Y' || n.collapse === true).map(n => n.id));
+  sitemapAutoCollapsedIds(state.navTree || []).forEach(id => collapsed.add(id));
 
   if (grouping) {
     // The bucket is created collapsed — see groupNavRootsUnderBucket. A pile of
@@ -20454,7 +20518,7 @@ async function generateNavSitemap(sitemapOpts = {}) {
   // label, stamped onto colorValue so "color by section" tints the whole subtree.
   function navToSitemap(node, topLabel) {
     if (sectionIds.has(node.id)) topLabel = node.label || '(section)';
-    const kids = (node.children || []);
+    const kids = (node.children || []).filter(c => !isNavHiddenInVisual(c));
     const count = pageCounts[node.id] || 0;
     if (node.collapse === 'Y' || node.collapse === true) initialCollapsed.push(node.id);
     const out = {
@@ -20502,7 +20566,12 @@ async function generateNavSitemap(sitemapOpts = {}) {
   }
 
   const ps = state.projectSettings || {};
-  const sections = state.navTree.map(sec => navToSitemap(sec, sec.label || '(section)'));
+  const sections = state.navTree.filter(sec => !isNavHiddenInVisual(sec))
+    .map(sec => navToSitemap(sec, sec.label || '(section)'));
+  if (!sections.length) {
+    showToast('Every top-level node is hidden in the Visual Sitemap — untick "Hide in diagram" on one to draw it', 'error');
+    return;
+  }
   // By default the sitemap's own top-level node(s) are the root(s) — no extra
   // synthetic layer above e.g. a "Home" node. Only when `sitemapShowSiteRoot`
   // is explicitly true do we wrap the tree in one synthetic "site" root (labeled
@@ -21067,6 +21136,16 @@ function renderNavEditorNode(node, pageCounts, depth, dupSlugs, depthFilter) {
     openNavNodeEditor(node);
   });
   labelCell.appendChild(labelText);
+  if (isNavHiddenInVisual(node)) {
+    row.classList.add('ne-row-visual-hidden');
+    const hb = document.createElement('span');
+    hb.className = 'ne-visual-hidden-badge';
+    hb.textContent = 'hidden in diagram';
+    hb.title = (node.children && node.children.length)
+      ? 'This node and everything under it are left out of the Visual Sitemap. They stay in the sitemap for mapping, reports and redirects.'
+      : 'Left out of the Visual Sitemap. It stays in the sitemap for mapping, reports and redirects.';
+    labelCell.appendChild(hb);
+  }
 
   // Phase 2, Chunk δ: build-phase indicators (status badge + assignee + pattern)
   // Render inline after the label text. Each indicator is conditional — appears
@@ -22812,6 +22891,12 @@ function openNavNodeEditor(node) {
             <span style="color:var(--text-muted);">Collapse this node’s subtree in the Visual Sitemap</span>
           </label>
 
+          <label style="font-size:12px;color:var(--text-secondary);">Hide in diagram</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;">
+            <input id="_nne-hide-visual" type="checkbox" ${isNavHiddenInVisual(node) ? 'checked' : ''}>
+            <span style="color:var(--text-muted);">Leave this node and everything under it out of the Visual Sitemap. It stays in the sitemap for mapping, reports and redirects.</span>
+          </label>
+
           <label for="_nne-node-type" style="font-size:12px;color:var(--text-secondary);">Node type</label>
           <div>
             <select id="_nne-node-type" style="font-size:13px;padding:4px 8px;min-width:200px;">
@@ -23258,6 +23343,12 @@ function openNavNodeEditor(node) {
     const newLabel = sanitizeText(labelInp.value).trim();
     const newSlug = sanitizeText(slugInp.value).trim();
     const newInmenu = inmenuInp.checked ? 'Y' : '';
+    const hideVisualInp = dialog.querySelector('#_nne-hide-visual');
+    const newHideVisual = hideVisualInp && hideVisualInp.checked ? 'Y' : '';
+    if (newHideVisual !== (isNavHiddenInVisual(node) ? 'Y' : '')) {
+      node.hideInVisual = newHideVisual;
+      state.navTreeDirty = true; setDirty(true);
+    }
     const newUrl = urlInp.value.trim();
     const newNotes = sanitizeText(notesInp.value);
     const phaseInp = dialog.querySelector('#_nne-phase');
