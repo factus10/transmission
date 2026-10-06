@@ -31,6 +31,9 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'),
 const SitemapLayout = require(path.join(__dirname, '..', 'src', 'sitemap-layout.js'));
 
 const EXTRACTED = [
+  'isNavHiddenInVisual',
+  'navVisualSkeleton',
+  'sitemapAutoCollapsedIds',
   'measureSitemapLayout',
   'sitemapFitVerdict',
   'computeSitemapShape',
@@ -67,6 +70,7 @@ function sitemapEffectiveSettings() {
     vertDepth: 2, childThresh: 3, cardWidth: 148, cardHeight: 70,
     hGap: 40, vRow: 60, vlGap: 12, vlDrop: 32, vlHgap: 20, pad: 72,
     nodeOverrides: {},
+    ...(globalThis.__largeBranchSettings || {}),
   };
 }
 var state = null;
@@ -403,5 +407,127 @@ describe('applyGroupNavRoots — the repair', () => {
     assert.deepEqual(state.navTree.map(n => n.label), ['Other', 'Unsorted'],
       'no existing root was spliced away');
     assert.deepEqual(bucket.children.map(n => n.label), ['Orphan']);
+  });
+});
+
+// ── Large branches: auto-collapse + a vertical bar for roots ──────────────────
+// A flat site (the Eberly audit) puts 1,378 news articles under one node and
+// 106 profile pages under a top-level "User" node. The engine auto-collapses
+// the first and stacks the second; the shape check must measure that diagram,
+// not the unreadable one.
+function leaves(n, prefix) {
+  return Array.from({ length: n }, (_, i) => node(prefix + ' ' + i));
+}
+
+describe('SitemapLayout.autoCollapseIds', () => {
+  const roots = () => [{ id: 'home', children: [
+    { id: 'news', children: Array.from({ length: 40 }, (_, i) => ({ id: 'n' + i, children: [] })) },
+    { id: 'about', children: [{ id: 'a1', children: [] }] },
+  ] }, { id: 'user', children: Array.from({ length: 60 }, (_, i) => ({ id: 'u' + i, children: [] })) }];
+
+  test('collapses non-root nodes with more than N children', () => {
+    assert.deepEqual(SitemapLayout.autoCollapseIds(roots(), { autoCollapseOver: 25 }), ['news']);
+  });
+  test('never collapses a root — that would hide the whole site', () => {
+    assert.ok(!SitemapLayout.autoCollapseIds(roots(), { autoCollapseOver: 25 }).includes('user'));
+  });
+  test('"more than", not "at least"', () => {
+    assert.deepEqual(SitemapLayout.autoCollapseIds(roots(), { autoCollapseOver: 40 }), []);
+  });
+  test('0 or unset is off, so existing callers are unchanged', () => {
+    assert.deepEqual(SitemapLayout.autoCollapseIds(roots(), { autoCollapseOver: 0 }), []);
+    assert.deepEqual(SitemapLayout.autoCollapseIds(roots(), {}), []);
+  });
+});
+
+describe('rootVertOver — a wide root stacks instead of spreading', () => {
+  const S = { vertDepth: 2, childThresh: 3, cardWidth: 148, cardHeight: 70,
+    hGap: 40, vRow: 60, vlGap: 12, vlDrop: 32, vlHgap: 20, pad: 72, nodeOverrides: {} };
+  const user = () => ({ id: 'user', children: Array.from({ length: 106 }, (_, i) => ({ id: 'u' + i, children: [] })) });
+  const home = () => ({ id: 'home', children: Array.from({ length: 15 }, (_, i) => ({ id: 'h' + i, children: [] })) });
+
+  test('a root past the bar goes vertical', () => {
+    const lay = SitemapLayout.create({ roots: [user()], settings: Object.assign({ rootVertOver: 30 }, S) });
+    assert.equal(lay.shouldBeVert(user(), 0), true);
+    const r = lay.compute();
+    assert.ok(r.canvasW < 600, 'one column, not a 15,000px row: ' + r.canvasW);
+  });
+  test('a homepage under the bar keeps its sections across the top', () => {
+    const lay = SitemapLayout.create({ roots: [home()], settings: Object.assign({ rootVertOver: 30 }, S) });
+    assert.equal(lay.shouldBeVert(home(), 0), false);
+  });
+  test('off by default, so a stored project lays out as before', () => {
+    const lay = SitemapLayout.create({ roots: [user()], settings: S });
+    assert.equal(lay.shouldBeVert(user(), 0), false);
+  });
+  test('a per-node override still wins', () => {
+    const settings = Object.assign({ rootVertOver: 30 }, S, { nodeOverrides: { user: { layout: 'horiz' } } });
+    assert.equal(SitemapLayout.create({ roots: [user()], settings }).shouldBeVert(user(), 0), false);
+  });
+});
+
+describe('the shape check sees auto-collapse', () => {
+  test('an auto-collapsed list is not reported as wide, and the measure shrinks', () => {
+    const news = node('News', { children: leaves(200, 'Story') });
+    const home = node('Home', { children: [news, node('About')] });
+    setTree([home], []);
+
+    globalThis.__largeBranchSettings = {};
+    const before = computeSitemapShape();
+    globalThis.__largeBranchSettings = { autoCollapseOver: 25 };
+    try {
+      const after = computeSitemapShape();
+      assert.ok(before.wide.some(w => w.node === news), 'reported as wide when nothing folds it');
+      assert.ok(!after.wide.some(w => w.node === news), 'not wide once it opens collapsed');
+      assert.ok(after.canvasH < before.canvasH / 10, `${after.canvasH} vs ${before.canvasH}`);
+    } finally {
+      globalThis.__largeBranchSettings = {};
+    }
+  });
+  test('auto-collapse never writes the node’s own Collapse flag', () => {
+    const news = node('News', { children: leaves(40, 'Story') });
+    setTree([node('Home', { children: [news] })], []);
+    globalThis.__largeBranchSettings = { autoCollapseOver: 25 };
+    try { computeSitemapShape(); } finally { globalThis.__largeBranchSettings = {}; }
+    assert.equal(news.collapse, undefined);
+  });
+});
+
+// ── "Hide in diagram" ─────────────────────────────────────────────────────────
+// /user/NNN profiles belong in the sitemap (they need mapping to the new CMS)
+// but not in the Visual Sitemap. The shape check predicts the diagram, so it
+// must not count what the diagram won't draw.
+describe('Hide in diagram', () => {
+  test('a hidden root is not counted and not measured', () => {
+    const home = node('Home', { children: [node('About'), node('News')] });
+    const user = node('User', { children: leaves(106, 'Profile'), hideInVisual: 'Y' });
+    setTree([home, user], []);
+    const shown = computeSitemapShape();
+    user.hideInVisual = '';
+    const all = computeSitemapShape();
+    assert.equal(shown.roots, 1);
+    assert.equal(all.roots, 2);
+    assert.ok(shown.canvasW < all.canvasW / 5, `${shown.canvasW} vs ${all.canvasW}`);
+    assert.equal(shown.nodes, 3, 'the hidden branch is out of the node count');
+  });
+  test('a hidden branch below the top is not reported as wide', () => {
+    const user = node('User', { children: leaves(40, 'Profile'), hideInVisual: 'Y' });
+    setTree([node('Home', { children: [user, node('About')] })], []);
+    assert.ok(!computeSitemapShape().wide.some(w => w.node === user));
+  });
+  test('hiding never alters the real tree', () => {
+    const user = node('User', { children: leaves(5, 'Profile'), hideInVisual: 'Y' });
+    const home = node('Home', { children: [user] });
+    setTree([home], []);
+    computeSitemapShape();
+    assert.equal(home.children.length, 1);
+    assert.equal(user.children.length, 5);
+    assert.equal(navVisualSkeleton([home])[0].children.length, 0);
+  });
+  test('accepts the stored "Y" and a boolean', () => {
+    assert.equal(isNavHiddenInVisual({ hideInVisual: 'Y' }), true);
+    assert.equal(isNavHiddenInVisual({ hideInVisual: true }), true);
+    assert.equal(isNavHiddenInVisual({ hideInVisual: '' }), false);
+    assert.equal(isNavHiddenInVisual({}), false);
   });
 });
