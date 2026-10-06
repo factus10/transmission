@@ -764,7 +764,8 @@ const NAV_HEADER_TO_KEY = {
   'Notes': 'notes', 'Phase': 'phase', 'Node_Type': 'nodeType', 'Nav_Layer': 'navLayer',
   'Build_Pattern': 'buildPattern', 'Build_Guidance': 'buildGuidance', 'Writer_Brief': 'writerBrief',
   'Page_Status': 'pageStatus', 'Build_Assignee': 'buildAssignee', 'Write_Assignee': 'writeAssignee',
-  'Migrate_Assignee': 'migrateAssignee', 'Node_Audiences': 'audiences'
+  'Migrate_Assignee': 'migrateAssignee', 'Node_Audiences': 'audiences',
+  'Hide_In_Visual_Sitemap': 'hideInVisual'
 };
 
 function navTreeFromFlatNodes(flatNodes) {
@@ -879,7 +880,10 @@ function parseNavSheet(worksheet) {
     writeAssignee:  h.indexOf('Write_Assignee'),
     migrateAssignee: h.indexOf('Migrate_Assignee'),
     // Who the branch is for (renderer: nodeOwnAudiences / navEffectiveAudienceMap)
-    audiences:    h.indexOf('Node_Audiences')
+    audiences:    h.indexOf('Node_Audiences'),
+    // Kept in the sitemap (mapping, reports, redirects) but not drawn in the
+    // Visual Sitemap — renderer: isNavHiddenInVisual()
+    hideInVisual: h.indexOf('Hide_In_Visual_Sitemap')
   };
 
   if (idx.number === -1 || idx.label === -1 || idx.id === -1) return null;
@@ -921,6 +925,7 @@ function parseNavSheet(worksheet) {
       writeAssignee:  idx.writeAssignee >= 0 ? String(r[idx.writeAssignee] || '') : '',
       migrateAssignee: idx.migrateAssignee >= 0 ? String(r[idx.migrateAssignee] || '') : '',
       audiences:    idx.audiences >= 0 ? String(r[idx.audiences] || '') : '',
+      hideInVisual: idx.hideInVisual >= 0 ? String(r[idx.hideInVisual] || '') : '',
       children:     []
     };
     nodes.push(node);
@@ -1886,7 +1891,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
           nsData[0] = nsHeaders;
         }
         // Phase 2, Chunk α: build / write metadata columns
-        const ensureCols = ['Build_Pattern', 'Build_Guidance', 'Writer_Brief', 'Page_Status', 'Build_Assignee', 'Write_Assignee', 'Migrate_Assignee', 'Node_Audiences'];
+        const ensureCols = ['Build_Pattern', 'Build_Guidance', 'Writer_Brief', 'Page_Status', 'Build_Assignee', 'Write_Assignee', 'Migrate_Assignee', 'Node_Audiences', 'Hide_In_Visual_Sitemap'];
         ensureCols.forEach(c => {
           if (!nsHeaders.includes(c)) {
             nsHeaders.push(c);
@@ -1926,7 +1931,8 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
           buildAssignee:  nsHeaders.indexOf('Build_Assignee'),
           writeAssignee:  nsHeaders.indexOf('Write_Assignee'),
           migrateAssignee: nsHeaders.indexOf('Migrate_Assignee'),
-          audiences:      nsHeaders.indexOf('Node_Audiences')
+          audiences:      nsHeaders.indexOf('Node_Audiences'),
+          hideInVisual:   nsHeaders.indexOf('Hide_In_Visual_Sitemap')
         };
 
         const rebuilt = [nsData[0]];
@@ -1960,6 +1966,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
           if (colIdx.writeAssignee  >= 0) newRow[colIdx.writeAssignee]  = node.writeAssignee  || '';
           if (colIdx.migrateAssignee >= 0) newRow[colIdx.migrateAssignee] = node.migrateAssignee || '';
           if (colIdx.audiences      >= 0) newRow[colIdx.audiences]      = node.audiences      || '';
+          if (colIdx.hideInVisual   >= 0) newRow[colIdx.hideInVisual]   = node.hideInVisual   || '';
           rebuilt.push(newRow);
         }
 
@@ -1971,7 +1978,7 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
         const nsHeaders = ['ID', 'Number', 'ParentNumber', 'Label', 'Path', 'SortID', 'Computed Path', 'Breadcrumb',
                            'RefNodeID', 'InMenu', 'URL', 'Url_Path', 'Breadcrumb_Parent', 'Collapse', 'Notes', 'Phase', 'Node_Type', 'Nav_Layer',
                            'Build_Pattern', 'Build_Guidance', 'Writer_Brief', 'Page_Status',
-                           'Build_Assignee', 'Write_Assignee', 'Migrate_Assignee', 'Node_Audiences'];
+                           'Build_Assignee', 'Write_Assignee', 'Migrate_Assignee', 'Node_Audiences', 'Hide_In_Visual_Sitemap'];
         const rebuilt = [nsHeaders];
         for (const node of allNavNodes) {
           rebuilt.push([
@@ -1981,7 +1988,8 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
             node.refNodeId || '', node.inMenu || '', node.url || '', node.urlOverride || '', node.breadcrumbParentId || '', node.collapse || '',
             clampCell(node.notes || ''), node.phase || '', node.nodeType || '', node.navLayer || '',
             node.buildPattern || '', clampCell(node.buildGuidance || ''), clampCell(node.writerBrief || ''), node.pageStatus || '',
-            node.buildAssignee || '', node.writeAssignee || '', node.migrateAssignee || '', node.audiences || ''
+            node.buildAssignee || '', node.writeAssignee || '', node.migrateAssignee || '', node.audiences || '',
+            node.hideInVisual || ''
           ]);
         }
         workbook.Sheets[nsName] = XLSX.utils.aoa_to_sheet(rebuilt);
@@ -3679,6 +3687,34 @@ ipcMain.handle('save-text-file', async (event, { content, defaultName, filters }
   }
 });
 
+// ── Loading generated HTML (sitemap / treemap / Content Flow / reports) ──────
+// These pages used to be loaded as `data:` URLs. Chromium refuses any URL over
+// 2 MB, and a data: URL percent-encodes its content (~1.6x), so a large
+// diagram simply never loaded: the Eberly audit's Visual Sitemap is ~2 MB of
+// HTML, 3.2 MB encoded, and opened as a blank modal with no toolbar. Anything
+// past the threshold now goes through a temp file instead; smaller pages keep
+// the data: URL they always had.
+const VIEW_DATA_URL_MAX = 1.5 * 1024 * 1024;
+const VIEW_TMP_DIR = path.join(app.getPath('temp'), 'transmission-views');
+function stageViewHtml(html) {
+  fs.mkdirSync(VIEW_TMP_DIR, { recursive: true });
+  const file = path.join(VIEW_TMP_DIR, `view-${Date.now()}-${require('crypto').randomBytes(4).toString('hex')}.html`);
+  fs.writeFileSync(file, html, 'utf8');
+  return file;
+}
+function loadHtmlIntoWindow(win, html) {
+  const enc = encodeURIComponent(html);
+  if (enc.length <= VIEW_DATA_URL_MAX) return win.loadURL('data:text/html;charset=utf-8,' + enc);
+  return win.loadFile(stageViewHtml(html));
+}
+function clearStagedViews() {
+  try { fs.rmSync(VIEW_TMP_DIR, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+}
+// The renderer's <webview>s hit the same limit — it asks for a file:// URL.
+ipcMain.handle('stage-view-html', (event, html) => {
+  return require('url').pathToFileURL(stageViewHtml(String(html || ''))).href;
+});
+
 ipcMain.handle('export-progress-pdf', async (event, { html, defaultName }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     title: 'Export Progress Report',
@@ -3691,7 +3727,7 @@ ipcMain.handle('export-progress-pdf', async (event, { html, defaultName }) => {
   let win = null;
   try {
     win = new BrowserWindow({ show: false, width: 800, height: 600 });
-    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    await loadHtmlIntoWindow(win, html);
     const pdfData = await win.webContents.printToPDF({
       printBackground: true,
       pageSize: 'A4',
@@ -4010,7 +4046,7 @@ ipcMain.handle('export-sitemap-pdf', async (event, { html, defaultName }) => {
   let win = null;
   try {
     win = new BrowserWindow({ show: false, width: 2000, height: 1400, webPreferences: { nodeIntegration: false, contextIsolation: true } });
-    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    await loadHtmlIntoWindow(win, html);
     // Wait for the engine to finish layout (document.title -> 'READY'), capped.
     await new Promise((resolve) => {
       let waited = 0;
@@ -4065,7 +4101,7 @@ ipcMain.handle('export-viz-png', async (event, { html, defaultName }) => {
       paintWhenInitiallyHidden: true,   // default, but load-bearing here: a hidden window that never paints captures blank
       webPreferences: { nodeIntegration: false, contextIsolation: true, offscreen: false },
     });
-    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    await loadHtmlIntoWindow(win, html);
     await new Promise((resolve) => {
       let waited = 0;
       const tick = async () => {
@@ -4289,6 +4325,7 @@ app.on('web-contents-created', (event, contents) => {
 });
 
 app.whenReady().then(() => {
+  clearStagedViews();   // left behind by a crash or force-quit
   buildMenu();
   createWindow();
   app.on('activate', () => {
@@ -4336,4 +4373,5 @@ app.on('window-all-closed', () => {
 // is a complete single-file snapshot (no stale -wal/-shm sidecars).
 app.on('before-quit', () => {
   try { projectStore.close(); } catch (e) { /* best effort */ }
+  clearStagedViews();   // generated diagram pages; a stale one is never reopened
 });
