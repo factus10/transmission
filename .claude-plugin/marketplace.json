@@ -1,0 +1,17 @@
+{
+  "name": "transmission",
+  "owner": {
+    "name": "David Anderson"
+  },
+  "plugins": [
+    {
+      "name": "transmission",
+      "description": "Transmission content-audit MCP server and strategist skills (read-only access to .transmission projects).",
+      "version": "0.2.0",
+      "source": "./mcp"
+    }
+  ],
+  "metadata": {
+    "description": "Transmission \u2014 content-audit tooling: the read-only MCP server over .transmission projects and the strategist skills that use it."
+  }
+}
