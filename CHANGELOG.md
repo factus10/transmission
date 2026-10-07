@@ -6,6 +6,10 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Added
+
+- **Audit skills for the MCP server, packaged as a Claude Code plugin.** `mcp/` is now a plugin: one install wires the read-only server *and* four skills that know how to use it — `ask-the-audit` (the analyst discipline: aggregate before listing, content pages for client numbers, blank means unreviewed, every figure reproducible as a sidebar filter), `audit-status` (progress both ways, what moved and by whom, what's still owed before handoff), `section-review` (a section's patterns, its exceptions, and a proposed-decision worksheet in the auditor's own vocabulary) and `decision-consistency` (pages whose decision contradicts their neighbours or their data — a Keep that 404s, a Consolidate with no target, a Kill in a priority-audience section — each with the evidence and a question rather than a verdict). All four propose; none write. `node mcp/sample/make-sample-project.js` builds a 314-row fictional audit with planted problems to try them on. Claude Code only; Desktop still gets the server alone.
+
 ## [2.19.1] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Added

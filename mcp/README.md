@@ -11,7 +11,19 @@ Design and reasoning: [`docs/dev/MCP_SERVER_PROPOSAL.md`](../docs/dev/MCP_SERVER
 
 ## Setup
 
-**Claude Code**
+**Claude Code — as a plugin (recommended).** This directory is a Claude Code plugin: it declares the server *and* ships the skills below, so one install wires both.
+
+```bash
+# from a checkout of the repo
+claude plugin install transmission --plugin-dir /absolute/path/to/transmission/mcp
+
+# or, for one session only
+claude --plugin-dir /absolute/path/to/transmission/mcp
+```
+
+The repo root also carries a marketplace entry (`.claude-plugin/marketplace.json`), so `/plugin marketplace add factus10/transmission` then `/plugin install transmission` works for anyone with access to the repo.
+
+**Claude Code — server only**
 
 ```bash
 claude mcp add transmission -- node /absolute/path/to/transmission/mcp/server.js
@@ -31,6 +43,27 @@ claude mcp add transmission -- node /absolute/path/to/transmission/mcp/server.js
 ```
 
 Then, in a conversation: *"Open the project at /path/to/audit.transmission"*. To start with a project already open, append `--project /path/to/audit.transmission` to the args (or set `TRANSMISSION_PROJECT`).
+
+## Skills
+
+Four skills ride along in `skills/`. They encode *how to ask* — the audit's conventions and the order of operations from `docs/RUNNING_AN_AUDIT.md` — so the model behaves like an analyst who has read the method, not one guessing from column names. Each ends in something the strategist acts on in the app; none of them change the project.
+
+| Skill | Use it when | Produces |
+|---|---|---|
+| `ask-the-audit` | Any "how many / which pages / what did we decide" question | A number, its breakdown, and the sidebar filter that reproduces it |
+| `audit-status` | Monday check-in, client status email, "what changed since Friday" | A status note: progress both ways, what moved and by whom, what's still owed before handoff |
+| `section-review` | "Help me go through /news", "what should we do with the department pages" | The section's patterns, the exceptions worth a human minute, and a proposed-decision worksheet with reasons in the auditor's own vocabulary |
+| `decision-consistency` | Before SME export, handoff, or a readout | Pages whose decision contradicts their neighbours or their data, each with the evidence and a question — never an accusation |
+
+Invoke them as `/audit-status`, `/section-review /news`, `/decision-consistency`, or just ask in plain language; the descriptions let the model pick them up.
+
+**Try them without client data:**
+
+```bash
+node mcp/sample/make-sample-project.js        # → mcp/sample/alpha-university.transmission
+```
+
+That writes a deterministic 314-row fictional university audit with a sitemap, audiences, saved filters and three weeks of change history — and seven planted problems (a Keep page that 404s, Consolidate pages with no target, a Kill in a priority-audience section, SME overrides, an undecided tail) for the skills to find. The script prints the list.
 
 ## What it can do
 
@@ -56,6 +89,8 @@ The server opens the project **read-only**, never migrates it, and holds the dat
 One visible side effect: reading a project that the app has closed leaves empty `-shm` / `-wal` files beside it. That is how SQLite's WAL mode works for any reader; they are harmless, and the app removes them the next time it opens and closes the project.
 
 ## What it can't do yet
+
+- **Skills in Claude Desktop.** Desktop can run the server (configure it as above) but doesn't load Claude Code plugins or skills; the skills are Claude Code only for now.
 
 - **Change anything.** The app keeps the project in memory and would overwrite an outside edit on its next autosave. Writes are planned as *proposals* the auditor accepts in the app — see the proposal doc, §5.
 - **Filters the app computes live** — duplicates, URL variants, redirect review, cross-site duplicates, consolidate-target checks, SME conflicts. A saved filter that uses one is refused by name rather than silently run without it; `get_libraries` → `savedFilters` shows which are usable.
