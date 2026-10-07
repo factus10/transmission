@@ -1,0 +1,13 @@
+{
+  "name": "transmission",
+  "version": "0.2.0",
+  "description": "Read-only access to a Transmission content-audit project (.transmission), plus skills that help a content strategist run the audit: status briefs, section review, decision-consistency checks, and disciplined ad hoc questions.",
+  "author": { "name": "David Anderson" },
+  "keywords": ["content-audit", "content-strategy", "kke", "migration", "mcp"],
+  "mcpServers": {
+    "transmission": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server.js"]
+    }
+  }
+}

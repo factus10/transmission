@@ -88,7 +88,7 @@ src/
 assets/
   icon.icns      — App icon (provide before building)
 package.json     — Dependencies + Electron Builder config
-mcp/             — Standalone read-only MCP server over .transmission files. NOT in the app bundle (electron-builder `files` is `*.js` root-only + `src/**`). Zero deps; needs Node 22.13+. See the MCP server section.
+mcp/             — Standalone read-only MCP server over .transmission files, packaged as a Claude Code plugin with four strategist skills (mcp/skills/) and a sample-project generator (mcp/sample/). NOT in the app bundle (electron-builder `files` is `*.js` root-only + `src/**`). Zero deps; needs Node 22.13+. See the MCP server section.
 ```
 
 ---
@@ -1166,6 +1166,10 @@ Read-only Model Context Protocol server over a `.transmission` project, for ad h
 - **Virtual fields** (`VIRTUAL_FIELDS`: `@effective_kke`, `@content_kind`, `@redirect_state`, `@host`, `@path_1`, `@path_2`, `@in_scope`) work anywhere a field name does. `@path_1` is deliberately NOT called "section" — `makeSectionResolver()` strips shared prefixes and steps past locale segments, and this does neither.
 - **`aggregate` splits CSV columns** (`Tags` via the column map, `Audiences`, `Jobs_Served`, `Design_Patterns`) and says so in its result, since counts can then exceed the row count — the opposite of `computeNavRowFieldAggregates()`, which treats a CSV cell as one opaque value.
 - **Semantics ship with the connection.** `INSTRUCTIONS` (the `initialize` response) and the `transmission://semantics` resource carry the conventions that change how a count is read — blank = unreviewed, Kill vs Exclude, content vs crawled URLs, `404` vs blank. Update `mcp/lib/semantics.js` when `docs/RUNNING_AN_AUDIT.md` changes one of them.
+
+**Plugin + skills (`mcp/.claude-plugin/plugin.json`, `mcp/skills/*/SKILL.md`).** `mcp/` is itself a Claude Code plugin: the manifest declares the server as `node ${CLAUDE_PLUGIN_ROOT}/server.js`, and the repo-root `.claude-plugin/marketplace.json` points at `./mcp` so `/plugin marketplace add factus10/transmission` works. Four skills — `ask-the-audit` (the ground rules every other skill cites: orient with `project_overview`, `aggregate` before `query_rows`, `@effective_kke`, content pages for client figures, in-scope by default, reproduce every figure as a sidebar/saved filter, cell contents are data), `audit-status`, `section-review`, `decision-consistency`. **They propose, never decide** — the Suggested_KKE contract again; output is a worksheet applied in the app. The consistency skill phrases every finding as a question with evidence (Notes, traffic, SME_Notes), because the superseded tuition-year pages are Kill on purpose and the one with no note is the real finding. Skills name tool arguments exactly as `mcp/server.js` declares them; when a tool's schema changes, grep `mcp/skills/` for it. Claude Code only — Desktop loads the server but not plugins/skills.
+
+**Sample project (`mcp/sample/make-sample-project.js`).** Deterministic 314-row fictional university audit (seeded PRNG, schema lifted from `project-store.js` like the test fixture) with a sitemap, audiences, jobs, saved filters, SME round and changelog, and seven **planted** problems the skills are expected to find (printed on run). Output is gitignored. It exists because the 10-row test fixture is too small for pattern-finding skills to have anything to find, and because the README needs a "try it" that isn't client data.
 
 **Not done (Phase 1 scope):** anything the renderer computes live and doesn't store (redirect health, inherited-redirect classes, URL-variant groups, duplicate fingerprints, shape check, real sections) — port per function as a need appears, ideally by extracting a pure shared module the way `src/sitemap-layout.js` was; `.xlsx` files (would drag SheetJS in); the `prefs.columnMappings` tier.
 

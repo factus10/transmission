@@ -34,3 +34,7 @@ prefs.json
 
 # Claude Code session memory (local notes, not project source)
 /memory/
+
+# Generated sample project (node mcp/sample/make-sample-project.js)
+mcp/sample/*.transmission
+mcp/sample/*.transmission-*
