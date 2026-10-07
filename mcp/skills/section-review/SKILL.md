@@ -64,7 +64,7 @@ Rules for proposals:
 
 End with:
 
-- **Apply in the app** — the sidebar filter that shows exactly the proposed-Kill set (and the proposed-Keep set), so the strategist can select-all and use the Multi-bar: e.g. *Search `/news/2022/`, KKE filter = Unreviewed, then Apply → KKE → Kill.* Where the proposal isn't bulk-shaped, say so.
+- **Apply in the app** — the sidebar filter that shows exactly the proposed-Kill set (and the proposed-Keep set), so the strategist can select-all and use the Multi-bar: e.g. *Search `/news/2022/`, KKE filter = Unreviewed, then Apply → KKE → Kill.* Where the proposal isn't bulk-shaped, say so. Use the app's controls, not server syntax: search box (scope URL) for a path, **KKE filter = Unreviewed**, **+ Field filter** on real columns (`Page_Type equals Directory`), never `@path_1` or `filters:[…]`.
 - **Exceptions to look at by hand** — the short list from step 3.
 - **What I couldn't see** — e.g. the app's duplicate detection, page content itself (you have metadata, not the page), anything the user asked that the columns don't carry.
 
