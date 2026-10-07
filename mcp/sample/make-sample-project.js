@@ -211,6 +211,9 @@ centers.forEach((c, i) => {
   const slug = c.toLowerCase().replace(/[^a-z0-9]+/g, '-');
   const overturned = i < 4;
   const r = add({ Address: HOST + '/research/centers/' + slug, 'Title 1': c + ' | Alpha University', 'H1-1': c, KKE_Recommendation: 'Kill', Final_KKE: overturned ? 'Keep' : 'Kill', SME_Decision: overturned ? 'Change: Keep' : 'Approve', SME_Notes: overturned ? 'Active center with external funding — must stay.' : '', Group: 'Research', Page_Type: 'Landing page', Content_Nature: 'Page', Content_Owner: 'Research Office', Audiences: aud(AUD.faculty), Primary_Audience: AUD.faculty, Notes: 'No updates since 2019; traffic negligible.', 'Last Modified': '2019-0' + (3 + i % 6) + '-12', Published_Status: 'Published', Suggested_KKE: 'Kill', Suggested_KKE_Sources: sources('Kill', 'Kill', 'Keep') });
+  // The note says "traffic negligible"; make that true for the ones that stay Kill, and modest for the
+  // ones the SME kept (so the override reads as funding, not traffic — which is what SME_Notes says).
+  r['GA4 Sessions'] = String(overturned ? 300 + Math.floor(rand() * 900) : Math.floor(rand() * 15));
   if (overturned) place(r, byLabel('Centers and Institutes'));
   else redirectTo(r, NEW + '/research/centers-and-institutes', 'auto');
 });
@@ -258,6 +261,7 @@ for (let year = 2016; year <= 2024; year++) {
 for (let i = 0; i < 18; i++) {
   const past = i < 12;
   const r = add({ Address: HOST + '/events/' + (past ? '2024' : '2026') + '/event-' + (i + 1), 'Title 1': (past ? 'Past event ' : 'Upcoming: ') + ['Open House', 'Lecture Series', 'Homecoming', 'Career Fair', 'Gala', 'Symposium'][i % 6] + ' | Alpha University', KKE_Recommendation: past ? (i < 8 ? 'Kill' : '') : '', Group: 'Events', Page_Type: 'Event', Content_Nature: 'Content Object', Content_Owner: 'Comms', Audiences: past && i < 8 ? NONE : '', Published_Status: 'Published', Suggested_KKE: past ? 'Kill' : 'Keep', Suggested_KKE_Sources: sources(past ? 'Kill' : 'Keep', past ? 'Kill' : 'Keep', '') });
+  if (past) r['GA4 Sessions'] = String(Math.floor(rand() * 30));   // a past event page has no traffic
   if (past && i < 8) redirectTo(r, NEW + '/news-and-events/events', 'auto');
 }
 { const r = add({ Address: HOST + '/events', 'Title 1': 'Events | Alpha University', KKE_Recommendation: 'Keep', Group: 'Events', Page_Type: 'Listing', Content_Nature: 'Generated', Content_Owner: 'Comms', Audiences: aud(AUD.current, AUD.community, AUD.alumni), Primary_Audience: AUD.community }); place(r, byLabel('Events')); }
