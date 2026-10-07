@@ -39,6 +39,8 @@ Keep it under a screen. Plain prose with short lists; no raw JSON.
 
 Close with a one-line **How to see these rows** per figure where it isn't obvious.
 
+**Translate server syntax into the app's controls — `@` fields and `filters` JSON do not exist there.** The sidebar has: a **search box** (scope All fields / URL / Title), the **KKE filter** (a checkbox list of decision values plus named entries), the **Group** dropdown, **+ Field filter** (real column · operator · value), and **saved filters**. So: `@effective_kke equals Kill` → *KKE filter = Kill*; `@effective_kke is-blank` → *KKE filter = Unreviewed*; `@path_2 equals /news/2017` → *search `/news/2017/` (scope URL)*; `@content_kind` → *Field filter `Status Code equals 200`* or the entry **Not content (3xx or 4xx)**; `Primary_Audience equals X` → *Field filter `Primary_Audience equals X`* (a real column, fine as is). Named entries, verbatim: **Unreviewed · Consolidate (no target) · Consolidate (client changed — review) · Pending Final KKE · SME Conflicts · Suggested KKE: differs from my KKE · Suggested KKE: sources disagree · Needs sitemap placement (Keep/Evolve, no node) · Needs audience (Keep/Evolve, untagged) · Not content (3xx or 4xx) · Existing redirect (3xx — not content) · Inherited redirect needs review**. Write each reproduction as a recipe the strategist can click through.
+
 ## Don't
 
 - Don't report the Kill percentage over all rows if non-content rows exist; the client number is content only.
