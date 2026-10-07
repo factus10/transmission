@@ -1668,11 +1668,24 @@ It also sends the model the conventions that matter — blank means *unreviewed*
 - Read `.xlsx` files. Use **File → Save As Project…** first.
 - Compute the handful of filters only the app can (duplicates, URL variants, redirect review, cross-site duplicates). A saved filter that uses one is refused by name rather than run half-applied.
 
+**Four skills come with it (Claude Code only).** Skills are instructions the assistant follows for a kind of task; these encode the audit method from *Running an Audit*, so the model asks the right questions in the right order and reads the answers the way the reports do. None of them change the project.
+
+- **`/audit-status`** — where the audit stands: progress both ways (auditor vs client), what moved and by whom, what's still owed before handoff. For Monday check-ins and client status emails.
+- **`/section-review /news`** — go through a section with you: its patterns, the exceptions worth a human minute, and a proposed-decision worksheet with reasons written in your own audit vocabulary. You confirm, then apply in the app — in bulk with the Multi-bar on a filtered list.
+- **`/decision-consistency`** — before an SME export or handoff: pages whose decision contradicts their neighbours or their data (a Keep that returns 404, a Consolidate with no target, a Kill in a priority-audience section with real traffic), each with the evidence and phrased as a question, not a verdict.
+- **`ask-the-audit`** — the discipline behind any ad hoc question: aggregate before listing, content pages for client numbers, and every figure quoted with the sidebar filter that reproduces it.
+
 **Set it up**
 
 You need **Node 22.13 or newer** installed (it uses Node's built-in SQLite; nothing else to install) and a copy of the Transmission source, which contains `mcp/server.js`.
 
-For Claude Code:
+For Claude Code, install it as a plugin — that wires the server *and* the skills in one step:
+
+```bash
+claude plugin install transmission --plugin-dir /path/to/transmission/mcp
+```
+
+Or, server only:
 
 ```bash
 claude mcp add transmission -- node /path/to/transmission/mcp/server.js
@@ -1684,7 +1697,7 @@ For Claude Desktop, add to `claude_desktop_config.json`:
 { "mcpServers": { "transmission": { "command": "node", "args": ["/path/to/transmission/mcp/server.js"] } } }
 ```
 
-Then, in a conversation: *"Open the project at /path/to/audit.transmission and give me an overview."* You can keep working in the app while it's connected — the server notices each autosave and answers from the current state.
+Then, in a conversation: *"Open the project at /path/to/audit.transmission and give me an overview."* To try it without client data, `node mcp/sample/make-sample-project.js` writes a fictional 314-page university audit with a few problems planted for the skills to find. You can keep working in the app while it's connected — the server notices each autosave and answers from the current state.
 
 **A note on client data.** The server hands crawl and audit data to whichever model your assistant is connected to. Treat it like any other tool that can read the client's project file, and check the engagement's data terms before connecting one.
 
