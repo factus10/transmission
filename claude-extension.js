@@ -12,8 +12,8 @@
 // server's mirrors of renderer logic change with the app, and an app update
 // should re-offer the extension.
 //
-// What it does not carry: the skills. Extensions are MCP servers only; skills are
-// a Claude Code plugin feature (or a separate upload to Claude).
+// The skills travel as MCP prompts rather than skills (extensions are MCP
+// servers only): the chat's "+" menu lists them. See mcp/lib/prompts.js.
 
 const fs = require('fs');
 const path = require('path');
@@ -41,6 +41,7 @@ function buildMcpbManifest(version) {
       }
     },
     tools_generated: true,
+    prompts_generated: true,
     keywords: ['content-audit', 'content-strategy', 'migration'],
     compatibility: {
       platforms: ['darwin'],
@@ -50,13 +51,18 @@ function buildMcpbManifest(version) {
 }
 
 /** Files from the mcp/ folder that belong in the extension, as paths relative
- *  to it: the server and its lib/. The plugin manifests, skills, README and the
- *  sample generator are Claude Code material and stay out. */
+ *  to it: the server, its lib/, and each skill's SKILL.md (the server reads them
+ *  to serve its prompts — see mcp/lib/prompts.js). The plugin manifests, README
+ *  and the sample generator are Claude Code material and stay out. */
 function mcpbFileList(mcpDir) {
   const out = ['server.js'];
   const lib = path.join(mcpDir, 'lib');
   for (const f of fs.readdirSync(lib).sort()) {
     if (f.endsWith('.js')) out.push('lib/' + f);
+  }
+  const skills = path.join(mcpDir, 'skills');
+  for (const d of fs.readdirSync(skills).sort()) {
+    if (fs.existsSync(path.join(skills, d, 'SKILL.md'))) out.push(`skills/${d}/SKILL.md`);
   }
   return out;
 }
