@@ -42,7 +42,12 @@ function liftSchemaSql() {
   const open = src.indexOf('this.db.exec(`', start);
   const close = src.indexOf('`);', open);
   if (open < 0 || close < 0) throw new Error('could not find the CREATE TABLE template in _createSchema()');
-  return src.slice(open + 'this.db.exec(`'.length, close);
+  // The proposals table is declared separately (PROPOSALS_DDL), because the
+  // migration step reuses it; lift that too so the fixture is the real v2 schema.
+  const pStart = src.indexOf('const PROPOSALS_DDL = `');
+  const pEnd = pStart < 0 ? -1 : src.indexOf('`;', pStart);
+  if (pStart < 0 || pEnd < 0) throw new Error('project-store.js no longer declares PROPOSALS_DDL');
+  return src.slice(open + 'this.db.exec(`'.length, close) + '\n' + src.slice(pStart + 'const PROPOSALS_DDL = `'.length, pEnd);
 }
 
 const HEADERS = [
@@ -132,7 +137,7 @@ const group = (res, ...vals) => {
 describe('loader', () => {
   test('the schema still lifts out of project-store.js with every table the server reads', () => {
     const sql = liftSchemaSql();
-    for (const t of ['meta', 'headers', 'rows', 'nav_nodes', 'settings', 'changelog']) {
+    for (const t of ['meta', 'headers', 'rows', 'nav_nodes', 'settings', 'changelog', 'proposals']) {
       assert.match(sql, new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\(`), `${t} table`);
     }
   });
@@ -157,6 +162,17 @@ describe('loader', () => {
     const p = mcp.loadProject(f);
     assert.equal(p.columnMap.kke, 'Verdict');
     assert.equal(p.columnMap.finalKke, 'Final_KKE', 'a stale saved name falls through to detection');
+  });
+
+  test('DRIFT: the proposals table the app creates has exactly the columns the server writes', () => {
+    const sql = liftSchemaSql();
+    const m = /CREATE TABLE IF NOT EXISTS proposals \(([\s\S]*?)\);/.exec(sql);
+    assert.ok(m, 'project-store.js declares a proposals table');
+    const appCols = m[1].split('\n').map(l => l.trim().split(/\s+/)[0]).filter(c => c && !/^(PRIMARY|UNIQUE|CHECK)/.test(c));
+    assert.deepEqual(appCols, mcp.PROPOSAL_COLUMNS);
+    const sm = /CREATE TABLE IF NOT EXISTS proposals \(([\s\S]*?)\);/.exec(mcp.PROPOSALS_DDL);
+    const srvCols = sm[1].split('\n').map(l => l.trim().split(/\s+/)[0]).filter(c => c && !/^(PRIMARY|UNIQUE|CHECK)/.test(c));
+    assert.deepEqual(srvCols, appCols);
   });
 
   test('refuses a project from a newer schema rather than misreading it', () => {
@@ -454,6 +470,96 @@ describe('changelog', () => {
   });
 });
 
+// ─── Proposals: the one write ────────────────────────────────────────────────
+
+describe('proposals', () => {
+  const dumpOthers = f => {
+    const db = new DatabaseSync(f, { readOnly: true });
+    const out = {};
+    for (const t of ['headers', 'rows', 'nav_nodes', 'settings', 'changelog', 'meta']) out[t] = JSON.stringify(db.prepare(`SELECT * FROM ${t}`).all());
+    out.version = db.prepare('PRAGMA user_version').get().user_version;
+    db.close();
+    return out;
+  };
+
+  test('queues valid changes, touches no other table, and never bumps user_version', () => {
+    const f = path.join(dir, 'propose.transmission');
+    buildFixture(f);
+    const before_ = dumpOthers(f);
+    const p = mcp.loadProject(f);
+    const r = p.proposeChanges({ source: 'test', changes: [
+      { url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: 'keep', rationale: 'Core page' },
+      { url: 'https://www.alpha.edu/about', field: 'Tags', value: 'landing, evergreen', rationale: 'Hub' },
+      { url: 'https://www.alpha.edu/news/b', field: 'Notes', value: 'Thin; merge candidates nearby.', rationale: 'Thin content' }
+    ] });
+    assert.equal(r.queued, 3);
+    assert.equal(r.inserted, 3);
+    assert.deepEqual(dumpOthers(f), before_, 'rows/settings/nav/changelog/meta untouched and schema version unchanged');
+    const list = p.listProposals({});
+    assert.equal(list.total, 3);
+    assert.equal(list.proposals.find(x => x.field === 'KKE_Recommendation').value, 'Keep', 'case normalised to the project vocabulary');
+    assert.equal(list.proposals.find(x => x.field === 'KKE_Recommendation').current, '', 'joined with the live current value');
+  });
+
+  test('validates the whole batch before writing any of it', () => {
+    const f = path.join(dir, 'propose-atomic.transmission');
+    buildFixture(f);
+    const p = mcp.loadProject(f);
+    assert.throws(() => p.proposeChanges({ changes: [
+      { url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: 'Keep', rationale: 'ok' },
+      { url: 'https://www.alpha.edu/about', field: 'Final_KKE', value: 'Keep', rationale: 'not allowed' }
+    ] }), /Final_KKE.*not a field proposals may change|is not a field proposals may change/);
+    assert.equal(p.listProposals({}).total, 0, 'the valid first change was not written either');
+  });
+
+  test('refuses what a proposal must not do: unknown fields, bad vocabulary, Consolidate, blanks, no rationale', () => {
+    const p = mcp.loadProject(file);
+    const one = c => () => p.proposeChanges({ changes: [c] });
+    assert.throws(one({ url: 'https://www.alpha.edu/about', field: 'Sitemap_ID', value: 'n1', rationale: 'x' }), /not a field proposals may change/);
+    assert.throws(one({ url: 'https://www.alpha.edu/about', field: '_RedirectSource', value: 'auto', rationale: 'x' }), /not a field proposals may change/);
+    assert.throws(one({ url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: 'Archive', rationale: 'x' }), /cannot be "Archive".*Keep · Kill · Evolve · Exclude/s);
+    assert.throws(one({ url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: 'Consolidate', rationale: 'x' }), /cannot be "Consolidate"/);
+    assert.throws(one({ url: 'https://www.alpha.edu/about', field: 'Audiences', value: 'Donors', rationale: 'x' }), /Audiences cannot be "Donors"/);
+    assert.throws(one({ url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: '', rationale: 'x' }), /cannot clear a field/);
+    assert.throws(one({ url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: 'Keep', rationale: '' }), /needs a `rationale`/);
+  });
+
+  test('skips what is already true, adds only what is new, and replaces a pending duplicate instead of stacking', () => {
+    const f = path.join(dir, 'propose-dupe.transmission');
+    buildFixture(f);
+    const p = mcp.loadProject(f);
+    const r1 = p.proposeChanges({ changes: [
+      { url: 'https://www.alpha.edu/news/a', field: 'KKE_Recommendation', value: 'Keep', rationale: 'already Keep' },
+      { url: 'https://www.alpha.edu/news/a', field: 'Tags', value: 'outdated, stale', rationale: 'one of these is new' },
+      { url: 'https://www.alpha.edu/nowhere', field: 'KKE_Recommendation', value: 'Kill', rationale: 'no such page' },
+      { url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: 'Keep', rationale: 'first thought' }
+    ] });
+    assert.equal(r1.queued, 2);
+    assert.deepEqual(r1.skipped.map(x => x.reason), ['already "Keep"', 'no row with that URL']);
+    assert.equal(p.listProposals({}).proposals.find(x => x.field === 'Tags').value, 'stale', 'only the tag the page lacks');
+    const r2 = p.proposeChanges({ changes: [{ url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: 'Evolve', rationale: 'second thought' }] });
+    assert.equal(r2.replacedPending, 1);
+    const kke = p.listProposals({}).proposals.filter(x => x.url === 'https://www.alpha.edu/about' && x.field === 'KKE_Recommendation');
+    assert.equal(kke.length, 1);
+    assert.equal(kke[0].value, 'Evolve');
+    assert.equal(kke[0].rationale, 'second thought');
+  });
+
+  test('reads a v2 project and lists resolved proposals by status', () => {
+    const f = path.join(dir, 'v2.transmission');
+    buildFixture(f, { userVersion: 2 });
+    const db = new DatabaseSync(f);
+    db.prepare("INSERT INTO proposals (created_at, batch, source, url, field, value, rationale, status, resolved_at, resolved_by) VALUES ('t','b','x','https://www.alpha.edu/about','KKE_Recommendation','Keep','r','accepted','t2','david')").run();
+    db.close();
+    const p = mcp.loadProject(f);
+    assert.equal(p.listProposals({}).total, 0);
+    const acc = p.listProposals({ status: 'accepted' });
+    assert.equal(acc.total, 1);
+    assert.equal(acc.proposals[0].resolvedBy, 'david');
+    assert.deepEqual(acc.byStatus, { accepted: 1 });
+  });
+});
+
 // ─── The server itself, over stdio ───────────────────────────────────────────
 
 // Takes the test context so the child is killed when the test ends HOWEVER it
@@ -511,8 +617,10 @@ describe('stdio server', () => {
     s.notify('notifications/initialized');
 
     const tools = (await s.request('tools/list')).result.tools;
-    assert.deepEqual(tools.map(t => t.name), ['open_project', 'project_overview', 'describe_columns', 'aggregate', 'query_rows', 'get_row', 'get_sitemap', 'get_redirects', 'get_changelog', 'get_libraries']);
-    assert.ok(tools.every(t => t.annotations.readOnlyHint === true && t.inputSchema.type === 'object'));
+    assert.deepEqual(tools.map(t => t.name), ['open_project', 'project_overview', 'describe_columns', 'aggregate', 'query_rows', 'get_row', 'get_sitemap', 'get_redirects', 'get_changelog', 'propose_changes', 'list_proposals', 'get_libraries']);
+    assert.ok(tools.every(t => t.inputSchema.type === 'object'));
+    assert.ok(tools.filter(t => t.name !== 'propose_changes').every(t => t.annotations.readOnlyHint === true), 'every tool but propose_changes is read-only');
+    assert.equal(tools.find(t => t.name === 'propose_changes').annotations.readOnlyHint, false);
 
     const o = await callTool(s, 'project_overview');
     assert.equal(o.data.client, 'Alpha University');
