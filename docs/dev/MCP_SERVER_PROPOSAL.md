@@ -1,6 +1,6 @@
 # Proposal — MCP Server
 
-**Status:** Phase 1 implemented 2026-09-18 · Phase 2 proposed
+**Status:** Phase 1 implemented 2026-09-18 · skills + plugin 2026-10-07 · **Phase 2 (proposals) implemented 2026-10-08**
 **Date:** 2026-09-18
 
 **Scope:** let an MCP client (Claude Desktop, Claude Code, anything that speaks the Model Context Protocol) ask questions of a `.transmission` project — and, later, propose changes to one — without going through the app's UI.
@@ -112,7 +112,11 @@ Usable anywhere a field name is — filters, `groupBy`, `columns`, `sortBy`:
 
 ---
 
-## 5. Phase 2 — writes as proposals (proposed)
+## 5. Phase 2 — writes as proposals (implemented 2026-10-08)
+
+**As built.** `proposals` table (`project-store.js` `PROPOSALS_DDL`, schema **v2**, mirrored in `mcp/lib/project.js`; a drift test compares the two column lists). Server: `propose_changes` validates the whole batch first (allow-list, project vocabularies, URL resolves, no blanks, rationale required, `Consolidate` refused), skips no-ops, replaces a pending duplicate, writes through its own short-lived connection, never bumps `user_version`. App: `proposals-pending` / `proposals-list` / `proposals-resolve` IPC; the renderer checks on open and on window focus; `openProposalReviewDialog()` groups by field + value; accept goes through `applyMultiAction` / `writeAudienceDecision` with `promptBulkKillCleanup` for Kill, a `(proposal accepted)` change-log entry per row (`from` = source · field, `to` = rationale) and one `pushBulkEditUndo`. The open decisions below were resolved as: (1) **schema bump** to v2 — the app owns the table's existence and `_migrate()` is the honest place to create it; the server creates IF NOT EXISTS without bumping, so it never locks an older build out; (2) **stays in this repo**, shipped inside the app as an extraResource and launched by the ✦ button; (3) the client-data note is in the User Guide and in the launch dialog itself.
+
+**Original proposal, for the record:**
 
 The contract already exists in the app: `Suggested_KKE` and `_Suggested_Audiences` both promise that a machine **never writes the human's column** — it queues a suggestion and a person accepts or rejects it. MCP writes should be a third instance of that contract, not a new one.
 
