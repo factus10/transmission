@@ -6,6 +6,12 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [Unreleased]
+
+### Changed
+
+- **Open in Claude now opens the Claude app itself — no Claude Code needed.** The ✦ button (or Project → Open in Claude…) installs Transmission as a **Claude desktop extension** and brings up the Claude app; start a new chat and ask about the open project. Claude runs the extension on its own built-in Node, so the only thing to install is the Claude app — no `claude` command, no Node. The first time, Claude asks you to approve the install; after an app update it offers to update the extension. Claude Code (the app's Code tab, or Terminal) is still offered when the `claude` command is installed, and it remains the route that carries the audit skills. Previously the dialog refused to open anything when `claude` wasn't on your PATH, even with the Claude app installed.
+
 ## [2.20.0] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Added
