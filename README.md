@@ -549,7 +549,8 @@ All reports use a shared infrastructure (`buildReportShell()`, `showReport()`, `
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org) 18 or later
+- [Node.js](https://nodejs.org) 22.13 or later (24 recommended; CI builds with 24). better-sqlite3 13, @electron/rebuild 4 and the MCP server's `node:sqlite` all need 22.x.
+- To run the built app: macOS 13 (Ventura) or later, the minimum for Electron 44.
 - npm (included with Node.js)
 - **Miro export (optional)** — a Miro account. Nothing to install; connect once from **App Settings → Miro → Connect to Miro** and the sitemap's **Export to Miro** action is available from then on.
 
