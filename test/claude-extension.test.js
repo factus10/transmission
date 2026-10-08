@@ -21,13 +21,16 @@ test('manifest is a node extension running server.js, versioned as given', () =>
   assert.strictEqual(m.compatibility.runtimes.node, '>=22.13.0');
 });
 
-test('the package holds the server and everything it requires, and nothing Claude-Code-only', async () => {
+test('the package holds the server, everything it requires and the skill texts, and nothing Claude-Code-only', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcpb-'));
   const file = await ext.writeMcpb({ mcpDir: MCP, iconPath: path.join(__dirname, '..', 'assets', 'icon.png'), version: '1.2.3', outDir: dir });
   const zip = await JSZip.loadAsync(fs.readFileSync(file));
   const names = Object.keys(zip.files).filter(n => !zip.files[n].dir).sort();
   assert.ok(names.includes('manifest.json') && names.includes('server.js') && names.includes('icon.png'));
-  assert.ok(!names.some(n => /skills\/|\.claude-plugin|sample\/|README/.test(n)), names.join(', '));
+  assert.ok(!names.some(n => /\.claude-plugin|sample\/|README/.test(n)), names.join(', '));
+  // The prompts are read from the skills at request time, so every SKILL.md must travel.
+  const { PROMPTS } = require('../mcp/lib/prompts');
+  for (const p of PROMPTS) assert.ok(names.includes(`skills/${p.name}/SKILL.md`), `${p.name} SKILL.md missing`);
   // Every relative require in the packaged files resolves inside the package.
   for (const n of names.filter(n => n.endsWith('.js'))) {
     const src = await zip.file(n).async('string');
