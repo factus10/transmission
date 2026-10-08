@@ -454,7 +454,7 @@ function buildMenu() {
         { label: 'Suggest Audiences with AI…',   click: send('menu-audience-ai') },
         { type: 'separator' },
         { label: 'Review Proposals…',            click: send('menu-review-proposals') },
-        { label: 'Open in Claude Code…',         click: send('menu-open-in-claude') },
+        { label: 'Open in Claude…',              click: send('menu-open-in-claude') },
         { label: 'Content Type Registry…', click: send('menu-content-type-registry') },
         { label: 'Target Spec Library…',    click: send('menu-pattern-library') },
         { label: 'Component Library…',      click: send('menu-design-pattern-library') },
@@ -2310,11 +2310,15 @@ ipcMain.handle('proposals-resolve', (_e, { ids, status } = {}) => {
   catch (e) { return { success: false, error: e.message, resolved: 0 }; }
 });
 
-// ─── Open in Claude Code ──────────────────────────────────────────────────────
-// Launches the `claude` CLI in a Terminal window with the bundled MCP plugin
-// (mcp/ ships as an extraResource) pointed at the open project. The plugin's
-// server reads TRANSMISSION_PROJECT, so no per-project configuration is needed.
-// Nothing here talks to a model: it opens a terminal, exactly as the user would.
+// ─── Open in Claude ───────────────────────────────────────────────────────────
+// Three routes to the bundled MCP server (mcp/ ships as an extraResource):
+//   chat     — the Claude app, via a desktop extension built from mcp/ (needs
+//              only the Claude app; the default)
+//   app      — the Claude app's Code tab, via the Claude Code plugin (needs the CLI)
+//   terminal — the `claude` CLI in Terminal with --plugin-dir (needs the CLI)
+// The server follows the project through current-project.json (or
+// TRANSMISSION_PROJECT in Terminal), so no per-project configuration is needed.
+// Nothing here talks to a model: it opens an app, exactly as the user would.
 
 function mcpPluginDir() {
   return app.isPackaged ? path.join(process.resourcesPath, 'mcp') : path.join(__dirname, 'mcp');
@@ -2377,11 +2381,42 @@ async function ensurePluginInstalled() {
   return { ok: true, changed: true };
 }
 
+const claudeExtension = require('./claude-extension');
+const claudeSupportDir = () => path.join(app.getPath('home'), 'Library', 'Application Support', 'Claude');
+
 ipcMain.handle('claude-launch-status', async () => {
   const reason = proposalsUnavailableReason();   // same precondition: a project file to point at
   const [cli, desktopApp] = await Promise.all([findClaudeCli(), findClaudeDesktopApp()]);
-  return { projectOk: !reason, projectReason: reason, cliFound: !!cli, cliPath: cli, desktopAppFound: !!desktopApp, desktopAppPath: desktopApp, pluginDir: mcpPluginDir(), platform: process.platform };
+  const extension = desktopApp ? claudeExtension.installedExtension(claudeSupportDir()) : { installed: false, version: null, enabled: false };
+  return { projectOk: !reason, projectReason: reason, cliFound: !!cli, cliPath: cli, desktopAppFound: !!desktopApp, desktopAppPath: desktopApp,
+    extension, extensionCurrent: extension.installed && extension.version === app.getVersion(), appVersion: app.getVersion(),
+    pluginDir: mcpPluginDir(), platform: process.platform };
 });
+
+/**
+ * Open the Claude desktop app with the Transmission extension. Needs neither the
+ * CLI nor a system Node — Claude runs the extension on its own runtime (see
+ * claude-extension.js). When the extension is missing or from another app
+ * version, the freshly built .mcpb is handed to Claude, which shows its own
+ * install/update prompt; otherwise Claude is just brought forward.
+ */
+async function launchClaudeChat() {
+  const ext = claudeExtension.installedExtension(claudeSupportDir());
+  const current = ext.installed && ext.version === app.getVersion();
+  const args = ['-b', claudeExtension.CLAUDE_BUNDLE_ID];
+  if (!current) {
+    const file = await claudeExtension.writeMcpb({
+      mcpDir: mcpPluginDir(),
+      iconPath: path.join(__dirname, 'assets', 'icon.png'),
+      version: app.getVersion(),
+      outDir: path.join(app.getPath('userData'), 'launch')
+    });
+    args.push(file);
+  }
+  const { execFile } = require('child_process');
+  await new Promise((resolve, reject) => execFile('/usr/bin/open', args, { timeout: 15000 }, err => err ? reject(err) : resolve()));
+  return { installing: !current, updating: ext.installed && !current, enabled: ext.enabled || !ext.installed };
+}
 
 ipcMain.handle('claude-launch', async (_e, { mode } = {}) => {
   const reason = proposalsUnavailableReason();
@@ -2392,8 +2427,18 @@ ipcMain.handle('claude-launch', async (_e, { mode } = {}) => {
   try { projectStore.checkpoint(); } catch (_) { /* best effort */ }
   writeCurrentProjectPointer(currentFilePath);
   const cmd = `cd ${shQuote(path.dirname(currentFilePath))} && TRANSMISSION_PROJECT=${shQuote(currentFilePath)} claude --plugin-dir ${shQuote(plugin)}`;
-  if (!cli) return { success: false, error: 'claude-not-found', command: cmd };
   if (process.platform !== 'darwin') return { success: false, error: 'unsupported-platform', command: cmd };
+
+  if (mode === 'chat') {
+    // The Claude app itself, through the extension: no CLI involved.
+    if (!(await findClaudeDesktopApp())) return { success: false, error: 'claude-app-not-found' };
+    try { return { success: true, mode: 'chat', ...(await launchClaudeChat()) }; }
+    catch (e) { return { success: false, error: e.message }; }
+  }
+
+  // Both Claude Code routes need the CLI: the Code tab to register the plugin,
+  // Terminal to run it.
+  if (!cli) return { success: false, error: 'claude-not-found', command: cmd };
 
   if (mode === 'app') {
     // The desktop app's Code tab: a `claude://code/new` deep link with the

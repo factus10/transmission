@@ -19,6 +19,7 @@ const path = require('node:path');
 const readline = require('node:readline');
 const { loadProject, fileStamp, FIELD_FILTER_OPERATORS, VIRTUAL_FIELDS, PROPOSAL_FIELDS } = require('./lib/project');
 const { INSTRUCTIONS, SEMANTICS_MD } = require('./lib/semantics');
+const { listPrompts, getPrompt } = require('./lib/prompts');
 
 const SERVER_INFO = { name: 'transmission', version: '0.3.0' };
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
@@ -306,7 +307,7 @@ function handle(method, params) {
       const asked = params && params.protocolVersion;
       return {
         protocolVersion: PROTOCOL_VERSIONS.includes(asked) ? asked : PROTOCOL_VERSIONS[0],
-        capabilities: { tools: {}, resources: {} },
+        capabilities: { tools: {}, resources: {}, prompts: {} },
         serverInfo: SERVER_INFO,
         instructions: INSTRUCTIONS
       };
@@ -329,6 +330,11 @@ function handle(method, params) {
     }
     case 'resources/list':
       return { resources: RESOURCES.map(({ uri, name, description, mimeType }) => ({ uri, name, description, mimeType })) };
+    case 'prompts/list':
+      return { prompts: listPrompts() };
+    case 'prompts/get':
+      try { return getPrompt(params && params.name, params && params.arguments); }
+      catch (e) { throw e.invalidParams ? rpcError(-32602, e.message) : e; }
     case 'resources/templates/list':
       return { resourceTemplates: [] };
     case 'resources/read': {
