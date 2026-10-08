@@ -7,8 +7,8 @@
 // failing test:
 //
 // 1. The fixture database is built from the CREATE TABLE text LIFTED OUT OF
-//    project-store.js, not from a copy of it. The server can't load
-//    ProjectStore (better-sqlite3 is built for Electron's ABI, not node's), so
+//    project-store.js, not from a copy of it. The server doesn't load
+//    ProjectStore (it ships with no node_modules, and opening migrates), so
 //    it reads the same tables through node:sqlite — two readers of one schema.
 //    If the schema changes and the server hasn't followed, this suite is what
 //    notices.
