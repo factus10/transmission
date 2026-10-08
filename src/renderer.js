@@ -8336,9 +8336,9 @@ function setupWebviewEvents() {
     } catch (e) { /* no-op */ }
   });
 
-  wv.addEventListener('new-window', e => {
-    window.electronAPI.openExternal(e.url);
-  });
+  // New-window requests (target=_blank, window.open) are routed to the system
+  // browser in main via setWindowOpenHandler; the <webview> 'new-window'
+  // event this used to listen for was removed in Electron 22.
 }
 
 // ─── Save / dirty ─────────────────────────────────────────────────────────────

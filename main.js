@@ -2504,7 +2504,7 @@ ipcMain.handle('open-external', async (event, url) => { await shell.openExternal
 // Templates live as .md files in ~/Documents/Transmission/templates/. Each may
 // carry YAML-ish frontmatter (name, appliesTo). The renderer hands us a data
 // context; we run Mustache then marked and return HTML. marked is ESM-only, so we
-// load it via dynamic import (Electron's Node 20 can't require() an ESM package).
+// load it via dynamic import (written for Electron 29's Node 20, which couldn't require() an ESM package).
 const Mustache = require('mustache');
 const { marked } = require('marked'); // v4 (CommonJS) — require()-able from asar in the packaged build
 
@@ -3843,8 +3843,10 @@ ipcMain.handle('capture-screenshot', async (event, { defaultName, webContentsId 
   }
 });
 
-ipcMain.handle('copy-to-clipboard', (event, text) => {
-  clipboard.writeText(text);
+ipcMain.handle('copy-to-clipboard', async (event, text) => {
+  // Electron 44 made the clipboard API asynchronous (W3C-aligned):
+  // writeText returns a Promise, so await it before reporting success.
+  await clipboard.writeText(String(text ?? ''));
   return true;
 });
 
@@ -4498,6 +4500,14 @@ app.on('web-contents-created', (event, contents) => {
   contents.on('dom-ready', forceLight);
   contents.on('did-navigate', forceLight);
   contents.on('did-navigate-in-page', forceLight);
+  // Links that open a new window (target=_blank, window.open) go to the
+  // system browser. The renderer used to do this with the <webview>
+  // 'new-window' event, which Electron removed in v22, so since then
+  // `allowpopups` was spawning bare in-app BrowserWindows instead.
+  contents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
 });
 
 app.whenReady().then(() => {
