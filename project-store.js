@@ -19,7 +19,34 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
+
+// Proposals: changes suggested from OUTSIDE the app (the MCP server, on behalf
+// of a model or a script) that a person accepts or rejects inside it. This is
+// the only table an outside process may write to. saveAll() never touches it,
+// which is what makes the queue survive the 2s autosave; the app reads it on
+// open and on window focus and applies accepted rows through its real write
+// paths (change log, undo, Suggested_KKE refresh).
+//
+// mcp/lib/project.js creates this same table on demand (CREATE IF NOT EXISTS,
+// without bumping user_version — an observer must not lock older app builds
+// out of a file). The two DDLs must agree; test/mcp-server.test.js lifts this
+// one and compares. Keep the column list in sync with PROPOSAL_COLUMNS there.
+const PROPOSALS_DDL = `
+      CREATE TABLE IF NOT EXISTS proposals (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at  TEXT,
+        batch       TEXT,
+        source      TEXT,
+        url         TEXT,
+        field       TEXT,
+        value       TEXT,
+        rationale   TEXT,
+        status      TEXT DEFAULT 'pending',
+        resolved_at TEXT,
+        resolved_by TEXT
+      );
+      CREATE INDEX IF NOT EXISTS proposals_status ON proposals (status);`;
 const PROJECT_EXT = '.transmission';
 
 class ProjectStore {
@@ -115,6 +142,7 @@ class ProjectStore {
         new_value TEXT
       );
     `);
+    this.db.exec(PROPOSALS_DDL);
     this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }
 
@@ -130,7 +158,11 @@ class ProjectStore {
       // ensure all tables exist.
       this._createSchema();
     }
-    // Future migrations: if (v < 2) { ...alter...; }
+    if (v < 2) {
+      // v1 → v2: the proposals queue. Additive, and IF NOT EXISTS because the
+      // MCP server may already have created it in a v1 file.
+      this.db.exec(PROPOSALS_DDL);
+    }
     this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }
 
@@ -261,6 +293,36 @@ class ProjectStore {
       .map(e => ({ timestamp: e.timestamp, auditor: e.auditor, row: e.row, url: e.url, field: e.field, from: e.old_value, to: e.new_value }));
   }
 
+  // ─── Proposals ──────────────────────────────────────────────────────────────
+
+  /** Pending (by default) proposals, oldest first. */
+  readProposals(status = 'pending') {
+    if (!this.db) return [];
+    return this.db.prepare('SELECT id, created_at, batch, source, url, field, value, rationale, status FROM proposals WHERE status = ? ORDER BY id')
+      .all(status)
+      .map(p => ({ id: p.id, createdAt: p.created_at, batch: p.batch, source: p.source, url: p.url, field: p.field, value: p.value, rationale: p.rationale, status: p.status }));
+  }
+
+  countProposals(status = 'pending') {
+    if (!this.db) return 0;
+    return this.db.prepare('SELECT count(*) AS c FROM proposals WHERE status = ?').get(status).c;
+  }
+
+  /** Mark proposals accepted / rejected. The app calls this AFTER it has
+   *  written the accepted values through its own paths — a proposal is a
+   *  request, never a write, so resolving it records what a person did. */
+  resolveProposals(ids, status, resolvedBy) {
+    if (!this.db || !ids || !ids.length) return 0;
+    if (status !== 'accepted' && status !== 'rejected') throw new Error(`Bad proposal status: ${status}`);
+    const st = this.db.prepare("UPDATE proposals SET status = ?, resolved_at = ?, resolved_by = ? WHERE id = ? AND status = 'pending'");
+    const now = new Date().toISOString();
+    const by = resolvedBy || os.userInfo().username || '';
+    let n = 0;
+    const txn = this.db.transaction(() => { for (const id of ids) n += st.run(status, now, by, id).changes; });
+    txn();
+    return n;
+  }
+
   /** Fold the WAL into the main DB file so it's a complete standalone snapshot
    *  (used before zipping for handoff). Safe to call while the DB stays open. */
   checkpoint() {
@@ -281,4 +343,4 @@ class ProjectStore {
   }
 }
 
-module.exports = { ProjectStore, PROJECT_EXT, SCHEMA_VERSION };
+module.exports = { ProjectStore, PROJECT_EXT, SCHEMA_VERSION, PROPOSALS_DDL };

@@ -9,6 +9,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveAsProject:  (payload) => ipcRenderer.invoke('save-as-project', payload),
   exportWorkbook: (payload) => ipcRenderer.invoke('export-workbook', payload),
   packageHandoff: ()        => ipcRenderer.invoke('package-handoff'),
+
+  // ── Proposals (queued from outside, e.g. the MCP server) + Claude launch ──
+  proposalsPending:   ()        => ipcRenderer.invoke('proposals-pending'),
+  proposalsList:      ()        => ipcRenderer.invoke('proposals-list'),
+  proposalsResolve:   (payload) => ipcRenderer.invoke('proposals-resolve', payload),
+  claudeLaunchStatus: ()        => ipcRenderer.invoke('claude-launch-status'),
+  claudeLaunch:       (payload) => ipcRenderer.invoke('claude-launch', payload),
+  onMenuReviewProposals: (cb)   => ipcRenderer.on('menu-review-proposals', () => cb()),
+  onMenuOpenInClaude:    (cb)   => ipcRenderer.on('menu-open-in-claude',   () => cb()),
   openExternal:   (url)     => ipcRenderer.invoke('open-external', url),
 
   // ── Update check ──────────────────────────────────────────────────────────

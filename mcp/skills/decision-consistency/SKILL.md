@@ -44,6 +44,7 @@ Then **Not checked here** — duplicates, URL variants, redirect chains and heal
 
 ## Don't
 
+- Don't queue proposals from this skill unless asked; most findings are questions for a person, not changes. If the strategist answers a question with a decision ("yes, make the counselors page Keep"), *then* `propose_changes` for that row with their answer as the rationale.
 - Don't call anything an error. Ask.
 - Don't flag a Kill that has a Note explaining it as a finding; mention it as "explained" at most.
 - Don't flag unreviewed pages as inconsistent — they are undecided, which is `audit-status`'s job to count.
