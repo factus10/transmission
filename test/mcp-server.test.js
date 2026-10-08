@@ -683,6 +683,25 @@ describe('stdio server', () => {
     await s.close();
   });
 
+  test('with no project given, follows the one Transmission has open (current-project.json)', async t => {
+    // The app writes <userData>/current-project.json; the server reads it under
+    // $HOME/Library/Application Support/{Transmission,transmission}. Point HOME
+    // at a scratch dir so the test never touches the real one.
+    const home = path.join(dir, 'home');
+    const appDir = path.join(home, 'Library', 'Application Support', 'transmission');
+    fs.mkdirSync(appDir, { recursive: true });
+    fs.writeFileSync(path.join(appDir, 'current-project.json'), JSON.stringify({ filePath: file, openedAt: 't', pid: 1 }));
+    const child = spawn(process.execPath, [path.join(ROOT, 'mcp', 'server.js')], { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, HOME: home, TRANSMISSION_PROJECT: '' } });
+    t.after(() => { if (child.exitCode === null) child.kill(); });
+    let buf = ''; const waiting = new Map(); let nextId = 1;
+    child.stdout.on('data', d => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); const m = JSON.parse(l); const w = waiting.get(m.id); if (w) { waiting.delete(m.id); w(m); } } });
+    const request = (method, params) => new Promise(r => { const id = nextId++; waiting.set(id, r); child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n'); });
+    const m = await request('tools/call', { name: 'project_overview', arguments: {} });
+    assert.ok(!m.result.isError, m.result.content[0].text);
+    assert.equal(JSON.parse(m.result.content[0].text).client, 'Alpha University');
+    child.stdin.end();
+  });
+
   test('resources: the semantics guide and the project glossary', async t => {
     const s = startServer(t, ['--project', file]);
     const list = (await s.request('resources/list')).result.resources.map(r => r.uri);

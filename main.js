@@ -346,6 +346,7 @@ function openAnyPath(filePath, targetSheet) {
   if (data) {
     currentFilePath = filePath;
     currentSheetName = data.sheetName;
+    writeCurrentProjectPointer(filePath);
     savePrefs({ lastFile: filePath, lastSheet: data.sheetName });
     recordRecentFile(filePath);
     mainWindow?.webContents.send('file-opened', { filePath, ...data });
@@ -2128,6 +2129,7 @@ ipcMain.handle('get-last-file', async () => {
       : readWorkbook(prefs.lastFile, prefs.lastSheet || null);
     if (data) {
       currentFilePath = prefs.lastFile;
+      writeCurrentProjectPointer(currentFilePath);
       currentSheetName = data.sheetName;
       recordRecentFile(prefs.lastFile);
       return { filePath: prefs.lastFile, ...data };
@@ -2138,6 +2140,7 @@ ipcMain.handle('get-last-file', async () => {
 
 ipcMain.handle('reload-sheet', async (event, { sheetName }) => {
   if (!currentFilePath) return null;
+  writeCurrentProjectPointer(currentFilePath);
   const data = isProjectFile(currentFilePath)
     ? readProject(currentFilePath)  // projects are single-sheet; ignore sheetName
     : readWorkbook(currentFilePath, sheetName || currentSheetName);
@@ -2243,6 +2246,7 @@ ipcMain.handle('save-as-project', async (event, payload) => {
       }
     }
     savePrefs({ lastFile: currentFilePath, lastSheet: null });
+    writeCurrentProjectPointer(currentFilePath);
     recordRecentFile(currentFilePath);
     mainWindow?.webContents.send('save-success', currentFilePath);
     return { success: true, filePath: currentFilePath };
@@ -2255,6 +2259,26 @@ ipcMain.handle('save-as-project', async (event, payload) => {
 // Package the open project for handoff to another auditor: checkpoint the WAL
 // so the .transmission file is a complete single-file snapshot, then zip it
 // with a short README. The recipient unzips and double-clicks.
+// ─── Current-project pointer ─────────────────────────────────────────────────
+// `current-project.json` in userData names the open .transmission file. The MCP
+// server reads it when started with no explicit project, so a Claude session
+// opened from anywhere (the desktop app has no way to pass an env var or an
+// argument) connects to whatever Transmission has open. Cleared on quit, and
+// never written for a spreadsheet — the server can't read those.
+
+function currentProjectPointerPath() { return path.join(app.getPath('userData'), 'current-project.json'); }
+
+function writeCurrentProjectPointer(filePath) {
+  try {
+    if (isProjectFile(filePath)) fs.writeFileSync(currentProjectPointerPath(), JSON.stringify({ filePath, openedAt: new Date().toISOString(), pid: process.pid }));
+    else if (fs.existsSync(currentProjectPointerPath())) fs.unlinkSync(currentProjectPointerPath());
+  } catch (_) { /* best effort — the pointer is a convenience */ }
+}
+
+function clearCurrentProjectPointer() {
+  try { if (fs.existsSync(currentProjectPointerPath())) fs.unlinkSync(currentProjectPointerPath()); } catch (_) { /* ignore */ }
+}
+
 // ─── Proposals (changes queued from outside, e.g. the MCP server) ────────────
 // The renderer asks, main answers from the open ProjectStore. The queue lives in
 // the project file, so a .xlsx session has none — the renderer shows why.
@@ -2310,22 +2334,83 @@ function findClaudeCli() {
 
 const shQuote = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
 
+/** Run a `claude` CLI subcommand through a login shell; resolves {code, out}. */
+function runClaudeCli(args, timeout = 60000) {
+  return new Promise(resolve => {
+    const { execFile } = require('child_process');
+    const line = 'claude ' + args.map(shQuote).join(' ') + ' < /dev/null 2>&1';
+    execFile('/bin/zsh', ['-lc', line], { timeout, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+      resolve({ code: err ? (err.code ?? 1) : 0, out: String(stdout || '') });
+    });
+  });
+}
+
+/** Is the Claude desktop app installed? (Its bundle id, via Launch Services.) */
+function findClaudeDesktopApp() {
+  return new Promise(resolve => {
+    if (process.platform !== 'darwin') return resolve(null);
+    const { execFile } = require('child_process');
+    execFile('/usr/bin/mdfind', ['kMDItemCFBundleIdentifier == "com.anthropic.claudefordesktop"'], { timeout: 8000 }, (err, stdout) => {
+      const hit = String(stdout || '').split('\n').map(s => s.trim()).filter(Boolean)[0];
+      resolve(!err && hit ? hit : (fs.existsSync('/Applications/Claude.app') ? '/Applications/Claude.app' : null));
+    });
+  });
+}
+
+/**
+ * Make sure the bundled plugin is what Claude Code has installed under the
+ * name `transmission`. The plugin dir is its own marketplace
+ * (mcp/.claude-plugin/marketplace.json, source "."), so one install registers
+ * both. A marketplace of the same name from another path (a dev checkout, an
+ * older app version) is removed first — `plugin install` refuses to re-point a
+ * known marketplace, which is correct for a CLI and wrong for an app that has
+ * just been updated. Idempotent: a matching install is left alone.
+ */
+async function ensurePluginInstalled() {
+  const plugin = mcpPluginDir();
+  const list = await runClaudeCli(['plugin', 'list']);
+  const block = /transmission@transmission[\s\S]*?(?=\n\s*\n|$)/.exec(list.out);
+  if (block && block[0].includes(`Read from: ${plugin}`)) return { ok: true, changed: false };
+  await runClaudeCli(['plugin', 'marketplace', 'remove', 'transmission']);   // may say "not found"; fine
+  const r = await runClaudeCli(['plugin', 'install', 'transmission', '--marketplace', plugin, '-y']);
+  if (r.code !== 0 || !/Successfully installed/.test(r.out)) return { ok: false, error: r.out.trim().split('\n').pop() || 'plugin install failed' };
+  return { ok: true, changed: true };
+}
+
 ipcMain.handle('claude-launch-status', async () => {
   const reason = proposalsUnavailableReason();   // same precondition: a project file to point at
-  const cli = await findClaudeCli();
-  return { projectOk: !reason, projectReason: reason, cliFound: !!cli, cliPath: cli, pluginDir: mcpPluginDir(), platform: process.platform };
+  const [cli, desktopApp] = await Promise.all([findClaudeCli(), findClaudeDesktopApp()]);
+  return { projectOk: !reason, projectReason: reason, cliFound: !!cli, cliPath: cli, desktopAppFound: !!desktopApp, desktopAppPath: desktopApp, pluginDir: mcpPluginDir(), platform: process.platform };
 });
 
-ipcMain.handle('claude-launch', async () => {
+ipcMain.handle('claude-launch', async (_e, { mode } = {}) => {
   const reason = proposalsUnavailableReason();
   if (reason) return { success: false, error: reason };
   const cli = await findClaudeCli();
   const plugin = mcpPluginDir();
   // Checkpoint so the file the server opens is complete even before its first autosave.
   try { projectStore.checkpoint(); } catch (_) { /* best effort */ }
+  writeCurrentProjectPointer(currentFilePath);
   const cmd = `cd ${shQuote(path.dirname(currentFilePath))} && TRANSMISSION_PROJECT=${shQuote(currentFilePath)} claude --plugin-dir ${shQuote(plugin)}`;
   if (!cli) return { success: false, error: 'claude-not-found', command: cmd };
   if (process.platform !== 'darwin') return { success: false, error: 'unsupported-platform', command: cmd };
+
+  if (mode === 'app') {
+    // The desktop app's Code tab: a `claude://code/new` deep link with the
+    // project's folder and an opening prompt. There is no way to hand a session
+    // an env var or a flag, so (a) the plugin has to be installed in Claude
+    // Code's own registry, which ensurePluginInstalled() does from the bundled
+    // copy, and (b) the prompt names the file — and the server would find it
+    // anyway through current-project.json.
+    const installed = await ensurePluginInstalled();
+    if (!installed.ok) return { success: false, error: 'plugin-install-failed', detail: installed.error, command: cmd };
+    const url = new URL('claude://code/new');
+    url.searchParams.set('folder', path.dirname(currentFilePath));
+    url.searchParams.set('prompt', `Open the Transmission project at ${currentFilePath} (transmission open_project tool) and give me an audit status.`);
+    url.searchParams.set('source', 'transmission');
+    try { await shell.openExternal(url.href); return { success: true, mode: 'app', pluginInstalled: installed.changed, command: cmd }; }
+    catch (e) { return { success: false, error: e.message, command: cmd }; }
+  }
   // A `.command` file opened with Terminal runs without Apple Events, so there
   // is no Automation permission prompt — which an AppleScript `do script` would
   // trigger on first use and silently block on if dismissed. The file is
@@ -4463,6 +4548,7 @@ app.on('window-all-closed', () => {
 // Checkpoint + close the project DB cleanly on quit so the .transmission file
 // is a complete single-file snapshot (no stale -wal/-shm sidecars).
 app.on('before-quit', () => {
+  clearCurrentProjectPointer();
   try { projectStore.close(); } catch (e) { /* best effort */ }
   clearStagedViews();   // generated diagram pages; a stale one is never reopened
 });
