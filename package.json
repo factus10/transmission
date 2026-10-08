@@ -1,7 +1,7 @@
 {
   "name": "transmission",
-  "version": "2.19.1",
-  "description": "Content audit, IA, and migration workspace for website replatforms — assess every page, architect the new site, and direct the build",
+  "version": "2.20.0",
+  "description": "Content audit, IA, and migration workspace for website replatforms \u2014 assess every page, architect the new site, and direct the build",
   "main": "main.js",
   "scripts": {
     "test": "node --test \"test/**/*.test.js\"",
