@@ -11,7 +11,7 @@ Design and reasoning: [`docs/dev/MCP_SERVER_PROPOSAL.md`](../docs/dev/MCP_SERVER
 
 ## Setup
 
-**From the app (simplest).** With a `.transmission` project open, click **✦** in the title bar → **Open in Claude**. A session opens in the Claude desktop app (or Terminal); the plugin ships inside the app (`Contents/Resources/mcp`) and registers itself with Claude Code on first use, so only Claude itself needs installing. The app also writes `current-project.json` in its support folder, which the server reads when started with no project — so any session connects to what's open.
+**From the app (simplest).** With a `.transmission` project open, click **✦** in the title bar → **Open in Claude**. Transmission builds a **Claude desktop extension** (`transmission.mcpb`: `server.js` + `lib/` + a manifest, see `claude-extension.js` at the repo root) from this folder and hands it to the Claude app, which asks to install it and then runs it on its **own bundled Node** — no CLI, no system Node. Extensions carry no skills, so the server also offers the four skills as **MCP prompts** (`mcp/lib/prompts.js` serves each `skills/*/SKILL.md` body, with the `ask-the-audit` ground rules appended) — the chat's **+** menu lists them. With the `claude` CLI installed, the dialog also offers a Claude Code session (Code tab or Terminal): the plugin ships inside the app (`Contents/Resources/mcp`) and registers itself with Claude Code on first use. The app also writes `current-project.json` in its support folder, which the server reads when started with no project — so any session connects to what's open.
 
 **Claude Code — as a plugin.** This directory is a Claude Code plugin: it declares the server *and* ships the skills below, so one install wires both.
 
