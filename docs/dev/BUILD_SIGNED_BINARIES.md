@@ -236,3 +236,40 @@ zip can't carry a ticket itself.
 - Windows/Linux packaging is configured in `package.json`'s devDependencies
   (`electron-builder`) but has never actually been run for this app — don't
   assume it works without testing.
+- electron-builder 26 does **not** read `APPLE_SIGNING_IDENTITY` itself (it
+  reads `CSC_NAME`, otherwise auto-discovers the keychain's Developer ID
+  identity). With exactly one such identity installed, auto-discovery picks
+  it, so the variable is harmless but not what's choosing the cert. If a
+  second identity ever appears, set `CSC_NAME` to the common name.
+
+## Upgrading Electron
+
+Electron supports only its latest three majors. Since the release after 2.20.0 the app is on
+**Electron 44** (Chromium 152, Node 24) with electron-builder 26 and
+better-sqlite3 13. Things that bit, or had to be checked, on the 29 → 44 jump:
+
+- **better-sqlite3 13 is N-API.** It ships per-arch prebuilds
+  (`prebuilds/darwin-arm64.node`, `darwin-x64.node`) that load in plain Node
+  and in any Electron, so `electron-rebuild` finds nothing to compile. The
+  universal merge then sees the same two `.node` files in both arch builds and
+  refuses them unless they're covered by `build.mac.x64ArchFiles` — that rule
+  is in `package.json` for this reason. The non-mac prebuilds and the bundled
+  SQLite source are excluded from `files`.
+- **The `electron` package no longer downloads its binary on `npm install`**
+  (Electron 42). It downloads the first time `electron` runs. To fetch it up
+  front, or to repair a half-installed one, run `npx install-electron --no`.
+- Read `docs/breaking-changes.md` in the electron repo for every major skipped,
+  and grep `main.js`, `preload.js`, `miro.js` and `src/renderer.js` for each
+  API named. On this jump the ones that touched the app were: the main-process
+  `clipboard` API turning async (44), `console-message` on `WebContents`
+  moving its fields onto the event (35; the `<webview>` DOM event still
+  carries `e.message`, which is what the diagram engines use), and the
+  long-removed `<webview>` `new-window` event (22), replaced by
+  `setWindowOpenHandler`.
+- **Coming in 45/46:** `safeStorage.encryptString` / `decryptString` /
+  `isEncryptionAvailable` are deprecated in 45 and removed in 46. `miro.js`
+  uses them; move it to the `*Async` variants before going past 45.
+  `decryptStringAsync()` reads data the sync API wrote, so no token migration
+  is needed.
+- Verify an unsigned universal package before spending a notarization round
+  trip: `CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --universal --dir --publish never`.

@@ -6,6 +6,15 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Changed
+
+- **Updated to Electron 44** (Chromium 152, Node 24), from Electron 29, which stopped receiving security fixes in 2024. The embedded browser now gets current Chromium, so modern client sites render as they do in Chrome. Also updated: electron-builder 26 and better-sqlite3 13. The new better-sqlite3 runs as a prebuilt N-API module, so it no longer has to be compiled against each Electron version. Projects, exports and the Visual Sitemap / Treemap / Content Flow views work as before. Needs macOS 13 or later (Electron 44 dropped macOS 12).
+
+### Fixed
+
+- **Links that open a new window in the page preview open in your browser again.** A `target="_blank"` link or a `window.open()` on an audited page was meant to go to the system browser. Since Electron 22 it had been opening a bare, chrome-less window inside Transmission instead, because the event the app listened for no longer exists. It now goes to the system browser.
+- **Copy to clipboard** waits for the copy to finish before confirming, which Electron 44's asynchronous clipboard API requires.
+
 ## [2.20.0] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Added
