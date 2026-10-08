@@ -78,6 +78,17 @@
         }
       ]
     },
+    "extraResources": [
+      {
+        "from": "mcp",
+        "to": "mcp",
+        "filter": [
+          "**/*",
+          "!sample/*.transmission*",
+          "!**/.DS_Store"
+        ]
+      }
+    ],
     "files": [
       "*.js",
       "src/**/*",

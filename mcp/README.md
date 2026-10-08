@@ -11,7 +11,9 @@ Design and reasoning: [`docs/dev/MCP_SERVER_PROPOSAL.md`](../docs/dev/MCP_SERVER
 
 ## Setup
 
-**Claude Code — as a plugin (recommended).** This directory is a Claude Code plugin: it declares the server *and* ships the skills below, so one install wires both.
+**From the app (simplest).** With a `.transmission` project open, click **✦** in the title bar → **Open in Claude Code**. The plugin ships inside the app (`Contents/Resources/mcp`), so only Claude Code itself needs installing.
+
+**Claude Code — as a plugin.** This directory is a Claude Code plugin: it declares the server *and* ships the skills below, so one install wires both.
 
 ```bash
 # from a checkout of the repo
@@ -88,11 +90,19 @@ The server opens the project **read-only**, never migrates it, and holds the dat
 
 One visible side effect: reading a project that the app has closed leaves empty `-shm` / `-wal` files beside it. That is how SQLite's WAL mode works for any reader; they are harmless, and the app removes them the next time it opens and closes the project.
 
+## Proposals — the one write
+
+`propose_changes` queues a request (page URL, field, value, one-line rationale) in a `proposals` table inside the project file. It never touches the audit: the app shows the queue (✦ in the title bar, **Proposals** in the sidebar, Project → Review Proposals) and the auditor accepts or rejects there. Accepted values are written by the app through its own paths — change-logged with a `(proposal accepted)` entry carrying the source and rationale, one `Cmd+Z` per batch. `list_proposals` shows what's queued, accepted or rejected.
+
+Allowed fields: decision, notes, tags, group, primary tag, content type, theme, renders-as, migration track, published status, audiences, primary audience, jobs. Controlled values are checked against the project's own libraries; `Consolidate` is refused (it needs a target only the app's picker can set); tags/audiences/jobs are added, never removed; a note is appended. `Final_KKE`, `_`-columns, sitemap placement, redirects and consolidation targets cannot be proposed. The whole batch is validated before any of it is written, and a pending proposal for the same page + field is replaced rather than stacked.
+
+The table is created on demand without touching the file's schema version; the app stamps schema v2 when it next opens the project.
+
 ## What it can't do yet
 
 - **Skills in Claude Desktop.** Desktop can run the server (configure it as above) but doesn't load Claude Code plugins or skills; the skills are Claude Code only for now.
 
-- **Change anything.** The app keeps the project in memory and would overwrite an outside edit on its next autosave. Writes are planned as *proposals* the auditor accepts in the app — see the proposal doc, §5.
+- **Change anything directly.** The app keeps the project in memory and would overwrite an outside edit on its next autosave, so the only write is the proposals queue above.
 - **Filters the app computes live** — duplicates, URL variants, redirect review, cross-site duplicates, consolidate-target checks, SME conflicts. A saved filter that uses one is refused by name rather than silently run without it; `get_libraries` → `savedFilters` shows which are usable.
 
 ## A note on client data

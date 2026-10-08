@@ -21,6 +21,7 @@
       <span id="save-status-dirty" class="status-dirty  hidden">● Unsaved changes</span>
     </div>
     <div id="titlebar-actions">
+      <button id="btn-claude" class="icon-btn btn-claude" title="Claude Code: open this project, review proposals">✦<span id="btn-claude-count" class="claude-count hidden"></span></button>
       <button id="btn-help" class="icon-btn" title="Help">?</button>
     </div>
   </div>
@@ -62,6 +63,7 @@
           <button id="btn-add-field-filter" class="btn btn-sm btn-ghost hidden" title="Filter by an arbitrary field">+ Field filter</button>
           <button id="btn-unclassified-filter" class="btn btn-sm btn-ghost hidden" title="Show only rows whose Content Nature is blank">Unclassified</button>
           <button id="btn-consolidate-todo" class="btn btn-sm btn-ghost hidden" title="Pages marked Consolidate that have no target page yet">Consolidate: no target</button>
+          <button id="btn-proposals-todo" class="btn btn-sm btn-ghost hidden" title="Changes proposed from outside the app (e.g. by Claude) waiting for your accept or reject">Proposals</button>
           <div id="field-filter-chips" class="field-filter-chips"></div>
           <div id="row-count"></div>
           <div id="saved-filters-wrap">

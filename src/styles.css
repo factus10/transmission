@@ -2025,6 +2025,22 @@ webview { width: 100%; height: 100%; display: flex; }
   transition: background 150ms, color 150ms;
 }
 .icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+/* Claude button in the titlebar: the entry point for "open this project in
+   Claude Code" and the proposals queue. The count pill only appears when
+   something is waiting, so an idle project shows just the glyph. */
+.btn-claude { position: relative; font-size: 13px; }
+.btn-claude .claude-count {
+  position: absolute; top: -4px; right: -6px;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 8px; font-size: 10px; line-height: 16px; font-weight: 600;
+  background: var(--accent); color: #fff; text-align: center;
+}
+#btn-proposals-todo:not(.hidden) { color: var(--accent); border-color: var(--accent); }
+.proposal-group-rows { display: none; }
+.proposal-group.open .proposal-group-rows { display: table-row-group; }
+.proposal-cur { color: var(--text-muted); }
+.proposal-cur::after { content: " → "; }
+.proposal-rationale { font-size: 11px; color: var(--text-muted); }
 .icon-btn.active { background: var(--bg-hover); color: var(--text-primary); }
 
 /* Cluster quick-toggle chips in field-bar-top — shortcut for App Settings checkboxes */

@@ -17,10 +17,10 @@
 
 const path = require('node:path');
 const readline = require('node:readline');
-const { loadProject, fileStamp, FIELD_FILTER_OPERATORS, VIRTUAL_FIELDS } = require('./lib/project');
+const { loadProject, fileStamp, FIELD_FILTER_OPERATORS, VIRTUAL_FIELDS, PROPOSAL_FIELDS } = require('./lib/project');
 const { INSTRUCTIONS, SEMANTICS_MD } = require('./lib/semantics');
 
-const SERVER_INFO = { name: 'transmission', version: '0.1.0' };
+const SERVER_INFO = { name: 'transmission', version: '0.3.0' };
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
 // ─── Active project ──────────────────────────────────────────────────────────
@@ -196,6 +196,47 @@ const TOOLS = [
     run: a => project().changelog(a)
   },
   {
+    name: 'propose_changes',
+    description: 'Queue proposed changes for the auditor to accept or reject in Transmission. This is the ONLY way to change anything, and it changes nothing by itself: each item is a request — page URL, field, value, and the reason — that a person reviews in the app (sidebar "Proposals" button). Call it only when the person has asked you to queue proposals (e.g. after confirming a section-review worksheet); never speculatively. Allowed fields: ' + Object.keys(PROPOSAL_FIELDS).join(', ') + '. Controlled fields are checked against this project\'s own vocabularies (KKE states, audience and job libraries); Consolidate is refused (it needs a target only the app can set); Tags/Audiences/Jobs_Served ADD to the cell, Notes appends to an existing note, the rest replace. A whole batch is validated before anything is written; a pending proposal for the same page + field is replaced by the newer one.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        changes: {
+          type: 'array', minItems: 1,
+          items: {
+            type: 'object',
+            properties: {
+              url: { type: 'string', description: 'The page URL as it appears in the crawl.' },
+              field: { type: 'string', description: 'One of the allowed fields.' },
+              value: { type: 'string', description: 'The proposed value. For Tags / Audiences / Jobs_Served, one or more comma-separated values to add.' },
+              rationale: { type: 'string', description: 'Why — one sentence the auditor reads before accepting. Required.' }
+            },
+            required: ['url', 'field', 'value', 'rationale']
+          }
+        },
+        source: { type: 'string', description: 'What produced these, e.g. "section-review /news". Shown to the auditor.' },
+        batch: { type: 'string', description: 'Optional batch id to group a run; generated when omitted.' }
+      },
+      required: ['changes']
+    },
+    readOnly: false,
+    run: a => project().proposeChanges(a)
+  },
+  {
+    name: 'list_proposals',
+    description: 'Proposals queued for this project and their status (pending / accepted / rejected), each with the field\'s current value so you can see whether a pending one is still relevant. Use it to avoid re-proposing what is already queued, and to see what the auditor accepted or rejected from an earlier batch.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['pending', 'accepted', 'rejected', 'all'], description: 'Default pending.' },
+        batch: { type: 'string' },
+        limit: { type: 'integer', description: 'Default 100, max 1000.' },
+        offset: { type: 'integer' }
+      }
+    },
+    run: a => project().listProposals(a)
+  },
+  {
     name: 'get_libraries',
     description: 'The project\'s controlled vocabularies and workshop output. Without `which`: what exists and how big. With `which`: the contents — identity, kkeStates, audiences (with tiers), jobs, sites, contentTypes (current→target crosswalk), targetSpecs, pageStatuses, assignees, contentThemes, glossary, savedFilters, menus.',
     inputSchema: {
@@ -250,7 +291,7 @@ function handle(method, params) {
     case 'ping':
       return {};
     case 'tools/list':
-      return { tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema, annotations: { readOnlyHint: true } })) };
+      return { tools: TOOLS.map(({ name, description, inputSchema, readOnly }) => ({ name, description, inputSchema, annotations: { readOnlyHint: readOnly !== false, destructiveHint: false } })) };
     case 'tools/call': {
       const tool = TOOLS.find(t => t.name === (params && params.name));
       if (!tool) throw rpcError(-32602, `Unknown tool: ${params && params.name}`);

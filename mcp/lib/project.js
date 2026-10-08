@@ -26,7 +26,63 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SUPPORTED_SCHEMA_VERSION = 1;
+const SUPPORTED_SCHEMA_VERSION = 2;
+
+// ─── Proposals ───────────────────────────────────────────────────────────────
+//
+// The one thing this server writes, and the only table it may write to. A
+// proposal is a REQUEST — "set this field on this page to this value, because…"
+// — that a person accepts or rejects in the app, which then writes the value
+// through its own paths (change log, undo, Suggested_KKE refresh). Nothing here
+// ever touches `rows`, so the app's in-memory copy stays the truth and its
+// autosave can never collide with us.
+//
+// The DDL must match PROPOSALS_DDL in project-store.js (the test lifts that one
+// and compares). CREATE IF NOT EXISTS and NO user_version bump: the app stamps
+// v2 itself on open; an observer locking older app builds out of a file would
+// be the wrong trade.
+const PROPOSALS_DDL = `
+  CREATE TABLE IF NOT EXISTS proposals (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at  TEXT,
+    batch       TEXT,
+    source      TEXT,
+    url         TEXT,
+    field       TEXT,
+    value       TEXT,
+    rationale   TEXT,
+    status      TEXT DEFAULT 'pending',
+    resolved_at TEXT,
+    resolved_by TEXT
+  );
+  CREATE INDEX IF NOT EXISTS proposals_status ON proposals (status);`;
+const PROPOSAL_COLUMNS = ['id', 'created_at', 'batch', 'source', 'url', 'field', 'value', 'rationale', 'status', 'resolved_at', 'resolved_by'];
+
+// Fields a proposal may name. Keyed by the canonical column name; `map` keys
+// resolve through the project's column map (a file may call KKE "Recommendation").
+// `kind` decides how the app applies it: 'set' replaces the cell; 'add' merges
+// into a comma-separated cell (a proposal can add a tag or an audience, never
+// remove one); 'note' appends to a non-blank Notes cell rather than overwriting
+// what a person wrote. Deliberately absent: Final_KKE (the SME's call), every
+// `_`-prefixed column, the Sitemap_* / Computed Path / Redirect_Destination /
+// Consolidate_Into family (the engine derives those from decisions, and a
+// proposal must not fake one), and Suggested_* (machine columns already).
+const PROPOSAL_FIELDS = {
+  KKE_Recommendation: { map: 'kke', kind: 'set', vocab: 'kke' },
+  Notes:              { map: 'notes', kind: 'note' },
+  Tags:               { map: 'tags', kind: 'add' },
+  Group:              { map: 'group', kind: 'set' },
+  'Primary Tag':      { map: 'primaryTag', kind: 'set' },
+  Page_Type:          { kind: 'set' },
+  Content_Theme:      { kind: 'set' },
+  Content_Nature:     { kind: 'set', vocab: ['Page', 'Content Object', 'Fragment', 'Generated'] },
+  Migration_Track:    { kind: 'set', vocab: ['Scripted', 'Migrate Records', 'Configure', 'Manual Rebuild', 'Merge', 'Kill/Redirect'] },
+  Published_Status:   { kind: 'set', vocab: ['Published', 'Unpublished', 'Draft', '404'] },
+  Audiences:          { kind: 'add', vocab: 'audiences' },
+  Primary_Audience:   { kind: 'set', vocab: 'audiences-one' },
+  Jobs_Served:        { kind: 'add', vocab: 'jobs' }
+};
+const PROPOSAL_MAX_BATCH = 2000;
 
 // ─── node:sqlite ─────────────────────────────────────────────────────────────
 
@@ -93,6 +149,7 @@ const LEGACY_NAV_COLUMN_RENAMES = [
 ];
 
 const BUILTIN_KKE = ['Keep', 'Kill', 'Evolve', 'Consolidate', 'Exclude'];
+const AUDIENCE_NONE = '— None (no target audience)';
 
 function detectUrlColumn(headers) {
   for (const h of headers) {
@@ -968,6 +1025,158 @@ class Project {
   }
 }
 
+// ─── Proposals (the only write path) ─────────────────────────────────────────
+
+Project.prototype.proposalFieldInfo = function () {
+  const out = {};
+  for (const [canon, def] of Object.entries(PROPOSAL_FIELDS)) {
+    const col = def.map ? this.columnMap[def.map] : canon;
+    out[col] = { kind: def.kind, canonical: canon, vocab: this._proposalVocab(def) };
+  }
+  return out;
+};
+
+/** The allowed values for a controlled field, read from THIS project's own
+ *  libraries, or null for free text. */
+Project.prototype._proposalVocab = function (def) {
+  const v = def.vocab;
+  if (!v) return null;
+  if (Array.isArray(v)) return v;
+  if (v === 'kke') {
+    const custom = (Array.isArray(this.settings.customKkeStates) ? this.settings.customKkeStates : []).map(k => String(k.label || k)).filter(Boolean);
+    // Consolidate needs a target page, which only the app's picker can set —
+    // a proposal to consolidate without saying into what is not a decision.
+    return [...BUILTIN_KKE.filter(k => k !== 'Consolidate'), ...custom];
+  }
+  if (v === 'audiences' || v === 'audiences-one') {
+    const names = (Array.isArray(this.settings.audienceLibrary) ? this.settings.audienceLibrary : []).map(a => a.name).filter(Boolean);
+    return v === 'audiences' ? names : names.filter(n => n !== AUDIENCE_NONE);
+  }
+  if (v === 'jobs') return this.jobLibrary.map(j => j.label).filter(Boolean);
+  return null;
+};
+
+/** Resolve a proposed field name to a real column + its rules, or throw. */
+Project.prototype._resolveProposalField = function (name) {
+  const info = this.proposalFieldInfo();
+  const n = String(name || '').trim();
+  const hit = Object.keys(info).find(c => c === n) || Object.keys(info).find(c => c.toLowerCase() === n.toLowerCase())
+    || Object.keys(info).find(c => info[c].canonical.toLowerCase() === n.toLowerCase());
+  if (!hit) throw new Error(`"${n}" is not a field proposals may change. Allowed: ${Object.keys(info).join(', ')}. Final_KKE, sitemap placement, redirects and consolidation targets can only be set in the app.`);
+  return { column: hit, ...info[hit] };
+};
+
+/** Validate one proposal against the live project. Returns {ok, column, value,
+ *  current, reason} — `reason` set when it should be skipped rather than queued. */
+Project.prototype._checkProposal = function (c) {
+  if (!c || typeof c !== 'object') throw new Error('Each change must be an object {url, field, value, rationale}.');
+  const url = String(c.url || '').trim();
+  if (!url) throw new Error('A change needs a `url`.');
+  const rationale = String(c.rationale || '').trim();
+  if (!rationale) throw new Error(`${url}: a change needs a \`rationale\` — the auditor reads it before accepting.`);
+  const f = this._resolveProposalField(c.field);
+  const raw = c.value;
+  const values = Array.isArray(raw) ? raw.map(v => String(v).trim()).filter(Boolean) : String(raw ?? '').split(f.kind === 'add' ? ',' : '\u0000').map(v => v.trim()).filter(Boolean);
+  if (!values.length) throw new Error(`${url}: ${f.column} needs a non-empty value; proposals cannot clear a field.`);
+  if (f.kind !== 'add' && f.kind !== 'note' && values.length > 1 && !Array.isArray(raw)) values.splice(1);
+  if (f.vocab) {
+    const bad = values.filter(v => !f.vocab.some(o => o.toLowerCase() === v.toLowerCase()));
+    if (bad.length) throw new Error(`${url}: ${f.column} cannot be "${bad.join('", "')}". This project allows: ${f.vocab.join(' · ')}`);
+    // Normalise case to the project's own spelling.
+    values.forEach((v, i) => { values[i] = f.vocab.find(o => o.toLowerCase() === v.toLowerCase()); });
+  }
+  const rows = this.findRows(url);
+  if (!rows.length) return { ok: false, reason: 'no row with that URL' };
+  const row = rows[0];
+  const current = String(row[f.column] ?? '').trim();
+  const value = f.kind === 'add' ? values.join(', ') : values.join('\n');
+  if (f.kind === 'set' && current.toLowerCase() === value.toLowerCase()) return { ok: false, reason: `already "${current}"` };
+  if (f.kind === 'add') {
+    const have = parseCsvCell(current).map(x => x.toLowerCase());
+    const fresh = values.filter(v => !have.includes(v.toLowerCase()));
+    if (!fresh.length) return { ok: false, reason: `already has ${values.join(', ')}` };
+    return { ok: true, column: f.column, value: fresh.join(', '), current, url: this.url(row), rationale };
+  }
+  return { ok: true, column: f.column, value, current, url: this.url(row), rationale };
+};
+
+/**
+ * Queue proposals. Validates EVERY change before writing ANY — a batch with one
+ * bad field name fails whole, so a half-queued batch never has to be explained.
+ * A pending proposal for the same page + field is replaced, not stacked: the
+ * newer rationale wins, and the auditor sees one line per decision.
+ */
+Project.prototype.proposeChanges = function ({ changes, source, batch } = {}) {
+  if (!Array.isArray(changes) || !changes.length) throw new Error('`changes` must be a non-empty array of {url, field, value, rationale}.');
+  if (changes.length > PROPOSAL_MAX_BATCH) throw new Error(`At most ${PROPOSAL_MAX_BATCH} changes per call.`);
+  const src = String(source || 'mcp').trim().slice(0, 80);
+  const batchId = String(batch || '').trim() || (new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14) + '-' + Math.random().toString(36).slice(2, 6));
+  const checked = changes.map(c => this._checkProposal(c));   // throws on the first invalid one
+  const skipped = [], queued = [];
+  checked.forEach((r, i) => { if (r.ok) queued.push(r); else skipped.push({ url: String(changes[i].url), field: String(changes[i].field), reason: r.reason }); });
+  let inserted = 0, replaced = 0;
+  if (queued.length) {
+    const { DatabaseSync } = sqlite();
+    const db = new DatabaseSync(this.filePath);
+    try {
+      db.exec('PRAGMA busy_timeout = 5000;');
+      db.exec(PROPOSALS_DDL);
+      const find = db.prepare("SELECT id FROM proposals WHERE status = 'pending' AND url = ? AND field = ?");
+      const upd = db.prepare('UPDATE proposals SET created_at = ?, batch = ?, source = ?, value = ?, rationale = ? WHERE id = ?');
+      const ins = db.prepare('INSERT INTO proposals (created_at, batch, source, url, field, value, rationale, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      const now = new Date().toISOString();
+      db.exec('BEGIN');
+      try {
+        for (const q of queued) {
+          const prev = find.get(q.url, q.column);
+          if (prev) { upd.run(now, batchId, src, q.value, q.rationale, prev.id); replaced++; }
+          else { ins.run(now, batchId, src, q.url, q.column, q.value, q.rationale, 'pending'); inserted++; }
+        }
+        db.exec('COMMIT');
+      } catch (e) { db.exec('ROLLBACK'); throw e; }
+    } finally {
+      try { db.close(); } catch (_) { /* closed */ }
+    }
+  }
+  return {
+    batch: batchId,
+    queued: inserted + replaced,
+    inserted,
+    replacedPending: replaced,
+    skipped: skipped.length ? skipped : undefined,
+    note: 'Queued for the auditor to accept or reject in Transmission (sidebar "Proposals" button, or Project → Review Proposals). Nothing has been changed yet.'
+  };
+};
+
+Project.prototype.listProposals = function ({ status, batch, limit, offset } = {}) {
+  const st = status || 'pending';
+  if (!['pending', 'accepted', 'rejected', 'all'].includes(st)) throw new Error('`status` must be pending, accepted, rejected or all.');
+  const cap = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 1000);
+  const off = Math.max(parseInt(offset, 10) || 0, 0);
+  return withDb(this.filePath, db => {
+    const has = db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'proposals'").get();
+    if (!has) return { total: 0, proposals: [], note: 'No proposals have been queued for this project.' };
+    const where = [], args = [];
+    if (st !== 'all') { where.push('status = ?'); args.push(st); }
+    if (batch) { where.push('batch = ?'); args.push(String(batch)); }
+    const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const total = db.prepare(`SELECT count(*) AS c FROM proposals ${w}`).get(...args).c;
+    const byStatus = {};
+    for (const r of db.prepare('SELECT status, count(*) AS c FROM proposals GROUP BY status').all()) byStatus[r.status] = r.c;
+    const list = db.prepare(`SELECT ${PROPOSAL_COLUMNS.join(', ')} FROM proposals ${w} ORDER BY id DESC LIMIT ? OFFSET ?`).all(...args, cap, off)
+      .map(p => {
+        const rows = this.findRows(p.url);
+        const current = rows.length ? String(rows[0][p.field] ?? '') : undefined;
+        const o = compact({ id: p.id, status: p.status, createdAt: p.created_at, batch: p.batch, source: p.source, url: p.url, field: p.field, value: p.value, rationale: p.rationale, resolvedAt: p.resolved_at, resolvedBy: p.resolved_by });
+        // Set after compact(): a blank current value is the informative case
+        // ("nothing there yet"), and compact() would drop it.
+        o.current = rows.length ? current : '(row no longer exists)';
+        return o;
+      });
+    return { total, byStatus, offset: off, returned: list.length, nextOffset: off + list.length < total ? off + list.length : undefined, proposals: list };
+  });
+};
+
 // ─── Utilities ───────────────────────────────────────────────────────────────
 
 function clip(v, max) {
@@ -998,5 +1207,6 @@ function looseUrl(u) {
 module.exports = {
   loadProject, fileStamp, Project, sqlite,
   fieldFilterMatches, fieldFilterCompare, fieldFilterNumber, statusCodeCategory,
-  FIELD_FILTER_OPERATORS, VIRTUAL_FIELDS, SUPPORTED_SPECIAL_FILTERS, SUPPORTED_SCHEMA_VERSION
+  FIELD_FILTER_OPERATORS, VIRTUAL_FIELDS, SUPPORTED_SPECIAL_FILTERS, SUPPORTED_SCHEMA_VERSION,
+  PROPOSAL_FIELDS, PROPOSAL_COLUMNS, PROPOSALS_DDL
 };

@@ -451,6 +451,9 @@ function buildMenu() {
         { label: 'Audience Library…',     click: send('menu-audience-library') },
         { label: 'Fill Audiences from Section…', click: send('menu-audience-inherit') },
         { label: 'Suggest Audiences with AI…',   click: send('menu-audience-ai') },
+        { type: 'separator' },
+        { label: 'Review Proposals…',            click: send('menu-review-proposals') },
+        { label: 'Open in Claude Code…',         click: send('menu-open-in-claude') },
         { label: 'Content Type Registry…', click: send('menu-content-type-registry') },
         { label: 'Target Spec Library…',    click: send('menu-pattern-library') },
         { label: 'Component Library…',      click: send('menu-design-pattern-library') },
@@ -2252,6 +2255,94 @@ ipcMain.handle('save-as-project', async (event, payload) => {
 // Package the open project for handoff to another auditor: checkpoint the WAL
 // so the .transmission file is a complete single-file snapshot, then zip it
 // with a short README. The recipient unzips and double-clicks.
+// ─── Proposals (changes queued from outside, e.g. the MCP server) ────────────
+// The renderer asks, main answers from the open ProjectStore. The queue lives in
+// the project file, so a .xlsx session has none — the renderer shows why.
+
+function proposalsUnavailableReason() {
+  if (!currentFilePath) return 'No file is open.';
+  if (!isProjectFile(currentFilePath) || !projectStore.isOpen) return 'Proposals need a .transmission project (File → Save As Project…).';
+  return null;
+}
+
+ipcMain.handle('proposals-pending', () => {
+  const reason = proposalsUnavailableReason();
+  if (reason) return { supported: false, reason, count: 0 };
+  try { return { supported: true, count: projectStore.countProposals('pending') }; }
+  catch (e) { return { supported: false, reason: e.message, count: 0 }; }
+});
+
+ipcMain.handle('proposals-list', () => {
+  const reason = proposalsUnavailableReason();
+  if (reason) return { success: false, error: reason, proposals: [] };
+  try { return { success: true, proposals: projectStore.readProposals('pending') }; }
+  catch (e) { return { success: false, error: e.message, proposals: [] }; }
+});
+
+ipcMain.handle('proposals-resolve', (_e, { ids, status } = {}) => {
+  const reason = proposalsUnavailableReason();
+  if (reason) return { success: false, error: reason, resolved: 0 };
+  try { return { success: true, resolved: projectStore.resolveProposals(ids || [], status) }; }
+  catch (e) { return { success: false, error: e.message, resolved: 0 }; }
+});
+
+// ─── Open in Claude Code ──────────────────────────────────────────────────────
+// Launches the `claude` CLI in a Terminal window with the bundled MCP plugin
+// (mcp/ ships as an extraResource) pointed at the open project. The plugin's
+// server reads TRANSMISSION_PROJECT, so no per-project configuration is needed.
+// Nothing here talks to a model: it opens a terminal, exactly as the user would.
+
+function mcpPluginDir() {
+  return app.isPackaged ? path.join(process.resourcesPath, 'mcp') : path.join(__dirname, 'mcp');
+}
+
+/** Resolve `claude` through a login shell, since a GUI app's PATH is not the
+ *  user's terminal PATH (that is where ~/.local/bin and Homebrew live). */
+function findClaudeCli() {
+  return new Promise(resolve => {
+    const { execFile } = require('child_process');
+    execFile('/bin/zsh', ['-lc', 'command -v claude'], { timeout: 8000 }, (err, stdout) => {
+      const p = String(stdout || '').trim().split('\n').pop();
+      resolve(!err && p ? p : null);
+    });
+  });
+}
+
+const shQuote = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
+
+ipcMain.handle('claude-launch-status', async () => {
+  const reason = proposalsUnavailableReason();   // same precondition: a project file to point at
+  const cli = await findClaudeCli();
+  return { projectOk: !reason, projectReason: reason, cliFound: !!cli, cliPath: cli, pluginDir: mcpPluginDir(), platform: process.platform };
+});
+
+ipcMain.handle('claude-launch', async () => {
+  const reason = proposalsUnavailableReason();
+  if (reason) return { success: false, error: reason };
+  const cli = await findClaudeCli();
+  const plugin = mcpPluginDir();
+  // Checkpoint so the file the server opens is complete even before its first autosave.
+  try { projectStore.checkpoint(); } catch (_) { /* best effort */ }
+  const cmd = `cd ${shQuote(path.dirname(currentFilePath))} && TRANSMISSION_PROJECT=${shQuote(currentFilePath)} claude --plugin-dir ${shQuote(plugin)}`;
+  if (!cli) return { success: false, error: 'claude-not-found', command: cmd };
+  if (process.platform !== 'darwin') return { success: false, error: 'unsupported-platform', command: cmd };
+  // A `.command` file opened with Terminal runs without Apple Events, so there
+  // is no Automation permission prompt — which an AppleScript `do script` would
+  // trigger on first use and silently block on if dismissed. The file is
+  // rewritten per launch and lives in userData, outside any project.
+  try {
+    const dir = path.join(app.getPath('userData'), 'launch');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'open-in-claude.command');
+    fs.writeFileSync(file, `#!/bin/zsh -l\n# Written by Transmission — opens Claude Code on the current project.\nclear\n${cmd}\n`, { mode: 0o755 });
+    const { execFile } = require('child_process');
+    await new Promise((resolve, reject) => execFile('/usr/bin/open', ['-a', 'Terminal', file], { timeout: 15000 }, err => err ? reject(err) : resolve()));
+    return { success: true, command: cmd };
+  } catch (e) {
+    return { success: false, error: e.message, command: cmd };
+  }
+});
+
 ipcMain.handle('package-handoff', async () => {
   if (!isProjectFile(currentFilePath) || !projectStore.isOpen) {
     return { success: false, error: 'Open a .transmission project first (File → Save As Project…).' };
