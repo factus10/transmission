@@ -33,7 +33,9 @@ The list below is a feature catalog, not a how-to.
 ### Ask an AI about the audit (MCP server)
 - **Read-only MCP server** — `mcp/server.js` exposes a `.transmission` project to any Model Context Protocol client (Claude Desktop, Claude Code), so the questions the Reports menu doesn't answer — *how many Keep pages under `/news` have no audience? which sections did the SME overturn most?* — get a real number instead of an Excel pivot. Counts grouped by any columns, filtered with the same field filters (and saved filters) the sidebar uses; one page's full record with its change history; the sitemap with page counts; redirects with who wrote them; the audit trail.
 - **Safe beside the running app** — opens the project read-only, never migrates it, and picks up each autosave on its next call. It cannot change anything; writes are planned as proposals you accept in the app.
-- **No install** — needs Node 22.13+, has no dependencies, and is not part of the app bundle. Setup in [`mcp/README.md`](mcp/README.md); design in [`docs/dev/MCP_SERVER_PROPOSAL.md`](docs/dev/MCP_SERVER_PROPOSAL.md).
+- **Proposals come back into the app.** Claude can queue changes (page · field · value · reason) that you **accept or reject** in Transmission — the ✦ button shows how many are waiting, Review Proposals groups them by what's proposed, and accepting writes through the app's own paths: change-logged with the reason, one `Cmd+Z` for the batch. Nothing is written until you accept; `Final_KKE`, placement and redirects can't be proposed at all.
+- **One button to start.** ✦ → **Open in Claude Code** launches a Terminal with Claude connected to the open project and the skills loaded; the plugin ships inside the app.
+- **Needs Node 22.13+**, has no dependencies, and is not part of the app's JavaScript bundle (it ships as a resource). Setup in [`mcp/README.md`](mcp/README.md); design in [`docs/dev/MCP_SERVER_PROPOSAL.md`](docs/dev/MCP_SERVER_PROPOSAL.md).
 
 ### Core Audit Workflow
 - **Open any spreadsheet** (.xlsx, .xls, .xlsm, .ods, .csv) or a `.transmission` project — designed for Screaming Frog exports
