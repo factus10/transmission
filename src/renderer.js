@@ -32819,78 +32819,94 @@ async function applyProposalToRow({ p, origIndex, row, kind }) {
   }
 }
 
-// ─── Open in Claude Code ──────────────────────────────────────────────────────
+// ─── Open in Claude ───────────────────────────────────────────────────────────
 // One dialog for both halves of the loop: launch Claude on this project, and
-// review what it sent back. Launching opens a Terminal running the `claude`
-// CLI with the bundled plugin; it needs a .transmission file to point at and
-// the CLI on the user's PATH, and says which is missing rather than failing.
+// review what it sent back. The default route is the Claude app itself, through
+// a desktop extension built from the bundled server — it needs nothing but the
+// Claude app. Claude Code (the app's Code tab, or Terminal) is offered when the
+// `claude` CLI is installed, since that is the route that carries the skills.
 
 async function openClaudeDialog() {
   const st = await window.electronAPI.claudeLaunchStatus();
   const pend = await window.electronAPI.proposalsPending();
   const n = pend && pend.supported ? pend.count : 0;
-  const ok = st.projectOk && st.cliFound;
-  const appOk = ok && st.desktopAppFound;
+  const line = (label, html, bad) => `<div style="font-size:12px;${bad ? 'color:var(--kke-kill);' : ''}"><strong>${label}:</strong> ${html}</div>`;
   const projectLine = st.projectOk
-    ? `<div style="font-size:12px;"><strong>Project:</strong> <code style="word-break:break-all;">${escapeHtml(state.filePath || '')}</code></div>`
-    : `<div style="font-size:12px;color:var(--kke-kill);"><strong>Project:</strong> ${escapeHtml(st.projectReason || 'none')}</div>`;
-  const cliLine = st.cliFound
-    ? `<div style="font-size:12px;"><strong>Claude Code:</strong> <code>${escapeHtml(st.cliPath)}</code></div>`
-    : `<div style="font-size:12px;color:var(--kke-kill);"><strong>Claude Code:</strong> the <code>claude</code> command wasn't found on your PATH. Install it from <a href="#" id="_cl-install">claude.com/claude-code</a>, then try again.</div>`;
+    ? line('Project', `<code style="word-break:break-all;">${escapeHtml(state.filePath || '')}</code>`)
+    : line('Project', escapeHtml(st.projectReason || 'none'), true);
+  const ext = st.extension || {};
+  const appLine = !st.desktopAppFound
+    ? line('Claude app', `not found. Install it from <a href="#" id="_cl-get-app">claude.com/download</a>, then try again.`, true)
+    : !ext.installed ? line('Claude app', 'installed. The first launch asks Claude to install the Transmission extension.')
+    : !st.extensionCurrent ? line('Claude app', `the Transmission extension is from another version (${escapeHtml(ext.version || '?')}); Claude will offer to update it.`)
+    : !ext.enabled ? line('Claude app', 'the Transmission extension is installed but turned off. Turn it on in Claude → Settings → Extensions.', true)
+    : line('Claude app', 'the Transmission extension is installed.');
+  const codeLinks = st.cliFound
+    ? `<p style="font-size:11px;color:var(--text-muted);margin:4px 0 0;">
+         Use Claude Code instead, with the audit skills (<code>/audit-status</code>, <code>/section-review</code>, <code>/decision-consistency</code>):
+         ${st.desktopAppFound ? '<a href="#" id="_cl-code">Code tab</a> · ' : ''}<a href="#" id="_cl-term">Terminal</a>
+       </p>` : '';
 
   const api = openModal({
-    title: 'Claude Code',
+    title: 'Open in Claude',
     width: 560,
     body: `
       <div style="display:flex;flex-direction:column;gap:8px;">
         ${projectLine}
-        ${cliLine}
+        ${appLine}
         <div style="font-size:12px;margin-top:4px;">
           <strong>Proposals waiting:</strong> ${n.toLocaleString()}
           ${n ? ' — changes Claude queued for you to accept or reject.' : ''}
         </div>
         <p style="font-size:11px;color:var(--text-muted);margin:6px 0 0;">
-          <strong>Open in Claude</strong> starts a new Claude Code session ${st.desktopAppFound ? 'in the Claude app' : 'in Terminal'} with this project connected and the audit skills loaded —
-          try <code>/audit-status</code>, <code>/section-review /news</code>, <code>/decision-consistency</code>.
+          <strong>Open in Claude</strong> brings up the Claude app with this project connected. Start a new chat and ask —
+          "where does the audit stand?", "which sections are mostly undecided?", "propose decisions for the /news pages".
           Anything it proposes comes back here as a proposal; nothing is written to the audit until you accept it.
           Keep this window open while you work: Claude sees each autosave within a couple of seconds.
-          ${st.desktopAppFound ? 'The first launch registers the bundled plugin with Claude Code, which can take a few seconds.' : ''}
         </p>
+        ${codeLinks}
         <p style="font-size:11px;color:var(--text-muted);margin:4px 0 0;">
-          The project's crawl and audit data go to the model your Claude Code is connected to — check the engagement's data terms first.
+          The project's crawl and audit data go to the model your Claude account uses — check the engagement's data terms first.
         </p>
       </div>`,
     buttons: [
       { label: n ? `Review ${n.toLocaleString()} proposal${n !== 1 ? 's' : ''}` : 'Review proposals', variant: 'ghost', closeOnClick: false,
         onClick: m => { m.close(); openProposalReviewDialog(); } },
       { label: 'Close', variant: 'ghost', value: false },
-      // Terminal is the fallback when the desktop app isn't installed, and an
-      // explicit secondary choice when it is.
-      ...(st.desktopAppFound ? [{ label: 'Open in Terminal', variant: 'ghost', closeOnClick: false, onClick: m => launchClaude(m, 'terminal', ok, st) }] : []),
-      { label: st.desktopAppFound ? 'Open in Claude' : 'Open in Terminal', variant: 'primary', primary: true, closeOnClick: false,
-        onClick: m => launchClaude(m, st.desktopAppFound ? 'app' : 'terminal', appOk || ok, st) }
+      { label: 'Open in Claude', variant: 'primary', primary: true, closeOnClick: false,
+        onClick: m => launchClaude(m, 'chat', st) }
     ]
   });
-  const inst = api.body.querySelector('#_cl-install');
-  if (inst) inst.addEventListener('click', e => { e.preventDefault(); window.electronAPI.openExternal('https://claude.com/claude-code'); });
+  const link = (id, fn) => { const el = api.body.querySelector(id); if (el) el.addEventListener('click', e => { e.preventDefault(); fn(); }); };
+  link('#_cl-get-app', () => window.electronAPI.openExternal('https://claude.com/download'));
+  link('#_cl-code', () => launchClaude(api, 'app', st));
+  link('#_cl-term', () => launchClaude(api, 'terminal', st));
   return api;
 }
 
-async function launchClaude(m, mode, ok, st) {
-  if (!ok) { showToast(st.projectOk ? 'Install Claude Code first' : st.projectReason, 'error'); return; }
-  showToast(mode === 'app' ? 'Opening in Claude…' : 'Opening Terminal…', 'info');
+async function launchClaude(m, mode, st) {
+  if (!st.projectOk) { showToast(st.projectReason, 'error'); return; }
+  if (mode === 'chat' && !st.desktopAppFound) { showToast('Install the Claude app first', 'error'); return; }
+  if (mode !== 'chat' && !st.cliFound) { showToast('Install Claude Code first', 'error'); return; }
+  showToast(mode === 'terminal' ? 'Opening Terminal…' : 'Opening Claude…', 'info');
   const r = await window.electronAPI.claudeLaunch({ mode });
   if (r.success) {
-    showToast(mode === 'app'
-      ? (r.pluginInstalled ? 'Plugin registered — Claude is opening a session on this project' : 'Claude is opening a session on this project')
-      : 'Opened in Terminal — Claude is starting with this project', 'success');
+    showToast(mode === 'chat'
+      ? (r.updating ? 'Claude is asking to update the Transmission extension — accept, then start a new chat'
+        : r.installing ? 'Claude is asking to install the Transmission extension — accept, then start a new chat'
+        : 'Claude is open — start a new chat to ask about this project')
+      : mode === 'app'
+        ? (r.pluginInstalled ? 'Plugin registered — Claude is opening a session on this project' : 'Claude is opening a session on this project')
+        : 'Opened in Terminal — Claude is starting with this project', 'success');
     m.close();
     return;
   }
+  if (r.error === 'claude-app-not-found') { showToast('The Claude app was not found', 'error'); return; }
   if (r.error === 'claude-not-found') { showToast('The claude command was not found on your PATH', 'error'); return; }
   if (r.error === 'plugin-install-failed') { showToast(`Could not register the plugin with Claude Code: ${r.detail || 'unknown error'}`, 'error'); return; }
+  if (!r.command) { showToast(r.error || 'Could not open Claude', 'error'); return; }
   // Unsupported platform or the launch refused: hand over the command instead.
-  try { await navigator.clipboard.writeText(r.command || ''); showToast('Could not launch — the command is on your clipboard', 'info'); }
+  try { await navigator.clipboard.writeText(r.command); showToast('Could not launch — the command is on your clipboard', 'info'); }
   catch (_) { showToast(r.error || 'Could not launch Claude Code', 'error'); }
 }
 
