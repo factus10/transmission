@@ -1,14 +1,14 @@
 # CLAUDE.md — Excel Browser
 
-Electron app for macOS (universal ARM + Intel). Designed primarily for **Screaming Frog crawl exports** (`.xlsx`). Shows rows in a left sidebar, loads each row's URL in an embedded webview, and provides a persistent **field bar above the browser** for reading metadata and recording content audit decisions.
+Electron app for macOS (universal ARM + Intel). Runs on **Electron 44** (Chromium 152, Node 24) — keep it on a supported major (the latest three); `docs/dev/BUILD_SIGNED_BINARIES.md` notes what to check on a bump. Designed primarily for **Screaming Frog crawl exports** (`.xlsx`). Shows rows in a left sidebar, loads each row's URL in an embedded webview, and provides a persistent **field bar above the browser** for reading metadata and recording content audit decisions.
 
 ---
 
 ## Commands
 
 ```bash
-npm install          # first-time setup (postinstall runs electron-rebuild for better-sqlite3)
-npm run rebuild      # rebuild better-sqlite3 against Electron (after Electron version bumps)
+npm install          # first-time setup (postinstall runs electron-rebuild; a no-op while better-sqlite3's N-API prebuild covers the platform)
+npm run rebuild      # rebuild native deps against Electron (only compiles if no prebuild matches)
 npm test             # unit tests (node:test, no deps) — see docs/dev/TESTING.md
 npm run dev          # run with DevTools open
 npm start            # run normally
@@ -1157,7 +1157,7 @@ mapped, so an all-null plan would report "0 blocks exported" on a full board.
 Model Context Protocol server over a `.transmission` project — read access for ad hoc questions the Reports menu doesn't answer, plus one write: a **proposals** queue the auditor accepts or rejects in the app. Design + Phase 2 plan: **`docs/dev/MCP_SERVER_PROPOSAL.md`**; setup: `mcp/README.md`. `mcp/server.js` is the stdio JSON-RPC transport + tool/resource registry, `mcp/lib/project.js` the loader and query engine, `mcp/lib/semantics.js` the conventions text.
 
 **Two facts decide the design — do not "simplify" either away:**
-- **It does not use `project-store.js`.** `better-sqlite3` is rebuilt against Electron's ABI by `postinstall`, so it won't load in plain `node` (`NODE_MODULE_VERSION` mismatch) — and `ProjectStore.open()` runs `_migrate()`, which stamps `user_version`; an observer must not migrate someone's project. The server reads the same tables through **`node:sqlite`**, opened `readOnly`, holding the connection only for the duration of a load. A test asserts the file is byte-identical after a full battery of tool calls.
+- **It does not use `project-store.js`.** The server ships as a bare `extraResource` with no `node_modules` (zero dependencies is the point), so `better-sqlite3` isn't there to load — and `ProjectStore.open()` runs `_migrate()`, which stamps `user_version`; an observer must not migrate someone's project. The server reads the same tables through **`node:sqlite`**, opened `readOnly`, holding the connection only for the duration of a load. A test asserts the file is byte-identical after a full battery of tool calls.
 - **It never writes, and direct writes can never be added.** The renderer holds the project in memory and `saveAll()` rewrites `rows` from that copy on the 2s autosave without ever re-reading the file, so an outside edit is silently overwritten. Phase 2 writes are **proposals** in a separate table (`saveAll()` touches only `headers`/`rows`/`nav_nodes`/`settings`/`changelog`/`meta`, so an extra table survives autosave) that the app surfaces for accept/reject through the real write paths — the `_Suggested_Audiences` contract.
 
 **Zero dependencies** — `node:sqlite` plus a hand-rolled newline-delimited JSON-RPC transport instead of `@modelcontextprotocol/sdk` (same reasoning as `callClaudeMessages()` using raw HTTPS). **stdout carries protocol messages only**; a stray `console.log` in `mcp/` corrupts the stream. `sqlite()` swallows node:sqlite's `ExperimentalWarning` (and nothing else) because MCP clients show server stderr to the user as if something were wrong. A failing *tool* returns `isError: true` with a readable message the model can correct from; only protocol faults are JSON-RPC errors.
@@ -1431,5 +1431,5 @@ For UI/interaction changes, also keep **`docs/UI_STANDARDS.md`** current (the in
 - Virtual scrolling in sidebar — tested to ~4,000+ rows (ROW_HEIGHT=34px, OVERSCAN=10)
 - Undo/redo: Cmd+Z / Cmd+Shift+Z for KKE changes and sitemap node deletions (single or bulk), 100-action stack per session
 - Tag library is global (shared across all files); visibleFields is also global
-- `new-window` events from webview open in system browser — intentional
+- New-window requests from a `<webview>` (`target=_blank`, `window.open`) open in the system browser — intentional. Done in main by `setWindowOpenHandler` inside the `web-contents-created` hook (the `<webview>` `new-window` event it used to rely on was removed in Electron 22)
 - Webview cannot load `localhost` URLs in production without CSP adjustment

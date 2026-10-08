@@ -111,7 +111,7 @@ The one suite here that tests code it can simply `require()` — `mcp/` is ordin
 
 | Area | What's asserted |
 |------|-----------------|
-| Schema drift | The fixture database is built from the `CREATE TABLE` text lifted out of `project-store.js` (the server can't load `ProjectStore` — `better-sqlite3` is built for Electron's ABI), so a schema change the server hasn't followed fails here |
+| Schema drift | The fixture database is built from the `CREATE TABLE` text lifted out of `project-store.js` (the server doesn't load `ProjectStore` — it ships with no `node_modules`, and `ProjectStore.open()` migrates), so a schema change the server hasn't followed fails here |
 | Filter drift | `fieldFilterMatches` and `statusCodeCategory` lifted from `renderer.js` agree with the server's ports across every operator × ~170 cell/needle shapes; the app's operator table and the server's are the same set |
 | Loader | Column mapping tiers; a newer schema is refused; a non-project fails with an actionable message; legacy nav column names; one corrupt row is quarantined without shifting the rows after it |
 | Read-only | The project file is byte-identical, and `user_version` untouched, after every tool has run |
