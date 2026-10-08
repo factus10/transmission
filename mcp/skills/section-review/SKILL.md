@@ -67,6 +67,11 @@ End with:
 - **Apply in the app** — the sidebar filter that shows exactly the proposed-Kill set (and the proposed-Keep set), so the strategist can select-all and use the Multi-bar: e.g. *Search `/news/2022/`, KKE filter = Unreviewed, then Apply → KKE → Kill.* Where the proposal isn't bulk-shaped, say so. Use the app's controls, not server syntax: search box (scope URL) for a path, **KKE filter = Unreviewed**, **+ Field filter** on real columns (`Page_Type equals Directory`), never `@path_1` or `filters:[…]`.
 - **Exceptions to look at by hand** — the short list from step 3.
 - **What I couldn't see** — e.g. the app's duplicate detection, page content itself (you have metadata, not the page), anything the user asked that the columns don't carry.
+- **Offer to queue it** — one line: *"Say the word and I'll queue the N high-confidence proposals for you to accept in Transmission."* Do not call `propose_changes` until they say yes.
+
+## 6. Queue proposals (only when asked)
+
+When the strategist confirms, call `propose_changes` with one change per page you proposed, `source:"section-review <section>"`, and the worksheet's **Why** as each `rationale` — that sentence is what they read in the app before accepting. Queue only the rows they confirmed (typically the high-confidence ones; leave **ask** rows out unless told otherwise). Never propose `Consolidate` — it needs a target only the app's picker can set; list those separately as "set by hand". If the result reports `skipped` items (already that value, page not found) or `replacedPending`, say so. Then tell them where it lands: *the ✦ button / sidebar "Proposals" button in Transmission, or Project → Review Proposals*. Nothing is changed until they accept there.
 
 ## Don't
 

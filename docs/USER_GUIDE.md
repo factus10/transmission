@@ -1662,9 +1662,17 @@ Transmission ships a small **MCP server** (Model Context Protocol — the standa
 
 It also sends the model the conventions that matter — blank means *unreviewed*, Kill vs Exclude, content pages vs crawled URLs, the `404` sentinel — so an untouched crawl doesn't get reported back as a finished audit.
 
+**How changes come back: proposals**
+
+Claude never edits the audit. When you ask it to — typically after confirming a `/section-review` worksheet — it **queues proposals**: one per page, with the field, the value and a one-line reason. They land inside your project file, and the app notices the next time its window is active: the **✦** button in the title bar shows a count, and a **Proposals** button appears in the sidebar.
+
+**Review Proposals** (either button, or Project → Review Proposals…) groups them by what is being proposed, so a hundred "Kill — archival news" rows are one decision. Each group shows how many pages, what they currently hold, and who proposed it; ▸ opens the pages with each one's current value and reason. Tick the groups you agree with and **Accept selected**: the values are written exactly as if you had made the edits — through the same paths, into the change log (with a second `(proposal accepted)` entry carrying the source and reason), and as one `Cmd+Z`. Accepting a Kill offers the same sitemap/redirect cleanup as any other Kill. **Reject selected** records the refusal so it isn't proposed again; unticked groups stay queued.
+
+What a proposal may touch is deliberately narrow: the decision, notes, tags, group, content type and theme, renders-as, migration track, published status, audiences, primary audience and jobs. Tags, audiences and jobs are *added* to a page, never removed; a note is appended under what's there. `Final_KKE`, sitemap placement, redirects and consolidation targets cannot be proposed — those are set in the app, by you. Proposals need a `.transmission` project (they live in the file), and the file moves to a newer format the first time this version opens it; older builds of Transmission will ask you to update before opening it.
+
 **What it deliberately can't do**
 
-- **Change anything.** It opens the project read-only and never touches the file. Writes are planned as *proposals* you'd accept or reject in the app — the same contract Suggested_KKE and the AI audience suggestions already follow.
+- **Change anything directly.** It opens the project read-only; the one write it has is the proposals queue above, and nothing in it is applied until you accept it — the same contract Suggested_KKE and the AI audience suggestions already follow.
 - Read `.xlsx` files. Use **File → Save As Project…** first.
 - Compute the handful of filters only the app can (duplicates, URL variants, redirect review, cross-site duplicates). A saved filter that uses one is refused by name rather than run half-applied.
 
@@ -1675,14 +1683,18 @@ It also sends the model the conventions that matter — blank means *unreviewed*
 - **`/decision-consistency`** — before an SME export or handoff: pages whose decision contradicts their neighbours or their data (a Keep that returns 404, a Consolidate with no target, a Kill in a priority-audience section with real traffic), each with the evidence and phrased as a question, not a verdict.
 - **`ask-the-audit`** — the discipline behind any ad hoc question: aggregate before listing, content pages for client numbers, and every figure quoted with the sidebar filter that reproduces it.
 
-**Set it up**
+**The quick way: ✦ → Open in Claude Code**
+
+With a `.transmission` project open, click **✦** in the title bar (or Project → Open in Claude Code…) and choose **Open in Claude**. A new Claude Code session opens in the Claude desktop app — or in Terminal, if the app isn't installed or you'd rather — with this project connected and the skills loaded. The plugin ships inside Transmission and registers itself with Claude Code the first time (a few seconds), so the only thing you need installed is [Claude](https://claude.com/claude-code) itself (and Node 22.13 or newer, which it uses). The dialog tells you if anything is missing. Transmission also notes which project it has open, so a session you start by hand in Claude connects to it without being told. Keep Transmission open while you work: Claude sees each autosave within a couple of seconds, and its proposals show up in the same dialog.
+
+**Setting it up by hand** (if you'd rather register it once)
 
 You need **Node 22.13 or newer** installed (it uses Node's built-in SQLite; nothing else to install) and a copy of the Transmission source, which contains `mcp/server.js`.
 
 For Claude Code, install it as a plugin — that wires the server *and* the skills in one step:
 
 ```bash
-claude plugin install transmission --plugin-dir /path/to/transmission/mcp
+claude plugin install transmission --marketplace /path/to/transmission/mcp -y
 ```
 
 Or, server only:
@@ -1999,7 +2011,7 @@ npm run build      # build universal .dmg (output in dist/)
 - **Miro: collapsed sections can't be unfolded on the board** — Miro has no collapse behaviour for shapes. Only Miro *mind maps* collapse, and those are text-only with no colour, so using them would lose all the colour coding. Collapsed sections export as a stacked block instead, which shows that something is folded away but can't be opened.
 - **Miro: corner radius exports as square-vs-rounded only** — Miro has no radius setting, so a specific radius value in the app arrives as simply "rounded".
 - **Miro: inner padding is app-only** — Miro centres shape text itself and has no padding control.
-- **MCP server is read-only and needs Node 22.13+** — it can answer questions about a project but cannot change it; proposals-based writes are planned. It reads `.transmission` projects only, not spreadsheets.
+- **MCP server needs Node 22.13+ and a `.transmission` project** — it reads the project and can queue *proposals*, which you accept or reject in the app; it never writes the audit itself. Spreadsheets aren't supported. Claude Code only for the skills and the ✦ launch button; Claude Desktop gets the server alone.
 - **Miro: one team per connection** — a Miro token is scoped to a single team; working across teams means connecting once per team.
 - **New sitemap card defaults apply to new projects only** — existing projects keep the card height and colour rules they already saved. Changing them is a one-click job in the Visual Sitemap's **Layout** / **Colors** tabs.
 

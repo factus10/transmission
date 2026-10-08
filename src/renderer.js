@@ -524,6 +524,7 @@ async function init() {
   setupSavedFilters();
   setupFieldFilters();
   setupConsolidateTodoButton();
+  setupProposalsUi();
   $('btn-add-row').addEventListener('click', addNewRow);
   setupGlobalSearch();
   setupShortcutHelp();
@@ -1410,6 +1411,10 @@ function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, she
 
   // Session resume cue — re-establish momentum when reopening a partly-done audit
   showSessionResumeCue();
+
+  // Anything queued from outside (the MCP server) while the project was closed
+  _proposalsLastCount = 0;
+  checkPendingProposals({ announce: true });
 }
 
 /** On file open, surface where the audit stands so you can pick up where you left off. */
@@ -32511,6 +32516,383 @@ function toggleFlag(origIndex) {
 // ─── Utils ────────────────────────────────────────────────────────────────────
 
 function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Proposals — changes queued from OUTSIDE the app, accepted or rejected here
+//
+// The MCP server (and anything else that speaks to the project file) may write
+// to exactly one table, `proposals`: a request to set one field on one page,
+// with a reason. Nothing is applied until a person accepts it in this dialog,
+// and acceptance goes through the same write paths a hand edit does —
+// applyMultiAction / the audience helpers — so it is change-logged, undoable in
+// one Cmd+Z, and refreshes Suggested_KKE like any other edit. A second
+// change-log entry per accepted row records the provenance (source + rationale),
+// the way '(row deleted)' records a deletion.
+//
+// The queue lives in the .transmission file, so main answers from ProjectStore;
+// a spreadsheet session has no queue (the button says why).
+// ═════════════════════════════════════════════════════════════════════════════
+
+let _proposalsLastCount = 0;
+
+async function checkPendingProposals({ announce = false } = {}) {
+  if (!window.electronAPI.proposalsPending) return;
+  let res;
+  try { res = await window.electronAPI.proposalsPending(); } catch (_) { return; }
+  const n = res && res.supported ? res.count : 0;
+  if (announce && n > _proposalsLastCount) {
+    const fresh = n - _proposalsLastCount;
+    showToast(`${fresh.toLocaleString()} new proposal${fresh !== 1 ? 's' : ''} waiting — ✦ or the Proposals button to review`, 'info');
+  }
+  _proposalsLastCount = n;
+  refreshProposalsButton(n);
+}
+
+function refreshProposalsButton(n) {
+  const btn = document.getElementById('btn-proposals-todo');
+  if (btn) {
+    btn.classList.toggle('hidden', !n);
+    btn.textContent = `✦ ${n.toLocaleString()} proposal${n !== 1 ? 's' : ''} to review`;
+  }
+  const pill = document.getElementById('btn-claude-count');
+  if (pill) { pill.classList.toggle('hidden', !n); pill.textContent = n > 99 ? '99+' : String(n); }
+}
+
+function setupProposalsUi() {
+  const claudeBtn = document.getElementById('btn-claude');
+  if (claudeBtn) claudeBtn.addEventListener('click', () => openClaudeDialog());
+  const todo = document.getElementById('btn-proposals-todo');
+  if (todo) todo.addEventListener('click', () => openProposalReviewDialog());
+  // The server writes while this window is in the background; coming back to
+  // the app is the moment to notice.
+  window.addEventListener('focus', () => { if (state.filePath) checkPendingProposals({ announce: true }); });
+  if (window.electronAPI.onMenuReviewProposals) window.electronAPI.onMenuReviewProposals(() => openProposalReviewDialog());
+  if (window.electronAPI.onMenuOpenInClaude) window.electronAPI.onMenuOpenInClaude(() => openClaudeDialog());
+}
+
+/** URL → origIndex, exact first, then forgiving (trailing slash, case) — the
+ *  same latitude the server's lookup allows, and never used as identity. */
+function proposalRowIndexer() {
+  const urlCol = state.urlColumn || 'Address';
+  const exact = new Map(), loose = new Map();
+  const norm = u => String(u || '').trim().toLowerCase().replace(/\/+$/, '');
+  state.editedRows.forEach((r, i) => {
+    const u = String(r[urlCol] || '');
+    if (!u) return;
+    if (!exact.has(u)) exact.set(u, i);
+    const k = norm(u);
+    if (!loose.has(k)) loose.set(k, i);
+  });
+  return url => (exact.has(url) ? exact.get(url) : (loose.has(norm(url)) ? loose.get(norm(url)) : -1));
+}
+
+/** How the app applies a proposed field — mirrors PROPOSAL_FIELDS in mcp/lib/project.js. */
+function proposalFieldKind(field) {
+  if (field === kkeCol()) return 'kke';
+  if (field === tagsCol()) return 'tags';
+  if (field === notesCol()) return 'notes';
+  if (field === groupCol()) return 'group';
+  if (field === primaryTagCol()) return 'primary-tag';
+  switch (field) {
+    case 'Page_Type': return 'page-type';
+    case 'Content_Theme': return 'content-theme';
+    case 'Published_Status': return 'published';
+    case AUDIENCES_COL: return 'audiences';
+    case PRIMARY_AUDIENCE_COL: return 'primary-audience';
+    case JOBS_COL: return 'jobs';
+    case 'Content_Nature': return 'content-nature';
+    case 'Migration_Track': return 'migration-track';
+    default: return null;
+  }
+}
+
+async function openProposalReviewDialog() {
+  const res = await window.electronAPI.proposalsList();
+  if (!res || !res.success) { showToast(res && res.error ? res.error : 'Could not read proposals', 'error'); return; }
+  const pending = res.proposals || [];
+  if (!pending.length) { showToast('No proposals waiting', 'info'); return; }
+
+  const indexOf = proposalRowIndexer();
+  const items = pending.map(p => {
+    const origIndex = indexOf(p.url);
+    const row = origIndex >= 0 ? state.editedRows[origIndex] : null;
+    return { p, origIndex, row, current: row ? String(row[p.field] ?? '').trim() : null, kind: proposalFieldKind(p.field) };
+  });
+
+  // Group by what is being proposed, so a hundred "Kill, archival news" rows
+  // are one decision — the audience-review pattern. Notes group by source only;
+  // each note is its own text.
+  const groups = new Map();
+  for (const it of items) {
+    const unusable = it.row === null ? 'missing' : (it.kind === null ? 'unknown-field' : '');
+    const key = unusable ? `!${unusable}|${it.p.field}` : (it.kind === 'notes' ? `${it.p.field}|notes|${it.p.source || ''}` : `${it.p.field}|${it.p.value}`);
+    if (!groups.has(key)) groups.set(key, { key, field: it.p.field, value: it.kind === 'notes' ? '(note text, per page)' : it.p.value, unusable, items: [], sources: new Set() });
+    const g = groups.get(key);
+    g.items.push(it);
+    if (it.p.source) g.sources.add(it.p.source);
+  }
+  const ordered = [...groups.values()].sort((a, b) => (a.unusable ? 1 : 0) - (b.unusable ? 1 : 0) || b.items.length - a.items.length);
+
+  const shortUrl = u => { try { const x = new URL(u); return x.pathname + (x.search || ''); } catch (_) { return String(u || ''); } };
+  const curSummary = g => {
+    if (g.unusable === 'missing') return 'page not in this project';
+    if (g.unusable === 'unknown-field') return 'field the app cannot apply';
+    const blank = g.items.filter(it => !it.current).length;
+    const same = g.items.filter(it => it.current && it.current.toLowerCase() === String(g.value).toLowerCase()).length;
+    const other = g.items.length - blank - same;
+    return [blank ? `${blank} blank` : '', other ? `${other} other value` : '', same ? `${same} already set` : ''].filter(Boolean).join(' · ') || '—';
+  };
+
+  const groupRows = ordered.map((g, gi) => {
+    const detail = g.items.slice(0, 60).map(it => `
+      <tr class="proposal-row">
+        <td colspan="2" style="padding:3px 8px 3px 28px;font-size:11px;word-break:break-all;">${escapeHtml(shortUrl(it.p.url))}</td>
+        <td colspan="3" style="padding:3px 8px;font-size:11px;">
+          ${it.current ? `<span class="proposal-cur">${escapeHtml(it.current.slice(0, 80))}</span>` : ''}${escapeHtml(String(it.p.value).slice(0, 120))}
+          <div class="proposal-rationale">${escapeHtml(it.p.rationale || '')}</div>
+        </td>
+      </tr>`).join('') + (g.items.length > 60 ? `<tr class="proposal-row"><td colspan="5" style="padding:3px 8px 3px 28px;font-size:11px;color:var(--text-muted);">…and ${g.items.length - 60} more</td></tr>` : '');
+    return `
+      <tbody class="proposal-group" data-gi="${gi}">
+        <tr>
+          <td style="padding:6px 8px;"><input type="checkbox" class="_pr-pick" data-gi="${gi}" ${g.unusable ? 'disabled' : 'checked'}></td>
+          <td style="padding:6px 8px;font-size:12px;white-space:nowrap;"><button type="button" class="btn btn-sm btn-ghost _pr-toggle" data-gi="${gi}" title="Show pages">▸</button> <strong>${escapeHtml(g.field)}</strong></td>
+          <td style="padding:6px 8px;font-size:12px;">${escapeHtml(String(g.value).slice(0, 120))}</td>
+          <td style="padding:6px 8px;text-align:right;"><strong>${g.items.length.toLocaleString()}</strong></td>
+          <td style="padding:6px 8px;font-size:11px;color:${g.unusable ? 'var(--kke-kill)' : 'var(--text-muted)'};">${escapeHtml(curSummary(g))}${g.sources.size ? `<div style="font-size:10px;">from ${escapeHtml([...g.sources].join(', '))}</div>` : ''}</td>
+        </tr>
+        <tbody class="proposal-group-rows">${detail}</tbody>
+      </tbody>`;
+  }).join('');
+
+  const api = openModal({
+    title: 'Review Proposals',
+    width: 940,
+    body: `
+      <p style="font-size:12px;color:var(--text-muted);margin:0 0 10px;">
+        <strong>${pending.length.toLocaleString()}</strong> proposed change${pending.length !== 1 ? 's' : ''}, grouped by what is being proposed.
+        Nothing has been applied. <strong>Accept</strong> writes the value the way you would — logged, with the reason, and one <kbd>Cmd+Z</kbd> undoes the lot.
+        <strong>Reject</strong> records the refusal so it isn't proposed again. Unticked groups stay queued.
+      </p>
+      <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px;">
+        Tags, audiences and jobs are <em>added</em> to a page, never removed; a note is appended under an existing one; everything else replaces the current value.
+        ▸ shows the pages in a group with each one's current value and the reason.
+      </p>
+      <div style="max-height:50vh;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
+        <table style="width:100%;border-collapse:collapse;">
+          <thead><tr style="text-align:left;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-surface);">
+            <th style="padding:6px 8px;font-size:11px;"></th>
+            <th style="padding:6px 8px;font-size:11px;">Field</th>
+            <th style="padding:6px 8px;font-size:11px;">Proposed value</th>
+            <th style="padding:6px 8px;font-size:11px;text-align:right;">Pages</th>
+            <th style="padding:6px 8px;font-size:11px;">Currently</th>
+          </tr></thead>
+          ${groupRows}
+        </table>
+      </div>`,
+    buttons: [
+      { label: 'Select none', variant: 'ghost', closeOnClick: false,
+        onClick: m => m.body.querySelectorAll('._pr-pick').forEach(cb => { cb.checked = false; }) },
+      { label: 'Reject selected', variant: 'ghost', closeOnClick: false,
+        onClick: async m => { if (await resolveProposalGroups(ordered, m, 'rejected')) m.close(); } },
+      { label: 'Close', variant: 'ghost', value: false },
+      { label: 'Accept selected', variant: 'primary', primary: true, closeOnClick: false,
+        onClick: async m => { if (await resolveProposalGroups(ordered, m, 'accepted')) m.close(); } }
+    ]
+  });
+  api.body.querySelectorAll('._pr-toggle').forEach(b => b.addEventListener('click', () => {
+    const grp = api.body.querySelector(`.proposal-group[data-gi="${b.dataset.gi}"]`);
+    grp.classList.toggle('open');
+    b.textContent = grp.classList.contains('open') ? '▾' : '▸';
+  }));
+  return api;
+}
+
+/** Apply or reject the ticked groups. Returns true when the dialog may close. */
+async function resolveProposalGroups(ordered, api, decision) {
+  const chosen = new Set();
+  api.body.querySelectorAll('._pr-pick').forEach(cb => { if (cb.checked && !cb.disabled) chosen.add(+cb.dataset.gi); });
+  // Unusable groups (missing page, unknown field) can only ever be rejected.
+  const items = [];
+  ordered.forEach((g, gi) => {
+    if (decision === 'rejected' && g.unusable) { g.items.forEach(it => items.push(it)); return; }
+    if (chosen.has(gi)) g.items.forEach(it => items.push(it));
+  });
+  if (!items.length) { showToast('Nothing selected', 'info'); return false; }
+
+  if (decision === 'rejected') {
+    const r = await window.electronAPI.proposalsResolve({ ids: items.map(it => it.p.id), status: 'rejected' });
+    if (!r.success) { showToast(r.error || 'Could not update proposals', 'error'); return false; }
+    showToast(`Rejected ${r.resolved.toLocaleString()} proposal${r.resolved !== 1 ? 's' : ''}`, 'info');
+    checkPendingProposals();
+    return true;
+  }
+
+  // Accepting Kill offers the same sitemap/redirect cleanup every other Kill
+  // path does; cancelling it cancels the whole accept, as elsewhere.
+  const killIdx = items.filter(it => it.kind === 'kke' && it.p.value === 'Kill' && String(it.row[kkeCol()] || '').trim() !== 'Kill').map(it => it.origIndex);
+  if (killIdx.length && !(await promptBulkKillCleanup([...new Set(killIdx)]))) return false;
+
+  const undoItems = [];
+  const acceptedIds = [];
+  let written = 0;
+  for (const it of items) {
+    const before = { ...it.row };
+    let changed = false;
+    try { changed = await applyProposalToRow(it); }
+    catch (e) { console.warn('proposal apply failed', it.p, e); continue; }
+    acceptedIds.push(it.p.id);
+    if (!changed) continue;
+    written++;
+    for (const k of Object.keys(it.row)) {
+      const was = before[k] ?? '', now = it.row[k] ?? '';
+      if (was !== now) undoItems.push({ origIndex: it.origIndex, field: k, oldValue: was, newValue: now });
+    }
+    // Provenance: who proposed it and why, beside the ordinary field entry.
+    logChange(it.origIndex, '(proposal accepted)', `${it.p.source || 'mcp'} · ${it.p.field}`, it.p.rationale || '');
+  }
+
+  const r = await window.electronAPI.proposalsResolve({ ids: acceptedIds, status: 'accepted' });
+  if (!r.success) showToast(r.error || 'Values applied, but the queue could not be updated', 'error');
+  if (undoItems.length) pushBulkEditUndo(undoItems, 'accept proposals');
+  if (written) {
+    setDirty(true);
+    invalidateNavPageCountsCache();
+    applyFilter();
+    if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+  }
+  showToast(`Accepted ${acceptedIds.length.toLocaleString()} proposal${acceptedIds.length !== 1 ? 's' : ''} (${written.toLocaleString()} changed)${written ? ' — Cmd+Z to undo' : ''}`, 'success');
+  checkPendingProposals();
+  return true;
+}
+
+/** Write one accepted proposal through the app's own paths. Returns whether the row changed. */
+async function applyProposalToRow({ p, origIndex, row, kind }) {
+  const value = String(p.value || '').trim();
+  const parts = value.split(',').map(s => s.trim()).filter(Boolean);
+  switch (kind) {
+    case 'kke': case 'published': case 'page-type': case 'content-theme': case 'group': case 'primary-tag':
+      return await applyMultiAction(row, origIndex, kind, value);
+    case 'tags': {
+      let any = false;
+      for (const t of parts) if (await applyMultiAction(row, origIndex, 'add-tag', t)) any = true;
+      return any;
+    }
+    case 'audiences': {
+      // Write the merged SET once, not one audience at a time: adding singly
+      // would auto-name the first as Primary (the "exactly one audience" rule
+      // fires mid-way), and a proposal that adds two audiences says nothing
+      // about which leads. writeAudienceDecision applies the same rule the chip
+      // input does — infer a primary only when the final set has exactly one.
+      const merged = toggleAudience(rowAudiences(row), parts[0]);
+      for (const a of parts.slice(1)) if (!merged.includes(a)) merged.push(a);
+      if (merged.join(', ') === rowAudiences(row).join(', ')) return false;
+      return writeAudienceDecision(origIndex, { audiences: merged, primary: String(row[PRIMARY_AUDIENCE_COL] || '') }, null);
+    }
+    case 'primary-audience':
+      return await applyMultiAction(row, origIndex, 'primary-audience', value);
+    case 'jobs': {
+      let any = false;
+      for (const j of parts) if (await applyMultiAction(row, origIndex, 'add-job', j)) any = true;
+      return any;
+    }
+    case 'notes': {
+      const col = notesCol();
+      const old = String(row[col] || '');
+      if (old.includes(value)) return false;
+      const next = old.trim() ? old.replace(/\s+$/, '') + '\n\n' + value : value;
+      row[col] = next;
+      logChange(origIndex, col, old, next);
+      return true;
+    }
+    case 'content-nature': case 'migration-track': {
+      const col = kind === 'content-nature' ? 'Content_Nature' : 'Migration_Track';
+      const old = String(row[col] || '');
+      if (old === value) return false;
+      row[col] = value;
+      logChange(origIndex, col, old, value);
+      if (state.selectedIndex === origIndex) populateMigrationFields(row);
+      return true;
+    }
+    default:
+      throw new Error(`cannot apply field ${p.field}`);
+  }
+}
+
+// ─── Open in Claude Code ──────────────────────────────────────────────────────
+// One dialog for both halves of the loop: launch Claude on this project, and
+// review what it sent back. Launching opens a Terminal running the `claude`
+// CLI with the bundled plugin; it needs a .transmission file to point at and
+// the CLI on the user's PATH, and says which is missing rather than failing.
+
+async function openClaudeDialog() {
+  const st = await window.electronAPI.claudeLaunchStatus();
+  const pend = await window.electronAPI.proposalsPending();
+  const n = pend && pend.supported ? pend.count : 0;
+  const ok = st.projectOk && st.cliFound;
+  const appOk = ok && st.desktopAppFound;
+  const projectLine = st.projectOk
+    ? `<div style="font-size:12px;"><strong>Project:</strong> <code style="word-break:break-all;">${escapeHtml(state.filePath || '')}</code></div>`
+    : `<div style="font-size:12px;color:var(--kke-kill);"><strong>Project:</strong> ${escapeHtml(st.projectReason || 'none')}</div>`;
+  const cliLine = st.cliFound
+    ? `<div style="font-size:12px;"><strong>Claude Code:</strong> <code>${escapeHtml(st.cliPath)}</code></div>`
+    : `<div style="font-size:12px;color:var(--kke-kill);"><strong>Claude Code:</strong> the <code>claude</code> command wasn't found on your PATH. Install it from <a href="#" id="_cl-install">claude.com/claude-code</a>, then try again.</div>`;
+
+  const api = openModal({
+    title: 'Claude Code',
+    width: 560,
+    body: `
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${projectLine}
+        ${cliLine}
+        <div style="font-size:12px;margin-top:4px;">
+          <strong>Proposals waiting:</strong> ${n.toLocaleString()}
+          ${n ? ' — changes Claude queued for you to accept or reject.' : ''}
+        </div>
+        <p style="font-size:11px;color:var(--text-muted);margin:6px 0 0;">
+          <strong>Open in Claude</strong> starts a new Claude Code session ${st.desktopAppFound ? 'in the Claude app' : 'in Terminal'} with this project connected and the audit skills loaded —
+          try <code>/audit-status</code>, <code>/section-review /news</code>, <code>/decision-consistency</code>.
+          Anything it proposes comes back here as a proposal; nothing is written to the audit until you accept it.
+          Keep this window open while you work: Claude sees each autosave within a couple of seconds.
+          ${st.desktopAppFound ? 'The first launch registers the bundled plugin with Claude Code, which can take a few seconds.' : ''}
+        </p>
+        <p style="font-size:11px;color:var(--text-muted);margin:4px 0 0;">
+          The project's crawl and audit data go to the model your Claude Code is connected to — check the engagement's data terms first.
+        </p>
+      </div>`,
+    buttons: [
+      { label: n ? `Review ${n.toLocaleString()} proposal${n !== 1 ? 's' : ''}` : 'Review proposals', variant: 'ghost', closeOnClick: false,
+        onClick: m => { m.close(); openProposalReviewDialog(); } },
+      { label: 'Close', variant: 'ghost', value: false },
+      // Terminal is the fallback when the desktop app isn't installed, and an
+      // explicit secondary choice when it is.
+      ...(st.desktopAppFound ? [{ label: 'Open in Terminal', variant: 'ghost', closeOnClick: false, onClick: m => launchClaude(m, 'terminal', ok, st) }] : []),
+      { label: st.desktopAppFound ? 'Open in Claude' : 'Open in Terminal', variant: 'primary', primary: true, closeOnClick: false,
+        onClick: m => launchClaude(m, st.desktopAppFound ? 'app' : 'terminal', appOk || ok, st) }
+    ]
+  });
+  const inst = api.body.querySelector('#_cl-install');
+  if (inst) inst.addEventListener('click', e => { e.preventDefault(); window.electronAPI.openExternal('https://claude.com/claude-code'); });
+  return api;
+}
+
+async function launchClaude(m, mode, ok, st) {
+  if (!ok) { showToast(st.projectOk ? 'Install Claude Code first' : st.projectReason, 'error'); return; }
+  showToast(mode === 'app' ? 'Opening in Claude…' : 'Opening Terminal…', 'info');
+  const r = await window.electronAPI.claudeLaunch({ mode });
+  if (r.success) {
+    showToast(mode === 'app'
+      ? (r.pluginInstalled ? 'Plugin registered — Claude is opening a session on this project' : 'Claude is opening a session on this project')
+      : 'Opened in Terminal — Claude is starting with this project', 'success');
+    m.close();
+    return;
+  }
+  if (r.error === 'claude-not-found') { showToast('The claude command was not found on your PATH', 'error'); return; }
+  if (r.error === 'plugin-install-failed') { showToast(`Could not register the plugin with Claude Code: ${r.detail || 'unknown error'}`, 'error'); return; }
+  // Unsupported platform or the launch refused: hand over the command instead.
+  try { await navigator.clipboard.writeText(r.command || ''); showToast('Could not launch — the command is on your clipboard', 'info'); }
+  catch (_) { showToast(r.error || 'Could not launch Claude Code', 'error'); }
+}
 
 // ─── Go ───────────────────────────────────────────────────────────────────────
 
