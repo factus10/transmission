@@ -34,12 +34,35 @@ function argProject() {
   return process.env.TRANSMISSION_PROJECT || null;
 }
 
+/** The project Transmission currently has open, if the app is running.
+ *  main.js writes `current-project.json` into its userData folder on every
+ *  open and clears it on quit, so a Claude session started from anywhere —
+ *  the desktop app, a terminal — connects to "what's open in Transmission"
+ *  with no per-project configuration. Checked only when nothing explicit was
+ *  given, and re-read on each use so switching projects in the app is
+ *  picked up by the next call. */
+function currentProjectFromApp() {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const candidates = process.platform === 'darwin'
+    ? ['Transmission', 'transmission'].map(n => path.join(home, 'Library', 'Application Support', n, 'current-project.json'))
+    : [path.join(process.env.APPDATA || path.join(home, '.config'), 'transmission', 'current-project.json')];
+  for (const f of candidates) {
+    try {
+      const j = JSON.parse(require('node:fs').readFileSync(f, 'utf8'));
+      if (j && typeof j.filePath === 'string' && require('node:fs').existsSync(j.filePath)) return j.filePath;
+    } catch (_) { /* not there, or not readable */ }
+  }
+  return null;
+}
+
 /** The current project, reloaded whenever the file (or its WAL) has changed on
  *  disk. The app autosaves a project every ~2s while someone is working in it,
  *  so a cached copy goes stale quickly — and a stat is far cheaper than a load. */
 function project() {
   if (!activePath) {
-    throw new Error('No project is open. Call open_project with the path to a .transmission file.');
+    const fromApp = currentProjectFromApp();
+    if (fromApp) activePath = fromApp;
+    else throw new Error('No project is open. Call open_project with the path to a .transmission file — or open one in Transmission, which this server then follows automatically.');
   }
   if (!cached || cached.filePath !== activePath || cached.stamp !== fileStamp(activePath)) {
     cached = loadProject(activePath);

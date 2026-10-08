@@ -1685,7 +1685,7 @@ What a proposal may touch is deliberately narrow: the decision, notes, tags, gro
 
 **The quick way: ✦ → Open in Claude Code**
 
-With a `.transmission` project open, click **✦** in the title bar (or Project → Open in Claude Code…). It opens a Terminal running Claude Code with this project connected and the skills loaded — the plugin ships inside the app, so the only thing you need installed is [Claude Code](https://claude.com/claude-code) itself (and Node 22.13 or newer, which it uses). The dialog tells you if either is missing. Keep Transmission open while you work: Claude sees each autosave within a couple of seconds, and its proposals show up in the same dialog.
+With a `.transmission` project open, click **✦** in the title bar (or Project → Open in Claude Code…) and choose **Open in Claude**. A new Claude Code session opens in the Claude desktop app — or in Terminal, if the app isn't installed or you'd rather — with this project connected and the skills loaded. The plugin ships inside Transmission and registers itself with Claude Code the first time (a few seconds), so the only thing you need installed is [Claude](https://claude.com/claude-code) itself (and Node 22.13 or newer, which it uses). The dialog tells you if anything is missing. Transmission also notes which project it has open, so a session you start by hand in Claude connects to it without being told. Keep Transmission open while you work: Claude sees each autosave within a couple of seconds, and its proposals show up in the same dialog.
 
 **Setting it up by hand** (if you'd rather register it once)
 
@@ -1694,7 +1694,7 @@ You need **Node 22.13 or newer** installed (it uses Node's built-in SQLite; noth
 For Claude Code, install it as a plugin — that wires the server *and* the skills in one step:
 
 ```bash
-claude plugin install transmission --plugin-dir /path/to/transmission/mcp
+claude plugin install transmission --marketplace /path/to/transmission/mcp -y
 ```
 
 Or, server only:
