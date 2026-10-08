@@ -29,7 +29,7 @@ Consequence: **reads can be direct; writes cannot be.** Phase 1 is read-only. Ph
 
 ### 2.2 The app's SQLite binding doesn't load in plain Node
 
-`better-sqlite3` is rebuilt against Electron's ABI by `postinstall` (`electron-rebuild -f -w better-sqlite3`). `require('./project-store')` from a plain `node` process fails with a `NODE_MODULE_VERSION` mismatch. The server therefore **does not use `ProjectStore`** — it reads the same tables through `node:sqlite`, which ships with Node.
+When this was written, `better-sqlite3` was rebuilt against Electron's ABI by `postinstall`, so `require('./project-store')` from a plain `node` process failed with a `NODE_MODULE_VERSION` mismatch. (better-sqlite3 13 is N-API and would now load, but the server ships as a bare `extraResource` with no `node_modules`, so the conclusion stands.) The server therefore **does not use `ProjectStore`** — it reads the same tables through `node:sqlite`, which ships with Node.
 
 That is a deliberate second reason not to reuse it, too: `ProjectStore.open()` sets pragmas and runs `_migrate()`, which stamps `user_version`. An observer has no business migrating someone's project. The server opens the file `readOnly`, and a test asserts the file's bytes are unchanged after a full battery of tool calls.
 
