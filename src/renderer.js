@@ -32860,7 +32860,8 @@ async function openClaudeDialog() {
         </div>
         <p style="font-size:11px;color:var(--text-muted);margin:6px 0 0;">
           <strong>Open in Claude</strong> brings up the Claude app with this project connected. Start a new chat and ask —
-          "where does the audit stand?", "which sections are mostly undecided?", "propose decisions for the /news pages".
+          "where does the audit stand?", "which sections are mostly undecided?" — or pick a playbook from the chat's <strong>+</strong> menu
+          under Transmission: <em>Audit status</em>, <em>Section review</em>, <em>Decision consistency check</em>, <em>Ask the audit</em>.
           Anything it proposes comes back here as a proposal; nothing is written to the audit until you accept it.
           Keep this window open while you work: Claude sees each autosave within a couple of seconds.
         </p>
