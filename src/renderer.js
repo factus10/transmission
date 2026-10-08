@@ -32830,6 +32830,7 @@ async function openClaudeDialog() {
   const pend = await window.electronAPI.proposalsPending();
   const n = pend && pend.supported ? pend.count : 0;
   const ok = st.projectOk && st.cliFound;
+  const appOk = ok && st.desktopAppFound;
   const projectLine = st.projectOk
     ? `<div style="font-size:12px;"><strong>Project:</strong> <code style="word-break:break-all;">${escapeHtml(state.filePath || '')}</code></div>`
     : `<div style="font-size:12px;color:var(--kke-kill);"><strong>Project:</strong> ${escapeHtml(st.projectReason || 'none')}</div>`;
@@ -32849,10 +32850,11 @@ async function openClaudeDialog() {
           ${n ? ' — changes Claude queued for you to accept or reject.' : ''}
         </div>
         <p style="font-size:11px;color:var(--text-muted);margin:6px 0 0;">
-          <strong>Open in Claude Code</strong> starts a Terminal running Claude with this project connected (read-only) and the audit skills loaded —
+          <strong>Open in Claude</strong> starts a new Claude Code session ${st.desktopAppFound ? 'in the Claude app' : 'in Terminal'} with this project connected and the audit skills loaded —
           try <code>/audit-status</code>, <code>/section-review /news</code>, <code>/decision-consistency</code>.
           Anything it proposes comes back here as a proposal; nothing is written to the audit until you accept it.
           Keep this window open while you work: Claude sees each autosave within a couple of seconds.
+          ${st.desktopAppFound ? 'The first launch registers the bundled plugin with Claude Code, which can take a few seconds.' : ''}
         </p>
         <p style="font-size:11px;color:var(--text-muted);margin:4px 0 0;">
           The project's crawl and audit data go to the model your Claude Code is connected to — check the engagement's data terms first.
@@ -32862,21 +32864,34 @@ async function openClaudeDialog() {
       { label: n ? `Review ${n.toLocaleString()} proposal${n !== 1 ? 's' : ''}` : 'Review proposals', variant: 'ghost', closeOnClick: false,
         onClick: m => { m.close(); openProposalReviewDialog(); } },
       { label: 'Close', variant: 'ghost', value: false },
-      { label: 'Open in Claude Code', variant: 'primary', primary: true, closeOnClick: false,
-        onClick: async m => {
-          if (!ok) { showToast(st.projectOk ? 'Install Claude Code first' : st.projectReason, 'error'); return; }
-          const r = await window.electronAPI.claudeLaunch();
-          if (r.success) { showToast('Opened in Terminal — Claude is starting with this project', 'success'); m.close(); return; }
-          if (r.error === 'claude-not-found') { showToast('The claude command was not found on your PATH', 'error'); return; }
-          // Unsupported platform or AppleScript refused: hand over the command instead.
-          try { await navigator.clipboard.writeText(r.command || ''); showToast('Could not open Terminal — the command is on your clipboard', 'info'); }
-          catch (_) { showToast(r.error || 'Could not launch Claude Code', 'error'); }
-        } }
+      // Terminal is the fallback when the desktop app isn't installed, and an
+      // explicit secondary choice when it is.
+      ...(st.desktopAppFound ? [{ label: 'Open in Terminal', variant: 'ghost', closeOnClick: false, onClick: m => launchClaude(m, 'terminal', ok, st) }] : []),
+      { label: st.desktopAppFound ? 'Open in Claude' : 'Open in Terminal', variant: 'primary', primary: true, closeOnClick: false,
+        onClick: m => launchClaude(m, st.desktopAppFound ? 'app' : 'terminal', appOk || ok, st) }
     ]
   });
   const inst = api.body.querySelector('#_cl-install');
   if (inst) inst.addEventListener('click', e => { e.preventDefault(); window.electronAPI.openExternal('https://claude.com/claude-code'); });
   return api;
+}
+
+async function launchClaude(m, mode, ok, st) {
+  if (!ok) { showToast(st.projectOk ? 'Install Claude Code first' : st.projectReason, 'error'); return; }
+  showToast(mode === 'app' ? 'Opening in Claude…' : 'Opening Terminal…', 'info');
+  const r = await window.electronAPI.claudeLaunch({ mode });
+  if (r.success) {
+    showToast(mode === 'app'
+      ? (r.pluginInstalled ? 'Plugin registered — Claude is opening a session on this project' : 'Claude is opening a session on this project')
+      : 'Opened in Terminal — Claude is starting with this project', 'success');
+    m.close();
+    return;
+  }
+  if (r.error === 'claude-not-found') { showToast('The claude command was not found on your PATH', 'error'); return; }
+  if (r.error === 'plugin-install-failed') { showToast(`Could not register the plugin with Claude Code: ${r.detail || 'unknown error'}`, 'error'); return; }
+  // Unsupported platform or the launch refused: hand over the command instead.
+  try { await navigator.clipboard.writeText(r.command || ''); showToast('Could not launch — the command is on your clipboard', 'info'); }
+  catch (_) { showToast(r.error || 'Could not launch Claude Code', 'error'); }
 }
 
 // ─── Go ───────────────────────────────────────────────────────────────────────

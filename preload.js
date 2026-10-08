@@ -15,7 +15,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   proposalsList:      ()        => ipcRenderer.invoke('proposals-list'),
   proposalsResolve:   (payload) => ipcRenderer.invoke('proposals-resolve', payload),
   claudeLaunchStatus: ()        => ipcRenderer.invoke('claude-launch-status'),
-  claudeLaunch:       ()        => ipcRenderer.invoke('claude-launch'),
+  claudeLaunch:       (payload) => ipcRenderer.invoke('claude-launch', payload),
   onMenuReviewProposals: (cb)   => ipcRenderer.on('menu-review-proposals', () => cb()),
   onMenuOpenInClaude:    (cb)   => ipcRenderer.on('menu-open-in-claude',   () => cb()),
   openExternal:   (url)     => ipcRenderer.invoke('open-external', url),

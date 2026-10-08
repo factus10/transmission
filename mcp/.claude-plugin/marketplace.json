@@ -1,0 +1,13 @@
+{
+  "name": "transmission",
+  "owner": { "name": "David Anderson" },
+  "metadata": { "description": "Transmission — content-audit MCP server and strategist skills, as bundled inside the app." },
+  "plugins": [
+    {
+      "name": "transmission",
+      "description": "Transmission content-audit MCP server and strategist skills (reads .transmission projects; queues proposals).",
+      "version": "0.3.0",
+      "source": "."
+    }
+  ]
+}

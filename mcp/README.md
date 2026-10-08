@@ -11,13 +11,13 @@ Design and reasoning: [`docs/dev/MCP_SERVER_PROPOSAL.md`](../docs/dev/MCP_SERVER
 
 ## Setup
 
-**From the app (simplest).** With a `.transmission` project open, click **✦** in the title bar → **Open in Claude Code**. The plugin ships inside the app (`Contents/Resources/mcp`), so only Claude Code itself needs installing.
+**From the app (simplest).** With a `.transmission` project open, click **✦** in the title bar → **Open in Claude**. A session opens in the Claude desktop app (or Terminal); the plugin ships inside the app (`Contents/Resources/mcp`) and registers itself with Claude Code on first use, so only Claude itself needs installing. The app also writes `current-project.json` in its support folder, which the server reads when started with no project — so any session connects to what's open.
 
 **Claude Code — as a plugin.** This directory is a Claude Code plugin: it declares the server *and* ships the skills below, so one install wires both.
 
 ```bash
 # from a checkout of the repo
-claude plugin install transmission --plugin-dir /absolute/path/to/transmission/mcp
+claude plugin install transmission --marketplace /absolute/path/to/transmission/mcp -y
 
 # or, for one session only
 claude --plugin-dir /absolute/path/to/transmission/mcp
