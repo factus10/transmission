@@ -5,8 +5,8 @@
 // deliberate and easy to "fix" by mistake:
 //
 // 1. It does NOT use ../../project-store.js. That module loads better-sqlite3,
-//    which postinstall rebuilds against Electron's ABI — it will not load in a
-//    plain node process. And ProjectStore.open() runs _migrate(), which stamps
+//    and this server ships as a bare extraResource with no node_modules, so
+//    the binding isn't there to load. And ProjectStore.open() runs _migrate(), which stamps
 //    user_version: an observer has no business migrating someone's project.
 //    This reads the same tables through node:sqlite, opened readOnly, and holds
 //    the connection only for the duration of a load.
