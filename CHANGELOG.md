@@ -4,6 +4,12 @@ All notable changes to Transmission are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 major-version codenames drawn from The Smiths.
 
+## [Unreleased]
+
+### Fixed
+
+- **Open in Claude: the Claude app can now connect to Transmission.** In 2.21.0 the extension installed, but every chat reported that it couldn't connect to the Transmission server. The Claude app loads an extension's code differently from running it at a command line, and the server only started itself when run directly, so under Claude it loaded and then never answered. The extension now starts the server through a small entry file that works either way. Claude offers to update the extension the first time you click ✦ → Open in Claude after updating.
+
 ## [2.21.0] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Changed
