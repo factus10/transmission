@@ -82,6 +82,7 @@ That writes a deterministic 314-row fictional university audit with a sitemap, a
 | `get_changelog` | The audit trail |
 | `get_libraries` | Audiences, jobs, sites, content types, statuses, glossary… |
 | `get_rubrics` | The project's own decision rubrics, with each pattern's conditions as ready-to-run filters |
+| `get_page_text` | The main content of up to 10 audit pages (paragraphs, words, headings, text), fetched live once and cached in the project |
 
 Filters use the same `{field, operator, value}` shape and semantics as the app's sidebar field filters, and `savedFilter` runs one of the project's own saved filters by name.
 
