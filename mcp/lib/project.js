@@ -69,6 +69,8 @@ const PROPOSAL_COLUMNS = ['id', 'created_at', 'batch', 'source', 'url', 'field',
 // `_`-prefixed column, the Sitemap_* / Computed Path / Redirect_Destination /
 // Consolidate_Into family (the engine derives those from decisions, and a
 // proposal must not fake one), and Suggested_* (machine columns already).
+const CONSOLIDATE_ID_COLUMN = '_ConsolidateTargetId';
+
 const PROPOSAL_FIELDS = {
   KKE_Recommendation: { map: 'kke', kind: 'set', vocab: 'kke' },
   Notes:              { map: 'notes', kind: 'note' },
@@ -82,7 +84,11 @@ const PROPOSAL_FIELDS = {
   Published_Status:   { kind: 'set', vocab: ['Published', 'Unpublished', 'Draft', '404'] },
   Audiences:          { kind: 'add', vocab: 'audiences' },
   Primary_Audience:   { kind: 'set', vocab: 'audiences-one' },
-  Jobs_Served:        { kind: 'add', vocab: 'jobs' }
+  Jobs_Served:        { kind: 'add', vocab: 'jobs' },
+  // Consolidate, with its target: the value is the URL of the page the content
+  // merges into. Accepting it in the app runs the same path as the Consolidate
+  // picker (identity + display columns, cycle guards, the Evolve nudge).
+  Consolidate_Into:   { kind: 'consolidate' }
 };
 const PROPOSAL_MAX_BATCH = 2000;
 
@@ -1129,6 +1135,37 @@ Project.prototype._resolveProposalField = function (name) {
 
 /** Validate one proposal against the live project. Returns {ok, column, value,
  *  current, reason} — `reason` set when it should be skipped rather than queued. */
+/** Consolidate_Into: the target must be another page in the audit, not one that
+ *  already consolidates back into this page (directly or along a chain), and not
+ *  one that is itself being removed — the content would have nowhere to land. */
+Project.prototype._checkConsolidateProposal = function (row, targetRaw, rationale) {
+  const pageUrl = this.url(row);
+  const target = this.findRows(targetRaw)[0];
+  if (!target) return { ok: false, reason: `the target ${targetRaw} is not a page in this audit` };
+  const targetUrl = this.url(target);
+  if (target === row || looseUrl(targetUrl) === looseUrl(pageUrl)) {
+    throw new Error(`${pageUrl}: a page cannot consolidate into itself.`);
+  }
+  const idOf = r => String(r._ConsolidateTargetId || r[CONSOLIDATE_ID_COLUMN] || '').trim();
+  if (this.effectiveKke(row) === 'Consolidate' && looseUrl(idOf(row)) === looseUrl(targetUrl)) {
+    return { ok: false, reason: 'already consolidating into that page' };
+  }
+  // Walk the target's own chain: reaching this page means a loop.
+  const seen = new Set([looseUrl(targetUrl)]);
+  let cur = target;
+  while (cur && this.effectiveKke(cur) === 'Consolidate') {
+    const next = idOf(cur);
+    if (!next) break;
+    if (looseUrl(next) === looseUrl(pageUrl)) return { ok: false, reason: 'the target already consolidates back into this page' };
+    if (seen.has(looseUrl(next))) break;
+    seen.add(looseUrl(next));
+    cur = this.findRows(next)[0];
+  }
+  const tk = this.effectiveKke(target);
+  if (tk === 'Kill' || tk === 'Exclude') return { ok: false, reason: `the target is marked ${tk}, so the content would have nowhere to land` };
+  return { ok: true, column: 'Consolidate_Into', value: targetUrl, current: String(row.Consolidate_Into || '').trim(), url: pageUrl, rationale };
+};
+
 Project.prototype._checkProposal = function (c) {
   if (!c || typeof c !== 'object') throw new Error('Each change must be an object {url, field, value, rationale}.');
   const url = String(c.url || '').trim();
@@ -1149,6 +1186,7 @@ Project.prototype._checkProposal = function (c) {
   const rows = this.findRows(url);
   if (!rows.length) return { ok: false, reason: 'no row with that URL' };
   const row = rows[0];
+  if (f.kind === 'consolidate') return this._checkConsolidateProposal(row, values[0], rationale);
   const current = String(row[f.column] ?? '').trim();
   const value = f.kind === 'add' ? values.join(', ') : values.join('\n');
   if (f.kind === 'set' && current.toLowerCase() === value.toLowerCase()) return { ok: false, reason: `already "${current}"` };
