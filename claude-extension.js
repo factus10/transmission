@@ -34,10 +34,10 @@ function buildMcpbManifest(version) {
     icon: 'icon.png',
     server: {
       type: 'node',
-      entry_point: 'server.js',
+      entry_point: 'start.js',
       mcp_config: {
         command: 'node',
-        args: ['${__dirname}/server.js']
+        args: ['${__dirname}/start.js']
       }
     },
     tools_generated: true,
@@ -55,7 +55,7 @@ function buildMcpbManifest(version) {
  *  to serve its prompts — see mcp/lib/prompts.js). The plugin manifests, README
  *  and the sample generator are Claude Code material and stay out. */
 function mcpbFileList(mcpDir) {
-  const out = ['server.js'];
+  const out = ['start.js', 'server.js'];
   const lib = path.join(mcpDir, 'lib');
   for (const f of fs.readdirSync(lib).sort()) {
     if (f.endsWith('.js')) out.push('lib/' + f);
