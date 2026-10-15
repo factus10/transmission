@@ -858,13 +858,18 @@ When the sources **disagree**, the badge takes on a dashed amber border and a **
 
 #### Rubrics
 
-Rubrics are plain Markdown files in a folder you choose (**App Settings → Rubrics folder**), one per status:
+A rubric is one Markdown document per decision — Keep, Kill, Evolve, Exclude and Consolidate — and lives in two places:
 
-```
-rubrics/  keep.md  kill.md  evolve.md  exclude.md
-```
+- **Your library** — a folder of files on your machine (**App Settings → Rubrics folder**). It's your starting point, and it only exists on your computer.
+- **The project** — a copy stored inside the project file, so everyone auditing it applies the same rules, and Claude can read them through the Transmission extension. Open **Project → Rubrics…**, choose **Copy from my library**, adjust anything specific to this client, and **Save**. A project with no rubrics of its own uses your library, as before.
 
-Each file has two sections. **Field Rules** are evaluated automatically against your spreadsheet data — the status with the most passing rules wins. **Content Rules** are plain-English statements used as a manual checklist and by the AI assessor. The full rule syntax is in the [Rubric DSL appendix](#rubric-dsl-operators).
+Each document can have three sections:
+
+- **Field Rules** are evaluated automatically against your spreadsheet data — the status with the most passing rules wins.
+- **Content Rules** are plain-English statements used as a manual checklist and by the AI assessor.
+- **Patterns** describe situations that only show up across pages: a thin page whose content belongs on its parent, a cluster of near-identical siblings. Each pattern says when it **applies** (conditions a filter can check), its exceptions (**unless**), the **judgment** that needs someone to read the page, what to do (**then**, e.g. `Consolidate → parent`), what evidence to **cite**, and when to **ask instead**. Claude uses patterns when it reviews the whole audit; the per-page Assess button doesn't, because it sees one page at a time and so can't name a consolidation target. The default `consolidate.md` shows the format.
+
+The full rule syntax is in the [Rubric DSL appendix](#rubric-dsl-operators). Conditions can also use `@url_parent` — the nearest page above this one in the current site's URL structure that is itself in the audit.
 
 #### Assessing a page
 
@@ -876,7 +881,7 @@ With a Claude API key set, **AI Assess** sends the page's metadata and your cont
 
 #### Editing rubrics
 
-**App Settings → Rubrics → Edit** opens an in-app editor with a tab per status, so you needn't leave the app. You can also bind a specific rubric folder to a specific file, so different projects use different rule sets (saved per filename).
+**Project → Rubrics…** opens the editor on this project's rubrics; **App Settings → Rubrics → Edit** opens it on your library. A switch at the top moves between the two. In the project view, **Copy from my library** replaces the project's rubrics with your library's, and **Save to my library** sends the tab you're on back to your library — useful when a rule you wrote for one client deserves to be your default.
 
 #### How GA KKE scores a page
 

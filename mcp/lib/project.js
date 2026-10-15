@@ -23,6 +23,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 'use strict';
 
+const rubricsLib = require('./rubrics');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -251,7 +252,8 @@ const VIRTUAL_FIELDS = {
   '@host':            'URL host with www. removed',
   '@path_1':          'First URL path segment, e.g. /news. Raw — no shared-prefix or locale handling.',
   '@path_2':          'First two URL path segments, e.g. /news/2024',
-  '@in_scope':        'yes | no — whether the row\'s source site is in scope for the audit'
+  '@in_scope':        'yes | no — whether the row\'s source site is in scope for the audit',
+  '@url_parent':      'URL of the nearest ancestor page that exists in the inventory (same host, walking up the path; a top-level page\'s parent is the homepage when it was crawled). Blank when none. The CURRENT site\'s hierarchy — the new sitemap\'s parent is get_sitemap.'
 };
 
 // The sidebar's special filters that need nothing the renderer computes. Every
@@ -416,8 +418,31 @@ class Project {
     return !site || site.inScope !== false;
   }
 
+  /** renderer.js isFragmentRow(). `Content Object` means a Record (a page with
+   *  its own URL) since the app split the two values; only `Fragment` has none. */
   isFragment(row) {
-    return String(row['Content_Nature'] || '').trim() === 'Content Object';
+    return String(row['Content_Nature'] || '').trim() === 'Fragment';
+  }
+
+  /** The nearest ancestor URL that is itself a row: walk the path up one segment
+   *  at a time on the same origin, ending at the homepage. Matching is loose
+   *  (trailing slash, case) — lookup latitude only, as everywhere here. Query
+   *  strings are dropped: `/a?b=1`'s parent is `/`, not `/a`. */
+  urlParent(row) {
+    if (!this._urlParentCache) this._urlParentCache = new WeakMap();
+    if (this._urlParentCache.has(row)) return this._urlParentCache.get(row);
+    let out = '';
+    const u = this._parsedUrl(row);
+    if (u) {
+      const segs = u.pathname.split('/').filter(Boolean);
+      for (let i = segs.length - 1; i >= 0 && !out; i--) {
+        const cand = u.origin + '/' + segs.slice(0, i).join('/');
+        const hit = this.findRows(cand)[0];
+        if (hit && hit !== row) out = this.url(hit);
+      }
+    }
+    this._urlParentCache.set(row, out);
+    return out;
   }
 
   redirectState(row) {
@@ -460,6 +485,7 @@ class Project {
       case '@path_1':         { const s = this.pathSegments(row); return s.length ? '/' + s[0] : '/'; }
       case '@path_2':         { const s = this.pathSegments(row); return s.length ? '/' + s.slice(0, 2).join('/') : '/'; }
       case '@in_scope':       return this.inScope(row) ? 'yes' : 'no';
+      case '@url_parent':     return this.urlParent(row);
       default:                return '';
     }
   }
@@ -985,6 +1011,40 @@ class Project {
   }
 
   // ── Libraries ──
+
+  /** The project's own rubrics, parsed. Rubrics in an auditor's personal library
+   *  are deliberately not read: they live on one machine, and a finding based on
+   *  them couldn't be reproduced by anyone else on the engagement. */
+  getRubrics({ statuses } = {}) {
+    const texts = this.settings.rubrics && typeof this.settings.rubrics === 'object' ? this.settings.rubrics : {};
+    const has = Object.values(texts).some(t => String(t || '').trim());
+    if (!has) {
+      return {
+        source: 'none',
+        note: 'This project has no rubrics of its own. The auditor may have a personal rubric library on their machine, but it is not part of the project. Ask them to copy it in: Project → Rubrics… → Copy from my library, then Save.'
+      };
+    }
+    const want = Array.isArray(statuses) && statuses.length
+      ? statuses.map(x => String(x).toLowerCase()).filter(x => rubricsLib.RUBRIC_STATUSES.includes(x))
+      : rubricsLib.RUBRIC_STATUSES;
+    const out = {};
+    for (const st of want) {
+      const text = String(texts[st] || '');
+      if (!text.trim()) continue;
+      const p = rubricsLib.parseRubricText(text);
+      out[st] = {
+        fieldRules: p.fieldRules.map(r => ({ raw: r.raw, ...rubricsLib.ruleToFilters(r) })),
+        contentRules: p.contentRules,
+        patterns: p.patterns
+      };
+    }
+    return {
+      source: 'project',
+      updatedAt: this.settings.rubricsUpdatedAt || null,
+      rubrics: out,
+      howToRead: 'Field rules and content rules are the per-page assessment the app runs. Patterns are for whole-audit work: run each pattern\'s appliesWhen filters (all must hold) and drop rows matching any unless filter, then apply the judgment to what is left. A condition with filters:null uses >= or <=, which has no filter operator; restate it with greater-than / less-than.'
+    };
+  }
 
   getLibraries({ which } = {}) {
     const s = this.settings;
