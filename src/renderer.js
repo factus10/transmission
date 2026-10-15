@@ -2648,7 +2648,7 @@ async function promptKillCleanup(origIndex, targetStateLabel = 'Kill') {
   return true;
 }
 
-async function promptBulkKillCleanup(origIndexes) {
+async function promptBulkKillCleanup(origIndexes, targetStateLabel = 'Kill') {
   let navCount = 0, redirectCount = 0;
   origIndexes.forEach(i => {
     const r = state.editedRows[i];
@@ -2656,7 +2656,7 @@ async function promptBulkKillCleanup(origIndexes) {
     if (String(r['Redirect_Destination'] || '').trim()) redirectCount++;
   });
   if (navCount === 0 && redirectCount === 0) return true;
-  const result = await showBulkKillCleanupModal({ total: origIndexes.length, navCount, redirectCount });
+  const result = await showBulkKillCleanupModal({ total: origIndexes.length, navCount, redirectCount, targetStateLabel });
   if (result === null) return false;
   if (result.clearNav) {
     origIndexes.forEach(i => {
@@ -2671,7 +2671,7 @@ async function promptBulkKillCleanup(origIndexes) {
   return true;
 }
 
-function showBulkKillCleanupModal({ total, navCount, redirectCount }) {
+function showBulkKillCleanupModal({ total, navCount, redirectCount, targetStateLabel = 'Kill' }) {
   return new Promise(resolve => {
     let settled = false;
     const navChoice = navCount > 0 ? `
@@ -2693,7 +2693,7 @@ function showBulkKillCleanupModal({ total, navCount, redirectCount }) {
       ${navChoice}${redirChoice}`;
 
     openModal({
-      title: `Change ${total} rows to Kill`,
+      title: `Change ${total} row${total !== 1 ? 's' : ''} to ${targetStateLabel}`,
       width: 460,
       body,
       escapeValue: null,
@@ -13450,10 +13450,15 @@ async function maybeUpgradeConsolidateTargetToEvolve(targetIndex) {
   if (state.selectedIndex === targetIndex) populateAuditFields(targetRow);
 }
 
-async function applyConsolidateTarget(origIndex, targetUrl) {
+// opts.quiet: a bulk caller (accepting proposals) that has already asked its
+// questions once for the whole batch — no per-page dialogs or toasts: the Final
+// KKE is overridden, the Kill-style cleanup and the Evolve nudge are left to the
+// caller. Returns {ok, changed, targetIndex, reason}; interactive callers ignore it.
+async function applyConsolidateTarget(origIndex, targetUrl, opts = {}) {
+  const quiet = !!opts.quiet;
   const row = state.editedRows[origIndex];
   const rawTarget = String(targetUrl || '').trim();
-  if (!rawTarget) return;
+  if (!rawTarget) return { ok: false, reason: 'no target' };
 
   // The picker selects a master by its inventory Address. Store that Address as the stable
   // identity, and derive Consolidate_Into as the master's clean relative new path (display).
@@ -13465,15 +13470,18 @@ async function applyConsolidateTarget(origIndex, targetUrl) {
   // row, but a duplicate Address in the crawl (or a caller passing a URL rather
   // than a picked row) can still reach here, so the guard lives at the write.
   if (sameConsolidateUrl(rawTarget, selfUrl)) {
-    showToast('A page can’t consolidate into itself — pick a different target', 'error');
-    return;
+    if (!quiet) showToast('A page can’t consolidate into itself — pick a different target', 'error');
+    return { ok: false, reason: 'a page can’t consolidate into itself' };
   }
   if (consolidateChainReaches(rawTarget, selfUrl)) {
-    showToast('That page already consolidates back into this one — the content would have nowhere to land', 'error');
-    return;
+    if (!quiet) showToast('That page already consolidates back into this one — the content would have nowhere to land', 'error');
+    return { ok: false, reason: 'the target already consolidates back into this page' };
   }
 
-  const targetIndex = state.editedRows.findIndex(r => String(r[urlCol] || '').trim() === rawTarget);
+  let targetIndex = state.editedRows.findIndex(r => String(r[urlCol] || '').trim() === rawTarget);
+  // A proposal's target came from outside the app: allow the same loose match
+  // (trailing slash, case) the proposal lookup uses, so it resolves to the row.
+  if (targetIndex < 0 && quiet) targetIndex = state.editedRows.findIndex(r => sameConsolidateUrl(String(r[urlCol] || '').trim(), rawTarget));
   const targetRow = targetIndex >= 0 ? state.editedRows[targetIndex] : null;
   const newId = targetRow ? String(targetRow[urlCol] || '').trim() : rawTarget; // off-inventory → keep raw
   const newDisplay = targetRow ? consolidateDisplayPath(targetRow) : rawTarget;
@@ -13484,6 +13492,7 @@ async function applyConsolidateTarget(origIndex, targetUrl) {
   // If Consolidate intent already exists (via KKE or Final_KKE), we're just setting
   // the target — don't overwrite KKE_Recommendation, and skip the kill-cleanup prompt.
   const alreadyConsolidate = rowIsConsolidate(row);
+  let changed = false;
   const oldKke = row[kkeCol()];
   const oldFinal = String(row[finalKkeCol()] || '').trim();
 
@@ -13491,49 +13500,54 @@ async function applyConsolidateTarget(origIndex, targetUrl) {
     // A client Final_KKE outranks the recommendation, so writing only
     // KKE_Recommendation here would leave the page NOT consolidating — the
     // target would be stored and ignored. Say so, and let the user decide.
-    if (oldFinal && oldFinal !== 'Consolidate' && kkeCol() !== finalKkeCol()) {
+    if (!quiet && oldFinal && oldFinal !== 'Consolidate' && kkeCol() !== finalKkeCol()) {
       const ok = await confirmDialog({
         title: 'Override the Final KKE?',
         message: `The Final KKE for this page is ${oldFinal} — that is the decision redirects and reports act on.\n\n` +
           'Consolidating it changes the Final KKE to Consolidate as well.',
         confirmLabel: 'Consolidate anyway',
       });
-      if (!ok) return;
+      if (!ok) return { ok: false, reason: 'cancelled' };
     }
-    await promptKillCleanup(origIndex, 'Consolidate'); // cancel is fine — user can still proceed with the state change
+    if (!quiet) await promptKillCleanup(origIndex, 'Consolidate'); // cancel is fine — user can still proceed with the state change
     if (oldKke !== 'Consolidate') {
       row[kkeCol()] = 'Consolidate';
       logChange(origIndex, kkeCol(), oldKke, 'Consolidate');
-      applyKkeStyle('Consolidate');
+      if (state.selectedIndex === origIndex) applyKkeStyle('Consolidate');
+      changed = true;
     }
     if (oldFinal && oldFinal !== 'Consolidate' && kkeCol() !== finalKkeCol()) {
       row[finalKkeCol()] = 'Consolidate';
       logChange(origIndex, finalKkeCol(), oldFinal, 'Consolidate');
       if (state.selectedIndex === origIndex) populateFinalKkeSelect('Consolidate', row[kkeCol()] || '');
+      changed = true;
     }
   }
 
   if (oldId !== newId) {
     row[CONSOLIDATE_ID_COL] = newId;
     logChange(origIndex, CONSOLIDATE_ID_COL, oldId, newId);
+    changed = true;
   }
   if (oldDisplay !== newDisplay) {
     row[CONSOLIDATE_COL] = newDisplay;
     logChange(origIndex, CONSOLIDATE_COL, oldDisplay, newDisplay);
+    changed = true;
   }
 
   setDirty(true);
   markConsolidateReviewed(row);
   if (state.selectedIndex === origIndex) { updateConsolidateIndicator(row); updateFinalOverrideChip(row); }
   refreshRowInList(origIndex);
-  renderMetaFields(row, origIndex);
+  if (state.selectedIndex === origIndex) renderMetaFields(row, origIndex);
 
   // Last, so the source row is already written: if the user declines the Evolve
   // nudge, the consolidation still stands exactly as they asked for it.
-  if (targetRow) {
+  if (targetRow && !quiet) {
     await maybeUpgradeConsolidateTargetToEvolve(targetIndex);
     updateConsolidateIndicator(row);   // the dead-target warning may have cleared
   }
+  return { ok: true, changed, targetIndex: targetRow ? targetIndex : -1 };
 }
 
 function clearConsolidateTarget(origIndex) {
@@ -32730,6 +32744,7 @@ function proposalFieldKind(field) {
     case JOBS_COL: return 'jobs';
     case 'Content_Nature': return 'content-nature';
     case 'Migration_Track': return 'migration-track';
+    case CONSOLIDATE_COL: return 'consolidate';
     default: return null;
   }
 }
@@ -32804,6 +32819,7 @@ async function openProposalReviewDialog() {
       </p>
       <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px;">
         Tags, audiences and jobs are <em>added</em> to a page, never removed; a note is appended under an existing one; everything else replaces the current value.
+        A <strong>Consolidate_Into</strong> proposal sets the page to Consolidate with that page as its target (overriding a Final KKE), the same as the Consolidate picker; you're asked once about sitemap and redirect cleanup, and once about moving the targets to Evolve.
         ▸ shows the pages in a group with each one's current value and the reason.
       </p>
       <div style="max-height:50vh;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
@@ -32860,15 +32876,21 @@ async function resolveProposalGroups(ordered, api, decision) {
   // path does; cancelling it cancels the whole accept, as elsewhere.
   const killIdx = items.filter(it => it.kind === 'kke' && it.p.value === 'Kill' && String(it.row[kkeCol()] || '').trim() !== 'Kill').map(it => it.origIndex);
   if (killIdx.length && !(await promptBulkKillCleanup([...new Set(killIdx)]))) return false;
+  // Consolidate retires the URL too, so the same cleanup question applies — asked
+  // once for the batch, where the Consolidate picker asks it page by page.
+  const consolidateItems = items.filter(it => it.kind === 'consolidate');
+  const consIdx = consolidateItems.filter(it => !rowIsConsolidate(it.row)).map(it => it.origIndex);
+  if (consIdx.length && !(await promptBulkKillCleanup([...new Set(consIdx)], 'Consolidate'))) return false;
 
   const undoItems = [];
   const acceptedIds = [];
+  const failures = [];
   let written = 0;
   for (const it of items) {
     const before = { ...it.row };
     let changed = false;
     try { changed = await applyProposalToRow(it); }
-    catch (e) { console.warn('proposal apply failed', it.p, e); continue; }
+    catch (e) { console.warn('proposal apply failed', it.p, e); failures.push(e.message); continue; }
     acceptedIds.push(it.p.id);
     if (!changed) continue;
     written++;
@@ -32880,8 +32902,42 @@ async function resolveProposalGroups(ordered, api, decision) {
     logChange(it.origIndex, '(proposal accepted)', `${it.p.source || 'mcp'} · ${it.p.field}`, it.p.rationale || '');
   }
 
+  // The Consolidate picker offers to move each target to Evolve; here it's one
+  // question for every target in the batch that isn't already Evolve (or itself
+  // consolidating — a chain, which the cycle and dead-target checks cover).
+  const targetIdx = [...new Set(consolidateItems.map(it => it.targetIndex).filter(i => i >= 0))]
+    .filter(i => !['Evolve', 'Consolidate'].includes(effectiveKke(state.editedRows[i])));
+  if (targetIdx.length) {
+    const urlCol = state.urlColumn || 'Address';
+    const names = targetIdx.slice(0, 6).map(i => '• ' + (String(state.editedRows[i]['Title 1'] || '').trim() || state.editedRows[i][urlCol]));
+    const ok = await confirmDialog({
+      title: `Set ${targetIdx.length} target page${targetIdx.length !== 1 ? 's' : ''} to Evolve?`,
+      message: `These pages are receiving another page's content, so they no longer stay as they are:\n\n${names.join('\n')}${targetIdx.length > 6 ? `\n…and ${targetIdx.length - 6} more` : ''}\n\nEvolve is the signal that a page needs work.`,
+      confirmLabel: 'Set to Evolve', cancelLabel: 'Leave them'
+    });
+    if (ok) {
+      for (const i of targetIdx) {
+        const t = state.editedRows[i];
+        for (const col of [kkeCol(), finalKkeCol()]) {
+          const old = String(t[col] || '');
+          if (col === finalKkeCol() && !old) continue;   // only overwrite a Final that exists
+          if (old === 'Evolve' || (col === finalKkeCol() && col === kkeCol())) continue;
+          t[col] = 'Evolve';
+          logChange(i, col, old, 'Evolve');
+          undoItems.push({ origIndex: i, field: col, oldValue: old, newValue: 'Evolve' });
+        }
+        refreshRowInList(i);
+      }
+      written += targetIdx.length;
+    }
+  }
+
   const r = await window.electronAPI.proposalsResolve({ ids: acceptedIds, status: 'accepted' });
   if (!r.success) showToast(r.error || 'Values applied, but the queue could not be updated', 'error');
+  if (failures.length) {
+    const uniq = [...new Set(failures)];
+    showToast(`${failures.length} proposal${failures.length !== 1 ? 's' : ''} could not be applied and stay queued: ${uniq.slice(0, 2).join('; ')}`, 'error');
+  }
   if (undoItems.length) pushBulkEditUndo(undoItems, 'accept proposals');
   if (written) {
     setDirty(true);
@@ -32895,7 +32951,8 @@ async function resolveProposalGroups(ordered, api, decision) {
 }
 
 /** Write one accepted proposal through the app's own paths. Returns whether the row changed. */
-async function applyProposalToRow({ p, origIndex, row, kind }) {
+async function applyProposalToRow(item) {
+  const { p, origIndex, row, kind } = item;
   const value = String(p.value || '').trim();
   const parts = value.split(',').map(s => s.trim()).filter(Boolean);
   switch (kind) {
@@ -32932,6 +32989,12 @@ async function applyProposalToRow({ p, origIndex, row, kind }) {
       row[col] = next;
       logChange(origIndex, col, old, next);
       return true;
+    }
+    case 'consolidate': {
+      const res = await applyConsolidateTarget(origIndex, value, { quiet: true });
+      if (!res || !res.ok) throw new Error(res && res.reason ? res.reason : 'could not consolidate');
+      item.targetIndex = res.targetIndex;   // for the batch's one Evolve question
+      return res.changed;
     }
     case 'content-nature': case 'migration-track': {
       const col = kind === 'content-nature' ? 'Content_Nature' : 'Migration_Track';
@@ -32971,7 +33034,7 @@ async function openClaudeDialog() {
     : line('Claude app', 'the Transmission extension is installed.');
   const codeLinks = st.cliFound
     ? `<p style="font-size:11px;color:var(--text-muted);margin:4px 0 0;">
-         Use Claude Code instead, with the audit skills (<code>/audit-status</code>, <code>/section-review</code>, <code>/decision-consistency</code>):
+         Use Claude Code instead, with the audit skills (<code>/audit-status</code>, <code>/section-review</code>, <code>/decision-consistency</code>, <code>/rubric-sweep</code>):
          ${st.desktopAppFound ? '<a href="#" id="_cl-code">Code tab</a> · ' : ''}<a href="#" id="_cl-term">Terminal</a>
        </p>` : '';
 
@@ -32989,7 +33052,7 @@ async function openClaudeDialog() {
         <p style="font-size:11px;color:var(--text-muted);margin:6px 0 0;">
           <strong>Open in Claude</strong> brings up the Claude app with this project connected. Start a new chat and ask —
           "where does the audit stand?", "which sections are mostly undecided?" — or pick a playbook from the chat's <strong>+</strong> menu
-          under Transmission: <em>Audit status</em>, <em>Section review</em>, <em>Decision consistency check</em>, <em>Ask the audit</em>.
+          under Transmission: <em>Audit status</em>, <em>Section review</em>, <em>Decision consistency check</em>, <em>Rubric sweep</em>, <em>Ask the audit</em>.
           Anything it proposes comes back here as a proposal; nothing is written to the audit until you accept it.
           Keep this window open while you work: Claude sees each autosave within a couple of seconds.
         </p>
