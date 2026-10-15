@@ -381,6 +381,8 @@ function main() {
   rl.on('close', () => process.exit(0));
 }
 
+// Started by `node server.js` (the Claude Code plugin). The Claude app's extension
+// loads start.js instead, because it imports its entry rather than running it.
 if (require.main === module) main();
 
-module.exports = { handle, TOOLS, RESOURCES };
+module.exports = { handle, main, TOOLS, RESOURCES };
