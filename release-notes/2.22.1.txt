@@ -1,0 +1,1 @@
+The audit playbooks now come as Claude skills: download the transmission-skill zip files from this release and upload each in Claude → Settings → Capabilities → Skills, and Claude will use them on its own when a question calls for one. Help explains the steps.
