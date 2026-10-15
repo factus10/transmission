@@ -33,7 +33,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Rubrics ─────────────────────────────────────────────────────────────
   getRubricDir:  ()        => ipcRenderer.invoke('get-rubric-dir'),
   pickRubricDir: ()        => ipcRenderer.invoke('pick-rubric-dir'),
-  loadRubrics:   ()        => ipcRenderer.invoke('load-rubrics'),
+  loadRubrics:   (payload) => ipcRenderer.invoke('load-rubrics', payload),
+  readRubricLibrary: ()    => ipcRenderer.invoke('read-rubric-library'),
   assessRow:      (payload)  => ipcRenderer.invoke('assess-row', payload),
   assessRowLLM:   (payload)  => ipcRenderer.invoke('assess-row-llm', payload),
   getClaudeModels: ()        => ipcRenderer.invoke('get-claude-models'),
@@ -94,6 +95,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onMenuGaKkeRefresh:  (cb) => ipcRenderer.on('menu-ga-kke-refresh',    ()   => cb()),
   onMenuSuggestedKkeRecompute: (cb) => ipcRenderer.on('menu-suggested-kke-recompute', () => cb()),
   onMenuRubricBatch:           (cb) => ipcRenderer.on('menu-rubric-batch',            () => cb()),
+  onMenuRubrics:               (cb) => ipcRenderer.on('menu-rubrics',                 () => cb()),
   onMenuExportMigrationTracker:(cb) => ipcRenderer.on('menu-export-migration-tracker',() => cb()),
   onMenuExportDialog:          (cb) => ipcRenderer.on('menu-export-dialog',            () => cb()),
   exportMigrationTracker:      (payload) => ipcRenderer.invoke('export-migration-tracker', payload),

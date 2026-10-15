@@ -268,6 +268,15 @@ const TOOLS = [
       properties: { which: { type: 'array', items: { type: 'string' } } }
     },
     run: a => project().getLibraries(a)
+  },
+  {
+    name: 'get_rubrics',
+    description: 'The project\'s own decision rubrics (keep, kill, evolve, exclude, consolidate), parsed. Each has fieldRules (with ready-made `filters` for query_rows/aggregate), contentRules (free text), and patterns — the whole-audit form: appliesWhen (all must hold) / unless (any excludes) as filters, a judgment that needs the page itself, then {decision, target}, cite, askInstead. source:"none" means the project carries no rubrics yet.',
+    inputSchema: {
+      type: 'object',
+      properties: { statuses: { type: 'array', items: { type: 'string' }, description: 'Limit to these, e.g. ["consolidate"]. Default all.' } }
+    },
+    run: a => project().getRubrics(a)
   }
 ];
 
