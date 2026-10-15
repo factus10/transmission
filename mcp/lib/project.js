@@ -24,6 +24,7 @@
 'use strict';
 
 const rubricsLib = require('./rubrics');
+const pageText = require('./page-text');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -1205,6 +1206,77 @@ Project.prototype.proposeChanges = function ({ changes, source, batch } = {}) {
     replacedPending: replaced,
     skipped: skipped.length ? skipped : undefined,
     note: 'Queued for the auditor to accept or reject in Transmission (sidebar "Proposals" button, or Project → Review Proposals). Nothing has been changed yet.'
+  };
+};
+
+const PAGE_TEXT_MAX_BATCH = 10;
+const PAGE_TEXT_CONCURRENCY = 3;
+const PAGE_TEXT_CACHE_CHARS = 40000;   // what's stored; maxChars trims what's returned
+
+/**
+ * Main-content text for up to ten pages, from the project's cache when present,
+ * otherwise fetched live (three at a time) and cached. Only pages in the
+ * inventory can be fetched: the cache is part of the project, and a tool that
+ * fetches any URL it's handed is a tool for something other than this audit.
+ * Failures (blocked, timed out, 4xx/5xx, not HTML) are reported per page and
+ * never cached, so a retry can succeed.
+ */
+Project.prototype.getPageText = async function ({ urls, url, refresh, maxChars, fetchImpl } = {}) {
+  const asked = (Array.isArray(urls) ? urls : (url ? [url] : [])).map(u => String(u || '').trim()).filter(Boolean);
+  if (!asked.length) throw new Error('Pass `urls` (up to ' + PAGE_TEXT_MAX_BATCH + ' page URLs from the audit).');
+  if (asked.length > PAGE_TEXT_MAX_BATCH) throw new Error(`At most ${PAGE_TEXT_MAX_BATCH} pages per call — narrow the candidates with filters first, then read them in batches.`);
+  const cap = Math.max(500, Math.min(parseInt(maxChars, 10) || pageText.DEFAULT_MAX_CHARS, PAGE_TEXT_CACHE_CHARS));
+
+  const failed = [];
+  const targets = [];
+  for (const u of asked) {
+    const row = this.findRows(u)[0];
+    if (!row) { failed.push({ url: u, error: 'not a page in this audit' }); continue; }
+    targets.push(this.url(row));
+  }
+  const { DatabaseSync } = sqlite();
+  const cache = refresh ? new Map() : pageText.readCache(DatabaseSync, this.filePath, targets);
+  const shape = (u, d, cached) => {
+    const text = String(d.text || '');
+    return {
+      url: u, cached, fetchedAt: d.fetchedAt, httpStatus: d.httpStatus, finalUrl: d.finalUrl !== u ? d.finalUrl : undefined,
+      title: d.title, h1: d.h1, region: d.region,
+      paragraphs: d.paragraphs, shortParagraphs: d.shortParagraphs, listItems: d.listItems, words: d.words,
+      headings: d.headings,
+      text: text.length > cap ? text.slice(0, cap) : text,
+      truncated: d.truncated || text.length > cap
+    };
+  };
+  const pages = [];
+  const toFetch = [];
+  for (const u of targets) {
+    if (cache.has(u)) pages.push(shape(u, cache.get(u), true));
+    else toFetch.push(u);
+  }
+  const fresh = [];
+  await pageText.pool(toFetch, PAGE_TEXT_CONCURRENCY, async u => {
+    try {
+      const r = await pageText.fetchHtml(u, fetchImpl ? { fetchImpl } : {});
+      if (r.status >= 400) { failed.push({ url: u, httpStatus: r.status, error: `HTTP ${r.status}` }); return; }
+      const data = pageText.extractPageText(r.html, { maxChars: PAGE_TEXT_CACHE_CHARS });
+      const entry = { url: u, fetchedAt: new Date().toISOString(), httpStatus: r.status, finalUrl: r.finalUrl, data };
+      fresh.push(entry);
+      pages.push(shape(u, { ...data, fetchedAt: entry.fetchedAt, httpStatus: r.status, finalUrl: r.finalUrl }, false));
+    } catch (e) {
+      const msg = e && e.name === 'TimeoutError' ? 'timed out' : (e && e.cause && e.cause.code) || (e && e.message) || String(e);
+      failed.push({ url: u, error: msg });
+    }
+  });
+  let cacheError;
+  try { pageText.writeCache(DatabaseSync, this.filePath, fresh); }
+  catch (e) { cacheError = `fetched, but could not cache: ${e.message}`; }
+  const order = new Map(asked.map((u, i) => [looseUrl(u), i]));
+  pages.sort((a, b) => (order.get(looseUrl(a.url)) ?? 0) - (order.get(looseUrl(b.url)) ?? 0));
+  return {
+    pages,
+    failed: failed.length ? failed : undefined,
+    cacheError,
+    note: 'Main content only (see `region` for how it was found). `paragraphs` counts paragraphs of a sentence or more; `shortParagraphs` the rest. Text is a live fetch of the current site — cite it as such.'
   };
 };
 
