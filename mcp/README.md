@@ -48,7 +48,7 @@ Then, in a conversation: *"Open the project at /path/to/audit.transmission"*. To
 
 ## Skills
 
-Four skills ride along in `skills/`. They encode *how to ask* — the audit's conventions and the order of operations from `docs/RUNNING_AN_AUDIT.md` — so the model behaves like an analyst who has read the method, not one guessing from column names. Each ends in something the strategist acts on in the app; none of them change the project.
+Five skills ride along in `skills/`. They encode *how to ask* — the audit's conventions and the order of operations from `docs/RUNNING_AN_AUDIT.md` — so the model behaves like an analyst who has read the method, not one guessing from column names. Each ends in something the strategist acts on in the app; none of them change the project.
 
 | Skill | Use it when | Produces |
 |---|---|---|
@@ -59,6 +59,14 @@ Four skills ride along in `skills/`. They encode *how to ask* — the audit's co
 | `decision-consistency` | Before SME export, handoff, or a readout | Pages whose decision contradicts their neighbours or their data, each with the evidence and a question — never an accusation |
 
 Invoke them as `/audit-status`, `/section-review /news`, `/decision-consistency`, `/rubric-sweep /admissions`, or just ask in plain language; the descriptions let the model pick them up.
+
+**Where they reach you.** In Claude Code they load with the plugin. In the Claude app they're the Transmission extension's **+** menu prompts, which you pick by hand. To have the Claude app reach for them on its own, as Claude Code does, upload them as skills:
+
+```bash
+npm run skills:zip        # → dist/skills/<name>.zip, one per skill
+```
+
+Then in Claude, **Settings → Capabilities → Skills → Upload skill**, once per zip (a Team or Enterprise admin can provision them for everyone). The zips carry the same `SKILL.md`, with the Claude Code-only `argument-hint` key dropped. They call the Transmission tools, so they only work where the extension is connected — the Claude desktop app, not claude.ai in a browser. Re-upload after a skill changes.
 
 **Try them without client data:**
 

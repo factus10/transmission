@@ -4,6 +4,12 @@ All notable changes to Transmission are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 major-version codenames drawn from The Smiths.
 
+## [Unreleased]
+
+### Added
+
+- **The audit playbooks as uploadable skills.** `npm run skills:zip` packages each one (ask-the-audit, audit-status, section-review, decision-consistency, rubric-sweep) as a zip for **Claude → Settings → Capabilities → Skills**, so the Claude app uses them on its own when a question calls for one, rather than only when picked from the + menu. They need the Transmission extension connected, which means the Claude desktop app.
+
 ## [2.22.0] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Added
