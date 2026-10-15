@@ -1,6 +1,6 @@
 {
   "name": "transmission",
-  "version": "2.21.1",
+  "version": "2.22.0",
   "description": "Content audit, IA, and migration workspace for website replatforms \u2014 assess every page, architect the new site, and direct the build",
   "main": "main.js",
   "scripts": {
