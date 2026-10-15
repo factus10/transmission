@@ -55,9 +55,10 @@ Four skills ride along in `skills/`. They encode *how to ask* — the audit's co
 | `ask-the-audit` | Any "how many / which pages / what did we decide" question | A number, its breakdown, and the sidebar filter that reproduces it |
 | `audit-status` | Monday check-in, client status email, "what changed since Friday" | A status note: progress both ways, what moved and by whom, what's still owed before handoff |
 | `section-review` | "Help me go through /news", "what should we do with the department pages" | The section's patterns, the exceptions worth a human minute, and a proposed-decision worksheet with reasons in the auditor's own vocabulary |
+| `rubric-sweep` | "Apply the rubric across the site", "find thin pages to consolidate" | The project's own rubric patterns applied to every matching page: candidates found by the pattern's conditions, candidates and targets read with `get_page_text`, and proposals grouped by where the content goes, with questions kept separate |
 | `decision-consistency` | Before SME export, handoff, or a readout | Pages whose decision contradicts their neighbours or their data, each with the evidence and a question — never an accusation |
 
-Invoke them as `/audit-status`, `/section-review /news`, `/decision-consistency`, or just ask in plain language; the descriptions let the model pick them up.
+Invoke them as `/audit-status`, `/section-review /news`, `/decision-consistency`, `/rubric-sweep /admissions`, or just ask in plain language; the descriptions let the model pick them up.
 
 **Try them without client data:**
 
@@ -82,6 +83,7 @@ That writes a deterministic 314-row fictional university audit with a sitemap, a
 | `get_changelog` | The audit trail |
 | `get_libraries` | Audiences, jobs, sites, content types, statuses, glossary… |
 | `get_rubrics` | The project's own decision rubrics, with each pattern's conditions as ready-to-run filters |
+| `get_page_text` | The main content of up to 10 audit pages (paragraphs, words, headings, text), fetched live once and cached in the project |
 
 Filters use the same `{field, operator, value}` shape and semantics as the app's sidebar field filters, and `savedFilter` runs one of the project's own saved filters by name.
 
