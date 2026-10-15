@@ -1,0 +1,1 @@
+Fixes Open in Claude: in 2.21.0 the Transmission extension installed in the Claude app, but chats couldn't connect to it. After updating, click ✦ → Open in Claude once and accept Claude's offer to update the extension.
