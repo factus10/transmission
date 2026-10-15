@@ -8,7 +8,7 @@ major-version codenames drawn from The Smiths.
 
 ### Added
 
-- **The audit playbooks as uploadable skills.** `npm run skills:zip` packages each one (ask-the-audit, audit-status, section-review, decision-consistency, rubric-sweep) as a zip for **Claude → Settings → Capabilities → Skills**, so the Claude app uses them on its own when a question calls for one, rather than only when picked from the + menu. They need the Transmission extension connected, which means the Claude desktop app.
+- **The audit playbooks as uploadable skills.** `npm run skills:zip` packages each one (ask-the-audit, audit-status, section-review, decision-consistency, rubric-sweep) as a zip for **Claude → Settings → Capabilities → Skills**, so the Claude app uses them on its own when a question calls for one, rather than only when picked from the + menu. They need the Transmission extension connected, which means the Claude desktop app. Every release now attaches them as `transmission-skill-*.zip`, so you don't need the source to get them.
 
 ## [2.22.0] — "Please, Please, Please, Let Me Get What I Want"
 
