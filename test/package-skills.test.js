@@ -36,3 +36,14 @@ test('validation catches the upload rules', () => {
   assert.match(pkg.validate({ name: 'a', description: 'x'.repeat(1025) }, 'a')[0], /1025/);
   assert.match(pkg.validate({ name: 'a', description: 'uses <tags>' }, 'a')[0], /< or >/);
 });
+
+test('a prefix changes only the zip file name, not the skill inside', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skills-'));
+  const files = await pkg.packageSkills(dir, { prefix: 'transmission-skill-' });
+  const f = files.find(x => x.endsWith('transmission-skill-rubric-sweep.zip'));
+  assert.ok(f);
+  const zip = await JSZip.loadAsync(fs.readFileSync(f));
+  assert.ok(zip.file('rubric-sweep/SKILL.md'));
+  assert.match(await zip.file('rubric-sweep/SKILL.md').async('string'), /^---\nname: rubric-sweep\n/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
