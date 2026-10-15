@@ -617,10 +617,13 @@ describe('stdio server', () => {
     s.notify('notifications/initialized');
 
     const tools = (await s.request('tools/list')).result.tools;
-    assert.deepEqual(tools.map(t => t.name), ['open_project', 'project_overview', 'describe_columns', 'aggregate', 'query_rows', 'get_row', 'get_sitemap', 'get_redirects', 'get_changelog', 'propose_changes', 'list_proposals', 'get_libraries', 'get_rubrics']);
+    assert.deepEqual(tools.map(t => t.name), ['open_project', 'project_overview', 'describe_columns', 'aggregate', 'query_rows', 'get_row', 'get_sitemap', 'get_redirects', 'get_changelog', 'propose_changes', 'list_proposals', 'get_libraries', 'get_rubrics', 'get_page_text']);
     assert.ok(tools.every(t => t.inputSchema.type === 'object'));
-    assert.ok(tools.filter(t => t.name !== 'propose_changes').every(t => t.annotations.readOnlyHint === true), 'every tool but propose_changes is read-only');
-    assert.equal(tools.find(t => t.name === 'propose_changes').annotations.readOnlyHint, false);
+    // Two tools write, each only to its own table: propose_changes (proposals) and
+    // get_page_text (its page_text cache). Neither touches what the app saves.
+    const WRITERS = ['propose_changes', 'get_page_text'];
+    assert.ok(tools.filter(t => !WRITERS.includes(t.name)).every(t => t.annotations.readOnlyHint === true), 'every other tool is read-only');
+    for (const w of WRITERS) assert.equal(tools.find(t => t.name === w).annotations.readOnlyHint, false);
 
     const o = await callTool(s, 'project_overview');
     assert.equal(o.data.client, 'Alpha University');

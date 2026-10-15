@@ -41,6 +41,12 @@ const PROMPTS = [
     request: v => v ? `Run the decision consistency check on: ${v}` : 'Run the decision consistency check on the whole in-scope inventory.'
   },
   {
+    name: 'rubric-sweep', title: 'Rubric sweep',
+    description: 'Apply the project\'s rubric patterns across the audit: find matching pages, read them and their targets, and propose what merges into what.',
+    argument: { name: 'scope', description: 'A section like /admissions, or a pattern name (optional). Default: every pattern, the whole in-scope inventory.', required: false },
+    request: v => v ? `Run the rubric sweep on: ${v}` : 'Run the rubric sweep across the whole in-scope inventory.'
+  },
+  {
     name: 'ask-the-audit', title: 'Ask the audit',
     description: 'Answer a question from the project with real counts, each traceable to a filter you can reproduce in Transmission.',
     argument: { name: 'question', description: 'What you want to know, e.g. "how many Keep pages under /news have no audience?"', required: false },

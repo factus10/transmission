@@ -221,7 +221,7 @@ const TOOLS = [
   },
   {
     name: 'propose_changes',
-    description: 'Queue proposed changes for the auditor to accept or reject in Transmission. This is the ONLY way to change anything, and it changes nothing by itself: each item is a request — page URL, field, value, and the reason — that a person reviews in the app (sidebar "Proposals" button). Call it only when the person has asked you to queue proposals (e.g. after confirming a section-review worksheet); never speculatively. Allowed fields: ' + Object.keys(PROPOSAL_FIELDS).join(', ') + '. Controlled fields are checked against this project\'s own vocabularies (KKE states, audience and job libraries); Consolidate is refused (it needs a target only the app can set); Tags/Audiences/Jobs_Served ADD to the cell, Notes appends to an existing note, the rest replace. A whole batch is validated before anything is written; a pending proposal for the same page + field is replaced by the newer one.',
+    description: 'Queue proposed changes for the auditor to accept or reject in Transmission. This is the ONLY way to change anything, and it changes nothing by itself: each item is a request — page URL, field, value, and the reason — that a person reviews in the app (sidebar "Proposals" button). Call it only when the person has asked you to queue proposals (e.g. after confirming a section-review worksheet); never speculatively. Allowed fields: ' + Object.keys(PROPOSAL_FIELDS).join(', ') + '. Controlled fields are checked against this project\'s own vocabularies (KKE states, audience and job libraries); to propose Consolidate use field Consolidate_Into with the TARGET page\'s URL as the value (KKE_Recommendation cannot be set to Consolidate directly, since a consolidation without a target is not a decision) — targets must be other pages in the audit, not ones that consolidate back or are marked Kill/Exclude; Tags/Audiences/Jobs_Served ADD to the cell, Notes appends to an existing note, the rest replace. A whole batch is validated before anything is written; a pending proposal for the same page + field is replaced by the newer one.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -277,6 +277,21 @@ const TOOLS = [
       properties: { statuses: { type: 'array', items: { type: 'string' }, description: 'Limit to these, e.g. ["consolidate"]. Default all.' } }
     },
     run: a => project().getRubrics(a)
+  },
+  {
+    name: 'get_page_text',
+    description: 'The main content of up to 10 audit pages: paragraph count (paragraphs of a sentence or more), words, headings, and the text itself. Served from the project\'s cache when a page has been read before; otherwise fetched live from the current site and cached in the project for everyone. Use it only on candidates a rubric pattern\'s filters have already narrowed — not on whole sections. Pages that block the fetch or are behind a login come back in `failed`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        urls: { type: 'array', items: { type: 'string' }, description: 'Page URLs from the audit (1–10).' },
+        refresh: { type: 'boolean', description: 'Ignore the cache and fetch again (the page has changed).' },
+        maxChars: { type: 'number', description: 'Text returned per page (default 6000).' }
+      },
+      required: ['urls']
+    },
+    readOnly: false,
+    run: a => project().getPageText(a)
   }
 ];
 
@@ -330,11 +345,14 @@ function handle(method, params) {
       if (!tool) throw rpcError(-32602, `Unknown tool: ${params && params.name}`);
       // A tool that fails is a RESULT the model should read and correct from
       // (wrong field name, no project open) — not a protocol error.
+      const ok = result => ({ content: [{ type: 'text', text: JSON.stringify(result, null, 1) }] });
+      const fail = e => ({ content: [{ type: 'text', text: e.message }], isError: true });
       try {
         const result = tool.run((params && params.arguments) || {});
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 1) }] };
+        // A tool that goes to the network returns a promise; the rest stay synchronous.
+        return result && typeof result.then === 'function' ? result.then(ok, fail) : ok(result);
       } catch (e) {
-        return { content: [{ type: 'text', text: e.message }], isError: true };
+        return fail(e);
       }
     }
     case 'resources/list':
@@ -371,10 +389,14 @@ function onLine(line) {
   const isRequest = msg && msg.id !== undefined && msg.id !== null && typeof msg.method === 'string';
   if (!isRequest) return;   // notifications (initialized, cancelled) and stray responses need no reply
 
+  const reply = result => send({ jsonrpc: '2.0', id: msg.id, result });
+  const error = e => send({ jsonrpc: '2.0', id: msg.id, error: { code: e.rpcCode || -32603, message: e.message } });
   try {
-    send({ jsonrpc: '2.0', id: msg.id, result: handle(msg.method, msg.params) });
+    const result = handle(msg.method, msg.params);
+    if (result && typeof result.then === 'function') result.then(reply, error);
+    else reply(result);
   } catch (e) {
-    send({ jsonrpc: '2.0', id: msg.id, error: { code: e.rpcCode || -32603, message: e.message } });
+    error(e);
   }
 }
 
