@@ -66,7 +66,7 @@ Invoke them as `/audit-status`, `/section-review /news`, `/decision-consistency`
 npm run skills:zip        # → dist/skills/<name>.zip, one per skill
 ```
 
-Then in Claude, **Settings → Capabilities → Skills → Upload skill**, once per zip (a Team or Enterprise admin can provision them for everyone). The zips carry the same `SKILL.md`, with the Claude Code-only `argument-hint` key dropped. They call the Transmission tools, so they only work where the extension is connected — the Claude desktop app, not claude.ai in a browser. Re-upload after a skill changes.
+Every release also carries them as `transmission-skill-<name>.zip` assets, so you don't need the repo. Then in Claude, **Settings → Capabilities → Skills → Upload skill**, once per zip (a Team or Enterprise admin can provision them for everyone). The zips carry the same `SKILL.md`, with the Claude Code-only `argument-hint` key dropped. They call the Transmission tools, so they only work where the extension is connected — the Claude desktop app, not claude.ai in a browser. Re-upload after a skill changes.
 
 **Try them without client data:**
 

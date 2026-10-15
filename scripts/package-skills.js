@@ -3,7 +3,11 @@
 // Capabilities → Skills), one zip per skill: <name>/SKILL.md inside.
 //
 //   npm run skills:zip            → dist/skills/<name>.zip
-//   node scripts/package-skills.js --out <dir>
+//   node scripts/package-skills.js --out <dir> [--prefix transmission-skill-]
+//
+// --prefix only changes the zip's file name (the release script uses it so the
+// assets read as Transmission's on a release page); the skill inside is still
+// <name>/SKILL.md, and the skill's name comes from its frontmatter.
 //
 // The same SKILL.md files drive three surfaces: the Claude Code plugin (as
 // skills), the desktop extension (as + menu prompts, mcp/lib/prompts.js), and
@@ -58,7 +62,7 @@ function uploadSkillText(text) {
   return { fm, text: `---\n${head}\n---\n${body}` };
 }
 
-async function packageSkills(outDir) {
+async function packageSkills(outDir, { prefix = '' } = {}) {
   const JSZip = require('jszip');
   fs.mkdirSync(outDir, { recursive: true });
   const written = [];
@@ -76,7 +80,7 @@ async function packageSkills(outDir) {
       const p = path.join(SKILLS, dir, f);
       if (fs.statSync(p).isFile()) zip.file(`${fm.name}/${f}`, fs.readFileSync(p));
     }
-    const file = path.join(outDir, `${fm.name}.zip`);
+    const file = path.join(outDir, `${prefix}${fm.name}.zip`);
     fs.writeFileSync(file, await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
     written.push(file);
   }
@@ -88,7 +92,10 @@ module.exports = { packageSkills, splitSkill, validate, uploadSkillText, SKILLS 
 if (require.main === module) {
   const i = process.argv.indexOf('--out');
   const out = i > 0 ? path.resolve(process.argv[i + 1]) : path.join(ROOT, 'dist', 'skills');
-  packageSkills(out)
+  const pi = process.argv.indexOf('--prefix');
+  const prefix = pi > 0 ? String(process.argv[pi + 1] || '') : '';
+  if (!/^[A-Za-z0-9._-]*$/.test(prefix)) { console.error('--prefix may use letters, digits, . _ - only'); process.exit(1); }
+  packageSkills(out, { prefix })
     .then(files => { files.forEach(f => console.log(path.relative(process.cwd(), f))); })
     .catch(e => { console.error(e.message); process.exit(1); });
 }
