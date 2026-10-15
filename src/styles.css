@@ -2686,36 +2686,25 @@ body.dragging-popover iframe { pointer-events: none !important; }
 
 /* ── Rubric editor modal ─────────────────────────────────────────────────── */
 
-#rubric-overlay {
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,0.3);
-  z-index: 400;
-}
-
-#rubric-modal {
-  position: fixed;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  background: var(--bg-surface);
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  width: 640px;
-  max-height: 85vh;
-  z-index: 500;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.3);
-}
-
-#rubric-header {
+/* Rubric editor (openRubricEditor — an openModal dialog). */
+.rubric-scope {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+  gap: 8px;
+  padding: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
-
+.rubric-banner {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
 #rubric-tabs {
   display: flex;
   gap: 0;
@@ -2738,12 +2727,11 @@ body.dragging-popover iframe { pointer-events: none !important; }
 .rubric-tab:hover { color: var(--text-primary); }
 .rubric-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
-#rubric-body { flex: 1; overflow: hidden; padding: 0; }
-
 #rubric-editor {
   width: 100%;
-  height: 100%;
+  height: 52vh;
   min-height: 300px;
+  box-sizing: border-box;
   background: var(--bg-base);
   border: none;
   color: var(--text-primary);
@@ -2755,8 +2743,6 @@ body.dragging-popover iframe { pointer-events: none !important; }
   resize: none;
   display: block;
 }
-
-/* #rubric-footer styling now provided by the global .modal-footer class. */
 
 /* ── Import/Merge modal ─────────────────────────────────────────────────── */
 

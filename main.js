@@ -460,6 +460,7 @@ function buildMenu() {
         { label: 'Component Library…',      click: send('menu-design-pattern-library') },
         { type: 'separator' },
         { label: 'AI Suggest for Unreviewed…',   click: send('menu-suggest-unreviewed') },
+        { label: 'Rubrics…',                     click: send('menu-rubrics') },
         { label: 'Run Rubric on filtered rows…', click: send('menu-rubric-batch') },
         { label: 'Refresh GA KKE',               click: send('menu-ga-kke-refresh') },
         { label: 'Recompute Suggested KKE',      click: send('menu-suggested-kke-recompute') }
@@ -3006,65 +3007,16 @@ function getDefaultRubricDir() {
   return path.join(userDataPath, 'rubrics');
 }
 
+// Rubric parsing lives in mcp/lib/rubrics.js, shared with the MCP server so the
+// app's assessment and a Claude session reading the same rubric agree on it.
+// Required lazily from the bundled mcp/ folder (an extraResource, outside asar).
+function rubricsLib() {
+  return require(path.join(mcpPluginDir(), 'lib', 'rubrics.js'));
+}
+
 function parseRubricFile(filePath) {
-  try {
-    const content = fs.readFileSync(filePath, 'utf8');
-    const fieldRules = [];
-    const contentRules = [];
-    let section = null;
-
-    for (const line of content.split('\n')) {
-      const trimmed = line.trim();
-      if (/^##\s+field\s+rules/i.test(trimmed)) { section = 'field'; continue; }
-      if (/^##\s+content\s+rules/i.test(trimmed)) { section = 'content'; continue; }
-      if (/^#\s+/.test(trimmed)) continue; // top-level heading
-
-      if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-        const ruleText = trimmed.slice(2).trim();
-        if (!ruleText) continue;
-        if (section === 'field') {
-          fieldRules.push(parseFieldRule(ruleText));
-        } else if (section === 'content') {
-          contentRules.push(ruleText);
-        }
-      }
-    }
-    return { fieldRules, contentRules };
-  } catch (e) {
-    return { fieldRules: [], contentRules: [] };
-  }
-}
-
-function parseFieldRule(text) {
-  // Compound: "Field >= X and Field < Y"
-  const andParts = text.split(/\s+and\s+/i);
-  if (andParts.length > 1) {
-    return { type: 'compound', conditions: andParts.map(parseSingleCondition), raw: text };
-  }
-  return { type: 'single', ...parseSingleCondition(text), raw: text };
-}
-
-function parseSingleCondition(text) {
-  // Patterns: "Field is Value", "Field is not Value", "Field >= N", "Field > N", etc.
-  const ops = [
-    { pattern: /^(.+?)\s+is not empty$/i,      op: 'is_not_empty', noVal: true },
-    { pattern: /^(.+?)\s+is empty$/i,           op: 'is_empty', noVal: true },
-    { pattern: /^(.+?)\s+is not\s+(.+)$/i,      op: 'is_not' },
-    { pattern: /^(.+?)\s+is\s+(.+)$/i,          op: 'is' },
-    { pattern: /^(.+?)\s+not contains\s+(.+)$/i, op: 'not_contains' },
-    { pattern: /^(.+?)\s+contains\s+(.+)$/i,    op: 'contains' },
-    { pattern: /^(.+?)\s+starts with\s+(.+)$/i, op: 'starts_with' },
-    { pattern: /^(.+?)\s+ends with\s+(.+)$/i,   op: 'ends_with' },
-    { pattern: /^(.+?)\s*>=\s*(.+)$/,           op: 'gte' },
-    { pattern: /^(.+?)\s*<=\s*(.+)$/,           op: 'lte' },
-    { pattern: /^(.+?)\s*>\s*(.+)$/,            op: 'gt' },
-    { pattern: /^(.+?)\s*<\s*(.+)$/,            op: 'lt' },
-  ];
-  for (const { pattern, op, noVal } of ops) {
-    const m = text.match(pattern);
-    if (m) return { field: m[1].trim(), op, value: noVal ? '' : m[2].trim() };
-  }
-  return { field: text, op: 'truthy', value: '' };
+  try { return rubricsLib().parseRubricText(fs.readFileSync(filePath, 'utf8')); }
+  catch (e) { return { fieldRules: [], contentRules: [], patterns: [] }; }
 }
 
 function evaluateFieldRule(rule, row) {
@@ -3465,17 +3417,52 @@ function evaluateComputedColumns(definitions, rows, headers) {
 }
 
 function loadAllRubrics(rubricDir) {
-  const statuses = ['keep', 'kill', 'evolve', 'exclude'];
   const rubrics = {};
-  for (const status of statuses) {
+  for (const status of rubricsLib().PAGE_LEVEL_STATUSES) {
     const fp = path.join(rubricDir, `${status}.md`);
-    if (fs.existsSync(fp)) {
-      rubrics[status] = parseRubricFile(fp);
-    } else {
-      rubrics[status] = { fieldRules: [], contentRules: [] };
-    }
+    rubrics[status] = fs.existsSync(fp) ? parseRubricFile(fp) : { fieldRules: [], contentRules: [], patterns: [] };
   }
   return rubrics;
+}
+
+/** The personal rubric library: one Markdown file per decision in the rubric folder. */
+function rubricLibraryDir() {
+  const prefs = loadPrefs();
+  return prefs.rubricDir || getDefaultRubricDir();
+}
+
+function readRubricLibrary() {
+  const dir = rubricLibraryDir();
+  const files = {};
+  for (const status of rubricsLib().RUBRIC_STATUSES) {
+    const fp = path.join(dir, `${status}.md`);
+    try { files[status] = fs.existsSync(fp) ? fs.readFileSync(fp, 'utf8') : ''; } catch (_) { files[status] = ''; }
+  }
+  return { dir, files };
+}
+
+/** True when the renderer sent project rubrics with any text in them. */
+function hasProjectRubrics(texts) {
+  return !!texts && typeof texts === 'object' && Object.values(texts).some(t => String(t || '').trim());
+}
+
+/**
+ * The rubrics the per-page assessment uses: the open project's own when it has
+ * any (they travel with the file, so every auditor applies the same ones),
+ * otherwise the personal library, as before projects carried rubrics.
+ */
+function resolvePageLevelRubrics(texts) {
+  if (hasProjectRubrics(texts)) {
+    return { rubrics: rubricsLib().parseRubricSet(texts, rubricsLib().PAGE_LEVEL_STATUSES), source: 'project' };
+  }
+  const prefs = loadPrefs();
+  let dir = prefs.rubricDir || getDefaultRubricDir();
+  if (currentFilePath) {
+    const perFile = prefs.fileRubricDirs?.[path.basename(currentFilePath)];
+    if (perFile && fs.existsSync(perFile)) dir = perFile;
+  }
+  if (!fs.existsSync(dir)) return { rubrics: {}, dir, source: 'none' };
+  return { rubrics: loadAllRubrics(dir), dir, source: 'library' };
 }
 
 function assessRow(row, rubrics) {
@@ -3528,17 +3515,11 @@ ipcMain.handle('pick-rubric-dir', async () => {
   return null;
 });
 
-ipcMain.handle('load-rubrics', () => {
-  const prefs = loadPrefs();
-  // Per-file rubric dir override
-  let dir = prefs.rubricDir || getDefaultRubricDir();
-  if (currentFilePath) {
-    const fileName = path.basename(currentFilePath);
-    const perFile = prefs.fileRubricDirs?.[fileName];
-    if (perFile && fs.existsSync(perFile)) dir = perFile;
-  }
-  if (!fs.existsSync(dir)) return { rubrics: {}, dir };
-  return { rubrics: loadAllRubrics(dir), dir };
+ipcMain.handle('load-rubrics', (_e, { texts } = {}) => resolvePageLevelRubrics(texts));
+
+ipcMain.handle('read-rubric-library', () => {
+  try { return { success: true, ...readRubricLibrary() }; }
+  catch (e) { return { success: false, error: e.message, dir: rubricLibraryDir(), files: {} }; }
 });
 
 ipcMain.handle('set-file-rubric-dir', async (event, { rubricDir }) => {
@@ -3579,11 +3560,9 @@ ipcMain.handle('write-rubric-file', async (event, { status, content }) => {
   }
 });
 
-ipcMain.handle('assess-row', (event, { row }) => {
-  const prefs = loadPrefs();
-  const dir = prefs.rubricDir || getDefaultRubricDir();
-  if (!fs.existsSync(dir)) return { error: 'Rubric directory not found' };
-  const rubrics = loadAllRubrics(dir);
+ipcMain.handle('assess-row', (event, { row, texts }) => {
+  const { rubrics, source } = resolvePageLevelRubrics(texts);
+  if (source === 'none') return { error: 'Rubric directory not found' };
   return assessRow(row, rubrics);
 });
 

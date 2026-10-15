@@ -6,6 +6,9 @@ This folder contains rubric definitions for the KKE content audit tool. Each `.m
 - `kill.md` — rules for pages that should be removed
 - `evolve.md` — rules for pages that need improvement
 - `exclude.md` — rules for pages outside the scope of the audit
+- `consolidate.md` — patterns for pages whose content should merge into another page
+
+This folder is your **personal library**. A project carries its own copy of its rubrics (Project → Rubrics… → **Copy from my library**), so everyone auditing it — and Claude, through the Transmission extension — applies the same ones. A project with no rubrics of its own uses this folder for the per-page assessment.
 
 You can point the app at a different rubrics folder in **Settings > Rubrics folder**.
 
@@ -142,3 +145,34 @@ Open your spreadsheet's header row to see the exact column names available for y
 - **Compound rules are useful for ranges.** E.g., redirect detection: `Status Code >= 300 and Status Code < 400`.
 - **Rules are evaluated per-status.** The status with the most passing field rules is suggested.
 - **All comparisons are case-insensitive** for text operators (`is`, `contains`, `starts with`, `ends with`).
+
+
+---
+
+## Patterns (whole-audit rules)
+
+Field and content rules judge one page at a time. A **pattern** describes a situation that only shows up across pages — a thin page under a parent that could absorb it, a cluster of near-identical siblings — and is what a Claude session reads when it reviews the whole audit. Patterns go under a `## Patterns` heading, one `###` block each:
+
+```markdown
+## Patterns
+
+### Thin child page → consolidate into its parent
+- Applies when: Word Count < 300
+- Applies when: @url_parent is not empty
+- Unless: Page_Type is Form
+- Judgment: the main content is roughly 1–3 paragraphs and would read naturally as a section of the parent
+- Then: Consolidate → parent
+- Cite: paragraph count, the parent's URL, why it fits
+- Ask instead: the page serves a different audience from its parent
+```
+
+| Label | Meaning |
+|-------|---------|
+| `Applies when` | A condition in the field-rule syntax. Repeat it; **all** must hold. These are what narrow thousands of pages to the few worth reading, so make them do as much as they can. |
+| `Unless` | An exception in the same syntax. Repeat it; **any** match excludes the page. |
+| `Judgment` | What a person (or Claude, reading the page) has to decide. Keep everything a column can answer out of here. |
+| `Then` | The decision, and for Consolidate its target: `Consolidate → parent`. |
+| `Cite` | The evidence to show with each proposal. |
+| `Ask instead` | When to raise a question rather than propose a change. |
+
+`@url_parent` is the nearest page above this one in the current site's URL structure that is itself in the inventory. Any column in the crawl, any audit column, and the virtual fields the Transmission extension offers (`@effective_kke`, `@content_kind`, `@path_1`, …) can be used in a condition. `>=` and `<=` work in the app's own assessment but have no equivalent in the sidebar's field filters, so prefer `>` and `<` in patterns.
