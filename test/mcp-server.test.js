@@ -71,7 +71,7 @@ const ROWS = [
   row({ Address: 'https://www.alpha.edu/gone', 'Status Code': '404', KKE_Recommendation: 'Kill', Source_Site: 'Alpha', Redirect_Destination: '404', _RedirectSource: 'manual' }),
   row({ Address: 'https://www.alpha.edu/broken', 'Title 1': 'Broken', 'Status Code': '500', Source_Site: 'Alpha' }),
   row({ Address: 'https://www.alpha.edu/about', 'Title 1': 'About', 'Status Code': '200', Source_Site: 'Alpha' }),
-  row({ Address: 'https://www.alpha.edu/snippet', 'Title 1': 'Footer snippet', 'Status Code': '200', KKE_Recommendation: 'Keep', Source_Site: 'Alpha', Content_Nature: 'Content Object' }),
+  row({ Address: 'https://www.alpha.edu/snippet', 'Title 1': 'Footer snippet', 'Status Code': '200', KKE_Recommendation: 'Keep', Source_Site: 'Alpha', Content_Nature: 'Fragment' }),
   row({ Address: 'https://legacy.alpha.edu/page', 'Title 1': 'Legacy', 'Status Code': '200', KKE_Recommendation: 'Keep', Source_Site: 'Legacy' })
 ];
 
@@ -617,7 +617,7 @@ describe('stdio server', () => {
     s.notify('notifications/initialized');
 
     const tools = (await s.request('tools/list')).result.tools;
-    assert.deepEqual(tools.map(t => t.name), ['open_project', 'project_overview', 'describe_columns', 'aggregate', 'query_rows', 'get_row', 'get_sitemap', 'get_redirects', 'get_changelog', 'propose_changes', 'list_proposals', 'get_libraries']);
+    assert.deepEqual(tools.map(t => t.name), ['open_project', 'project_overview', 'describe_columns', 'aggregate', 'query_rows', 'get_row', 'get_sitemap', 'get_redirects', 'get_changelog', 'propose_changes', 'list_proposals', 'get_libraries', 'get_rubrics']);
     assert.ok(tools.every(t => t.inputSchema.type === 'object'));
     assert.ok(tools.filter(t => t.name !== 'propose_changes').every(t => t.annotations.readOnlyHint === true), 'every tool but propose_changes is read-only');
     assert.equal(tools.find(t => t.name === 'propose_changes').annotations.readOnlyHint, false);

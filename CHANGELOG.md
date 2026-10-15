@@ -4,6 +4,19 @@ All notable changes to Transmission are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 major-version codenames drawn from The Smiths.
 
+## [Unreleased]
+
+### Added
+
+- **Rubrics now travel with the project.** **Project → Rubrics…** edits the rubrics stored inside the project file, so everyone auditing it applies the same ones — previously each auditor's rubrics were a folder on their own machine. **Copy from my library** starts a project from your personal rubrics, and **Save to my library** sends an improvement back. A project with no rubrics of its own keeps using your library, so nothing changes until you copy them in.
+- **Patterns: rubric rules that look across pages.** A new `## Patterns` section describes situations a single page can't reveal — a thin page whose content belongs on its parent, near-identical siblings — as *applies when · unless · judgment · then · cite · ask instead*. A new **Consolidate** rubric ships with two. Patterns are what Claude reads when it reviews the whole audit; the per-page Assess button still uses field and content rules.
+- **Transmission extension: `get_rubrics` and `@url_parent`.** Claude can read the project's rubrics, with each pattern's conditions ready to run as filters, and `@url_parent` gives every page the nearest page above it in the current site that's also in the audit.
+
+### Fixed
+
+- **The Transmission extension counted the wrong pages as fragments.** It still treated `Content Object` as "no URL of its own" after the app split that value into Record and Fragment, so record pages (news, events, profiles) were left out of its placement counts.
+- **A heading after Content Rules no longer swallows the bullets below it** in a rubric file; they used to be read as more content rules.
+
 ## [2.21.1] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Fixed

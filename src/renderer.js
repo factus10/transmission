@@ -600,6 +600,7 @@ function bindIPCListeners() {
       }
     });
   }
+  if (window.electronAPI.onMenuRubrics) window.electronAPI.onMenuRubrics(() => openRubricEditor('project'));
   if (window.electronAPI.onMenuRubricBatch) {
     window.electronAPI.onMenuRubricBatch(() => runBatchAssessment());
   }
@@ -8655,7 +8656,7 @@ async function runAssessment() {
   els.btnAssessAccept.classList.add('hidden');
   els.btnAssessLlm.classList.add('hidden');
 
-  const result = await window.electronAPI.assessRow({ row });
+  const result = await window.electronAPI.assessRow({ row, texts: projectRubricTexts() });
   els.assessLoading.classList.add('hidden');
 
   if (result.error) {
@@ -8742,7 +8743,7 @@ async function runLLMAssessment() {
   els.assessLlmSection.classList.remove('hidden');
   els.assessLlmResults.innerHTML = '<span style="color:var(--text-muted)">Waiting for AI…</span>';
 
-  const { rubrics } = await window.electronAPI.loadRubrics();
+  const { rubrics } = await window.electronAPI.loadRubrics({ texts: projectRubricTexts() });
   const result = await window.electronAPI.assessRowLLM({
     row, rubrics, apiKey: state.claudeApiKey
   });
@@ -8821,7 +8822,7 @@ async function runBatchAssessment() {
   closeAssessPopover();
 
   // Show progress in toast
-  const { rubrics } = await window.electronAPI.loadRubrics();
+  const { rubrics } = await window.electronAPI.loadRubrics({ texts: projectRubricTexts() });
   const statusMap = { keep: 'Keep', kill: 'Kill', evolve: 'Evolve', exclude: 'Exclude' };
   let done = 0;
   let errors = 0;
@@ -8834,7 +8835,7 @@ async function runBatchAssessment() {
 
       try {
         // Field-rule assessment first
-        const fieldResult = await window.electronAPI.assessRow({ row });
+        const fieldResult = await window.electronAPI.assessRow({ row, texts: projectRubricTexts() });
         row['_AssessedAt'] = new Date().toISOString();
 
         // If API key, also do LLM assessment
@@ -8897,7 +8898,7 @@ async function runSuggestForUnreviewed() {
   const onAbort = (e) => { if (e.key === 'Escape') _batchAssessAbort = true; };
   document.addEventListener('keydown', onAbort);
 
-  const { rubrics } = await window.electronAPI.loadRubrics();
+  const { rubrics } = await window.electronAPI.loadRubrics({ texts: projectRubricTexts() });
   const statusMap = { keep: 'Keep', kill: 'Kill', evolve: 'Evolve', exclude: 'Exclude' };
   let done = 0, errors = 0;
   try {
@@ -8906,7 +8907,7 @@ async function runSuggestForUnreviewed() {
       done++;
       showToast(`Suggesting ${done}/${targets.length}…  (Esc to cancel)`);
       try {
-        const fieldResult = await window.electronAPI.assessRow({ row });
+        const fieldResult = await window.electronAPI.assessRow({ row, texts: projectRubricTexts() });
         row['_AssessedAt'] = new Date().toISOString();
         const llmResult = await window.electronAPI.assessRowLLM({ row, rubrics, apiKey: state.claudeApiKey });
         const rec = llmResult.recommendation
@@ -25336,62 +25337,189 @@ async function checkPageLinks() {
 }
 
 // ─── Rubric editor ────────────────────────────────────────────────────────────
+// Two places a rubric can live. The PROJECT's rubrics travel inside the file
+// (projectSettings.rubrics = {status: markdown}), so everyone auditing it — and
+// a Claude session reading it through the MCP server — applies the same ones.
+// The personal LIBRARY is a folder of Markdown files on this machine, the
+// starting point you copy into each project. A project with no rubrics of its
+// own falls back to the library for the per-page assessment, exactly as before
+// projects carried rubrics, so nothing changes until someone copies them in.
 
-let _rubricCurrentStatus = 'keep';
+const RUBRIC_TABS = [
+  ['keep', 'Keep'], ['kill', 'Kill'], ['evolve', 'Evolve'], ['exclude', 'Exclude'], ['consolidate', 'Consolidate']
+];
+
+/** The open project's rubric texts, or null when it has none of its own. */
+function projectRubricTexts() {
+  const r = state.projectSettings && state.projectSettings.rubrics;
+  if (!r || typeof r !== 'object') return null;
+  return Object.values(r).some(t => String(t || '').trim()) ? r : null;
+}
+
+function rubricTemplate(status) {
+  const title = status.charAt(0).toUpperCase() + status.slice(1);
+  if (status === 'consolidate') {
+    return `# ${title}\n\n## Patterns\n\n### Thin child page → consolidate into parent\n` +
+      `- Applies when: Word Count < 300\n- Applies when: @url_parent is not empty\n` +
+      `- Unless: Page_Type is Form\n` +
+      `- Judgment: the body is roughly 1–3 paragraphs and would read naturally as a section of the parent\n` +
+      `- Then: Consolidate → parent\n- Cite: paragraph count, parent URL, why it fits the parent\n` +
+      `- Ask instead: the page serves a different audience from its parent\n`;
+  }
+  return `# ${title}\n\n## Field Rules\n- \n\n## Content Rules\n- \n`;
+}
 
 function setupRubricEditor() {
   $('btn-edit-rubrics').addEventListener('click', () => {
     closeSettingsPopover();
-    openRubricEditor();
+    openRubricEditor('library');
   });
-  $('btn-rubric-close').addEventListener('click', closeRubricEditor);
-  $('rubric-overlay').addEventListener('click', closeRubricEditor);
-
-  // Tab switching
-  document.querySelectorAll('.rubric-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.rubric-tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      _rubricCurrentStatus = tab.dataset.status;
-      loadRubricContent(_rubricCurrentStatus);
-    });
-  });
-
-  $('btn-rubric-save').addEventListener('click', saveRubricContent);
 }
 
-async function openRubricEditor() {
-  _rubricCurrentStatus = 'keep';
-  document.querySelectorAll('.rubric-tab').forEach(t => {
-    t.classList.toggle('active', t.dataset.status === 'keep');
+async function openRubricEditor(initialScope) {
+  const hasFile = !!state.filePath;
+  let scope = initialScope || (hasFile ? 'project' : 'library');
+  if (scope === 'project' && !hasFile) scope = 'library';
+  let status = 'keep';
+  let lib = await window.electronAPI.readRubricLibrary();
+  // Working copies, so switching tabs or scope never loses an unsaved edit.
+  const drafts = { project: { ...(state.projectSettings.rubrics || {}) }, library: { ...(lib.files || {}) } };
+  const dirty = { project: new Set(), library: new Set() };   // statuses edited since the last save
+
+  const api = openModal({
+    title: 'Rubrics',
+    width: 760,
+    body: `
+      <div class="rubric-scope">
+        <span>Editing:</span>
+        <select id="_rb-scope" class="setting-input" style="width:auto;">
+          <option value="project" ${hasFile ? '' : 'disabled'}>This project</option>
+          <option value="library">My library</option>
+        </select>
+        <span id="_rb-where" style="flex:1;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+      </div>
+      <div id="_rb-banner" class="rubric-banner hidden"></div>
+      <div id="rubric-tabs">${RUBRIC_TABS.map(([k, l]) => `<button class="rubric-tab" data-status="${k}">${l}</button>`).join('')}</div>
+      <textarea id="rubric-editor" spellcheck="false"></textarea>
+      <p style="font-size:11px;color:var(--text-muted);margin:8px 0 0;">
+        <strong>Field Rules</strong> and <strong>Content Rules</strong> drive the per-page assessment.
+        <strong>Patterns</strong> (Applies when · Unless · Judgment · Then · Cite · Ask instead) are read by Claude
+        when it looks across the whole audit — the only place Consolidate can be described, since it needs a target.
+      </p>`,
+    buttons: [
+      { label: 'Copy from my library…', variant: 'ghost', closeOnClick: false, onClick: () => copyLibraryIn() },
+      { label: 'Save to my library', variant: 'ghost', closeOnClick: false, onClick: () => saveProjectToLibrary() },
+      { label: 'Close', variant: 'ghost', closeOnClick: false, onClick: () => closeIfSaved() },
+      { label: 'Save', variant: 'primary', primary: true, closeOnClick: false, onClick: () => save() }
+    ]
   });
-  await loadRubricContent('keep');
-  $('rubric-overlay').classList.remove('hidden');
-  $('rubric-modal').classList.remove('hidden');
-}
+  const $b = sel => api.body.querySelector(sel);
+  const editor = $b('#rubric-editor');
+  const scopeSel = $b('#_rb-scope');
+  scopeSel.value = scope;
+  const footerBtns = Array.from(api.footer.querySelectorAll('button'));
+  const [btnCopyIn, btnToLib] = footerBtns;
+  // Library actions are utilities: left side, apart from Close / Save (UI_STANDARDS footer rule).
+  const spacer = document.createElement('span');
+  spacer.style.flex = '1';
+  footerBtns[2].before(spacer);
 
-async function loadRubricContent(status) {
-  $('rubric-status').textContent = 'Loading…';
-  const result = await window.electronAPI.readRubricFile({ status });
-  $('rubric-editor').value = result.content || `# ${status.charAt(0).toUpperCase() + status.slice(1)}\n\n## Field Rules\n- \n\n## Content Rules\n- `;
-  $('rubric-status').textContent = result.error || '';
-}
-
-async function saveRubricContent() {
-  const content = $('rubric-editor').value;
-  const result = await window.electronAPI.writeRubricFile({ status: _rubricCurrentStatus, content });
-  if (result.success) {
-    $('rubric-status').textContent = 'Saved';
-    showToast(`Rubric "${_rubricCurrentStatus}" saved`, 'success');
-  } else {
-    $('rubric-status').textContent = result.error || 'Save failed';
-    showToast('Save failed: ' + (result.error || 'unknown error'), 'error');
+  function render() {
+    const text = drafts[scope][status];
+    editor.value = String(text || '').trim() ? text : rubricTemplate(status);
+    api.body.querySelectorAll('.rubric-tab').forEach(t => t.classList.toggle('active', t.dataset.status === status));
+    $b('#_rb-where').textContent = scope === 'library' ? (lib.dir || '') : (state.filePath ? state.filePath.split('/').pop() : '');
+    btnCopyIn.style.display = scope === 'project' ? '' : 'none';
+    btnToLib.style.display = scope === 'project' ? '' : 'none';
+    const banner = $b('#_rb-banner');
+    const own = Object.values(drafts.project).some(t => String(t || '').trim());
+    if (scope === 'project' && !own) {
+      banner.innerHTML = 'This project has no rubrics of its own yet, so assessments use <strong>your library</strong>, which other auditors don\'t have. ' +
+        '<strong>Copy from my library</strong> to start from it — the copy travels with the project file.';
+      banner.classList.remove('hidden');
+    } else if (scope === 'library') {
+      banner.innerHTML = 'Your personal library — the starting point you copy into projects. Changes here don\'t affect any project that already has its own rubrics.';
+      banner.classList.remove('hidden');
+    } else banner.classList.add('hidden');
   }
-}
 
-function closeRubricEditor() {
-  $('rubric-overlay').classList.add('hidden');
-  $('rubric-modal').classList.add('hidden');
+  // Keep the draft in step with the textarea. A template nobody touched isn't saved.
+  editor.addEventListener('input', () => { drafts[scope][status] = editor.value; dirty[scope].add(status); });
+
+  api.body.querySelectorAll('.rubric-tab').forEach(tab => tab.addEventListener('click', () => { status = tab.dataset.status; render(); }));
+  scopeSel.addEventListener('change', () => { scope = scopeSel.value; render(); });
+
+  async function copyLibraryIn() {
+    lib = await window.electronAPI.readRubricLibrary();
+    const files = lib.files || {};
+    if (!Object.values(files).some(t => String(t || '').trim())) { showToast('Your rubric library is empty', 'error'); return; }
+    const own = Object.values(drafts.project).some(t => String(t || '').trim());
+    if (own) {
+      const ok = await confirmDialog({
+        title: 'Replace this project\'s rubrics?',
+        message: `This replaces every rubric in this project with the ones in your library (${lib.dir}).`,
+        confirmLabel: 'Replace', danger: true
+      });
+      if (!ok) return;
+    }
+    drafts.project = { ...files };
+    drafts.library = { ...files };
+    dirty.library.clear();
+    RUBRIC_TABS.forEach(([k]) => dirty.project.add(k));
+    render();
+    showToast('Copied from your library — Save to keep it in the project', 'info');
+  }
+
+  async function saveProjectToLibrary() {
+    const ok = await confirmDialog({
+      title: 'Save to your library?',
+      message: `This overwrites the ${RUBRIC_TABS.find(t => t[0] === status)[1]} rubric in your library (${lib.dir}) with this project's version.`,
+      confirmLabel: 'Overwrite'
+    });
+    if (!ok) return;
+    const r = await window.electronAPI.writeRubricFile({ status, content: editor.value });
+    if (r.success) { drafts.library[status] = editor.value; showToast('Saved to your library', 'success'); }
+    else showToast('Save failed: ' + (r.error || 'unknown error'), 'error');
+  }
+
+  async function save() {
+    if (scope === 'project') {
+      const next = {};
+      for (const [k] of RUBRIC_TABS) {
+        const t = String(drafts.project[k] || '');
+        if (t.trim() && t.trim() !== rubricTemplate(k).trim()) next[k] = t;
+      }
+      state.projectSettings.rubrics = next;
+      state.projectSettings.rubricsUpdatedAt = new Date().toISOString();
+      dirty.project.clear();
+      setDirty(true);
+      showToast(Object.keys(next).length ? 'Rubrics saved to this project' : 'This project now uses your library', 'success');
+    } else {
+      const failed = [];
+      for (const k of [...dirty.library]) {
+        const r = await window.electronAPI.writeRubricFile({ status: k, content: drafts.library[k] || '' });
+        if (r.success) dirty.library.delete(k); else failed.push(`${k}: ${r.error || 'unknown error'}`);
+      }
+      if (failed.length) showToast('Save failed — ' + failed.join('; '), 'error');
+      else showToast('Saved to your library', 'success');
+    }
+  }
+
+  async function closeIfSaved() {
+    const unsaved = [...dirty.project].map(k => `this project's ${k}`).concat([...dirty.library].map(k => `your library's ${k}`));
+    if (unsaved.length) {
+      const ok = await confirmDialog({
+        title: 'Discard unsaved changes?',
+        message: `You have unsaved edits to ${unsaved.join(', ')}.`,
+        confirmLabel: 'Discard', danger: true
+      });
+      if (!ok) return;
+    }
+    api.close();
+  }
+
+  render();
+  return api;
 }
 
 // ─── Undo/Redo (Phase 6) ──────────────────────────────────────────────────────
