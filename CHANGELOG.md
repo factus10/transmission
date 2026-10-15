@@ -4,7 +4,7 @@ All notable changes to Transmission are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 major-version codenames drawn from The Smiths.
 
-## [Unreleased]
+## [2.22.0] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Added
 
