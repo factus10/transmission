@@ -117,6 +117,19 @@ if [ -n "$STRAY" ]; then
 fi
 ok "dist/ holds only $VERSION artifacts"
 
+# The audit skills, as zips for Claude's Settings → Skills upload, built fresh
+# from mcp/skills so a release always carries the skills of the code it ships.
+# Rebuilt into a cleared folder: a skill renamed or removed since the last
+# release must not linger as an asset.
+SKILLS_DIR="$PROJECT_DIR/dist/skills"
+rm -rf "$SKILLS_DIR"
+node "$PROJECT_DIR/scripts/package-skills.js" --out "$SKILLS_DIR" --prefix transmission-skill- >/dev/null \
+  || die "packaging the skills failed (node scripts/package-skills.js)"
+SKILL_ZIPS=()
+for f in "$SKILLS_DIR"/transmission-skill-*.zip; do [ -f "$f" ] && SKILL_ZIPS+=("$f"); done
+[ ${#SKILL_ZIPS[@]} -gt 0 ] || die "no skill zips were built"
+ok "${#SKILL_ZIPS[@]} skill zips built"
+
 # ── The binary is actually shippable ────────────────────────────────────────
 say "Verifying the signed artifacts"
 
@@ -164,6 +177,12 @@ if [ -z "$NOTES_FILE" ]; then
     f {print}
   ' "$PROJECT_DIR/CHANGELOG.md" > "$NOTES_FILE"
   [ -s "$NOTES_FILE" ] || die "extracted empty release notes for $VERSION"
+  cat >> "$NOTES_FILE" <<'EOS'
+
+---
+
+**Skills for Claude.** The `transmission-skill-*.zip` files are the audit playbooks as Claude skills. Upload each in **Claude → Settings → Capabilities → Skills → Upload skill** and the Claude desktop app uses them on its own when a question calls for one. They need the Transmission extension (✦ → Open in Claude).
+EOS
   ok "release notes extracted from CHANGELOG.md ($(wc -c < "$NOTES_FILE" | tr -d ' ') bytes)"
 else
   [ -f "$NOTES_FILE" ] || die "--notes-file $NOTES_FILE not found"
@@ -189,7 +208,7 @@ publish_to() {
 
   # One at a time: a combined upload that dies partway leaves a drafted release
   # with an incomplete asset set, and gh reports nothing useful about which.
-  for f in "$DMG" "$ZIP"; do
+  for f in "$DMG" "$ZIP" "${SKILL_ZIPS[@]}"; do
     printf '   uploading %s ...\n' "$(basename "$f")"
     run gh release upload "$TAG" "$f" --repo "$repo" --clobber
   done
@@ -198,7 +217,7 @@ publish_to() {
 
   # Byte-for-byte against the local file, because a truncated upload still
   # reports state=uploaded for whatever made it across.
-  node - "$repo" "$TAG" "$DMG" "$ZIP" <<'NODE'
+  node - "$repo" "$TAG" "$DMG" "$ZIP" "${SKILL_ZIPS[@]}" <<'NODE'
 const { execSync } = require('child_process');
 const fs = require('fs');
 const [repo, tag, ...files] = process.argv.slice(2);
