@@ -37,7 +37,7 @@ const PUBLISH = [
   { src: 'QUICK_START.md', section: 'Start here', blurb: 'The five-minute tour of the core loop.' },
   { src: 'RUNNING_AN_AUDIT.md', section: 'Start here', blurb: 'The opinionated engagement sequence — what to do in what order, and why the order matters.' },
   { src: 'USER_GUIDE.md', section: 'Start here', blurb: 'The full manual, feature by feature.' },
-  { src: 'CONTENT_AUDIT_FRAMEWORK.md', section: 'Background', blurb: 'The thinking behind Keep / Kill / Evolve, and where the framework strains.' },
+  { src: 'CONTENT_AUDIT_FRAMEWORK.md', section: 'Background', blurb: 'The thinking behind Migrate / Revise / Archive (formerly Keep / Kill / Evolve), and where the framework strains.' },
 ];
 for (const f of fs.readdirSync(path.join(DOCS, 'walkthroughs')).filter(f => f.endsWith('.md')).sort()) {
   PUBLISH.push({ src: `walkthroughs/${f}`, section: 'Walkthroughs' });
