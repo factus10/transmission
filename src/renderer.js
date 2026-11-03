@@ -77,8 +77,8 @@ const state = {
   navSortIDFormat: { segWidth: 4, maxLevels: 9 },  // derived from existing data
 
   // Column mapping (audit columns may have non-standard names)
-  columnMap: { kke: 'KKE_Recommendation', tags: 'Tags', notes: 'Notes', group: 'Group', primaryTag: 'Primary Tag',
-               smeDecision: 'SME_Decision', smeNotes: 'SME_Notes', contentOwner: 'Content_Owner', finalKke: 'Final_KKE' },
+  columnMap: { kke: 'MRA_Recommendation', tags: 'Tags', notes: 'Notes', group: 'Group', primaryTag: 'Primary Tag',
+               smeDecision: 'SME_Decision', smeNotes: 'SME_Notes', contentOwner: 'Content_Owner', finalKke: 'Final_MRA' },
 
   // Filters
   kkeFilter:     [],        // current KKE status filter values (array)
@@ -121,8 +121,8 @@ let _crossSiteDupSet = new Set(); // origIndex values duplicated on ANOTHER sour
 let _urlVariantSet = new Set();   // origIndex values whose rel=canonical points elsewhere
 let _variantTargetMissingSet = new Set(); // ...and whose canonical target wasn't crawled
 
-// All KKE states (built-in + custom)
-const BUILTIN_KKE = ['Keep', 'Kill', 'Evolve', 'Consolidate', 'Exclude'];
+// All KKE states (built-in + custom).
+const BUILTIN_KKE = ['Migrate', 'Revise', 'Archive', 'Consolidate', 'Exclude'];
 const _sessionChangeLog = [];
 
 function logChange(origIndex, field, oldValue, newValue) {
@@ -168,21 +168,56 @@ function finalKkeCol()     { return state.columnMap.finalKke; }
  *  Change: convention. The override value is never checked against the
  *  project's current KKE vocabulary (allKkeStates()); it's whatever text the
  *  SME wrote, known state or not. A bare value that just restates the row's
- *  own KKE_Recommendation (case-insensitive) counts as an implicit approval,
+ *  own MRA_Recommendation (case-insensitive) counts as an implicit approval,
  *  not an override — only an explicit "Change:" is unconditionally a change. */
 function parseSmeDecision(smeRaw, currentKke) {
   const sme = String(smeRaw || '').trim();
   if (!sme) return { reviewed: false, agree: false, changed: false, value: '' };
   if (/^(approve|accept)$/i.test(sme)) return { reviewed: true, agree: true, changed: false, value: '' };
+  // An SME working from a pre-rename worksheet writes Keep / Kill / Evolve; read
+  // those as the decisions they name ("Change: Kill" → Archive, and a bare
+  // "Keep" beside a Migrate recommendation is agreement, not a change).
+  const T = typeof window !== 'undefined' ? window.Terminology : null;
+  const toMra = v => T ? T.value(v, 'mra') : v;
   if (/^change:/i.test(sme)) {
-    const value = sme.replace(/^change:\s*/i, '').trim();
+    const value = toMra(sme.replace(/^change:\s*/i, '').trim());
     return { reviewed: true, agree: false, changed: !!value, value };
   }
-  const kke = String(currentKke || '').trim();
-  if (kke && sme.toLowerCase() === kke.toLowerCase()) {
+  const bare = toMra(sme);
+  const kke = toMra(String(currentKke || '').trim());
+  if (kke && bare.toLowerCase() === kke.toLowerCase()) {
     return { reviewed: true, agree: true, changed: false, value: '' };
   }
-  return { reviewed: true, agree: false, changed: true, value: sme };
+  return { reviewed: true, agree: false, changed: true, value: bare };
+}
+
+// Someone who added "Archive" or "Revise" as a custom state before the rename
+// now has two decisions with one name: every count, filter and report would
+// fold them together. Warn once per session; renaming is their call, since only
+// they know what the custom state meant.
+let _customStateCollisionWarned = false;
+async function maybeWarnCustomStateCollision() {
+  if (_customStateCollisionWarned) return;
+  const builtins = new Map(['Migrate', 'Revise', 'Archive'].map(b => [b.toLowerCase(), b]));
+  const labels = [
+    ...(state.customKkeStates || []),
+    ...((state.projectSettings && Array.isArray(state.projectSettings.customKkeStates)) ? state.projectSettings.customKkeStates : [])
+  ].map(s => String(s?.label || '').trim()).filter(l => builtins.has(l.toLowerCase()));
+  const clashes = [...new Set(labels)];
+  if (!clashes.length) return;
+  _customStateCollisionWarned = true;
+  const formerly = { migrate: 'Keep', revise: 'Evolve', archive: 'Kill' };
+  const list = clashes.map(l => `"${l}" (the built-in ${builtins.get(l.toLowerCase())} is what used to be ${formerly[l.toLowerCase()]})`).join(', ');
+  const open = await confirmDialog({
+    title: 'Custom decision state clashes with a built-in',
+    message: `You have a custom decision state named ${list}. It now shares its name with a built-in decision, so the two would be counted and filtered as one. Rename or remove the custom state in Project Settings → Decision states.`,
+    confirmLabel: 'Open Decision states',
+    cancelLabel: 'Later'
+  });
+  if (open) {
+    toggleProjectSettingsPopover();
+    switchProjectSettingsTab('kke-states');
+  }
 }
 
 // ─── Status code utilities ────────────────────────────────────────────────────
@@ -267,8 +302,8 @@ function defaultTriageAction(code) {
   const n = parseInt(code, 10);
   if (n >= 300 && n < 400) return 'kill-redirect';
   if (n === 404) return 'kill-404';
-  if (n >= 400 && n < 500) return 'kill';
-  if (n >= 500 && n < 600) return 'evolve';
+  if (n >= 400 && n < 500) return 'archive';
+  if (n >= 500 && n < 600) return 'revise';
   return 'skip';
 }
 
@@ -596,7 +631,7 @@ function bindIPCListeners() {
       const result = computeSuggestedKke();
       if (result) {
         const dis = result.disagreements > 0 ? ` · ${result.disagreements} disagreement${result.disagreements !== 1 ? 's' : ''}` : '';
-        showToast(`Suggested_KKE: ${result.computed} computed, ${result.blank} blank${dis}`, 'success');
+        showToast(`Suggested_MRA: ${result.computed} computed, ${result.blank} blank${dis}`, 'success');
       }
     });
   }
@@ -761,7 +796,7 @@ function bindStaticEvents() {
     const sel = $('final-kke-select');
     const old = state.editedRows[state.selectedIndex][finalKkeCol()] || '';
     const newVal = sel.value;
-    if (newVal === 'Kill' && old !== 'Kill') {
+    if (newVal === 'Archive' && old !== 'Archive') {
       const ok = await promptKillCleanup(state.selectedIndex);
       if (!ok) { sel.value = old; return; }
       renderMetaFields(state.editedRows[state.selectedIndex], state.selectedIndex);
@@ -849,9 +884,11 @@ function bindStaticEvents() {
     if (e.key === 'ArrowUp'   || e.key === 'k') { navigateRow(-1); return; }
     if (e.key === 'ArrowDown' || e.key === 'j') { navigateRow(+1); return; }
 
-    // KKE hotkeys: 1=Keep, 2=Kill, 3=Evolve, 4=Consolidate, 5=Exclude, 0=Clear
-    // Delegates to the KKE button click so all cleanup/picker logic runs.
-    const kkeMap = { '1': 'Keep', '2': 'Kill', '3': 'Evolve', '4': 'Consolidate', '5': 'Exclude' };
+    // Decision hotkeys: 1–5 = the built-in buttons in display order (MRA:
+    // Migrate, Revise, Archive; KKE: Keep, Kill, Evolve), then Consolidate,
+    // Exclude; 0 = Clear. Delegates to the button click so all cleanup/picker logic runs.
+    const kkeMap = {};
+    BUILTIN_KKE.forEach((v, i) => { kkeMap[String(i + 1)] = v; });
     if (kkeMap.hasOwnProperty(e.key)) {
       const btn = els.kkeButtons.querySelector(`.kke-btn[data-kke="${kkeMap[e.key]}"]`);
       if (btn) btn.click();
@@ -892,19 +929,19 @@ function bindStaticEvents() {
     }
 
     // Switching AWAY from Consolidate to another state — offer to clear the target.
-    // Not when a client's Final_KKE of Consolidate still stands: the target is
+    // Not when a client's Final_MRA of Consolidate still stands: the target is
     // live either way, and clearing it would orphan their decision.
     const finalStillConsolidates = String(row[finalKkeCol()] || '').trim() === 'Consolidate';
     if (current === 'Consolidate' && newVal !== 'Consolidate' && !finalStillConsolidates) {
       const target = String(row[CONSOLIDATE_COL] || '').trim() || consolidateTargetAddr(row);
       if (target) {
-        const clearIt = await confirmDialog({ title: 'Clear Consolidate target?', message: `This page has a Consolidate target:\n  ${target}\n\nClear it along with the KKE change?`, confirmLabel: 'Clear target' });
+        const clearIt = await confirmDialog({ title: 'Clear Consolidate target?', message: `This page has a Consolidate target:\n  ${target}\n\nClear it along with the MRA change?`, confirmLabel: 'Clear target' });
         if (clearIt) clearConsolidateTarget(state.selectedIndex);
       }
     }
 
     // When switching to Kill, offer to clear existing nav/redirect assignments
-    if (newVal === 'Kill' && current !== 'Kill') {
+    if (newVal === 'Archive' && current !== 'Archive') {
       const ok = await promptKillCleanup(state.selectedIndex);
       if (!ok) return;
       renderMetaFields(row, state.selectedIndex);
@@ -918,7 +955,7 @@ function bindStaticEvents() {
     refreshRowInList(state.selectedIndex);
     // Phase 1, Chunk C: refresh migration ghost suggestion (KKE drives the suggestion)
     populateMigrationFields(row);
-    if (newVal === 'Keep' || newVal === 'Evolve') await maybeWarnDuplicateDestination(state.selectedIndex);
+    if (newVal === 'Migrate' || newVal === 'Revise') await maybeWarnDuplicateDestination(state.selectedIndex);
     if (state.autoAdvance && newVal) navigateRow(+1);
   });
 
@@ -1084,11 +1121,11 @@ function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, she
     setDirty(true);
   }
 
-  // Phase 1, Chunk D: one-time migration of legacy GA_KKE_Recommendation → Suggested_KKE.
-  // If a file has GA recs populated but Suggested_KKE hasn't been computed yet, seed
-  // Suggested_KKE from the GA values so the new badge renders right away. Also pulls
+  // Phase 1, Chunk D: one-time migration of legacy GA_MRA_Recommendation → Suggested_MRA.
+  // If a file has GA recs populated but Suggested_MRA hasn't been computed yet, seed
+  // Suggested_MRA from the GA values so the new badge renders right away. Also pulls
   // in Rubric results from _AssessmentResult. Idempotent: skips rows that already
-  // have Suggested_KKE populated.
+  // have Suggested_MRA populated.
   let gaSeedCount = 0;
   state.editedRows.forEach(r => {
     const ga = String(r[GA_KKE_COL] || '').trim();
@@ -1110,7 +1147,7 @@ function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, she
     gaSeedCount++;
   });
   if (gaSeedCount > 0) {
-    showToast(`Seeded Suggested_KKE for ${gaSeedCount} row${gaSeedCount !== 1 ? 's' : ''} from existing GA / Rubric results · save to commit`, 'success');
+    showToast(`Seeded Suggested_MRA for ${gaSeedCount} row${gaSeedCount !== 1 ? 's' : ''} from existing GA / Rubric results · save to commit`, 'success');
     setDirty(true);
   }
 
@@ -1405,6 +1442,9 @@ function loadData({ filePath, headers, rows, urlColumn, navTree, dataSheets, she
   // un-dirtied on open — it's derived, so it's recomputed on every relevant edit
   // and travels out with the next real save.
   recomputeAllPageBreadcrumbs();
+
+  // A custom state named after one of the new built-ins can't be told apart from it.
+  maybeWarnCustomStateCollision();
 
   // Triage Non-200 Pages: toast if there are unhandled non-200 pages
   maybeOfferNon200Triage();
@@ -1803,7 +1843,7 @@ function lookupContentTypeRegistry(pageType) {
   return null;
 }
 
-/** Suggest a Migration_Track based on KKE (or Final_KKE if present) + Content_Nature.
+/** Suggest a Migration_Track based on KKE (or Final_MRA if present) + Content_Nature.
  *  Falls back to the ContentTypeRegistry's defaultMigrationTrack when Content_Nature
  *  is blank. Returns '' when no confident suggestion can be made.
  */
@@ -1853,7 +1893,7 @@ function splitContentObjectFragments() {
 
 function deriveMigrationTrackSuggestion(row) {
   if (!row) return '';
-  const finalKke = String(row['Final_KKE'] || '').trim();
+  const finalKke = String(row['Final_MRA'] || '').trim();
   const baseKke  = String(row[kkeCol()] || '').trim();
   const kke      = (finalKke || baseKke).toLowerCase();
   const nature   = String(row['Content_Nature'] || '').trim();
@@ -1861,11 +1901,11 @@ function deriveMigrationTrackSuggestion(row) {
   const registryEntry = lookupContentTypeRegistry(pageType);
 
   // KKE drives the broad track; nature refines for Keep
-  if (kke === 'kill')        return 'Kill/Redirect';
+  if (kke === 'archive')        return 'Archive/Redirect';
   if (kke === 'consolidate') return 'Merge';
-  if (kke === 'evolve')      return 'Manual Rebuild';
+  if (kke === 'revise')      return 'Manual Rebuild';
   if (kke === 'exclude')     return ''; // out of scope — no track
-  if (kke === 'keep') {
+  if (kke === 'migrate') {
     const effectiveNature = nature || (registryEntry ? registryEntry.defaultContentNature : '');
     if (effectiveNature === 'Page')           return 'Scripted';
     if (effectiveNature === 'Content Object') return 'Migrate Records';
@@ -1941,7 +1981,7 @@ function populateMigrationFields(row) {
       const suggestion = deriveMigrationTrackSuggestion(row);
       if (suggestion) {
         sugEl.textContent = `→ ${suggestion}`;
-        sugEl.title = `Suggested track based on KKE + Content Nature${row['Page_Type'] ? ` + Page Type "${row['Page_Type']}"` : ''}. Click to accept.`;
+        sugEl.title = `Suggested track based on MRA + Content Nature${row['Page_Type'] ? ` + Page Type "${row['Page_Type']}"` : ''}. Click to accept.`;
         sugEl.classList.remove('hidden');
         sugEl.dataset.value = suggestion;
       } else {
@@ -2285,12 +2325,12 @@ const SHORTCUT_GROUPS = [
     ['⌘,', 'Preferences'],
   ]},
   { title: 'Auditing a row', items: [
-    ['1', 'Keep'],
-    ['2', 'Kill'],
-    ['3', 'Evolve'],
+    ['1', 'Migrate'],
+    ['2', 'Revise'],
+    ['3', 'Archive'],
     ['4', 'Consolidate'],
     ['5', 'Exclude'],
-    ['0', 'Clear KKE'],
+    ['0', 'Clear decision'],
     ['F', 'Flag / unflag row'],
   ]},
   { title: 'Navigating', items: [
@@ -2347,13 +2387,13 @@ function openWelcomeDialog() {
   body.className = 'welcome-body';
   body.innerHTML = `
     <p class="welcome-lead">A desktop workspace for website content audits — load a crawl export,
-    review each page in a built-in browser, and record <b>Keep · Kill · Evolve · Consolidate · Exclude</b>
+    review each page in a built-in browser, and record <b>Migrate · Archive · Revise · Consolidate · Exclude</b>
     decisions that save straight back to your spreadsheet.</p>
     <div class="welcome-steps">
       <div class="welcome-step"><span class="welcome-num">1</span>
         <div><b>Open a file</b><br>A Screaming Frog <code>.xlsx</code> export, or any spreadsheet with a URL column.</div></div>
       <div class="welcome-step"><span class="welcome-num">2</span>
-        <div><b>Make the call</b><br>Select a row, then press <kbd>1</kbd>–<kbd>5</kbd> to set KKE. Auto-advance moves you to the next page.</div></div>
+        <div><b>Make the call</b><br>Select a row, then press <kbd>1</kbd>–<kbd>5</kbd> to set MRA. Auto-advance moves you to the next page.</div></div>
       <div class="welcome-step"><span class="welcome-num">3</span>
         <div><b>Filter & batch</b><br>Use the sidebar filters and the bottom action bar to decide many pages at once.</div></div>
       <div class="welcome-step"><span class="welcome-num">4</span>
@@ -2429,12 +2469,12 @@ const TOUR_STEPS = [
     target: '#field-bar-audit',
     fallbackTarget: '#row-list-wrap',
     title: '3. Decide each page',
-    body: 'Select a row to load it in the browser, then press <kbd>1</kbd>–<kbd>5</kbd> for Keep / Kill / Evolve / Consolidate / Exclude. Auto-advance moves you on; <kbd>]</kbd> jumps to the next unreviewed page.',
+    body: 'Select a row to load it in the browser, then press <kbd>1</kbd>–<kbd>5</kbd> for Migrate / Archive / Revise / Consolidate / Exclude. Auto-advance moves you on; <kbd>]</kbd> jumps to the next unreviewed page.',
   },
   {
     target: '#toolbar',
     title: '4. Filter &amp; batch',
-    body: 'Search, the KKE filter, and field filters narrow the list. Select rows (or just filter) and the action bar at the bottom of the sidebar applies a change to many pages at once.',
+    body: 'Search, the MRA filter, and field filters narrow the list. Select rows (or just filter) and the action bar at the bottom of the sidebar applies a change to many pages at once.',
   },
   {
     target: '#view-switcher',
@@ -2601,7 +2641,7 @@ function clearNavAssignment(row, origIndex, opts = {}) {
   // explicit "no, keep the redirect".
   const kke = String(row[finalKkeCol()] || row[kkeCol()] || '').trim().toLowerCase();
   if (!opts.keepRedirect
-      && kke !== 'kill' && kke !== 'consolidate'
+      && kke !== 'archive' && kke !== 'consolidate'
       && String(row[REDIRECT_SRC_COL] || '').trim() === 'auto'
       && String(row[REDIRECT_DEST_COL] || '').trim()) {
     clearRedirectDestination(row, origIndex);
@@ -2621,7 +2661,7 @@ function clearRedirectDestination(row, origIndex) {
   writeRedirectDestination(row, '', '');
 }
 
-async function promptKillCleanup(origIndex, targetStateLabel = 'Kill') {
+async function promptKillCleanup(origIndex, targetStateLabel = 'Archive') {
   const row = state.editedRows[origIndex];
   const hasNav = String(row['Sitemap_ID'] || '').trim();
   const hasRedirect = String(row['Redirect_Destination'] || '').trim();
@@ -2648,7 +2688,7 @@ async function promptKillCleanup(origIndex, targetStateLabel = 'Kill') {
   return true;
 }
 
-async function promptBulkKillCleanup(origIndexes, targetStateLabel = 'Kill') {
+async function promptBulkKillCleanup(origIndexes, targetStateLabel = 'Archive') {
   let navCount = 0, redirectCount = 0;
   origIndexes.forEach(i => {
     const r = state.editedRows[i];
@@ -2671,7 +2711,7 @@ async function promptBulkKillCleanup(origIndexes, targetStateLabel = 'Kill') {
   return true;
 }
 
-function showBulkKillCleanupModal({ total, navCount, redirectCount, targetStateLabel = 'Kill' }) {
+function showBulkKillCleanupModal({ total, navCount, redirectCount, targetStateLabel = 'Archive' }) {
   return new Promise(resolve => {
     let settled = false;
     const navChoice = navCount > 0 ? `
@@ -2709,7 +2749,7 @@ function showBulkKillCleanupModal({ total, navCount, redirectCount, targetStateL
   });
 }
 
-function showKillCleanupModal(row, targetStateLabel = 'Kill') {
+function showKillCleanupModal(row, targetStateLabel = 'Archive') {
   return new Promise(resolve => {
     let settled = false;
     const hasNav = String(row['Sitemap_ID'] || '').trim();
@@ -3158,14 +3198,14 @@ function applyFilter() {
           // Fragments are excluded — they have no nav home by design.
           if (!String(row['Sitemap_ID'] || '').trim() && !isFragmentRow(row)) {
             const eff = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
-            if (eff === 'Keep' || eff === 'Evolve') return true;
+            if (eff === 'Migrate' || eff === 'Revise') return true;
           }
         }
         if (s === '_cross-site-duplicate' && _crossSiteDupSet.has(origIndex)) return true;
         if (s === '_needs-job' && (state.jobLibrary || []).length && !rowJobs(row).length) {
           // Only pages we're carrying forward owe a job answer.
           const eff = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
-          if (eff === 'Keep' || eff === 'Evolve') return true;
+          if (eff === 'Migrate' || eff === 'Revise') return true;
         }
         // Not a page: the URL returned a redirect or an error. How you check
         // the "content pages" figure in a report against the rows themselves.
@@ -3180,7 +3220,7 @@ function applyFilter() {
           // of Kill rows doesn't drown the queue.
           if (!rowAudiences(row).length) {
             const eff = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
-            if (eff === 'Keep' || eff === 'Evolve') return true;
+            if (eff === 'Migrate' || eff === 'Revise') return true;
           }
         }
         if (s === '_audience-orphan') {
@@ -3207,7 +3247,7 @@ function applyFilter() {
           } catch (_) { /* ignore */ }
         }
         if (s === '_suggested-mismatch') {
-          // Suggested_KKE is populated AND differs from the user's KKE call.
+          // Suggested_MRA is populated AND differs from the user's KKE call.
           // Useful for "show me rows where I disagreed with the suggestion engine."
           const sug = String(row[SUGGESTED_KKE_COL] || '').trim();
           if (sug && kke && sug !== kke) return true;
@@ -3432,7 +3472,7 @@ function renderColHeaders() {
   const kkeCell = document.createElement('div');
   kkeCell.className = 'col-header-cell';
   kkeCell.style.cssText = 'width:60px;flex:none;color:var(--text-muted);display:flex;align-items:center;gap:4px;';
-  kkeCell.textContent = 'KKE';
+  kkeCell.textContent = 'MRA';
   const mapBtn = document.createElement('span');
   mapBtn.textContent = '⚙';
   mapBtn.title = 'Column mapping (App Settings)';
@@ -3451,9 +3491,9 @@ function renderColHeaders() {
     cell.className = 'col-header-cell extra-kke-hdr';
     cell.style.cssText = 'width:54px;flex:none;color:var(--text-muted);font-size:10px;display:flex;align-items:center;gap:2px;cursor:default;overflow:hidden;';
     // Abbreviate label
-    const abbr = col.replace('KKE_Recommendation', 'KKE')
+    const abbr = col.replace('MRA_Recommendation', 'MRA')
                      .replace('SME_Decision', 'SME')
-                     .replace('Final_KKE', 'Final')
+                     .replace('Final_MRA', 'Final')
                      .replace('Content_Owner', 'Owner')
                      .replace(/_/g, ' ');
     const label = document.createElement('span');
@@ -3688,11 +3728,11 @@ function renderVisibleRows() {
       c.title = 'Consolidate into: ' + consolidateTarget;
       indicators.appendChild(c);
     } else if (consolidateTarget) {
-      // A target the client's Final_KKE has overridden — kept, but inactive.
+      // A target the client's Final_MRA has overridden — kept, but inactive.
       const c = document.createElement('span');
       c.className = 'row-ind row-ind-consolidate row-ind-inactive';
       c.textContent = 'C';
-      c.title = `Inactive consolidate target (Final KKE is ${effectiveKke(row) || 'blank'}): ` + consolidateTarget;
+      c.title = `Inactive consolidate target (Final MRA is ${effectiveKke(row) || 'blank'}): ` + consolidateTarget;
       indicators.appendChild(c);
     } else if (needsTarget) {
       const c = document.createElement('span');
@@ -3735,7 +3775,7 @@ function renderVisibleRows() {
     const badge = document.createElement('div');
     badge.style.cssText = 'width:54px;flex:none;padding:7px 4px;display:flex;align-items:center;';
     // The badge is the recommendation (the column the KKE filter reads); when the
-    // client's Final_KKE overrides it, mark that — the override is what redirects
+    // client's Final_MRA overrides it, mark that — the override is what redirects
     // and reports act on, so it must be visible from the list, not only the audit bar.
     const finalOverride = kkeCol() !== finalKkeCol() ? String(row[finalKkeCol()] || '').trim() : '';
     const overridden = !!finalOverride && finalOverride !== String(kke).trim();
@@ -3745,7 +3785,7 @@ function renderVisibleRows() {
       span.textContent = kke || '—';
       if (overridden) {
         span.classList.add('kke-badge-overridden');
-        span.title = `Recommended ${kke || '(none)'} — Final KKE is ${finalOverride}`;
+        span.title = `Recommended ${kke || '(none)'} — Final MRA is ${finalOverride}`;
       }
       badge.appendChild(span);
     }
@@ -5164,7 +5204,7 @@ function applyJobsFieldVisibility() {
 //     section, so the worst case is a wrong guess traceable to a real choice.
 //   • AI suggestion         — costs credits and can be wrong in novel ways, so
 //     it never writes `Audiences` directly. It fills `_Suggested_Audiences` and
-//     the auditor accepts or rejects, exactly like `Suggested_KKE` never writes
+//     the auditor accepts or rejects, exactly like `Suggested_MRA` never writes
 //     the human KKE column.
 
 const SUGGESTED_AUDIENCES_COL = '_Suggested_Audiences';
@@ -5200,7 +5240,7 @@ function audienceFillTargets({ onlyFiltered = false, skipSuggested = false } = {
     // pages already sitting in the review queue.
     if (skipSuggested && rowAudienceSuggestion(row)) return false;
     const eff = audEffectiveKke(row);
-    return eff === 'Keep' || eff === 'Evolve' || eff === 'Consolidate' || !eff;
+    return eff === 'Migrate' || eff === 'Revise' || eff === 'Consolidate' || !eff;
   });
 }
 
@@ -5209,7 +5249,7 @@ function audienceFillTargets({ onlyFiltered = false, skipSuggested = false } = {
  *
  * Shared by inherit-from-section, the AI review dialog, and the per-row Accept,
  * so all three log to the change log, land in one undo entry, and re-run the
- * row's `Suggested_KKE` vote identically. `undoItems` is the array collected by
+ * row's `Suggested_MRA` vote identically. `undoItems` is the array collected by
  * `pushBulkEditUndo()`; pass null for a one-off.
  */
 function writeAudienceDecision(origIndex, { audiences, primary, jobs }, undoItems) {
@@ -5382,7 +5422,7 @@ function openAudienceInheritDialog(opts = {}) {
       <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px;">
         A section qualifies when at least 3 of its pages are tagged and an audience appears on half of them; the
         percentage is that agreement. <code>— None (no target audience)</code> is never inherited — asserting that a
-        page nobody has looked at serves nobody would turn an unreviewed blank into a Kill vote.
+        page nobody has looked at serves nobody would turn an unreviewed blank into a Archive vote.
       </p>
       <div style="max-height:44vh;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
         <table style="width:100%;border-collapse:collapse;">
@@ -5791,7 +5831,7 @@ function openAudienceSuggestionReview() {
           ${g.primary ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">primarily for ${escapeHtml(g.primary)}</div>` : ''}
         </td>
         <td style="padding:6px 8px;text-align:right;"><strong>${g.items.length.toLocaleString()}</strong></td>
-        <td style="padding:6px 8px;font-size:10px;color:${lowShare > 50 ? 'var(--kke-kill)' : 'var(--text-muted)'};white-space:nowrap;">
+        <td style="padding:6px 8px;font-size:10px;color:${lowShare > 50 ? 'var(--kke-archive)' : 'var(--text-muted)'};white-space:nowrap;">
           ${lowShare > 50 ? `${lowShare}% low confidence` : `${Math.round((g.conf.high || 0) / g.items.length * 100)}% high`}
         </td>
         <td style="padding:6px 8px;font-size:10px;color:var(--text-muted);word-break:break-all;">${samples.map(s => escapeHtml(s)).join('<br>')}</td>
@@ -6211,7 +6251,7 @@ function openDesignPatternLibraryEditor() {
           <textarea id="_dpl-d-notes" rows="2">${escapeHtml(e.notes || '')}</textarea>
         </div>
         <div class="pl-detail-row" style="justify-content:flex-end;">
-          <button id="_dpl-d-delete" class="btn btn-sm btn-ghost" style="color:var(--kke-kill);">Delete</button>
+          <button id="_dpl-d-delete" class="btn btn-sm btn-ghost" style="color:var(--kke-archive);">Delete</button>
         </div>
       </div>
     `;
@@ -6317,7 +6357,7 @@ function reportDesignPatterns() {
       patternCounts[p].count++;
       patternCounts[p].pages.push({
         url: row[urlCol] || '',
-        kke: effectiveKke(row),   // a client's Final_KKE wins, as everywhere else
+        kke: effectiveKke(row),   // a client's Final_MRA wins, as everywhere else
         pageType: row['Page_Type'] || '',
       });
     });
@@ -6355,11 +6395,11 @@ function reportDesignPatterns() {
   const projectLabel = [ps.clientName, ps.projectName].filter(Boolean).join(' — ');
 
   function kkeClass(v) {
-    const m = { Keep: 'kke-keep', Kill: 'kke-kill', Evolve: 'kke-evolve', Exclude: 'kke-exclude', Consolidate: 'kke-consolidate' };
+    const m = { Migrate: 'kke-migrate', Archive: 'kke-archive', Revise: 'kke-revise', Exclude: 'kke-exclude', Consolidate: 'kke-consolidate' };
     return m[v] || '';
   }
   function kkeStyle(v) {
-    const colors = { Keep: '#16a34a', Kill: '#dc2626', Evolve: '#d97706', Exclude: '#6b7280', Consolidate: '#7c3aed' };
+    const colors = { Migrate: '#16a34a', Archive: '#dc2626', Revise: '#d97706', Exclude: '#6b7280', Consolidate: '#7c3aed' };
     return colors[v] ? `color:${colors[v]};font-weight:600;` : '';
   }
 
@@ -6414,7 +6454,7 @@ function reportDesignPatterns() {
           <th style="padding:6px 8px;">Category</th>
           <th style="padding:6px 8px;">Complexity</th>
           <th style="padding:6px 8px;">Pages</th>
-          <th style="padding:6px 8px;">KKE breakdown</th>
+          <th style="padding:6px 8px;">MRA breakdown</th>
         </tr>
       </thead>
       <tbody>${inventoryRows || '<tr><td colspan="5" style="padding:12px;color:#888;">No design patterns recorded yet.</td></tr>'}</tbody>
@@ -6446,7 +6486,7 @@ function reportDesignPatterns() {
 
 // ─── Audience reports ────────────────────────────────────────────────────────
 
-const AUD_KKE_COLORS = { Keep: '#16a34a', Kill: '#dc2626', Evolve: '#d97706', Exclude: '#6b7280', Consolidate: '#7c3aed' };
+const AUD_KKE_COLORS = { Migrate: '#16a34a', Archive: '#dc2626', Revise: '#d97706', Exclude: '#6b7280', Consolidate: '#7c3aed' };
 function audKkeStyle(v) {
   return AUD_KKE_COLORS[v] ? `color:${AUD_KKE_COLORS[v]};font-weight:600;` : '';
 }
@@ -6481,7 +6521,7 @@ function audienceScopeRows() {
   return reportRows().filter(r => {
     if (nonContentKind(r, scCol)) return false;
     const eff = audEffectiveKke(r);
-    return eff === 'Keep' || eff === 'Evolve' || eff === 'Consolidate' || !eff;
+    return eff === 'Migrate' || eff === 'Revise' || eff === 'Consolidate' || !eff;
   });
 }
 
@@ -6509,13 +6549,13 @@ function audienceReportPreamble(scopeRows) {
       </div>
     </div>
     <p style="font-size:11px;color:#666;margin:0 0 16px;">
-      In scope = pages marked Keep, Evolve, Consolidate, or not yet reviewed. Kill and Exclude pages are
+      In scope = pages marked Migrate, Revise, Consolidate, or not yet reviewed. Archive and Exclude pages are
       left out of the denominator — nobody tags content they are removing.
     </p>
     ${untiered ? `<p style="background:#fef3c7;border-left:3px solid #d97706;padding:10px 12px;font-size:12px;margin:0 0 16px;">
       Every audience is still at the default <strong>Secondary</strong> tier, so no priority ranking has been
       applied yet. Set tiers in <strong>Project Settings → Audience</strong> to make this report — and the
-      Suggested&nbsp;KKE audience vote — meaningful.</p>` : ''}
+      Suggested&nbsp;MRA audience vote — meaningful.</p>` : ''}
   `;
 }
 
@@ -6619,7 +6659,7 @@ function reportAudienceCoverage() {
   const servesNobody = scopeRows.filter(r => { const l = rowAudiences(r); return l.length === 1 && l[0] === AUDIENCE_NONE; });
   // Priority content being removed — usually worth a second look. Out-of-scope
   // sites aren't being migrated, so reportRows().
-  const killedPriority = reportRows().filter(r => audEffectiveKke(r) === 'Kill' && rowAudiences(r).some(a => audienceTier(a) === 'Primary'));
+  const killedPriority = reportRows().filter(r => audEffectiveKke(r) === 'Archive' && rowAudiences(r).some(a => audienceTier(a) === 'Primary'));
   // Broad pages. Serving four or more audiences is normal for a landing page —
   // a program hub can rightly serve undergrads, grads, executive-ed and
   // certificate seekers at once — so only DETAIL pages are flagged: nothing sits
@@ -6646,11 +6686,11 @@ function reportAudienceCoverage() {
     if (starvedNames.length) findings.push(`Priority audience${starvedNames.length !== 1 ? 's' : ''} with very little content aimed at ${starvedNames.length !== 1 ? 'them' : 'it'}: ${starvedNames.join(', ')}.`);
     if (offStrategy.length) findings.push(`${offStrategy.length.toLocaleString()} page${offStrategy.length !== 1 ? 's serve' : ' serves'} only non-priority audiences.`);
     if (servesNobody.length) findings.push(`${servesNobody.length.toLocaleString()} page${servesNobody.length !== 1 ? 's were' : ' was'} reviewed as serving no target audience.`);
-    if (killedPriority.length) findings.push(`${killedPriority.length.toLocaleString()} page${killedPriority.length !== 1 ? 's' : ''} aimed at a Primary audience ${killedPriority.length !== 1 ? 'are' : 'is'} marked Kill.`);
+    if (killedPriority.length) findings.push(`${killedPriority.length.toLocaleString()} page${killedPriority.length !== 1 ? 's' : ''} aimed at a Primary audience ${killedPriority.length !== 1 ? 'are' : 'is'} marked Archive.`);
     if (untagged.length) nextSteps.push(`Tag the remaining ${untagged.length.toLocaleString()} page${untagged.length !== 1 ? 's' : ''} (sidebar filter: Needs audience; Project → Fill Audiences from Section helps).`);
     if (starvedNames.length) nextSteps.push(`Plan content for ${starvedNames.join(', ')} — check Jobs Coverage and the Net New Content Brief for the gaps.`);
-    if (killedPriority.length) nextSteps.push('Re-read the Primary-audience pages marked Kill before the redirect map is signed off.');
-    if (offStrategy.length + servesNobody.length) nextSteps.push('Treat pages serving no priority audience as Kill or Consolidate candidates.');
+    if (killedPriority.length) nextSteps.push('Re-read the Primary-audience pages marked Archive before the redirect map is signed off.');
+    if (offStrategy.length + servesNobody.length) nextSteps.push('Treat pages serving no priority audience as Archive or Consolidate candidates.');
   }
 
   const riskRow = (label, n, what) => `<div class="stat-row"><span class="stat-label">${label}<div style="font-size:11px;color:#777;">${what}</div></span><span class="stat-value">${n.toLocaleString()}</span></div>`;
@@ -6677,16 +6717,16 @@ function reportAudienceCoverage() {
     </table>
 
     ${lib.length ? `<h2>Risks</h2>
-    ${riskRow('Serves only non-priority audiences', offStrategy.length, 'Everything it serves is Tertiary or not a target — content to maintain and migrate that serves no priority. Kill or Consolidate candidates.')}
-    ${riskRow('Reviewed as serving no audience', servesNobody.length, 'Tagged "— None". The strongest Kill argument audience review produces.')}
-    ${riskRow('Priority-audience content marked Kill', killedPriority.length, 'Sometimes right (duplicated or obsolete), but worth re-reading before sign-off.')}
+    ${riskRow('Serves only non-priority audiences', offStrategy.length, 'Everything it serves is Tertiary or not a target — content to maintain and migrate that serves no priority. Archive or Consolidate candidates.')}
+    ${riskRow('Reviewed as serving no audience', servesNobody.length, 'Tagged "— None". The strongest Archive argument audience review produces.')}
+    ${riskRow('Priority-audience content marked Archive', killedPriority.length, 'Sometimes right (duplicated or obsolete), but worth re-reading before sign-off.')}
     ${riskRow('Detail pages serving four or more audiences', broadDetail.length, 'Broad tagging is normal on a landing page; on a single article it can mean the page is doing several jobs. Worth a look, not a defect.')}` : ''}
 
     ${auditorAppendixHtml([
       { title: `Not yet tagged (${untagged.length.toLocaleString()})`, intro: 'Unreviewed, not "serves nobody". Sidebar filter: <em>Needs audience</em>.', html: untagged.length ? pageTable(untagged, 'Audiences', () => '') : '' },
       { title: `Serves only non-priority audiences (${offStrategy.length.toLocaleString()})`, html: offStrategy.length ? pageTable(offStrategy, 'Audiences', r => rowAudiences(r).join(', ')) : '' },
       { title: `Reviewed as serving no audience (${servesNobody.length.toLocaleString()})`, html: servesNobody.length ? pageTable(servesNobody, 'Audiences', r => rowAudiences(r).join(', ')) : '' },
-      { title: `Priority-audience content marked Kill (${killedPriority.length.toLocaleString()})`, html: killedPriority.length ? pageTable(killedPriority, 'Primary audiences', r => rowAudiences(r).filter(a => audienceTier(a) === 'Primary').join(', ')) : '' },
+      { title: `Priority-audience content marked Archive (${killedPriority.length.toLocaleString()})`, html: killedPriority.length ? pageTable(killedPriority, 'Primary audiences', r => rowAudiences(r).filter(a => audienceTier(a) === 'Primary').join(', ')) : '' },
       { title: `Detail pages serving four or more audiences (${broadDetail.length.toLocaleString()})`, html: broadDetail.length ? pageTable(broadDetail, 'Audiences', r => rowAudiences(r).join(', ')) : '' },
     ])}
   `;
@@ -7147,7 +7187,7 @@ function openUrlVariantTriageDialog() {
   const rowsHtml = ordered.slice(0, 300).map((g, i) => `
     <tr${g.targetInCrawl ? '' : ' style="opacity:0.6;"'}>
       <td style="padding:4px 8px;word-break:break-all;font-size:11px;">${escapeHtml(shortUrl(g.target))}
-        ${g.targetInCrawl ? '' : '<div style="color:var(--kke-kill);font-size:10px;">canonical target not in this crawl</div>'}</td>
+        ${g.targetInCrawl ? '' : '<div style="color:var(--kke-archive);font-size:10px;">canonical target not in this crawl</div>'}</td>
       <td style="padding:4px 8px;text-align:right;"><strong>${g.total.toLocaleString()}</strong></td>
       <td style="padding:4px 8px;font-size:11px;color:var(--text-muted);">${g.queryOnly ? 'query only' : 'different path'}</td>
       <td style="padding:4px 8px;">
@@ -7171,7 +7211,7 @@ function openUrlVariantTriageDialog() {
         <span><strong>${totalVariants.toLocaleString()}</strong> variants in <strong>${groups.size}</strong> groups</span>
         <span style="color:var(--text-muted);"><strong>${selfCanonical.toLocaleString()}</strong> self-canonical (real content)</span>
         <span style="color:var(--text-muted);"><strong>${undeclared.toLocaleString()}</strong> no canonical declared</span>
-        ${missingTarget ? `<span style="color:var(--kke-kill);"><strong>${missingTarget.toLocaleString()}</strong> whose target wasn't crawled</span>` : ''}
+        ${missingTarget ? `<span style="color:var(--kke-archive);"><strong>${missingTarget.toLocaleString()}</strong> whose target wasn't crawled</span>` : ''}
       </div>
       <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px;">
         <strong>Query only</strong> means the variant differs from its canonical by query string alone — the path is the
@@ -7193,7 +7233,7 @@ function openUrlVariantTriageDialog() {
       ${ordered.length > 300 ? `<p style="font-size:11px;color:var(--text-muted);margin:6px 0 0;">Showing the 300 largest of ${ordered.length} groups; the rest keep their default action.</p>` : ''}
       <label class="setting-row" style="margin-top:8px;">
         <input type="checkbox" id="_uvt-skip-assigned" checked>
-        <span>Skip pages that already have a KKE decision</span>
+        <span>Skip pages that already have a decision</span>
       </label>
       <label class="setting-row">
         <input type="checkbox" id="_uvt-dismiss">
@@ -7536,7 +7576,7 @@ function reportJobsCoverage() {
     // "Best page" = the one you'd send someone to: a Keep beats an Evolve beats
     // anything unreviewed. Deliberately not a quality judgement — just the page
     // most likely to survive and answer the job.
-    const rank = (r) => { const e = audEffectiveKke(r); return e === 'Keep' ? 0 : e === 'Evolve' ? 1 : e ? 3 : 2; };
+    const rank = (r) => { const e = audEffectiveKke(r); return e === 'Migrate' ? 0 : e === 'Revise' ? 1 : e ? 3 : 2; };
     const best = pages.slice().sort((a, b) => rank(a) - rank(b))[0];
     return `<tr${pages.length ? '' : ' style="background:#fef2f2;"'}>
       <td><strong>${escapeHtml(job.label)}</strong>
@@ -7584,7 +7624,7 @@ function reportJobsCoverage() {
     <h2 style="font-size:14px;margin:0 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px;">Coverage by job</h2>
     <p style="font-size:12px;color:#666;margin:0 0 8px;">
       Grouped by the audience each job belongs to. <strong>Best page</strong> is the one you'd send someone to —
-      a Keep outranks an Evolve outranks an unreviewed page. It is not a quality score.
+      a Migrate outranks a Revise outranks an unreviewed page. It is not a quality score.
     </p>
     <table style="width:100%;border-collapse:collapse;font-size:12px;">
       <thead><tr style="text-align:left;border-bottom:2px solid #ddd;">
@@ -7699,7 +7739,7 @@ function reportContentTypeCrosswalk() {
     ? state.projectSettings.contentTypeRegistry : [];
 
   function kkeStyle(v) {
-    const colors = { Keep: '#16a34a', Kill: '#dc2626', Evolve: '#d97706', Exclude: '#6b7280', Consolidate: '#7c3aed' };
+    const colors = { Migrate: '#16a34a', Archive: '#dc2626', Revise: '#d97706', Exclude: '#6b7280', Consolidate: '#7c3aed' };
     return colors[v] ? `color:${colors[v]};font-weight:600;` : '';
   }
 
@@ -7803,7 +7843,7 @@ function reportContentTypeCrosswalk() {
           <th style="padding:6px 8px;">Target spec</th>
           <th style="padding:6px 8px;">Migration track</th>
           <th style="padding:6px 8px;">Pages</th>
-          <th style="padding:6px 8px;">KKE breakdown</th>
+          <th style="padding:6px 8px;">MRA breakdown</th>
         </tr>
       </thead>
       <tbody>${bodyRows || '<tr><td colspan="7" style="padding:12px;color:#888;">No content types found.</td></tr>'}</tbody>
@@ -7920,7 +7960,7 @@ function openNoteTemplateManager() {
       txt.textContent = t;
       const del = document.createElement('button');
       del.className = 'btn btn-sm btn-ghost';
-      del.style.color = 'var(--kke-kill)';
+      del.style.color = 'var(--kke-archive)';
       del.textContent = 'Delete';
       del.addEventListener('click', () => {
         state.noteTemplates = state.noteTemplates.filter((_, j) => j !== i);
@@ -8676,7 +8716,7 @@ async function runAssessment() {
 
 function renderAssessResults(result) {
   els.assessResults.innerHTML = '';
-  const statusLabels = { keep: 'Keep', kill: 'Kill', evolve: 'Evolve', exclude: 'Exclude' };
+  const statusLabels = { migrate: 'Migrate', archive: 'Archive', revise: 'Revise', exclude: 'Exclude' };
 
   for (const [status, data] of Object.entries(result.results)) {
     const group = document.createElement('div');
@@ -8687,7 +8727,7 @@ function renderAssessResults(result) {
     const scoreText = data.fieldResults.length > 0
       ? ` ${data.fieldResults.filter(r => r.pass).length}/${data.fieldResults.length}`
       : '';
-    label.innerHTML = `<span class="kke-badge ${status}">${statusLabels[status]}</span>`;
+    label.innerHTML = `<span class="kke-badge ${status}">${escapeHtml(statusLabels[status] || status)}</span>`;
     if (scoreText) {
       const score = document.createElement('span');
       score.className = 'assess-score';
@@ -8760,7 +8800,7 @@ async function runLLMAssessment() {
   if (result.recommendation) {
     const rec = document.createElement('div');
     rec.className = 'assess-llm-rec';
-    rec.innerHTML = `Recommendation: <span class="kke-badge ${result.recommendation.toLowerCase()}">${result.recommendation}</span>`;
+    rec.innerHTML = `Recommendation: <span class="kke-badge ${escapeHtml(result.recommendation.toLowerCase())}">${escapeHtml(result.recommendation)}</span>`;
     els.assessLlmResults.appendChild(rec);
 
     // Update accept button to use LLM recommendation
@@ -8784,7 +8824,7 @@ async function runLLMAssessment() {
 
 function acceptSuggestion() {
   if (!_lastAssessment?.suggestion || state.selectedIndex === null) return;
-  const statusMap = { keep: 'Keep', kill: 'Kill', evolve: 'Evolve', exclude: 'Exclude' };
+  const statusMap = { migrate: 'Migrate', archive: 'Archive', revise: 'Revise', exclude: 'Exclude' };
   const val = statusMap[_lastAssessment.suggestion] || _lastAssessment.suggestion;
   if (!val) return;
 
@@ -8810,7 +8850,7 @@ async function runBatchAssessment() {
   if (!state.claudeApiKey) { showToast('API key required for batch assessment', 'error'); return; }
   const rows = state.filteredRows;
   if (rows.length === 0) return;
-  if (!(await confirmDialog({ title: 'Batch AI Assessment', message: `Assess ${rows.length} rows via AI? This may take a while and use API credits.\n\nYour human KKE column is not changed — results feed Suggested_KKE for you to confirm or override.`, confirmLabel: 'Assess' }))) return;
+  if (!(await confirmDialog({ title: 'Batch AI Assessment', message: `Assess ${rows.length} rows via AI? This may take a while and use API credits.\n\nYour human MRA column is not changed — results feed Suggested_MRA for you to confirm or override.`, confirmLabel: 'Assess' }))) return;
 
   _batchAssessAbort = false;
   // Without this listener the _batchAssessAbort checks below can never fire —
@@ -8823,7 +8863,7 @@ async function runBatchAssessment() {
 
   // Show progress in toast
   const { rubrics } = await window.electronAPI.loadRubrics({ texts: projectRubricTexts() });
-  const statusMap = { keep: 'Keep', kill: 'Kill', evolve: 'Evolve', exclude: 'Exclude' };
+  const statusMap = { migrate: 'Migrate', archive: 'Archive', revise: 'Revise', exclude: 'Exclude' };
   let done = 0;
   let errors = 0;
 
@@ -8845,7 +8885,7 @@ async function runBatchAssessment() {
 
         const rec = llmResult.recommendation
           || (fieldResult.suggestion ? statusMap[fieldResult.suggestion] : '');
-        if (rec) row['_AssessmentResult'] = rec; // feeds Suggested_KKE — never touches the human KKE column
+        if (rec) row['_AssessmentResult'] = rec; // feeds Suggested_MRA — never touches the human KKE column
       } catch (e) {
         errors++;
       }
@@ -8859,22 +8899,22 @@ async function runBatchAssessment() {
   }
 
   setDirty(true);
-  // Phase 1, Chunk D: roll rubric results into the unified Suggested_KKE
+  // Phase 1, Chunk D: roll rubric results into the unified Suggested_MRA
   computeSuggestedKke();
   renderVisibleRows();
   if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
   const summary = _batchAssessAbort
     ? `Batch assessment cancelled after ${done} row${done !== 1 ? 's' : ''}`
     : `Batch assessment complete: ${done} row${done !== 1 ? 's' : ''}`;
-  showToast(`${summary}${errors ? `, ${errors} errors` : ''} — review Suggested_KKE`,
+  showToast(`${summary}${errors ? `, ${errors} errors` : ''} — review Suggested_MRA`,
             _batchAssessAbort ? 'info' : 'success');
 }
 
 /**
- * Proactive AI triage: generate a Suggested_KKE for every UNREVIEWED row (blank
+ * Proactive AI triage: generate a Suggested_MRA for every UNREVIEWED row (blank
  * KKE) without ever touching the human KKE column. Writes the rubric/LLM outcome
  * to _AssessmentResult, then lets computeSuggestedKke() roll it (+ GA) into
- * Suggested_KKE. The auditor confirms or overrides via the normal flow.
+ * Suggested_MRA. The auditor confirms or overrides via the normal flow.
  */
 async function runSuggestForUnreviewed() {
   if (!state.editedRows.length) { showToast('Open a file first', 'error'); return; }
@@ -8885,11 +8925,11 @@ async function runSuggestForUnreviewed() {
   const targets = state.editedRows
     .map((row, origIndex) => ({ row, origIndex }))
     .filter(t => !String(t.row[kkeCol()] || '').trim());
-  if (!targets.length) { showToast('No unreviewed rows — every page already has a KKE', 'info'); return; }
+  if (!targets.length) { showToast('No unreviewed rows — every page already has a decision', 'info'); return; }
 
   const ok = await confirmDialog({
     title: 'AI Suggest for unreviewed',
-    message: `Generate a Suggested KKE for ${targets.length} unreviewed row${targets.length !== 1 ? 's' : ''} via AI?\n\nThis uses your Claude API key and spends credits, and may take a while (~1s/row). Your human KKE column is NOT changed — only Suggested_KKE is filled, for you to confirm or override.`,
+    message: `Generate a Suggested MRA for ${targets.length} unreviewed row${targets.length !== 1 ? 's' : ''} via AI?\n\nThis uses your Claude API key and spends credits, and may take a while (~1s/row). Your human MRA column is NOT changed — only Suggested_MRA is filled, for you to confirm or override.`,
     confirmLabel: 'Suggest',
   });
   if (!ok) return;
@@ -8899,7 +8939,7 @@ async function runSuggestForUnreviewed() {
   document.addEventListener('keydown', onAbort);
 
   const { rubrics } = await window.electronAPI.loadRubrics({ texts: projectRubricTexts() });
-  const statusMap = { keep: 'Keep', kill: 'Kill', evolve: 'Evolve', exclude: 'Exclude' };
+  const statusMap = { migrate: 'Migrate', archive: 'Archive', revise: 'Revise', exclude: 'Exclude' };
   let done = 0, errors = 0;
   try {
     for (const { row } of targets) {
@@ -8921,10 +8961,10 @@ async function runSuggestForUnreviewed() {
   }
 
   setDirty(true);
-  computeSuggestedKke(); // rolls _AssessmentResult (+ GA) into Suggested_KKE
+  computeSuggestedKke(); // rolls _AssessmentResult (+ GA) into Suggested_MRA
   applyFilter();
   if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
-  const verb = _batchAssessAbort ? 'Cancelled after' : 'Suggested KKE for';
+  const verb = _batchAssessAbort ? 'Cancelled after' : 'Suggested MRA for';
   showToast(`${verb} ${done} row${done !== 1 ? 's' : ''}${errors ? `, ${errors} errors` : ''} — review & confirm`, _batchAssessAbort ? 'info' : 'success');
 }
 
@@ -9771,7 +9811,7 @@ function renderRogueKkeList() {
     const div = document.createElement('div');
     div.style.cssText = 'display:flex;align-items:center;gap:6px;padding:3px 0;';
     div.innerHTML = `
-      <span style="width:12px;height:12px;border-radius:2px;background:var(--kke-kill-bg);border:1px solid var(--kke-kill);flex-shrink:0;"></span>
+      <span style="width:12px;height:12px;border-radius:2px;background:var(--kke-archive-bg);border:1px solid var(--kke-archive);flex-shrink:0;"></span>
       <span style="flex:1;font-size:12px;color:var(--text-primary);font-family:var(--font-mono);">${escapeHtml(label)}</span>
       <span style="font-size:11px;color:var(--text-muted);">${count} row${count !== 1 ? 's' : ''}</span>
     `;
@@ -9828,7 +9868,7 @@ function openCustomKkeMergeDialog(sourceLabel) {
 
   dialog.innerHTML = `
     <div style="padding:16px 20px;border-bottom:1px solid var(--border);">
-      <div style="font-weight:600;font-size:15px;">Merge custom KKE state</div>
+      <div style="font-weight:600;font-size:15px;">Merge custom MRA state</div>
       <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">All rows using <code>${escapeHtml(sourceLabel)}</code> will be reassigned. The custom state itself is then removed.</div>
     </div>
     <div style="padding:16px 20px;">
@@ -9838,7 +9878,7 @@ function openCustomKkeMergeDialog(sourceLabel) {
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Merge into (target)</div>
       <select id="_kkemerge-target" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:13px;">
         <option value="">— pick a target —</option>
-        ${optgroup('Built-in KKE states', BUILTIN_KKE)}
+        ${optgroup('Built-in MRA states', BUILTIN_KKE)}
         ${optgroup('Other custom states', customLabels)}
         ${optgroup('Other values present in data (typo cleanup)', rogueTargets)}
       </select>
@@ -9846,8 +9886,8 @@ function openCustomKkeMergeDialog(sourceLabel) {
       <div style="margin-top:14px;font-size:12px;color:var(--text-muted);">
         Will affect:
         <ul style="margin:4px 0 0 18px;padding:0;">
-          <li><strong>${kkeMatches}</strong> KKE_Recommendation cell${kkeMatches !== 1 ? 's' : ''}</li>
-          <li><strong>${finalMatches}</strong> Final_KKE cell${finalMatches !== 1 ? 's' : ''}</li>
+          <li><strong>${kkeMatches}</strong> MRA_Recommendation cell${kkeMatches !== 1 ? 's' : ''}</li>
+          <li><strong>${finalMatches}</strong> Final_MRA cell${finalMatches !== 1 ? 's' : ''}</li>
           <li><strong>${smeMatches}</strong> SME_Decision cell${smeMatches !== 1 ? 's' : ''} (rewriting <code>Change: ${escapeHtml(sourceLabel)}</code>)</li>
         </ul>
       </div>
@@ -10043,7 +10083,7 @@ function setupProjectSettingsDrag() {
   });
   $('ps-btn-refresh-ga')?.addEventListener('click', () => {
     const result = computeGaKke();
-    if (result) showToast(`GA KKE: ${result.computed} computed · ${result.skipped} skipped`, 'success');
+    if (result) showToast(`GA MRA: ${result.computed} computed · ${result.skipped} skipped`, 'success');
     refreshSuggestionsTab();
   });
   $('ps-btn-run-rubric')?.addEventListener('click', () => {
@@ -10065,7 +10105,7 @@ function setupProjectSettingsDrag() {
     const result = computeSuggestedKke();
     if (result) {
       const dis = result.disagreements > 0 ? ` · ${result.disagreements} disagreement${result.disagreements !== 1 ? 's' : ''}` : '';
-      showToast(`Suggested_KKE recomputed: ${result.computed} · ${result.blank} blank${dis}`, 'success');
+      showToast(`Suggested_MRA recomputed: ${result.computed} · ${result.blank} blank${dis}`, 'success');
     }
     refreshSuggestionsTab();
   });
@@ -10108,9 +10148,9 @@ function refreshSuggestionsTab() {
   if (lastRun) {
     if (sCfg.lastRun) {
       const r = sCfg.lastRun;
-      lastRun.textContent = `Last Suggested_KKE run: ${r.computed} computed · ${r.blank} blank · ${r.disagreements} disagreement${r.disagreements !== 1 ? 's' : ''} of ${r.total} total`;
+      lastRun.textContent = `Last Suggested_MRA run: ${r.computed} computed · ${r.blank} blank · ${r.disagreements} disagreement${r.disagreements !== 1 ? 's' : ''} of ${r.total} total`;
     } else {
-      lastRun.textContent = 'Suggested_KKE has not been run yet.';
+      lastRun.textContent = 'Suggested_MRA has not been run yet.';
     }
   }
 }
@@ -10243,7 +10283,7 @@ function renderSitesList() {
         title: 'Record the decision on these pages?',
         message: `"${site.label}" is now out of scope for reporting, but its ${rows.length.toLocaleString()} `
           + `page${rows.length !== 1 ? 's' : ''} still have no decision recorded.\n\n`
-          + `Mark them all KKE = Exclude? That puts the call on the row itself — visible in the audit, in the `
+          + `Mark them all MRA = Exclude? That puts the call on the row itself — visible in the audit, in the `
           + `change log, and in every export — instead of leaving it as a reporting setting.\n\n`
           + `Skip this if you intend to review them individually.`,
         confirmLabel: 'Mark them Exclude',
@@ -10430,11 +10470,11 @@ function renderJobLibList() {
     row.style.cssText = 'flex-wrap:wrap;align-items:flex-start;';
     row.innerHTML = `
       <span class="ps-mig-name" data-idx="${idx}" style="min-width:170px;">${escapeHtml(entry.label)}</span>
-      <span class="ps-mig-count">${n ? `${n} page${n !== 1 ? 's' : ''}` : '<span style="color:var(--kke-kill);">no pages</span>'}</span>
+      <span class="ps-mig-count">${n ? `${n} page${n !== 1 ? 's' : ''}` : '<span style="color:var(--kke-archive);">no pages</span>'}</span>
       <span style="flex:1;"></span>
       <button class="ps-job-auds btn btn-sm btn-ghost" data-idx="${idx}">Audiences</button>
       <button class="ps-job-edit btn btn-sm btn-ghost" data-idx="${idx}">Edit</button>
-      <button class="ps-job-del btn btn-sm btn-ghost" data-idx="${idx}" style="color:var(--kke-kill);">Delete</button>
+      <button class="ps-job-del btn btn-sm btn-ghost" data-idx="${idx}" style="color:var(--kke-archive);">Delete</button>
       ${entry.statement ? `<div style="flex:1 1 100%;font-size:11px;color:var(--text-muted);margin-top:2px;">${escapeHtml(entry.statement)}</div>` : ''}
       <div style="flex:1 1 100%;font-size:11px;color:var(--text-muted);">${
         (entry.audiences || []).length ? escapeHtml(entry.audiences.join(' · ')) : '<em>any audience</em>'}</div>
@@ -10672,7 +10712,7 @@ function renderAudienceLibList() {
       <span style="flex:1;"></span>
       <button class="ps-aud-desc btn btn-sm btn-ghost" data-idx="${idx}" title="Edit description">Describe</button>
       <button class="ps-aud-rename btn btn-sm btn-ghost" data-idx="${idx}">Rename</button>
-      <button class="ps-aud-delete btn btn-sm btn-ghost" data-idx="${idx}" style="color:var(--kke-kill);">Delete</button>
+      <button class="ps-aud-delete btn btn-sm btn-ghost" data-idx="${idx}" style="color:var(--kke-archive);">Delete</button>
     `;
     list.appendChild(row);
   });
@@ -10981,7 +11021,7 @@ function renderPageStatusList() {
       <button class="ps-mig-up icon-btn" data-idx="${idx}" title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
       <button class="ps-mig-down icon-btn" data-idx="${idx}" title="Move down" ${idx === lib.length - 1 ? 'disabled' : ''}>↓</button>
       <button class="ps-mig-rename btn btn-sm btn-ghost" data-idx="${idx}" title="Rename">Rename</button>
-      <button class="ps-mig-delete btn btn-sm btn-ghost" data-idx="${idx}" title="Delete" style="color:var(--kke-kill);">Delete</button>
+      <button class="ps-mig-delete btn btn-sm btn-ghost" data-idx="${idx}" title="Delete" style="color:var(--kke-archive);">Delete</button>
     `;
     list.appendChild(row);
   });
@@ -11103,7 +11143,7 @@ function renderAssigneeList() {
       <span class="ps-mig-count" data-idx="${idx}">${escapeHtml(usageText)}</span>
       <span style="flex:1;"></span>
       <button class="ps-mig-rename-assignee btn btn-sm btn-ghost" data-idx="${idx}" title="Rename">Rename</button>
-      <button class="ps-mig-delete-assignee btn btn-sm btn-ghost" data-idx="${idx}" title="Delete" style="color:var(--kke-kill);">Delete</button>
+      <button class="ps-mig-delete-assignee btn btn-sm btn-ghost" data-idx="${idx}" title="Delete" style="color:var(--kke-archive);">Delete</button>
     `;
     list.appendChild(row);
   });
@@ -11222,13 +11262,13 @@ function renderSavedFiltersList() {
         <div style="font-weight:600;font-size:13px;">${escapeHtml(f.name)}</div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
           ${f.filterText ? `text: <code>${escapeHtml(f.filterText)}</code> · ` : ''}
-          ${Array.isArray(f.kkeFilter) && f.kkeFilter.length ? `KKE: ${f.kkeFilter.length} · ` : ''}
+          ${Array.isArray(f.kkeFilter) && f.kkeFilter.length ? `MRA: ${f.kkeFilter.length} · ` : ''}
           ${f.groupFilter ? `group: ${escapeHtml(f.groupFilter)} · ` : ''}
           ${Array.isArray(f.fieldFilters) && f.fieldFilters.length ? `${f.fieldFilters.length} field filter${f.fieldFilters.length !== 1 ? 's' : ''}` : ''}
         </div>
       </div>
       <button class="btn btn-sm btn-ghost" data-idx="${idx}" data-action="apply">Apply</button>
-      <button class="btn btn-sm btn-ghost" data-idx="${idx}" data-action="delete" style="color:var(--kke-kill);">Delete</button>
+      <button class="btn btn-sm btn-ghost" data-idx="${idx}" data-action="delete" style="color:var(--kke-archive);">Delete</button>
     `;
     list.appendChild(row);
   });
@@ -11585,7 +11625,7 @@ async function exportGlossary(source) {
 
 // ─── GA KKE (GA4-derived recommendation) ───────────────────────────────────────
 
-const GA_KKE_COL = 'GA_KKE_Recommendation';
+const GA_KKE_COL = 'GA_MRA_Recommendation';
 const GA_SCORE_COL = 'GA_Score';
 
 const GA_KKE_PRESETS = {
@@ -11689,7 +11729,7 @@ function ensureGaKkeColumns() {
 function computeGaKke() {
   const cfg = state.projectSettings.gaKkeConfig;
   if (!cfg || cfg.dismissed || !cfg.columnMap) {
-    showToast('GA KKE not configured', 'error');
+    showToast('GA MRA not configured', 'error');
     return null;
   }
   const { columnMap, missingPolicy } = cfg;
@@ -11760,9 +11800,9 @@ function computeGaKke() {
 
     const finalScore = score / totalWeight;
     let rec;
-    if (finalScore >= thresholds.keep) rec = 'Keep';
-    else if (finalScore >= thresholds.evolve) rec = 'Evolve';
-    else rec = 'Kill';
+    if (finalScore >= thresholds.keep) rec = 'Migrate';
+    else if (finalScore >= thresholds.evolve) rec = 'Revise';
+    else rec = 'Archive';
     row[GA_KKE_COL] = rec;
     row[GA_SCORE_COL] = finalScore.toFixed(3);
     computed++;
@@ -11773,7 +11813,7 @@ function computeGaKke() {
   state.projectSettings.gaKkeConfig = cfg;
   setDirty(true);
 
-  // Phase 1, Chunk D: roll GA results into the unified Suggested_KKE
+  // Phase 1, Chunk D: roll GA results into the unified Suggested_MRA
   computeSuggestedKke();
 
   applyFilter();
@@ -11789,26 +11829,26 @@ function updateGaKkeBadge(row) {
   if (!badge) return;
   const cfg = state.projectSettings.gaKkeConfig;
   if (!cfg || cfg.dismissed) { badge.classList.add('hidden'); return; }
-  // Phase 1, Chunk D: when Suggested_KKE is populated, prefer that badge — hide GA
+  // Phase 1, Chunk D: when Suggested_MRA is populated, prefer that badge — hide GA
   // since Suggested already surfaces GA's contribution under its source prefix.
   if (row && String(row[SUGGESTED_KKE_COL] || '').trim()) { badge.classList.add('hidden'); return; }
   const rec = row ? String(row[GA_KKE_COL] || '').trim() : '';
   if (!rec) { badge.classList.add('hidden'); return; }
   badge.classList.remove('hidden');
-  badge.classList.remove('ga-kke-keep', 'ga-kke-kill', 'ga-kke-evolve');
+  badge.classList.remove('ga-kke-migrate', 'ga-kke-archive', 'ga-kke-revise');
   const cls = rec.toLowerCase();
-  if (['keep', 'kill', 'evolve'].includes(cls)) badge.classList.add('ga-kke-' + cls);
+  if (['migrate', 'archive', 'revise'].includes(cls)) badge.classList.add('ga-kke-' + cls);
   badge.textContent = rec;
   const score = row[GA_SCORE_COL] ? ` (score ${row[GA_SCORE_COL]})` : '';
   const computed = cfg.computedAt ? new Date(cfg.computedAt).toLocaleString() : '';
-  badge.title = `GA KKE: ${rec}${score}\nComputed: ${computed}`;
+  badge.title = `GA MRA: ${rec}${score}\nComputed: ${computed}`;
 }
 
-// ─── Phase 1, Chunk D: Suggested_KKE unified badge ──────────────────────────
-// Suggested_KKE = derived value combining all configured suggestion sources
+// ─── Phase 1, Chunk D: Suggested_MRA unified badge ──────────────────────────
+// Suggested_MRA = derived value combining all configured suggestion sources
 // (GA + Rubric for now; CMS / URL patterns in future phases).
-// - `Suggested_KKE` column = the strongest single source's recommendation
-// - `Suggested_KKE_Sources` column = JSON array of {source, rec, weight} for the tooltip
+// - `Suggested_MRA` column = the strongest single source's recommendation
+// - `Suggested_MRA_Sources` column = JSON array of {source, rec, weight} for the tooltip
 // - Badge in audit bar shows "GA: Kill" or "Rubric: Evolve" with ⚠ on disagreement
 //
 // This is a thin orchestrator over existing GA + Rubric pipelines; it does not
@@ -11835,8 +11875,8 @@ function nextPageStatusColor() {
   return PAGE_STATUS_AUTO_COLORS[lib.length % PAGE_STATUS_AUTO_COLORS.length];
 }
 
-const SUGGESTED_KKE_COL = 'Suggested_KKE';
-const SUGGESTED_KKE_SOURCES_COL = 'Suggested_KKE_Sources';
+const SUGGESTED_KKE_COL = 'Suggested_MRA';
+const SUGGESTED_KKE_SOURCES_COL = 'Suggested_MRA_Sources';
 const ASSESSMENT_RESULT_COL = '_AssessmentResult';
 
 /** Default source weights — higher = preferred when sources disagree. */
@@ -11852,7 +11892,7 @@ function suggestedKkeConfig() {
 }
 
 /** Inspect a single row and produce a per-source breakdown.
- *  Returns: [{source: 'GA'|'Rubric', rec: 'Keep'|'Kill'|..., detail: extra info}]
+ *  Returns: [{source: 'GA'|'Rubric', rec: 'Migrate'|'Archive'|..., detail: extra info}]
  */
 function gatherRowSources(row) {
   const out = [];
@@ -11886,7 +11926,7 @@ function audienceSourceVote(row) {
   if (!list.length) return null;
 
   if (list.length === 1 && list[0] === AUDIENCE_NONE) {
-    return { source: 'Audience', rec: 'Kill', detail: 'no target audience' };
+    return { source: 'Audience', rec: 'Archive', detail: 'no target audience' };
   }
 
   const real = list.filter(a => a !== AUDIENCE_NONE);
@@ -11895,10 +11935,10 @@ function audienceSourceVote(row) {
   const tiers = real.map(audienceTier);
   if (tiers.includes('Primary')) {
     const names = real.filter(a => audienceTier(a) === 'Primary');
-    return { source: 'Audience', rec: 'Keep', detail: `serves ${names.join(', ')}` };
+    return { source: 'Audience', rec: 'Migrate', detail: `serves ${names.join(', ')}` };
   }
   if (tiers.every(t => t === 'Tertiary' || t === 'Not a target')) {
-    return { source: 'Audience', rec: 'Evolve', detail: 'only non-priority audiences' };
+    return { source: 'Audience', rec: 'Revise', detail: 'only non-priority audiences' };
   }
   return null; // Secondary-only — reviewed, but not decisive.
 }
@@ -11941,7 +11981,7 @@ function ensureSuggestedKkeColumns() {
     state.editedRows.forEach(r => { if (!(name in r)) r[name] = ''; });
     state.rows.forEach(r => { if (!(name in r)) r[name] = ''; });
   };
-  // Insert after GA_KKE / GA_Score if present, otherwise near KKE_Recommendation
+  // Insert after GA_MRA / GA_Score if present, otherwise near MRA_Recommendation
   let anchor = headers.indexOf(GA_SCORE_COL);
   if (anchor < 0) anchor = headers.indexOf(GA_KKE_COL);
   if (anchor < 0) anchor = headers.indexOf(kkeCol());
@@ -11950,7 +11990,7 @@ function ensureSuggestedKkeColumns() {
   addCol(SUGGESTED_KKE_SOURCES_COL, headers.indexOf(SUGGESTED_KKE_COL));
 }
 
-/** Write the two Suggested_KKE columns for ONE row. Returns the winner, or null
+/** Write the two Suggested_MRA columns for ONE row. Returns the winner, or null
  *  when no source had anything to say (columns cleared). */
 function writeSuggestedKkeForRow(row, weights) {
   const sources = gatherRowSources(row);
@@ -11980,8 +12020,8 @@ function refreshSuggestedKkeForRow(origIndex) {
   if (origIndex === state.selectedIndex) updateSuggestedKkeBadge(row);
 }
 
-/** Recompute Suggested_KKE + Suggested_KKE_Sources for every row.
- *  Reads from GA_KKE_Recommendation, GA_Score, and _AssessmentResult.
+/** Recompute Suggested_MRA + Suggested_MRA_Sources for every row.
+ *  Reads from GA_MRA_Recommendation, GA_Score, and _AssessmentResult.
  *  Does not invoke GA or Rubric computes — those are run separately.
  *  Returns a summary: { computed, blank, disagreements, total }.
  */
@@ -12009,8 +12049,8 @@ function computeSuggestedKke() {
   return cfg.lastRun;
 }
 
-/** Render the Suggested_KKE badge in the Decide cluster.
- *  Display: "GA: Kill" or "Rubric: Evolve" with ⚠ when sources disagree.
+/** Render the Suggested_MRA badge in the Decide cluster.
+ *  Display: "GA: Archive" or "Rubric: Revise" with ⚠ when sources disagree.
  *  Click → popover showing per-source breakdown.
  */
 function updateSuggestedKkeBadge(row) {
@@ -12031,9 +12071,9 @@ function updateSuggestedKkeBadge(row) {
   const disagreement = !!payload?.disagreement;
 
   badge.classList.remove('hidden');
-  badge.classList.remove('ga-kke-keep', 'ga-kke-kill', 'ga-kke-evolve');
+  badge.classList.remove('ga-kke-migrate', 'ga-kke-archive', 'ga-kke-revise');
   const cls = winningRec.toLowerCase();
-  if (['keep', 'kill', 'evolve'].includes(cls)) badge.classList.add('ga-kke-' + cls);
+  if (['migrate', 'archive', 'revise'].includes(cls)) badge.classList.add('ga-kke-' + cls);
   badge.classList.toggle('suggested-kke-disagree', disagreement);
 
   // Display text: source prefix + recommendation; ⚠ glyph for disagreement
@@ -12043,7 +12083,7 @@ function updateSuggestedKkeBadge(row) {
   // Build tooltip with all sources
   const sources = payload?.sources || [];
   const lines = sources.map(s => `  ${s.source}: ${s.rec}${s.detail ? ' (' + s.detail + ')' : ''}`).join('\n');
-  badge.title = (disagreement ? '⚠ Sources disagree\n' : '') + 'Suggested KKE breakdown:\n' + lines;
+  badge.title = (disagreement ? '⚠ Sources disagree\n' : '') + 'Suggested MRA breakdown:\n' + lines;
 
   // Click to show popover (simple: alert-style modal)
   badge.onclick = () => showSuggestedKkePopover(badge, payload);
@@ -12071,7 +12111,7 @@ function showSuggestedKkePopover(anchor, payload) {
     </div>`;
   }).join('');
   pop.innerHTML = `
-    <div class="skp-head">Suggested KKE — source breakdown</div>
+    <div class="skp-head">Suggested MRA — source breakdown</div>
     ${dis}
     ${rows}
     <div class="skp-foot">Winner: <strong>${escapeHtml(payload.winner)}</strong></div>
@@ -12186,7 +12226,7 @@ function openContentTypeRegistryEditor() {
   const NATURE_OPTIONS = CONTENT_NATURE_OPTIONS;
   // Display labels (values stay as stored — see contentNatureLabel()).
   const NATURE_LABEL = Object.fromEntries(CONTENT_NATURE_OPTIONS.map(v => [v, contentNatureLabel(v)]));
-  const TRACK_OPTIONS  = ['', 'Scripted', 'Migrate Records', 'Configure', 'Manual Rebuild', 'Merge', 'Kill/Redirect'];
+  const TRACK_OPTIONS  = ['', 'Scripted', 'Migrate Records', 'Configure', 'Manual Rebuild', 'Merge', 'Archive/Redirect'];
 
   const selectHtml = (opts, val, labels) => opts.map(o =>
     `<option value="${escapeHtml(o)}"${o === val ? ' selected' : ''}>${escapeHtml((labels && labels[o] !== undefined) ? labels[o] : (o || '—'))}</option>`
@@ -12445,7 +12485,7 @@ function openPatternLibraryEditor() {
     ? state.patternLibrary.map(e => ({ ...e }))
     : [];
 
-  const TRACK_OPTIONS = ['', 'Scripted', 'Migrate Records', 'Configure', 'Manual Rebuild', 'Merge', 'Kill/Redirect'];
+  const TRACK_OPTIONS = ['', 'Scripted', 'Migrate Records', 'Configure', 'Manual Rebuild', 'Merge', 'Archive/Redirect'];
   const trackOpts = (val) => TRACK_OPTIONS.map(o =>
     `<option value="${o}"${o === val ? ' selected' : ''}>${o || '—'}</option>`
   ).join('');
@@ -12534,7 +12574,7 @@ function openPatternLibraryEditor() {
           <textarea id="_pl-d-notes" rows="2">${escapeHtml(e.notes || '')}</textarea>
         </div>
         <div class="pl-detail-row" style="justify-content:flex-end;">
-          <button id="_pl-d-delete" class="btn btn-sm btn-ghost" style="color:var(--kke-kill);">Delete spec</button>
+          <button id="_pl-d-delete" class="btn btn-sm btn-ghost" style="color:var(--kke-archive);">Delete spec</button>
         </div>
       </div>
     `;
@@ -12696,24 +12736,24 @@ function openNon200TriageDialog() {
   function actionOptionsHtml(code) {
     const cat = statusCodeCategory(code);
     if (cat === '3xx') return `
-      <option value="kill-redirect">Kill + copy redirect URL</option>
-      <option value="kill">Kill</option>
+      <option value="kill-redirect">Archive + copy redirect URL</option>
+      <option value="archive">Archive</option>
       <option value="exclude">Exclude</option>
       <option value="skip">Skip (no change)</option>`;
     if (code === 404) return `
-      <option value="kill-404">Kill (404 sentinel)</option>
-      <option value="kill">Kill</option>
+      <option value="kill-404">Archive (404 sentinel)</option>
+      <option value="archive">Archive</option>
       <option value="exclude">Exclude</option>
       <option value="skip">Skip (no change)</option>`;
     if (cat === '4xx') return `
-      <option value="kill">Kill</option>
-      <option value="evolve">Evolve – flag for review</option>
+      <option value="archive">Archive</option>
+      <option value="revise">Revise – flag for review</option>
       <option value="exclude">Exclude</option>
       <option value="skip">Skip (no change)</option>`;
     // 5xx
     return `
-      <option value="evolve">Evolve – flag for review</option>
-      <option value="kill">Kill</option>
+      <option value="revise">Revise – flag for review</option>
+      <option value="archive">Archive</option>
       <option value="exclude">Exclude</option>
       <option value="skip">Skip (no change)</option>`;
   }
@@ -12757,7 +12797,7 @@ function openNon200TriageDialog() {
     </div>
     <div style="padding:14px 16px;overflow-y:auto;flex:1 1 auto;">
       <p style="margin:0 0 12px;font-size:13px;color:var(--text-muted);">
-        Choose a KKE action for each status code group. Pages already assigned a KKE value can be skipped.
+        Choose an action for each status code group. Pages already assigned a decision can be skipped.
       </p>
       <table style="width:100%;border-collapse:collapse;">
         <thead>
@@ -12776,7 +12816,7 @@ function openNon200TriageDialog() {
       </table>
       <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;cursor:pointer;">
         <input type="checkbox" id="_non200-skip-assigned" checked>
-        Skip pages already assigned a KKE value
+        Skip pages already assigned a decision
       </label>
     </div>
     <div style="padding:10px 16px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;gap:8px;">
@@ -12864,7 +12904,7 @@ function openNon200TriageDialog() {
         let newKke = '';
 
         if (action === 'kill-redirect') {
-          newKke = 'Kill';
+          newKke = 'Archive';
           // Copy redirect URL only if Redirect_Destination is blank and redirect URL exists
           if (redirectUrlColName) {
             const existingDest = String(editedRow['Redirect_Destination'] || '').trim();
@@ -12883,17 +12923,17 @@ function openNon200TriageDialog() {
             }
           }
         } else if (action === 'kill-404') {
-          newKke = 'Kill';
+          newKke = 'Archive';
           const existingDest = String(editedRow['Redirect_Destination'] || '').trim();
           if (!existingDest) {
             writeRedirectDestination(editedRow, '404', 'manual');
             logChange(origIndex, 'Redirect_Destination', '', '404');
             undoItems.push({ origIndex, field: 'Redirect_Destination', oldValue: '', newValue: '404' });
           }
-        } else if (action === 'kill') {
-          newKke = 'Kill';
-        } else if (action === 'evolve') {
-          newKke = 'Evolve';
+        } else if (action === 'archive') {
+          newKke = 'Archive';
+        } else if (action === 'revise') {
+          newKke = 'Revise';
         } else if (action === 'exclude') {
           newKke = 'Exclude';
         }
@@ -12953,7 +12993,7 @@ function maybeOfferGaKkeSetup() {
   banner.innerHTML = `
     <div style="flex:1;">
       <div style="font-weight:600;margin-bottom:2px;">GA4 data detected</div>
-      <div style="color:var(--text-muted);font-size:12px;">Compute GA KKE recommendations?</div>
+      <div style="color:var(--text-muted);font-size:12px;">Compute GA MRA recommendations?</div>
     </div>
     <button id="ga-kke-banner-setup" class="btn btn-sm btn-primary">Set up</button>
     <button id="ga-kke-banner-dismiss" class="btn btn-sm btn-ghost">Dismiss</button>
@@ -13022,7 +13062,7 @@ function openGaKkeConfigDialog() {
 
   dialog.innerHTML = `
     <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
-      <div style="font-weight:600;font-size:15px;">GA KKE Settings</div>
+      <div style="font-weight:600;font-size:15px;">GA MRA Settings</div>
       <button id="_gk-close" class="modal-close" title="Close">×</button>
     </div>
     <div style="flex:1;overflow:auto;padding:16px 20px;">
@@ -13045,9 +13085,9 @@ function openGaKkeConfigDialog() {
 
       <div style="margin-top:16px;font-weight:600;font-size:13px;margin-bottom:8px;">Thresholds</div>
       <div style="display:flex;gap:16px;align-items:center;">
-        <label style="font-size:12px;">Keep ≥ <input type="number" id="_gk-t-keep" value="${working.thresholds.keep}" step="0.05" min="0" max="1" style="width:64px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;margin-left:4px;"></label>
-        <label style="font-size:12px;">Evolve ≥ <input type="number" id="_gk-t-evolve" value="${working.thresholds.evolve}" step="0.05" min="0" max="1" style="width:64px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;margin-left:4px;"></label>
-        <span style="color:var(--text-muted);font-size:12px;">Below Evolve → Kill</span>
+        <label style="font-size:12px;">Migrate ≥ <input type="number" id="_gk-t-keep" value="${working.thresholds.keep}" step="0.05" min="0" max="1" style="width:64px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;margin-left:4px;"></label>
+        <label style="font-size:12px;">Revise ≥ <input type="number" id="_gk-t-evolve" value="${working.thresholds.evolve}" step="0.05" min="0" max="1" style="width:64px;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;margin-left:4px;"></label>
+        <span style="color:var(--text-muted);font-size:12px;">Below Revise → Archive</span>
       </div>
 
       <div style="margin-top:16px;font-weight:600;font-size:13px;margin-bottom:8px;">Missing data</div>
@@ -13085,7 +13125,7 @@ function openGaKkeConfigDialog() {
     const sum = Object.values(working.weights).reduce((a, b) => a + b, 0);
     const el = dialog.querySelector('#_gk-sum');
     el.textContent = `Sum: ${sum.toFixed(2)}` + (Math.abs(sum - 1) > 0.001 ? ' (will be normalized)' : '');
-    el.style.color = Math.abs(sum - 1) > 0.001 ? 'var(--kke-evolve)' : 'var(--text-muted)';
+    el.style.color = Math.abs(sum - 1) > 0.001 ? 'var(--kke-revise)' : 'var(--text-muted)';
   }
   dialog.addEventListener('input', updateSum);
 
@@ -13115,12 +13155,12 @@ function openGaKkeConfigDialog() {
   dialog.querySelector('#_gk-close').addEventListener('click', close);
   dialog.querySelector('#_gk-cancel').addEventListener('click', close);
   overlay.addEventListener('click', close);
-  dialog.querySelector('#_gk-save').addEventListener('click', () => { commitConfig(); close(); showToast('GA KKE settings saved', 'success'); });
+  dialog.querySelector('#_gk-save').addEventListener('click', () => { commitConfig(); close(); showToast('GA MRA settings saved', 'success'); });
   dialog.querySelector('#_gk-compute').addEventListener('click', () => {
     commitConfig();
     const result = computeGaKke();
     close();
-    if (result) showToast(`GA KKE computed: ${result.computed} rows (${result.skipped} skipped)`, 'success');
+    if (result) showToast(`GA MRA computed: ${result.computed} rows (${result.skipped} skipped)`, 'success');
   });
 
   updateSum();
@@ -13133,7 +13173,7 @@ function refreshGaKke() {
     return;
   }
   const result = computeGaKke();
-  if (result) showToast(`GA KKE refreshed: ${result.computed} rows (${result.skipped} skipped)`, 'success');
+  if (result) showToast(`GA MRA refreshed: ${result.computed} rows (${result.skipped} skipped)`, 'success');
 }
 
 // ─── Consolidate (merge a page's content into another inventory page) ─────────
@@ -13233,9 +13273,9 @@ function resyncConsolidateInto() {
 }
 
 /** Is this page consolidating? Decided by the EFFECTIVE KKE — a client's
- *  Final_KKE outranks the auditor's recommendation here exactly as it does in
+ *  Final_MRA outranks the auditor's recommendation here exactly as it does in
  *  the redirect resolver and every report. This used to OR the two columns, so a
- *  client who overrode "Consolidate" with "Keep" was silently ignored: the page
+ *  client who overrode "Consolidate" with "Migrate" was silently ignored: the page
  *  kept its target, its consolidation redirect, and its place in the worklists. */
 function rowIsConsolidate(row) {
   if (!row) return false;
@@ -13253,7 +13293,7 @@ function rowMentionsConsolidate(row) {
 }
 
 /** A stored consolidation target on a page that is no longer consolidating —
- *  typically the auditor recommended Consolidate and the client's Final_KKE
+ *  typically the auditor recommended Consolidate and the client's Final_MRA
  *  said otherwise. Inactive (nothing reads it) but worth tidying. */
 function rowHasInactiveConsolidateTarget(row) {
   if (!row || rowIsConsolidate(row)) return false;
@@ -13318,21 +13358,21 @@ function rowConsolidateHasDeadTarget(row) {
   const targetRow = findConsolidateTargetRow(row);
   if (!targetRow) return false;
   const targetKke = effectiveKke(targetRow).toLowerCase();
-  return targetKke === 'kill' || targetKke === 'exclude';
+  return targetKke === 'archive' || targetKke === 'exclude';
 }
 
 function updateConsolidateIndicator(row) {
   const dot = els.consolidateIndicator;
   if (!dot) return;
   dot.classList.remove('needs-target', 'dead-target');
-  // Only an ACTIVE consolidation shows its target — one the client's Final_KKE
+  // Only an ACTIVE consolidation shows its target — one the client's Final_MRA
   // has overridden is inactive, and the audit bar's override chip says so.
   const target = rowIsConsolidate(row) ? consolidateTargetAddr(row) : '';
   if (target) {
     dot.classList.remove('hidden');
     if (rowConsolidateHasDeadTarget(row)) {
       dot.classList.add('dead-target');
-      dot.title = 'Warning: consolidation target is Kill or Exclude';
+      dot.title = 'Warning: consolidation target is Archive or Exclude';
     } else {
       dot.title = '';
     }
@@ -13347,7 +13387,7 @@ function updateConsolidateIndicator(row) {
 }
 
 /** The KKE buttons edit (and highlight) the auditor's recommendation, but the
- *  engine acts on the effective KKE — so when the client's Final_KKE says
+ *  engine acts on the effective KKE — so when the client's Final_MRA says
  *  something else, show it beside the buttons. Clicking it goes where the
  *  override needs attention: the target picker for a Consolidate, otherwise the
  *  SME fields holding the Final dropdown. */
@@ -13367,9 +13407,9 @@ function updateFinalOverrideChip(row) {
   chip.classList.toggle('needs-target', needsTarget);
   const recText = rec ? `recommended ${rec}` : 'no recommendation';
   chip.title = fin.toLowerCase() === 'consolidate'
-    ? `Final KKE is Consolidate (${recText}) — this is what redirects and reports use.\n` +
+    ? `Final MRA is Consolidate (${recText}) — this is what redirects and reports use.\n` +
       (needsTarget ? 'No target page yet — click to choose where it consolidates.' : 'Click to review the consolidation target.')
-    : `Final KKE is ${fin} (${recText}) — this is what redirects and reports use.\nClick to show the Final dropdown.`;
+    : `Final MRA is ${fin} (${recText}) — this is what redirects and reports use.\nClick to show the Final dropdown.`;
 }
 
 /** Loose URL identity for the self/cycle guards: the same page reached with a
@@ -13413,37 +13453,37 @@ async function maybeUpgradeConsolidateTargetToEvolve(targetIndex) {
   const eff = effectiveKke(targetRow);
   // Evolve is the wanted state; Consolidate means a chain, which the cycle and
   // dead-target checks already speak to — re-asking here would just be noise.
-  if (eff === 'Evolve' || eff === 'Consolidate') return;
+  if (eff === 'Revise' || eff === 'Consolidate') return;
 
   const urlCol = state.urlColumn || 'Address';
   const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
   const label = (titleCol && String(targetRow[titleCol] || '').trim()) || String(targetRow[urlCol] || '').trim();
-  const dying = eff === 'Kill' || eff === 'Exclude';
+  const dying = eff === 'Archive' || eff === 'Exclude';
   const was = eff ? `is marked ${eff}` : 'has not been reviewed yet';
 
   const ok = await confirmDialog({
-    title: 'Set the target page to Evolve?',
+    title: 'Set the target page to Revise?',
     message:
       `${label}\n\nThis page ${was}, but you're merging another page's content into it.\n\n` +
       (dying
-        ? 'A page marked Kill or Exclude is being removed, so the content you merge in has nowhere to land and neither page gets a working redirect.'
-        : 'Keep means "carry it across unchanged" — which it no longer is. Evolve is the signal that this page needs work.'),
-    confirmLabel: 'Set to Evolve',
+        ? 'A page marked Archive or Exclude is being removed, so the content you merge in has nowhere to land and neither page gets a working redirect.'
+        : 'Migrate means "carry it across unchanged" — which it no longer is. Revise is the signal that this page needs work.'),
+    confirmLabel: 'Set to Revise',
     cancelLabel: `Leave as ${eff || 'unreviewed'}`,
   });
   if (!ok) return;
 
   const oldKke = String(targetRow[kkeCol()] || '');
-  if (oldKke !== 'Evolve') {
-    targetRow[kkeCol()] = 'Evolve';
-    logChange(targetIndex, kkeCol(), oldKke, 'Evolve');
+  if (oldKke !== 'Revise') {
+    targetRow[kkeCol()] = 'Revise';
+    logChange(targetIndex, kkeCol(), oldKke, 'Revise');
   }
-  // Final_KKE outranks KKE_Recommendation, so leaving a stale one behind would
+  // Final_MRA outranks MRA_Recommendation, so leaving a stale one behind would
   // make "Set to Evolve" quietly do nothing on any SME-resolved row.
   const oldFinal = String(targetRow[finalKkeCol()] || '');
-  if (oldFinal && oldFinal !== 'Evolve') {
-    targetRow[finalKkeCol()] = 'Evolve';
-    logChange(targetIndex, finalKkeCol(), oldFinal, 'Evolve');
+  if (oldFinal && oldFinal !== 'Revise') {
+    targetRow[finalKkeCol()] = 'Revise';
+    logChange(targetIndex, finalKkeCol(), oldFinal, 'Revise');
   }
   setDirty(true);
   refreshRowInList(targetIndex);
@@ -13489,22 +13529,22 @@ async function applyConsolidateTarget(origIndex, targetUrl, opts = {}) {
   const oldId = String(row[CONSOLIDATE_ID_COL] || '');
   const oldDisplay = String(row[CONSOLIDATE_COL] || '');
 
-  // If Consolidate intent already exists (via KKE or Final_KKE), we're just setting
-  // the target — don't overwrite KKE_Recommendation, and skip the kill-cleanup prompt.
+  // If Consolidate intent already exists (via KKE or Final_MRA), we're just setting
+  // the target — don't overwrite MRA_Recommendation, and skip the kill-cleanup prompt.
   const alreadyConsolidate = rowIsConsolidate(row);
   let changed = false;
   const oldKke = row[kkeCol()];
   const oldFinal = String(row[finalKkeCol()] || '').trim();
 
   if (!alreadyConsolidate) {
-    // A client Final_KKE outranks the recommendation, so writing only
-    // KKE_Recommendation here would leave the page NOT consolidating — the
+    // A client Final_MRA outranks the recommendation, so writing only
+    // MRA_Recommendation here would leave the page NOT consolidating — the
     // target would be stored and ignored. Say so, and let the user decide.
     if (!quiet && oldFinal && oldFinal !== 'Consolidate' && kkeCol() !== finalKkeCol()) {
       const ok = await confirmDialog({
-        title: 'Override the Final KKE?',
-        message: `The Final KKE for this page is ${oldFinal} — that is the decision redirects and reports act on.\n\n` +
-          'Consolidating it changes the Final KKE to Consolidate as well.',
+        title: 'Override the Final MRA?',
+        message: `The Final MRA for this page is ${oldFinal} — that is the decision redirects and reports act on.\n\n` +
+          'Consolidating it changes the Final MRA to Consolidate as well.',
         confirmLabel: 'Consolidate anyway',
       });
       if (!ok) return { ok: false, reason: 'cancelled' };
@@ -13560,7 +13600,7 @@ function clearConsolidateTarget(origIndex) {
   if (state.selectedIndex === origIndex) { updateConsolidateIndicator(row); updateFinalOverrideChip(row); }
 }
 
-// ─── Consolidation review: where the client's Final_KKE disagrees ─────────────
+// ─── Consolidation review: where the client's Final_MRA disagrees ─────────────
 // SME review is exactly where consolidation decisions get revisited: a client
 // knows which pages overlap in ways a crawl can't show, and can have a different
 // idea of where content should land. Three shapes need a person to look:
@@ -13631,8 +13671,8 @@ function openConsolidateReviewDialog() {
   wrap.className = 'cr-review';
   const intro = document.createElement('p');
   intro.className = 'cr-review-intro';
-  intro.textContent = 'Consolidations where the Final KKE (the client’s decision) differs from the recommendation, or where the SME commented. ' +
-    'Final KKE is what redirects and reports act on.';
+  intro.textContent = 'Consolidations where the Final MRA (the client’s decision) differs from the recommendation, or where the SME commented. ' +
+    'Final MRA is what redirects and reports act on.';
   wrap.appendChild(intro);
   const list = document.createElement('div');
   list.className = 'cr-review-list';
@@ -13719,7 +13759,7 @@ function openConsolidateReviewDialog() {
   render();
 }
 
-/** Follow-up after a row's Final_KKE changes. Final_KKE is the effective call,
+/** Follow-up after a row's Final_MRA changes. Final_MRA is the effective call,
  *  so moving it into or out of Consolidate changes what the page actually does:
  *  into → it needs a target (open the picker, which keeps any target the auditor
  *  already chose); out of → a stored target is now inactive (offer to clear it). */
@@ -13755,7 +13795,7 @@ function findEvolveDestinationConflicts(origIndex) {
   const navId = String(row['Sitemap_ID'] || '').trim();
   if (!navId) return [];
   const kke = String(row[kkeCol()] || '').trim();
-  if (kke !== 'Keep' && kke !== 'Evolve') return [];
+  if (kke !== 'Migrate' && kke !== 'Revise') return [];
   const urlCol = state.urlColumn || 'Address';
   const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
   const conflicts = [];
@@ -13763,7 +13803,7 @@ function findEvolveDestinationConflicts(origIndex) {
     if (i === origIndex) return;
     if (String(r['Sitemap_ID'] || '').trim() !== navId) return;
     const rk = String(r[kkeCol()] || '').trim();
-    if (rk !== 'Keep' && rk !== 'Evolve') return;
+    if (rk !== 'Migrate' && rk !== 'Revise') return;
     conflicts.push({
       origIndex: i,
       url: String(r[urlCol] || '').trim(),
@@ -13787,7 +13827,7 @@ async function maybeWarnDuplicateDestination(origIndex) {
     const otherLabel = other.title ? `${other.title}\n${other.url}` : other.url;
     const consolidate = await confirmDialog({
       title: 'Did you mean to Consolidate?',
-      message: `Another page is already assigned to the same destination (${destLabel}) and marked Keep/Evolve:\n\n${otherLabel}\n\nOnly one page can occupy that destination — consolidate this page into it instead?`,
+      message: `Another page is already assigned to the same destination (${destLabel}) and marked Migrate/Revise:\n\n${otherLabel}\n\nOnly one page can occupy that destination — consolidate this page into it instead?`,
       confirmLabel: 'Consolidate into it',
       cancelLabel: 'No, keep both',
     });
@@ -13796,7 +13836,7 @@ async function maybeWarnDuplicateDestination(origIndex) {
     const list = conflicts.map(c => `• ${c.title ? c.title + ' — ' : ''}${c.url}`).join('\n');
     const openPicker = await confirmDialog({
       title: 'Did you mean to Consolidate?',
-      message: `${conflicts.length} other pages already share this destination (${destLabel}) and are marked Keep/Evolve:\n\n${list}\n\nOnly one page can occupy that destination — pick one to consolidate into?`,
+      message: `${conflicts.length} other pages already share this destination (${destLabel}) and are marked Migrate/Revise:\n\n${list}\n\nOnly one page can occupy that destination — pick one to consolidate into?`,
       confirmLabel: 'Choose target…',
       cancelLabel: 'No, keep all',
     });
@@ -13832,7 +13872,7 @@ function openConsolidatePicker(sourceIndex, onDone) {
     origIndex,
     url: String(row[urlCol] || '').trim(),
     title: titleCol ? String(row[titleCol] || '').trim() : '',
-    kke: effectiveKke(row),   // what the page will actually do — a client Final_KKE included
+    kke: effectiveKke(row),   // what the page will actually do — a client Final_MRA included
   })).filter(c => c.origIndex !== sourceIndex && c.url && !sameConsolidateUrl(c.url, sourceUrl));
 
   const overlay = document.createElement('div');
@@ -13878,7 +13918,7 @@ function openConsolidatePicker(sourceIndex, onDone) {
       <div class="_cp-h" data-k="rownum" style="cursor:pointer;user-select:none;">#</div>
       <div class="_cp-h" data-k="url" style="cursor:pointer;user-select:none;">URL</div>
       <div class="_cp-h" data-k="title" style="cursor:pointer;user-select:none;">Title</div>
-      <div class="_cp-h" data-k="kke" style="cursor:pointer;user-select:none;">KKE</div>
+      <div class="_cp-h" data-k="kke" style="cursor:pointer;user-select:none;">MRA</div>
     </div>
     <div id="_cp-scroll" style="flex:1;overflow-y:auto;position:relative;min-height:200px;">
       <div id="_cp-body" style="position:relative;"></div>
@@ -13943,7 +13983,7 @@ function openConsolidatePicker(sourceIndex, onDone) {
       if (k === 'rownum') label = '#';
       else if (k === 'url') label = 'URL';
       else if (k === 'title') label = 'Title';
-      else if (k === 'kke') label = 'KKE';
+      else if (k === 'kke') label = 'MRA';
       if (sort.key === k) label += sort.dir === 'asc' ? ' ↑' : ' ↓';
       h.textContent = label;
     });
@@ -13959,7 +13999,7 @@ function openConsolidatePicker(sourceIndex, onDone) {
       const c = filtered[i];
       const row = document.createElement('div');
       row.className = '_cp-row' + (selectedUrl === c.url ? ' _cp-selected' : '');
-      row.style.cssText = `position:absolute;top:${i * CP_ROW_H}px;left:0;right:0;height:${CP_ROW_H}px;display:grid;grid-template-columns:60px 1fr 220px 80px;align-items:center;padding:0 18px;cursor:pointer;border-bottom:1px solid var(--border);font-size:12px;${selectedUrl === c.url ? 'background:var(--kke-keep-bg);' : ''}`;
+      row.style.cssText = `position:absolute;top:${i * CP_ROW_H}px;left:0;right:0;height:${CP_ROW_H}px;display:grid;grid-template-columns:60px 1fr 220px 80px;align-items:center;padding:0 18px;cursor:pointer;border-bottom:1px solid var(--border);font-size:12px;${selectedUrl === c.url ? 'background:var(--kke-migrate-bg);' : ''}`;
       const kkeClass = c.kke ? 'kke-badge-inline kke-' + c.kke.toLowerCase() : '';
       row.innerHTML = `
         <div style="color:var(--text-muted);">${c.origIndex + 1}</div>
@@ -14172,8 +14212,8 @@ function openConsolidationCandidates() {
     </div>
     <div style="padding:10px 20px;border-bottom:1px solid var(--border);background:var(--bg-field-bar);display:flex;flex-direction:column;gap:8px;">
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;">
-        <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;flex-shrink:0;margin-right:4px;">Include KKE:</span>
-        ${kkeCheckboxesHtml || '<span style="font-size:11px;color:var(--text-muted);">(no KKE values found)</span>'}
+        <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;flex-shrink:0;margin-right:4px;">Include MRA:</span>
+        ${kkeCheckboxesHtml || '<span style="font-size:11px;color:var(--text-muted);">(no MRA values found)</span>'}
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
         <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;flex-shrink:0;">Exclude groups:</span>
@@ -14203,7 +14243,7 @@ function openConsolidationCandidates() {
     excludedGroupsEl.innerHTML = '';
     Array.from(filter.excludedGroups).sort().forEach(g => {
       const chip = document.createElement('span');
-      chip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 6px;background:var(--kke-kill-bg);color:var(--kke-kill);border-radius:3px;';
+      chip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 6px;background:var(--kke-archive-bg);color:var(--kke-archive);border-radius:3px;';
       chip.innerHTML = `${escapeHtml(g)} <button style="background:none;border:none;color:inherit;cursor:pointer;padding:0;font-size:13px;line-height:1;">×</button>`;
       chip.querySelector('button').addEventListener('click', () => {
         filter.excludedGroups.delete(g);
@@ -14317,7 +14357,7 @@ function renderCandidateGroup(group, onChange, skipped) {
   // Hint
   const hint = document.createElement('div');
   hint.style.cssText = 'font-size:11px;color:var(--text-muted);font-style:italic;';
-  hint.textContent = 'Target keeps its sitemap assignment and is set to Evolve. Others become Consolidate (target URL = the chosen page) and have their sitemap placement cleared.';
+  hint.textContent = 'Target keeps its sitemap assignment and is set to Revise. Others become Consolidate (target URL = the chosen page) and have their sitemap placement cleared.';
   wrap.appendChild(hint);
 
   // Wire actions
@@ -14343,9 +14383,9 @@ function applyConsolidationGroup(group, targetOrigIndex) {
 
   // Target: set KKE to Evolve (unless it's already Evolve/Keep — preserve those; otherwise upgrade to Evolve)
   const oldTargetKke = String(targetRow[kkeCol()] || '').trim();
-  if (oldTargetKke !== 'Evolve' && oldTargetKke !== 'Keep') {
-    targetRow[kkeCol()] = 'Evolve';
-    logChange(targetOrigIndex, kkeCol(), oldTargetKke, 'Evolve');
+  if (oldTargetKke !== 'Revise' && oldTargetKke !== 'Migrate') {
+    targetRow[kkeCol()] = 'Revise';
+    logChange(targetOrigIndex, kkeCol(), oldTargetKke, 'Revise');
   }
 
   // Others: KKE = Consolidate, point identity + display at the master, clear nav
@@ -14996,7 +15036,7 @@ function createSitemapFromAudit(opts = {}) {
     if (!url) { skippedNoUrl++; return; }
     if (!includeAllRows) {
       const kke = String(row[kkeCol()] || '').trim();
-      if (kke !== 'Keep' && kke !== 'Evolve') { skippedKke++; return; }
+      if (kke !== 'Migrate' && kke !== 'Revise') { skippedKke++; return; }
     }
     const segments = urlPathSegments(url);
     if (!segments.length) { skippedRoot++; return; } // homepage / root URL — nothing to walk
@@ -15056,7 +15096,7 @@ async function promoteHubNodeToRow(node) {
 
   if (!(await confirmDialog({
     title: 'Create page for this section',
-    message: `Create a new page for "${node.label}"? It's added to the audit as a new Keep page assigned to this sitemap node, so it flows through the rest of the audit and migration tracker like any other page.`,
+    message: `Create a new page for "${node.label}"? It's added to the audit as a new Migrate page assigned to this sitemap node, so it flows through the rest of the audit and migration tracker like any other page.`,
     confirmLabel: 'Create Page',
   }))) return null;
 
@@ -15077,7 +15117,7 @@ async function promoteHubNodeToRow(node) {
   newRow[state.urlColumn] = url;
   const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : '');
   if (titleCol) newRow[titleCol] = node.label || '';
-  newRow[kkeCol()] = 'Keep';
+  newRow[kkeCol()] = 'Migrate';
   if (tagsCol()) {
     newRow[tagsCol()] = 'net-new';
     if (!state.tagLibrary.includes('net-new')) {
@@ -15100,7 +15140,7 @@ async function promoteHubNodeToRow(node) {
   return origIndex;
 }
 
-/** Effective KKE for gating purposes — Final_KKE (a later SME override) wins
+/** Effective KKE for gating purposes — Final_MRA (a later SME override) wins
  *  over the original recommendation when set. Matches the pattern already used
  *  by _navPageCountsCache(), renderNavEditor()'s pageCounts, and the Kill-cleanup
  *  flow, so "will this page actually stay" reads consistently across the app. */
@@ -15118,7 +15158,7 @@ function effectiveKke(row) {
  *  they're being merged into another page's URL, not their own. */
 function openBulkNavAssignDialog(targets, onDone) {
   const notPlaced = (row) => row && !String(row['Sitemap_ID'] || '').trim();
-  const isKeepEvolve = (row) => { const k = effectiveKke(row); return k === 'Keep' || k === 'Evolve'; };
+  const isKeepEvolve = (row) => { const k = effectiveKke(row); return k === 'Migrate' || k === 'Revise'; };
 
   const countEligible = (includeAll) => targets.filter(i => {
     const row = state.editedRows[i];
@@ -15147,7 +15187,7 @@ function openBulkNavAssignDialog(targets, onDone) {
     <div id="_bna-summary" style="color:var(--text-muted);line-height:1.5;"></div>
     <label style="display:flex;align-items:center;gap:8px;">
       <input type="checkbox" id="_bna-include-all" />
-      Include Kill / Exclude / unreviewed pages too
+      Include Archive / Exclude / unreviewed pages too
     </label>
     ${suggestion ? `
     <div style="border:1px solid var(--accent);border-radius:6px;padding:10px 12px;display:flex;align-items:center;gap:10px;justify-content:space-between;background:var(--bg-field-bar);">
@@ -15399,7 +15439,7 @@ function openCreateSitemapFromAuditDialog() {
     if (!String(row[state.urlColumn] || '').trim()) return false;
     if (includeAll) return true;
     const kke = String(row[kkeCol()] || '').trim();
-    return kke === 'Keep' || kke === 'Evolve';
+    return kke === 'Migrate' || kke === 'Revise';
   }).length;
 
   const hasExistingTree = state.navTree && state.navTree.length > 0;
@@ -15417,7 +15457,7 @@ function openCreateSitemapFromAuditDialog() {
       if (!url) return;
       if (!includeAll) {
         const kke = String(row[kkeCol()] || '').trim();
-        if (kke !== 'Keep' && kke !== 'Evolve') return;
+        if (kke !== 'Migrate' && kke !== 'Revise') return;
       }
       const parts = urlPathSegments(url);
       if (!parts.length) return;
@@ -15452,7 +15492,7 @@ function openCreateSitemapFromAuditDialog() {
     </div>
     <label style="display:flex;align-items:center;gap:8px;">
       <input type="checkbox" id="_csa-include-all" />
-      Include Kill / Exclude / unreviewed pages too
+      Include Archive / Exclude / unreviewed pages too
     </label>
     <div id="_csa-predict"></div>
     <div style="border-top:1px solid var(--border-light);padding-top:12px;display:flex;flex-direction:column;gap:6px;">
@@ -15465,7 +15505,7 @@ function openCreateSitemapFromAuditDialog() {
         <input type="radio" name="_csa-purpose" value="current" style="margin-top:2px;" />
         <span><b>Where pages are today</b> — a current-state snapshot to show a client</span>
       </label>
-      <div id="_csa-snapshot-note" class="hidden" style="background:var(--kke-evolve-bg);border:1px solid var(--border);border-left:3px solid var(--kke-evolve);border-radius:6px;padding:10px 12px;color:var(--text-secondary);line-height:1.5;">
+      <div id="_csa-snapshot-note" class="hidden" style="background:var(--kke-revise-bg);border:1px solid var(--border);border-left:3px solid var(--kke-revise);border-radius:6px;padding:10px 12px;color:var(--text-secondary);line-height:1.5;">
         Build a snapshot in <b>a copy of the project</b>, not this one. Placing a page writes where it's going, and Transmission derives a redirect from that for any page whose new path differs from its current URL — right for a tree describing where pages are <i>going</i>, meaningless for one describing where they already <i>are</i>.
         <div style="margin-top:8px;">
           <button type="button" id="_csa-copy" class="btn btn-sm btn-ghost">Save a copy first…</button>
@@ -15484,8 +15524,8 @@ function openCreateSitemapFromAuditDialog() {
     const bad = p.sections >= SITEMAP_MANY_ROOTS;
     const flatShare = p.sections ? Math.round((p.singles / p.sections) * 100) : 0;
     predictEl.innerHTML =
-      '<div style="background:' + (bad ? 'var(--kke-evolve-bg)' : 'var(--bg-field-bar)') + ';border:1px solid var(--border);' +
-        'border-left:3px solid ' + (bad ? 'var(--kke-evolve)' : 'var(--border)') + ';border-radius:6px;padding:10px 12px;line-height:1.55;">' +
+      '<div style="background:' + (bad ? 'var(--kke-revise-bg)' : 'var(--bg-field-bar)') + ';border:1px solid var(--border);' +
+        'border-left:3px solid ' + (bad ? 'var(--kke-revise)' : 'var(--border)') + ';border-radius:6px;padding:10px 12px;line-height:1.55;">' +
         '<div style="' + (bad ? 'font-weight:600;' : 'color:var(--text-secondary);') + '">' +
           (bad ? '⚠ ' : '') + 'This creates <b>' + p.sections.toLocaleString() + '</b> top-level section' + (p.sections !== 1 ? 's' : '') +
           (p.singles ? ' — ' + p.singles.toLocaleString() + ' of them holding a single page' : '') + '.' +
@@ -15498,7 +15538,7 @@ function openCreateSitemapFromAuditDialog() {
         (p.artifacts.length
           ? '<div style="color:var(--text-secondary);margin-top:5px;">Includes crawl artifacts that are not sections: ' +
             p.artifacts.slice(0, 4).map(a => '<code>/' + escapeHtml(a[0]) + '</code> (' + a[1] + ')').join(', ') +
-            '. Consider triaging those to Kill or Exclude first.</div>'
+            '. Consider triaging those to Archive or Exclude first.</div>'
           : '') +
         '<div style="color:var(--text-muted);font-size:11.5px;margin-top:5px;">Biggest: ' +
           p.top.map(t => escapeHtml(t[0]) + ' (' + t[1] + ')').join(' · ') + '</div>' +
@@ -15980,7 +16020,7 @@ async function promptClearNavAssignment(origIndex, navID, navDest) {
 
   // The "also delete the now-empty node" option only appears when the node truly becomes empty
   const emptyOption = nodeWillBeEmpty
-    ? `<div style="margin-top:10px;padding:10px 12px;background:var(--kke-evolve-bg);border:1px solid var(--kke-evolve);border-radius:4px;font-size:12px;">
+    ? `<div style="margin-top:10px;padding:10px 12px;background:var(--kke-revise-bg);border:1px solid var(--kke-revise);border-radius:4px;font-size:12px;">
          <strong>Heads up:</strong> after this clear, the sitemap node will have no pages or descendants anywhere.
          <label style="display:flex;align-items:flex-start;gap:8px;margin-top:8px;cursor:pointer;font-size:12px;color:var(--text-primary);">
            <input type="checkbox" id="_nbc-delete-node" style="margin-top:2px;flex-shrink:0;">
@@ -16642,8 +16682,8 @@ function renderMenusView() {
     if (orphanCount > 0) {
       chk.classList.remove('hidden');
       chk.textContent = `⚠ ${orphanCount} broken ref${orphanCount !== 1 ? 's' : ''}`;
-      chk.style.color = 'var(--kke-kill, #c0392b)';
-      chk.style.borderColor = 'var(--kke-kill, #c0392b)';
+      chk.style.color = 'var(--kke-archive, #c0392b)';
+      chk.style.borderColor = 'var(--kke-archive, #c0392b)';
     } else {
       chk.classList.add('hidden');
       chk.style.color = '';
@@ -18780,7 +18820,7 @@ function openTreemapView(opts) {
   if (!window.TreemapTemplate) { showToast('Treemap engine unavailable', 'error'); return; }
 
   // Color overrides are stored per color-by mode: the same key space means
-  // different things in each ("Keep" the decision vs a section called Keep),
+  // different things in each ("Migrate" the decision vs a section called Keep),
   // and a palette chosen for the section view has no bearing on the KKE view.
   const ctxKey = opts.colorBy || 'kke';
   const stored = ((state.projectSettings || {}).treemapSettings || {})[ctxKey] || {};
@@ -18844,7 +18884,7 @@ function buildTreemapLegend(ctx) {
     return Object.keys(ctx.sectionColors).map(label => ({ key: label, color: ctx.sectionColors[label], label }));
   }
   if (ctx.colorBy === 'kke') {
-    const labels = ['Keep', 'Evolve', 'Kill', 'Consolidate', 'Exclude'];
+    const labels = ['Migrate', 'Revise', 'Archive', 'Consolidate', 'Exclude'];
     (state.customKkeStates || []).forEach(s => { if (s && s.label && !labels.includes(s.label)) labels.push(s.label); });
     return labels.map(label => ({ key: label, color: treemapKkeColor(label), label }));
   }
@@ -18928,7 +18968,7 @@ function openTreemapConfigDialog() {
       <select id="_tmc-colorby" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-surface);"></select>
     </label>
     <p style="font-size:11px;color:var(--text-muted);margin-top:12px;line-height:1.5;">
-      Deeper levels roll up into the box above them, so only <b>Unlimited</b> depth can color by a per-page field like Page Status — limited depths color by section or KKE decision instead.
+      Deeper levels roll up into the box above them, so only <b>Unlimited</b> depth can color by a per-page field like Page Status — limited depths color by section or MRA decision instead.
     </p>
   `;
 
@@ -18937,7 +18977,7 @@ function openTreemapConfigDialog() {
     const sel = body.querySelector('#_tmc-colorby');
     const prev = sel.value;
     let opts = [
-      { value: 'kke', label: 'KKE decision' },
+      { value: 'kke', label: 'MRA decision' },
       { value: 'section', label: 'Top-level section' },
     ];
     if (unlimited) opts = opts.concat(fieldDefs.map(f => ({ value: f.key, label: f.label })));
@@ -18975,7 +19015,7 @@ const SANKEY_OUT_OF_SCOPE = '— Out of scope';
 const SANKEY_UNPLACED = '— Not yet placed';
 const SANKEY_UNREVIEWED = '(unreviewed)';
 const SANKEY_TERMINAL_COLORS = {
-  [SANKEY_RETIRED]: '#b91c1c',       // matches --kke-kill
+  [SANKEY_RETIRED]: '#b91c1c',       // matches --kke-archive
   [SANKEY_OUT_OF_SCOPE]: '#636363',  // matches --kke-exclude
   [SANKEY_UNPLACED]: '#8890a0',
 };
@@ -19084,7 +19124,7 @@ function navSectionLabelMap() {
  */
 function sankeyTargetOf(row, sectionByNodeId, seen) {
   const kke = effectiveKke(row).toLowerCase();
-  if (kke === 'kill') return SANKEY_RETIRED;
+  if (kke === 'archive') return SANKEY_RETIRED;
   if (kke === 'exclude') return SANKEY_OUT_OF_SCOPE;
   if (kke === 'consolidate') {
     const urlCol = state.urlColumn || 'Address';
@@ -19399,7 +19439,7 @@ function openSankeyConfigDialog() {
   const inScopeSites = (state.siteLibrary || []).filter(s => s.inScope !== false);
   const unnamed = inScopeSites.length > 1 ? sourceSitesNeedingLabels() : [];
   const namesHtml = !unnamed.length ? '' : `
-    <div style="margin-bottom:14px;padding:10px 12px;background:var(--bg-subtle,rgba(0,0,0,0.03));border-left:3px solid var(--kke-evolve);border-radius:var(--radius);">
+    <div style="margin-bottom:14px;padding:10px 12px;background:var(--bg-subtle,rgba(0,0,0,0.03));border-left:3px solid var(--kke-revise);border-radius:var(--radius);">
       <div style="font-size:12px;font-weight:600;margin-bottom:2px;">Name these sites?</div>
       <div style="font-size:11px;color:var(--text-muted);line-height:1.5;margin-bottom:8px;">
         ${unnamed.length} of your ${inScopeSites.length} source sites ${unnamed.length === 1 ? 'is' : 'are'} still named
@@ -19704,7 +19744,7 @@ function renderNavEditor() {
     const navID = row['Sitemap_ID'] || '';
     if (!navID) return;
     const effective = String(row[finalKkeCol()] || row[kkeCol()] || '').trim().toLowerCase();
-    if (effective === 'kill' || effective === 'consolidate') return;
+    if (effective === 'archive' || effective === 'consolidate') return;
     pageCounts[navID] = (pageCounts[navID] || 0) + 1;
   });
 
@@ -19715,7 +19755,7 @@ function renderNavEditor() {
     if (String(r['Sitemap_ID'] || '').trim()) return false;
     if (isFragmentRow(r)) return false; // fragments have no nav home — not a placement gap
     const effective = String(r[finalKkeCol()] || r[kkeCol()] || '').trim();
-    return effective === 'Keep' || effective === 'Evolve';
+    return effective === 'Migrate' || effective === 'Revise';
   }).length;
 
   // Node stats — exclude future/phased nodes from the current-build buckets.
@@ -19796,8 +19836,8 @@ function renderNavEditor() {
   if (needsPlacement > 0) {
     const ph = document.createElement('span');
     ph.textContent = ` · ${needsPlacement} need placement`;
-    ph.style.cssText = 'color:var(--kke-evolve);cursor:pointer;text-decoration:underline;';
-    ph.title = 'Keep/Evolve pages not yet assigned to a sitemap node — click to find them in the sidebar';
+    ph.style.cssText = 'color:var(--kke-revise);cursor:pointer;text-decoration:underline;';
+    ph.title = 'Migrate/Revise pages not yet assigned to a sitemap node — click to find them in the sidebar';
     ph.addEventListener('click', () => {
       closeNavEditor();
       applyKkeSpecialFilter('_needs-placement');
@@ -19812,7 +19852,7 @@ function renderNavEditor() {
   const shape = computeSitemapShape({ measure: false });
   if (sitemapShapeNeedsAttention(shape)) {
     const sw = document.createElement('span');
-    sw.style.cssText = 'margin-left:12px;color:var(--kke-evolve);font-weight:600;cursor:pointer;text-decoration:underline;';
+    sw.style.cssText = 'margin-left:12px;color:var(--kke-revise);font-weight:600;cursor:pointer;text-decoration:underline;';
     sw.textContent = `⚠ ${shape.roots.toLocaleString()} top-level section${shape.roots !== 1 ? 's' : ''} — check shape`;
     sw.title = 'This tree may not render as a readable diagram. Click to see what is driving it and what would fix it.';
     sw.addEventListener('click', () => openSitemapShapeCheck());
@@ -19822,7 +19862,7 @@ function renderNavEditor() {
   if (dupNavIds.length > 0) {
     const totalNodes = dupNavIds.reduce((s, g) => s + g.nodes.length, 0);
     const warn = document.createElement('span');
-    warn.style.cssText = 'margin-left:12px;color:var(--kke-kill);font-weight:600;cursor:pointer;text-decoration:underline;';
+    warn.style.cssText = 'margin-left:12px;color:var(--kke-archive);font-weight:600;cursor:pointer;text-decoration:underline;';
     warn.textContent = `⚠ ${dupNavIds.length} duplicate ID${dupNavIds.length > 1 ? 's' : ''} (${totalNodes} nodes affected) — click to fix`;
     warn.title = 'Pages assigned to a duplicated ID appear under every node sharing that ID. Fix renumbers duplicates with new unique IDs.';
     warn.addEventListener('click', async () => {
@@ -20269,9 +20309,9 @@ function openSitemapShapeCheck(opts = {}) {
     : shape.verdict === 'ok'
       ? 'This sitemap is a good shape for a diagram'
       : 'Sitemap shape';
-  const accent = shape.verdict === 'unusable' ? 'var(--kke-kill)'
-               : shape.verdict === 'crowded' ? 'var(--kke-evolve)'
-               : shape.verdict === 'ok' ? 'var(--kke-keep)' : 'var(--border)';
+  const accent = shape.verdict === 'unusable' ? 'var(--kke-archive)'
+               : shape.verdict === 'crowded' ? 'var(--kke-revise)'
+               : shape.verdict === 'ok' ? 'var(--kke-migrate)' : 'var(--border)';
 
   const summary = document.createElement('div');
   summary.style.cssText = 'padding:10px 12px;border-radius:8px;background:var(--bg-field-bar);border:1px solid var(--border);border-left:3px solid ' + accent + ';flex-shrink:0;line-height:1.55;';
@@ -20338,7 +20378,7 @@ function openSitemapShapeCheck(opts = {}) {
 
   cats.forEach(c => {
     const block = document.createElement('div');
-    block.style.cssText = 'border-left:3px solid var(--kke-evolve);padding-left:10px;';
+    block.style.cssText = 'border-left:3px solid var(--kke-revise);padding-left:10px;';
 
     const head = document.createElement('div');
     head.style.cssText = 'display:flex;align-items:baseline;gap:6px;';
@@ -20644,8 +20684,8 @@ async function generateNavSitemap(sitemapOpts = {}) {
 // column here to expose it; nothing else needs changing.
 const SITEMAP_ROW_FIELDS = [
   { col: 'Page_Type',            key: 'row.pageType',        label: 'Content Type' },
-  { col: 'KKE_Recommendation',   key: 'row.kke',             label: 'KKE' },
-  { col: 'Final_KKE',            key: 'row.finalKke',        label: 'Final KKE' },
+  { col: 'MRA_Recommendation',   key: 'row.kke',             label: 'MRA' },
+  { col: 'Final_MRA',            key: 'row.finalKke',        label: 'Final MRA' },
   { col: 'Content_Nature',       key: 'row.contentNature',   label: 'Renders as' },
   { col: 'Migration_Track',      key: 'row.migrationTrack',  label: 'Migration Track' },
   { col: 'Content_Theme',        key: 'row.contentTheme',    label: 'Content Theme' },
@@ -20871,7 +20911,7 @@ function treemapSubtitle(node, value, ctx, breakdownOverride) {
  *  subdivide into children (MIN_CONTAINER_W/H); when it isn't, it renders
  *  the box as a plain leaf using node.color/node.subtitle. Without these set
  *  on every node, a too-small container fell back to a neutral grey box with
- *  no subtitle — reading as "no data" to a client when it might mean "Kill"
+ *  no subtitle — reading as "no data" to a client when it might mean "Archive"
  *  or "Published". */
 function buildTreemapNode(node, topLabel, depthLimit, currentDepth, ctx) {
   if (ctx.sectionIds && ctx.sectionIds.has(node.id)) topLabel = node.label || '(section)';
@@ -21011,7 +21051,7 @@ function renderNavBreadcrumbCell(bcCell, node) {
   }
   if (breadcrumbExceedsCap(node)) {
     bcCell.textContent = '⚠ ' + bcCell.textContent;
-    bcCell.style.color = 'var(--kke-kill, #c0392b)';
+    bcCell.style.color = 'var(--kke-archive, #c0392b)';
     bcCell.title = `Breadcrumb is ${breadcrumbDepthOf(node)} levels — exceeds the project cap of ${getBreadcrumbMaxDepth()}. ${pageBreadcrumbOf(node)}`;
   }
 }
@@ -22662,7 +22702,7 @@ function navPageCounts(rows) {
     const id = String(r['Sitemap_ID'] || '').trim();
     if (!id) return;
     const effective = String(r[finalKkeCol()] || r[kkeCol()] || '').trim().toLowerCase();
-    if (effective === 'kill' || effective === 'consolidate') return;
+    if (effective === 'archive' || effective === 'consolidate') return;
     out[id] = (out[id] || 0) + 1;
   });
   return out;
@@ -22719,8 +22759,8 @@ function computeSubtreePageCounts() {
 }
 
 /** Bottom-up KKE tally per node's full subtree: node id -> { [kkeLabel]: count }.
- *  Same effective-KKE resolution as elsewhere (Final_KKE wins over
- *  KKE_Recommendation), but unlike _navPageCountsCache() this does NOT
+ *  Same effective-KKE resolution as elsewhere (Final_MRA wins over
+ *  MRA_Recommendation), but unlike _navPageCountsCache() this does NOT
  *  exclude Kill/Consolidate rows — what's happening to the content is
  *  exactly what this view is for.
  *  Returns { direct, totals } — see computeSubtreePageCounts() for why
@@ -22761,7 +22801,7 @@ function dominantKke(breakdown) {
  *  renders inside an isolated webview with no access to the host's :root
  *  custom properties, so colors must be pre-resolved before crossing over. */
 function treemapKkeColor(label) {
-  const map = { Keep: '--kke-keep', Kill: '--kke-kill', Evolve: '--kke-evolve', Consolidate: '--kke-consolidate', Exclude: '--kke-exclude' };
+  const map = { Migrate: '--kke-migrate', Archive: '--kke-archive', Revise: '--kke-revise', Consolidate: '--kke-consolidate', Exclude: '--kke-exclude' };
   if (map[label]) return getComputedStyle(document.documentElement).getPropertyValue(map[label]).trim();
   const custom = (state.customKkeStates || []).find(s => s.label === label);
   return custom ? custom.color : '#9aa0ab';
@@ -22885,7 +22925,7 @@ function openNavNodeEditor(node) {
       </div>
 
       ${isHubNode ? `
-      <div class="nne-hub-banner" style="margin-top:10px;padding:10px 12px;border-radius:6px;background:var(--kke-evolve-bg, #fef3c7);border:1px solid var(--kke-evolve, #d97706);display:flex;align-items:center;gap:10px;justify-content:space-between;">
+      <div class="nne-hub-banner" style="margin-top:10px;padding:10px 12px;border-radius:6px;background:var(--kke-revise-bg, #fef3c7);border:1px solid var(--kke-revise, #d97706);display:flex;align-items:center;gap:10px;justify-content:space-between;">
         <div style="font-size:12px;line-height:1.5;color:var(--text-primary);">
           <b>Net New</b> — children have assigned pages but this node has none. The client needs to develop content for this page. Set a <b>Page Status</b> in the Build section below to track progress (e.g. Not Started → In Progress), or create its spreadsheet row now.
         </div>
@@ -22975,7 +23015,7 @@ function openNavNodeEditor(node) {
               ? `<span style="font-style:italic;color:var(--text-secondary);">→ ${escapeHtml(refTarget.breadcrumb)}</span>
                  <button id="_nne-ref-clear" class="btn btn-sm btn-ghost" style="font-size:11px;">Clear</button>`
               : node.refNodeId
-                ? '<span style="color:var(--kke-kill);">Broken reference (target missing)</span> <button id="_nne-ref-clear" class="btn btn-sm btn-ghost" style="font-size:11px;">Clear</button>'
+                ? '<span style="color:var(--kke-archive);">Broken reference (target missing)</span> <button id="_nne-ref-clear" class="btn btn-sm btn-ghost" style="font-size:11px;">Clear</button>'
                 : '<span style="color:var(--text-muted);">(none — this is a real node)</span>'}
           </div>
         </div>
@@ -23053,7 +23093,7 @@ function openNavNodeEditor(node) {
       </div>
     </div>
     <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px;">
-      <button id="_nne-delete" class="btn btn-sm btn-ghost" style="color:var(--kke-kill);">Delete Node</button>
+      <button id="_nne-delete" class="btn btn-sm btn-ghost" style="color:var(--kke-archive);">Delete Node</button>
       <div style="display:flex;gap:8px;">
         <button id="_nne-cancel" class="btn btn-sm btn-ghost">Cancel</button>
         <button id="_nne-save" class="btn btn-sm btn-primary">Save</button>
@@ -23110,7 +23150,7 @@ function openNavNodeEditor(node) {
       const cap = getBreadcrumbMaxDepth();
       if (cap > 0 && labelsP.length > cap) {
         pbcEl.textContent += `  ⚠ ${labelsP.length}/${cap}`;
-        pbcEl.style.color = 'var(--kke-kill, #c0392b)';
+        pbcEl.style.color = 'var(--kke-archive, #c0392b)';
         pbcEl.title = `Breadcrumb is ${labelsP.length} levels — exceeds the project cap of ${cap}`;
       } else {
         pbcEl.style.color = 'var(--text-secondary)';
@@ -23736,7 +23776,7 @@ function showDeleteConfirmDialog(node, assignedCount, hasChildren, parent) {
 
     const deleteAllBtn = document.createElement('button');
     deleteAllBtn.className = 'btn btn-sm';
-    deleteAllBtn.style.cssText = 'background:var(--kke-kill);color:#fff;border:none;';
+    deleteAllBtn.style.cssText = 'background:var(--kke-archive);color:#fff;border:none;';
     deleteAllBtn.textContent = 'Delete all';
     deleteAllBtn.title = 'Delete this node and all its children';
     deleteAllBtn.addEventListener('click', () => checkAndExecute('delete-all'));
@@ -23747,7 +23787,7 @@ function showDeleteConfirmDialog(node, assignedCount, hasChildren, parent) {
   } else {
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'btn btn-sm';
-    deleteBtn.style.cssText = 'background:var(--kke-kill);color:#fff;border:none;';
+    deleteBtn.style.cssText = 'background:var(--kke-archive);color:#fff;border:none;';
     deleteBtn.textContent = 'Delete';
     deleteBtn.addEventListener('click', () => checkAndExecute('promote'));
 
@@ -24793,7 +24833,7 @@ function gatherProgressStats() {
   let nonContentRedirects = 0, nonContentGone = 0;
 
   rows.forEach(row => {
-    // Decision counts use the EFFECTIVE KKE: once a client's Final_KKE is set, it
+    // Decision counts use the EFFECTIVE KKE: once a client's Final_MRA is set, it
     // is what the migration does, and it's what every engine consumer (redirects,
     // the Tracker, the audience reports) already reads. Counting the auditor's
     // recommendation here put SME-overridden pages in the wrong bucket on the
@@ -24858,7 +24898,7 @@ function gatherProgressStats() {
 
 /** KKE color map (CSS variable values resolved at call time) */
 function kkeColor(label) {
-  const map = { Keep: '--kke-keep', Kill: '--kke-kill', Evolve: '--kke-evolve', Consolidate: '--kke-consolidate', Exclude: '--kke-exclude' };
+  const map = { Migrate: '--kke-migrate', Archive: '--kke-archive', Revise: '--kke-revise', Consolidate: '--kke-consolidate', Exclude: '--kke-exclude' };
   if (map[label]) return `var(${map[label]})`;
   const custom = state.customKkeStates.find(s => s.label === label);
   return custom ? custom.color : 'var(--text-primary)';
@@ -24866,7 +24906,7 @@ function kkeColor(label) {
 
 /** Resolve a CSS variable to its computed value (for PDF) */
 function resolvedKkeColor(label) {
-  const map = { Keep: '--kke-keep', Kill: '--kke-kill', Evolve: '--kke-evolve', Consolidate: '--kke-consolidate', Exclude: '--kke-exclude' };
+  const map = { Migrate: '--kke-migrate', Archive: '--kke-archive', Revise: '--kke-revise', Consolidate: '--kke-consolidate', Exclude: '--kke-exclude' };
   if (map[label]) return getComputedStyle(document.documentElement).getPropertyValue(map[label]).trim();
   const custom = state.customKkeStates.find(s => s.label === label);
   return custom ? custom.color : '#333';
@@ -24874,7 +24914,7 @@ function resolvedKkeColor(label) {
 
 /** Resolve a CSS variable to its computed value */
 function resolvedKkeBgColor(label) {
-  const map = { Keep: '--kke-keep-bg', Kill: '--kke-kill-bg', Evolve: '--kke-evolve-bg', Consolidate: '--kke-consolidate-bg', Exclude: '--kke-exclude-bg' };
+  const map = { Migrate: '--kke-migrate-bg', Archive: '--kke-archive-bg', Revise: '--kke-revise-bg', Consolidate: '--kke-consolidate-bg', Exclude: '--kke-exclude-bg' };
   if (map[label]) return getComputedStyle(document.documentElement).getPropertyValue(map[label]).trim();
   const custom = state.customKkeStates.find(s => s.label === label);
   return custom ? custom.color + '33' : '#33333333';
@@ -24956,7 +24996,7 @@ function openProgressDashboard() {
     html += `<div class="progress-stat"><span class="progress-stat-label">SME Reviewed</span><span class="progress-stat-value">${stats.smeReviewed} of ${stats.smeTotal} (${stats.smePct}%)</span></div>`;
     html += `<div class="progress-stat"><span class="progress-stat-label" style="padding-left:16px;">Approved</span><span class="progress-stat-value">${stats.smeApproved}</span></div>`;
     html += `<div class="progress-stat"><span class="progress-stat-label" style="padding-left:16px;">Changed</span><span class="progress-stat-value">${stats.smeChanged}</span></div>`;
-    html += `<div class="progress-stat"><span class="progress-stat-label">Final KKE Resolved</span><span class="progress-stat-value">${stats.finalResolved} of ${stats.smeTotal} (${stats.finalPct}%)</span></div>`;
+    html += `<div class="progress-stat"><span class="progress-stat-label">Final MRA Resolved</span><span class="progress-stat-value">${stats.finalResolved} of ${stats.smeTotal} (${stats.finalPct}%)</span></div>`;
     const pending = stats.smeTotal - stats.finalResolved;
     if (pending > 0) {
       html += `<div class="progress-stat"><span class="progress-stat-label" style="padding-left:16px;">Pending final decision</span><span class="progress-stat-value">${pending}</span></div>`;
@@ -25035,8 +25075,8 @@ function renderKkeButtons() {
   const kkeLabel = $('kke-buttons-label');
   if (kkeLabel) {
     const col = kkeCol();
-    const abbr = col.replace('KKE_Recommendation', 'KKE')
-                     .replace('Final_KKE', 'Final KKE')
+    const abbr = col.replace('MRA_Recommendation', 'MRA')
+                     .replace('Final_MRA', `Final MRA`)
                      .replace('SME_Decision', 'SME Decision')
                      .replace(/_/g, ' ');
     kkeLabel.textContent = abbr;
@@ -25089,19 +25129,19 @@ function renderKkeFilterOptions() {
     { value: '_flagged', text: 'Flagged' },
     { value: '_duplicates', text: 'Duplicates' },
     { value: '_sme-conflicts', text: 'SME Conflicts' },
-    { value: '_sme-pending', text: 'Pending Final KKE' },
+    { value: '_sme-pending', text: 'Pending Final MRA' },
     { value: '_consolidate-no-target', text: 'Consolidate (no target)' },
     { value: '_consolidate-review', text: 'Consolidate (client changed — review)' },
-    { value: '_consolidate-dead-target', text: 'Consolidate → Kill/Exclude target' },
+    { value: '_consolidate-dead-target', text: 'Consolidate → Archive/Exclude target' },
     { value: '_shared-nav', text: 'Shared sitemap node (2+ pages)' },
-    { value: '_needs-placement', text: 'Needs sitemap placement (Keep/Evolve, no node)' },
-    { value: '_suggested-disagree', text: 'Suggested KKE: sources disagree' },
-    { value: '_suggested-mismatch', text: 'Suggested KKE: differs from my KKE' },
-    { value: '_needs-audience', text: 'Needs audience (Keep/Evolve, untagged)' },
+    { value: '_needs-placement', text: 'Needs sitemap placement (Migrate/Revise, no node)' },
+    { value: '_suggested-disagree', text: 'Suggested MRA: sources disagree' },
+    { value: '_suggested-mismatch', text: 'Suggested MRA: differs from my MRA' },
+    { value: '_needs-audience', text: 'Needs audience (Migrate/Revise, untagged)' },
     { value: '_audience-orphan', text: 'Serves no priority audience' },
     { value: '_audience-suggested', text: 'Audience suggested by AI (awaiting review)' },
     { value: '_cross-site-duplicate', text: 'Duplicated on another source site' },
-    { value: '_needs-job', text: 'Needs a job (Keep/Evolve, untagged)' },
+    { value: '_needs-job', text: 'Needs a job (Migrate/Revise, untagged)' },
     { value: '_inherited-redirect', text: 'Existing redirect (3xx — not content)' },
     { value: '_non-content', text: 'Not content (3xx or 4xx)' },
     { value: '_redirect-needs-review', text: 'Inherited redirect needs review' },
@@ -25314,7 +25354,7 @@ async function checkPageLinks() {
 
     // Build HTML
     let html = '<div style="font-size:13px;line-height:1.6;">';
-    html += `<div style="margin-bottom:8px;"><strong>${unique.length} links checked</strong>, <span style="color:${broken.length > 0 ? 'var(--danger)' : 'var(--kke-keep)'}">${broken.length} broken</span></div>`;
+    html += `<div style="margin-bottom:8px;"><strong>${unique.length} links checked</strong>, <span style="color:${broken.length > 0 ? 'var(--danger)' : 'var(--kke-migrate)'}">${broken.length} broken</span></div>`;
 
     if (broken.length > 0) {
       broken.forEach(r => {
@@ -25323,7 +25363,7 @@ async function checkPageLinks() {
         </div>`;
       });
     } else {
-      html += '<div style="color:var(--kke-keep);">All links are valid.</div>';
+      html += '<div style="color:var(--kke-migrate);">All links are valid.</div>';
     }
     html += '</div>';
 
@@ -25360,7 +25400,7 @@ async function checkPageLinks() {
 // projects carried rubrics, so nothing changes until someone copies them in.
 
 const RUBRIC_TABS = [
-  ['keep', 'Keep'], ['kill', 'Kill'], ['evolve', 'Evolve'], ['exclude', 'Exclude'], ['consolidate', 'Consolidate']
+  ['migrate', 'Migrate'], ['archive', 'Archive'], ['revise', 'Revise'], ['exclude', 'Exclude'], ['consolidate', 'Consolidate']
 ];
 
 /** The open project's rubric texts, or null when it has none of its own. */
@@ -25394,7 +25434,7 @@ async function openRubricEditor(initialScope) {
   const hasFile = !!state.filePath;
   let scope = initialScope || (hasFile ? 'project' : 'library');
   if (scope === 'project' && !hasFile) scope = 'library';
-  let status = 'keep';
+  let status = 'migrate';
   let lib = await window.electronAPI.readRubricLibrary();
   // Working copies, so switching tabs or scope never loses an unsaved edit.
   const drafts = { project: { ...(state.projectSettings.rubrics || {}) }, library: { ...(lib.files || {}) } };
@@ -25580,7 +25620,7 @@ function applyBulkEditUndo(action, isUndo) {
 }
 
 function undo() {
-  if (_undoStack.length === 0) { showToast('Nothing to undo — only KKE changes are undoable', 'info'); return; }
+  if (_undoStack.length === 0) { showToast('Nothing to undo — only MRA changes are undoable', 'info'); return; }
   const action = _undoStack.pop();
   _redoStack.push(action);
   applyUndoAction(action, true);
@@ -25613,7 +25653,7 @@ function applyUndoAction(action, isUndo) {
   // Log the reversal itself — Cmd+Z used to mutate state.editedRows directly
   // with no logChange() call, so the persisted KKE_ChangeLog kept the original
   // forward entry (e.g. "Keep → Kill") even after the undo put the data back
-  // to "Keep", making the exported audit trail show a decision that wasn't
+  // to "Migrate", making the exported audit trail show a decision that wasn't
   // actually in the data. Logging both directions keeps the trail accurate.
   logChange(action.origIndex, action.field, prevVal, val);
   state.editedRows[action.origIndex][action.field] = val;
@@ -25868,7 +25908,7 @@ function renderComputedColumnCards() {
     const formulaInput = document.createElement('textarea');
     formulaInput.className = 'cc-formula-input';
     formulaInput.value = col.formula;
-    formulaInput.placeholder = 'e.g. {Sessions} * 0.4 + {Pageviews} * 0.3\nor classify({Score}, 0: "Kill", 40: "Evolve", 70: "Keep")';
+    formulaInput.placeholder = 'e.g. {Sessions} * 0.4 + {Pageviews} * 0.3\nor classify({Score}, 0: "Archive", 40: "Revise", 70: "Migrate")';
     formulaInput.rows = 2;
     formulaInput.addEventListener('input', () => {
       col.formula = formulaInput.value;
@@ -25981,7 +26021,7 @@ function builtinExportProfiles() {
     // Classification
     'Page_Type', 'Content_Theme', groupCol(), primaryTagCol(),
     // Decisions + rationale
-    kkeCol(), 'Final_KKE', tagsCol(), notesCol(),
+    kkeCol(), 'Final_MRA', tagsCol(), notesCol(),
     // Where content is going
     'Consolidate_Into', 'Redirect_Destination'
   ];
@@ -26179,8 +26219,8 @@ function openUnifiedExportDialog() {
   // Counts to surface
   const filteredCount = state.filteredRows.length;
   const decisionCount = state.editedRows.filter(r => {
-    return ['KKE_Recommendation', 'Tags', 'Notes', 'Group', 'Primary Tag'].some(h => {
-      const col = h === 'KKE_Recommendation' ? kkeCol()
+    return ['MRA_Recommendation', 'Tags', 'Notes', 'Group', 'Primary Tag'].some(h => {
+      const col = h === 'MRA_Recommendation' ? kkeCol()
                 : h === 'Tags' ? tagsCol()
                 : h === 'Notes' ? notesCol()
                 : h === 'Group' ? groupCol()
@@ -26206,12 +26246,12 @@ function openUnifiedExportDialog() {
         </button>
         <button type="button" class="xpd-option" data-kind="decisions">
           <div class="xpd-option-title">Audit Decisions</div>
-          <div class="xpd-option-desc">Just the audit columns (URL · KKE · Tags · Notes · Group · Primary Tag · Sitemap_ID). ${decisionCount} row${decisionCount !== 1 ? 's' : ''} have at least one decision.</div>
+          <div class="xpd-option-desc">Just the audit columns (URL · MRA · Tags · Notes · Group · Primary Tag · Sitemap_ID). ${decisionCount} row${decisionCount !== 1 ? 's' : ''} have at least one decision.</div>
           <div class="xpd-option-format">→ CSV / JSON</div>
         </button>
         <button type="button" class="xpd-option" data-kind="redirects">
           <div class="xpd-option-title">Redirect Map</div>
-          <div class="xpd-option-desc">Source URL → destination for every Kill and URL-changed row. Honors the 404 sentinel.</div>
+          <div class="xpd-option-desc">Source URL → destination for every Archive and URL-changed row. Honors the 404 sentinel.</div>
           <div class="xpd-option-format">→ CSV</div>
         </button>
         <button type="button" class="xpd-option" data-kind="migration">
@@ -26292,6 +26332,21 @@ async function exportAuditDecisions() {
 
 // ─── Multi-Auditor Merge ──────────────────────────────────────────────────────
 
+// Main translates a worksheet written in Keep / Kill / Evolve as it reads it
+// (`legacyVocabulary` on the read result). Say so: an auditor should see a
+// client's decisions being re-worded, not discover it later.
+function legacyVocabularyText(lv) {
+  if (!lv || !lv.legacy) return '';
+  const parts = [];
+  if (lv.cells) parts.push(`${lv.cells.toLocaleString()} decision${lv.cells === 1 ? '' : 's'} read as Migrate / Revise / Archive`);
+  if (lv.renamedHeaders?.length) parts.push(`column${lv.renamedHeaders.length === 1 ? '' : 's'} ${lv.renamedHeaders.join(', ')} renamed`);
+  return 'This worksheet uses Keep / Kill / Evolve' + (parts.length ? ': ' + parts.join('; ') + '.' : '.');
+}
+function noteLegacyVocabulary(lv) {
+  const t = legacyVocabularyText(lv);
+  if (t) showToast(t);
+}
+
 async function mergeAuditorDecisions() {
   if (state.editedRows.length === 0) { showToast('Open a file first', 'error'); return; }
 
@@ -26304,6 +26359,7 @@ async function mergeAuditorDecisions() {
   const sheetName = fileInfo.sheetNames[0];
   const data = await window.electronAPI.importAuditMergeReadSheet({ filePath: fileInfo.filePath, sheetName });
   if (!data || data.error) { showToast('Error: ' + (data?.error || 'Unknown'), 'error'); return; }
+  noteLegacyVocabulary(data.legacyVocabulary);
 
   const urlCol = state.urlColumn || 'Address';
   const impUrlCol = data.headers.find(h => h.toLowerCase() === urlCol.toLowerCase());
@@ -26534,7 +26590,7 @@ async function loadAuditTemplate() {
   const t = result.template;
   if (!t || !t.name) { showToast('Invalid template file', 'error'); return; }
 
-  const apply = await confirmDialog({ title: 'Apply audit template', message: `Apply template "${t.name}"?\n\nThis will update: visible fields, tag library, group library, sidebar columns, custom KKE states, column mapping, and project settings.\n\nYour current data will not be affected.`, confirmLabel: 'Apply' });
+  const apply = await confirmDialog({ title: 'Apply audit template', message: `Apply template "${t.name}"?\n\nThis will update: visible fields, tag library, group library, sidebar columns, custom MRA states, column mapping, and project settings.\n\nYour current data will not be affected.`, confirmLabel: 'Apply' });
   if (!apply) return;
 
   // Apply template settings
@@ -26664,7 +26720,7 @@ function buildRedirectResolverContext() {
   };
 
   // Auto-derived destination for a row, given its effective KKE (finalKkeCol() ||
-  // kkeCol() — a Final_KKE from SME resolve takes precedence, same convention as
+  // kkeCol() — a Final_MRA from SME resolve takes precedence, same convention as
   // buildRedirectsSheet). Pure read: does not look at or preserve any manual override
   // already sitting in Redirect_Destination — callers decide whether to keep that.
   function computeAutoDestination(row, kke) {
@@ -26686,7 +26742,7 @@ function buildRedirectResolverContext() {
       if (!targetId) return '';
       return resolveFinalUrl(targetId, new Set([selfUrl]));
     }
-    if (kke === 'kill') {
+    if (kke === 'archive') {
       // Priority: consolidation master > sitemap node path > inherited 3xx target
       // > default destination > blank.
       //
@@ -26742,7 +26798,7 @@ const INHERITED_REDIRECT_CLASSES = [
   { key: 'no-target',    label: 'No destination recorded',        actionable: true },
   { key: 'loop',         label: 'Redirects to itself',            actionable: true },
   { key: 'dead',         label: 'Destination is a dead URL (4xx)', actionable: true },
-  { key: 'undecided',    label: 'Destination has no KKE decision yet', actionable: true },
+  { key: 'undecided',    label: 'Destination has no decision yet', actionable: true },
   { key: 'target-retired', label: 'Destination is being retired with nowhere to go', actionable: true },
   { key: 'uncrawled',    label: 'Destination not in this crawl',  actionable: true },
   { key: 'out-of-scope', label: 'Destination is on an out-of-scope site', actionable: true },
@@ -26810,7 +26866,7 @@ function classifyInheritedRedirect(row, ctx, hosts) {
     const targetKke = effectiveKke(targetRow);
     if (!targetKke) return { cls: 'undecided', target, resolved };
     const stoppedOnTarget = isSelfRedirect(String(targetRow[ctx.urlCol] || ''), resolved);
-    if (stoppedOnTarget && (targetKke === 'Kill' || targetKke === 'Consolidate')) {
+    if (stoppedOnTarget && (targetKke === 'Archive' || targetKke === 'Consolidate')) {
       return { cls: 'target-retired', target, resolved };
     }
     return { cls: 'ok', target, resolved };
@@ -26850,8 +26906,8 @@ function resolveRedirectDestinations() {
   state.editedRows.forEach(row => {
     // Fragments / embeddable content objects have no public URL — never write a redirect.
     if (isFragmentRow(row)) return;
-    // Effective KKE: a Final_KKE from SME resolve overrides the raw KKE_Recommendation —
-    // otherwise a page whose Final_KKE is Kill but KKE_Recommendation is still Keep
+    // Effective KKE: a Final_MRA from SME resolve overrides the raw MRA_Recommendation —
+    // otherwise a page whose Final_MRA is Kill but MRA_Recommendation is still Keep
     // silently gets no auto-derived redirect at all.
     const kke = String(row[finalKkeCol()] || row[kkeCol()] || '').trim().toLowerCase();
     const existing = String(row[REDIRECT_DEST_COL] || '').trim();
@@ -26882,14 +26938,14 @@ function resolveRedirectDestinations() {
       return;
     }
 
-    if (kke === 'kill') {
+    if (kke === 'archive') {
       // Same looksAutoDerived philosophy as the Consolidate branch above: preserve
       // a genuine manual override, but re-derive blanks and anything that still
       // looks auto-derived — including the bare project default, which is what
       // gets written before a page has a nav home or consolidate target. Without
       // this, a Kill page assigned a nav home after autosave already wrote the
       // default keeps redirecting to the default forever.
-      const auto = ctx.computeAutoDestination(row, 'kill'); // blank if nothing resolved (retired/404)
+      const auto = ctx.computeAutoDestination(row, 'archive'); // blank if nothing resolved (retired/404)
       // An inherited value is the live site's answer copied in by triage, not a
       // decision — so it is always re-derived, exactly as 'auto' is. Without
       // this it would fail the looksAutoDerived test the moment its target
@@ -26953,7 +27009,7 @@ const REPORT_TOKENS = `
   --border: #e0e0e0; --border-light: #eeeeee;
   --bg-surface: #ffffff; --bg-field-bar: #fafafa; --bg-main: #fafafa;
   --accent: #16a34a; --accent-dim: #dcfce7; --accent-text: #166534;
-  --kke-keep: #15703a; --kke-kill: #b91c1c; --kke-evolve: #854d0e;
+  --kke-migrate: #15703a; --kke-archive: #b91c1c; --kke-revise: #854d0e;
   --kke-consolidate: #4338ca; --kke-exclude: #636363;
   --font-sans: -apple-system, 'Helvetica Neue', Arial, sans-serif;
   --font-mono: 'SF Mono', Menlo, monospace;
@@ -27160,7 +27216,7 @@ function kkeBarHtml(counts, total) {
     const pct = (count / total * 100).toFixed(1);
     const bg = resolvedKkeBgColor(label);
     const border = resolvedKkeColor(label);
-    html += `<div class="bar-seg" style="width:${pct}%;background:${bg};border-right:1px solid ${border};" title="${label}: ${count} (${pct}%)"></div>`;
+    html += `<div class="bar-seg" style="width:${pct}%;background:${bg};border-right:1px solid ${border};" title="${escapeHtml(label)}: ${count} (${pct}%)"></div>`;
   });
   html += '</div>';
   return html;
@@ -27208,10 +27264,10 @@ function reportExecutiveSummary() {
   // included, each with its share. It used to cover only Kill, Evolve and Keep,
   // so a migration that was mostly consolidation said nothing about it.
   const FINDING_TEXT = {
-    Kill: 'recommended for removal',
-    Evolve: 'need content updates or improvements',
+    Archive: 'recommended for removal',
+    Revise: 'need content updates or improvements',
     Consolidate: 'will be merged into another page',
-    Keep: 'are valuable and will be carried over as they are',
+    Migrate: 'are valuable and will be carried over as they are',
     Exclude: 'are out of scope for this migration',
   };
   const findings = [];
@@ -27237,7 +27293,7 @@ function reportExecutiveSummary() {
     const noLinks = reportRows().filter(r => {
       if (nonContentKind(r, scCol)) return false;
       const eff = effectiveKke(r);
-      if (eff === 'Kill' || eff === 'Exclude') return false;
+      if (eff === 'Archive' || eff === 'Exclude') return false;
       const raw = String(r['Unique Inlinks'] ?? '').trim();
       return raw !== '' && parseInt(raw, 10) === 0;
     }).length;
@@ -27324,7 +27380,7 @@ function reportContentInventory() {
   // Findings: where the content is, and where it's changing most.
   const big = tally.sections[0];
   const churn = tally.sections.filter(t => t.total >= 10)
-    .map(t => ({ t, gone: ((t.kke.Kill || 0) + (t.kke.Consolidate || 0)) / t.total }))
+    .map(t => ({ t, gone: ((t.kke.Archive || 0) + (t.kke.Consolidate || 0)) / t.total }))
     .sort((a, b) => b.gone - a.gone)[0];
   const invFindings = [
     big ? `The largest section is ${big.name} (${big.total.toLocaleString()} pages, ${Math.round(big.total / Math.max(tally.total, 1) * 100)}% of content).` : '',
@@ -27415,7 +27471,7 @@ function reportSmeStatus() {
     <div class="stat-row"><span class="stat-label">SME reviews received</span><span class="stat-value">${stats.smeReviewed} (${stats.smePct}%)</span></div>
     <div class="stat-row"><span class="stat-label">Approved (agree with auditor)</span><span class="stat-value">${stats.smeApproved}</span></div>
     <div class="stat-row"><span class="stat-label">Changes requested</span><span class="stat-value">${stats.smeChanged}</span></div>
-    <div class="stat-row"><span class="stat-label">Final KKE resolved</span><span class="stat-value">${stats.finalResolved} (${stats.finalPct}%)</span></div>
+    <div class="stat-row"><span class="stat-label">Final MRA resolved</span><span class="stat-value">${stats.finalResolved} (${stats.finalPct}%)</span></div>
     <div class="stat-row"><span class="stat-label">Pending final decision</span><span class="stat-value">${stats.smeTotal - stats.finalResolved}</span></div>
 
     <h2>By Content Owner</h2>
@@ -27454,7 +27510,7 @@ function reportSmeStatus() {
     const ownerOf = (r) => String(r[contentOwnerCol()] || '').trim() || 'Unassigned';
     conflicts.sort((a, b) => ownerOf(a).localeCompare(ownerOf(b)));
     body += `<h2>Unresolved Conflicts (${conflicts.length})</h2>`;
-    body += `<p style="font-size:12px;color:#666;">The SME disagreed with the recommendation and no Final KKE has been set. Resolve them in SME → Resolve Conflicts….</p>`;
+    body += `<p style="font-size:12px;color:#666;">The SME disagreed with the recommendation and no Final MRA has been set. Resolve them in SME → Resolve Conflicts….</p>`;
     body += reportTableHtml(['Owner', 'Page', 'Recommended', 'SME decision', 'SME notes'],
       conflicts.map(r => [ownerOf(r), (r[titleCol] || '') + (r[titleCol] ? ' — ' : '') + (r[urlCol] || ''), r[kkeCol()] || '', r[smeDecisionCol()] || '', r[smeNotesCol()] || '']),
       { cap: 100, moreNote: 'SME → Resolve Conflicts… lists them all.' });
@@ -27494,9 +27550,9 @@ function reportRedirectMap() {
     if (e) entries.push(Object.assign(e, { title: titleOf(row) }));
   });
 
-  const by = { kill: [], consolidate: [], moved: [], tbd: [], '404': [] };
+  const by = { archive: [], consolidate: [], moved: [], tbd: [], '404': [] };
   entries.forEach(e => by[e.kind].push(e));
-  const rules = by.kill.length + by.consolidate.length + by.moved.length;
+  const rules = by.archive.length + by.consolidate.length + by.moved.length;
 
   // The resolver collapses the chains it derived; what's left is usually a
   // hand-typed destination pointing at a page that has since moved.
@@ -27518,7 +27574,7 @@ function reportRedirectMap() {
     <p style="font-size:12px;color:#666;">Every redirect rule this migration needs, built from the same rules as the redirect CSV and the Migration Tracker's Redirects sheet. <strong>Deploy from the CSV or the Tracker</strong>; this report is for review.</p>
     <h2>Summary</h2>
     <div class="stat-row"><span class="stat-label">Redirect rules (301)</span><span class="stat-value">${rules.toLocaleString()}</span></div>
-    <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Removed pages (Kill)</span><span class="stat-value">${by.kill.length.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Removed pages (Archive)</span><span class="stat-value">${by.archive.length.toLocaleString()}</span></div>
     <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Consolidated pages</span><span class="stat-value">${by.consolidate.length.toLocaleString()}</span></div>
     <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Pages whose URL changes</span><span class="stat-value">${by.moved.length.toLocaleString()}</span></div>
     <div class="stat-row"><span class="stat-label">Still need a destination</span><span class="stat-value"${by.tbd.length ? ' style="color:#b91c1c;"' : ''}>${by.tbd.length.toLocaleString()}</span></div>
@@ -27553,7 +27609,7 @@ function reportRedirectMap() {
     body += reportTableHtml(headers, list.map(map), { moreNote: csvNote });
   };
   section('tbd', 'Need a destination', ['URL', 'Title', 'Decision'], e => [e.source, e.title, e.kke]);
-  section('kill', 'Removed pages (Kill)', ['Source URL', 'Destination'], e => [e.source, e.dest]);
+  section('archive', 'Removed pages (Archive)', ['Source URL', 'Destination'], e => [e.source, e.dest]);
   section('consolidate', 'Consolidated pages', ['Source URL', 'Destination'], e => [e.source, e.dest]);
   section('moved', 'Pages whose URL changes', ['Current URL', 'New URL'], e => [e.source, e.dest]);
   section('404', 'Intentional 404s', ['URL', 'Title'], e => [e.source, e.title],
@@ -27692,7 +27748,7 @@ function reportNetNewBrief() {
     const id = r['Sitemap_ID'];
     if (!id) return;
     const eff = effectiveKke(r);
-    if (eff === 'Kill' || eff === 'Consolidate') return;
+    if (eff === 'Archive' || eff === 'Consolidate') return;
     if (!rowsByNodeId.has(id)) rowsByNodeId.set(id, []);
     rowsByNodeId.get(id).push(r);
   });
@@ -27831,7 +27887,7 @@ function openMigrationTrackerExportDialog() {
   const phasedNodes = state.navNodes.filter(n => String(n.phase || '').trim()).length;
   const refNodes = state.navNodes.filter(n => n.refNodeId).length;
   const assignedRows = state.editedRows.filter(r => String(r['Sitemap_ID'] || '').trim()).length;
-  const killRows = state.editedRows.filter(r => String((r[finalKkeCol()] || r[kkeCol()]) || '').trim() === 'Kill').length;
+  const killRows = state.editedRows.filter(r => String((r[finalKkeCol()] || r[kkeCol()]) || '').trim() === 'Archive').length;
   // Active Build filter (from the Sitemap toolbar) — lets the Sitemap Plan sheet be scoped to it.
   const _bfSel = document.getElementById('nav-build-filter');
   const buildFilter = _bfSel ? _bfSel.value : '';
@@ -27852,8 +27908,8 @@ function openMigrationTrackerExportDialog() {
         <div class="mte-section-title">Sheets to include</div>
         <label class="mte-opt"><input type="checkbox" id="_mte-sheet-plan" checked disabled> <strong>Sitemap Plan</strong> <span class="mte-count">${totalNodes} node${totalNodes !== 1 ? 's' : ''}</span></label>
         <label class="mte-opt"><input type="checkbox" id="_mte-sheet-sources" checked> <strong>Source Pages</strong> <span class="mte-count">${assignedRows} assigned audit row${assignedRows !== 1 ? 's' : ''}</span></label>
-        <label class="mte-opt"><input type="checkbox" id="_mte-sheet-redirects" checked> <strong>Redirects</strong> <span class="mte-count">Kill rows + URL changes</span></label>
-        <label class="mte-opt"><input type="checkbox" id="_mte-sheet-archive" checked> <strong>Archive</strong> <span class="mte-count">${killRows} Kill row${killRows !== 1 ? 's' : ''}</span></label>
+        <label class="mte-opt"><input type="checkbox" id="_mte-sheet-redirects" checked> <strong>Redirects</strong> <span class="mte-count">Archive rows + URL changes</span></label>
+        <label class="mte-opt"><input type="checkbox" id="_mte-sheet-archive" checked> <strong>Archive</strong> <span class="mte-count">${killRows} Archive row${killRows !== 1 ? 's' : ''}</span></label>
       </div>
 
       <div class="mte-section">
@@ -27878,7 +27934,7 @@ function openMigrationTrackerExportDialog() {
 
       <div class="mte-section">
         <div class="mte-section-title">Source pages options</div>
-        <label class="mte-opt"><input type="checkbox" id="_mte-source-include-kill" checked> Include Kill rows <span class="mte-count">(traceability — what's going away)</span></label>
+        <label class="mte-opt"><input type="checkbox" id="_mte-source-include-kill" checked> Include Archive rows <span class="mte-count">(traceability — what's going away)</span></label>
         <label class="mte-opt"><input type="checkbox" id="_mte-source-include-exclude"> Include Exclude rows <span class="mte-count">(out of scope)</span></label>
       </div>
     </div>
@@ -28121,7 +28177,7 @@ function navExportContext() {
     const id = String(r['Sitemap_ID'] || '').trim();
     if (!id) return;
     const eff = String(r[finalKkeCol()] || r[kkeCol()] || '').trim().toLowerCase();
-    if (eff === 'kill' || eff === 'consolidate') return;
+    if (eff === 'archive' || eff === 'consolidate') return;
     (assignedRowsByNode[id] = assignedRowsByNode[id] || []).push(r);
     const u = String(r[urlCol] || '').trim();
     if (u) (assignedUrls[id] = assignedUrls[id] || []).push(u);
@@ -28209,7 +28265,7 @@ function buildSourcePagesSheet(sourceOpts) {
 
   const NATURE_LABEL = Object.fromEntries(CONTENT_NATURE_OPTIONS.map(v => [v, v ? contentNatureLabel(v, true) : '']));
   const aoa = [[
-    'Source URL', 'Title', 'KKE', 'Final KKE', 'Suggested KKE',
+    'Source URL', 'Title', 'MRA', 'Final MRA', 'Suggested MRA',
     'Content Type', 'Renders As', 'Target Content Type',
     'Group', 'Primary Tag',
     'Primary Audience', 'Audiences', 'Source Site',
@@ -28224,7 +28280,7 @@ function buildSourcePagesSheet(sourceOpts) {
     const kke = String(r[kkeCol()] || '').trim();
     const finalK = String(r[finalKkeCol()] || '').trim();
     const effective = finalK || kke;
-    if (effective === 'Kill' && !sourceOpts.includeKill) return;
+    if (effective === 'Archive' && !sourceOpts.includeKill) return;
     if (effective === 'Exclude' && !sourceOpts.includeExclude) return;
     const navID = String(r['Sitemap_ID'] || '').trim();
     const node = navID ? navById.get(navID) : null;
@@ -28233,7 +28289,7 @@ function buildSourcePagesSheet(sourceOpts) {
       titleCol ? (r[titleCol] || '') : '',
       kke,
       finalK,
-      r['Suggested_KKE'] || '',
+      r['Suggested_MRA'] || '',
       r['Page_Type'] || '',
       NATURE_LABEL[String(r['Content_Nature'] || '').trim()] ?? (r['Content_Nature'] || ''),
       r['Target_Content_Type'] || '',
@@ -28270,11 +28326,11 @@ function buildSourcePagesSheet(sourceOpts) {
 // deployed. Every one of them now reads this. Callers run
 // resolveRedirectDestinations() first so the stored value is current.
 //
-// kind: 'kill' | 'consolidate' | 'moved' (a 301 each), 'tbd' (the page is going
+// kind: 'archive' | 'consolidate' | 'moved' (a 301 each), 'tbd' (the page is going
 // away but has no destination yet — ships as "(TBD)" and must be decided before
 // handoff), '404' (intentional deindex: no rule is written).
 const REDIRECT_KIND_LABELS = {
-  kill: 'Removed (Kill) → 301',
+  archive: 'Removed (Archive) → 301',
   consolidate: 'Consolidated → 301',
   moved: 'URL changed → 301',
   tbd: 'Needs a destination',
@@ -28289,14 +28345,14 @@ function redirectEntryForRow(r) {
   const kke = effectiveKke(r);
   const dest = String(r[REDIRECT_DEST_COL] || '').trim();
   const base = { source, site: String(r[SOURCE_SITE_COL] || '').trim(), kke };
-  if (kke === 'Kill' || kke === 'Consolidate') {
-    const killed = kke === 'Kill';
-    if (dest === '404') return Object.assign(base, { dest: '', status: '404', kind: '404', reason: killed ? 'Page marked Kill — intentional deindex' : 'Consolidated — intentional deindex' });
-    if (dest) return Object.assign(base, { dest, status: '301', kind: killed ? 'kill' : 'consolidate', reason: killed ? 'Page marked Kill' : 'Consolidated into another page' });
+  if (kke === 'Archive' || kke === 'Consolidate') {
+    const killed = kke === 'Archive';
+    if (dest === '404') return Object.assign(base, { dest: '', status: '404', kind: '404', reason: killed ? 'Page marked Archive — intentional deindex' : 'Consolidated — intentional deindex' });
+    if (dest) return Object.assign(base, { dest, status: '301', kind: killed ? 'archive' : 'consolidate', reason: killed ? 'Page marked Archive' : 'Consolidated into another page' });
     // Consolidate with no destination used to vanish from every list: it isn't
     // Kill, and it has no destination to show. It is exactly as unfinished as a
     // Kill with none, so it ships the same way.
-    return Object.assign(base, { dest: '', status: '(TBD)', kind: 'tbd', reason: killed ? 'Kill, no destination set' : 'Consolidate, no destination set' });
+    return Object.assign(base, { dest: '', status: '(TBD)', kind: 'tbd', reason: killed ? 'Archive, no destination set' : 'Consolidate, no destination set' });
   }
   if (dest === '404') return Object.assign(base, { dest: '', status: '404', kind: '404', reason: 'Intentional deindex' });
   if (dest) return Object.assign(base, { dest, status: '301', kind: 'moved', reason: 'URL changed' });
@@ -28378,11 +28434,11 @@ function buildRedirectsSheet() {
 function buildArchiveSheet() {
   const urlCol = state.urlColumn || 'Address';
   const titleCol = state.headers.includes('Title 1') ? 'Title 1' : (state.headers.includes('Title') ? 'Title' : null);
-  const aoa = [['Source URL', 'Title', 'KKE', 'Notes', 'Tags']];
+  const aoa = [['Source URL', 'Title', 'MRA', 'Notes', 'Tags']];
   // Same reasoning as Source Pages — the archive record must be complete.
   state.editedRows.forEach(r => {
     const kke = String(r[finalKkeCol()] || r[kkeCol()] || '').trim();
-    if (kke !== 'Kill') return;
+    if (kke !== 'Archive') return;
     aoa.push([
       r[urlCol] || '',
       titleCol ? (r[titleCol] || '') : '',
@@ -28409,7 +28465,7 @@ function reportMigrationChecklist() {
   const urlCol = state.urlColumn || 'Address';
   const titleCol = state.headers.includes('Title 1') ? 'Title 1' : 'Title';
 
-  // Decisions by the EFFECTIVE KKE (a client's Final_KKE wins), every state.
+  // Decisions by the EFFECTIVE KKE (a client's Final_MRA wins), every state.
   const rows = reportRows();
   const byDecision = new Map();
   allKkeStates().forEach(st => byDecision.set(st, []));
@@ -28420,7 +28476,7 @@ function reportMigrationChecklist() {
     if (!byDecision.has(eff)) byDecision.set(eff, []);
     byDecision.get(eff).push(row);
   });
-  const evolve = byDecision.get('Evolve') || [];
+  const evolve = byDecision.get('Revise') || [];
 
   const entries = rows.map(redirectEntryForRow).filter(Boolean);
   const count = (k) => entries.filter(e => e.kind === k).length;
@@ -28442,12 +28498,12 @@ function reportMigrationChecklist() {
     [chains, 'redirect', 'pointing at another redirect'],
   ].filter(([n]) => n > 0);
 
-  const DECISION_LABELS = { Keep: 'Keep as is', Kill: 'Remove (Kill)', Evolve: 'Update (Evolve)', Consolidate: 'Merge into another page (Consolidate)', Exclude: 'Out of scope (Exclude)' };
+  const DECISION_LABELS = { Migrate: 'Migrate as is', Archive: 'Remove (Archive)', Revise: 'Update (Revise)', Consolidate: 'Merge into another page (Consolidate)', Exclude: 'Out of scope (Exclude)' };
   const pct = (n) => rows.length ? ` <span style="color:#888;font-weight:400;">(${n / rows.length * 100 < 1 && n ? '<1' : Math.round(n / rows.length * 100)}%)</span>` : '';
 
   const findings = [];
-  const keepish = (byDecision.get('Keep') || []).length + evolve.length;
-  if (rows.length) findings.push(`${keepish.toLocaleString()} of ${rows.length.toLocaleString()} pages move to the new site (${(byDecision.get('Keep') || []).length.toLocaleString()} as they are, ${evolve.length.toLocaleString()} updated).`);
+  const keepish = (byDecision.get('Migrate') || []).length + evolve.length;
+  if (rows.length) findings.push(`${keepish.toLocaleString()} of ${rows.length.toLocaleString()} pages move to the new site (${(byDecision.get('Migrate') || []).length.toLocaleString()} as they are, ${evolve.length.toLocaleString()} updated).`);
   if (rules) findings.push(`${rules.toLocaleString()} redirect rule${rules !== 1 ? 's' : ''} to deploy.`);
   if (netNew) findings.push(`${netNew.toLocaleString()} new page${netNew !== 1 ? 's' : ''} to write.`);
   const nextSteps = blockers.length
@@ -28470,7 +28526,7 @@ function reportMigrationChecklist() {
 
   body += `<h2>Redirects</h2>
     <div class="stat-row"><span class="stat-label">Redirect rules to deploy (301)</span><span class="stat-value">${rules.toLocaleString()}</span></div>
-    <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;removed / merged / URL changed</span><span class="stat-value">${count('kill').toLocaleString()} / ${count('consolidate').toLocaleString()} / ${count('moved').toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;removed / merged / URL changed</span><span class="stat-value">${count('archive').toLocaleString()} / ${count('consolidate').toLocaleString()} / ${count('moved').toLocaleString()}</span></div>
     <div class="stat-row"><span class="stat-label">Still need a destination</span><span class="stat-value"${tbd ? ' style="color:#b91c1c;"' : ''}>${tbd.toLocaleString()}</span></div>
     <div class="stat-row"><span class="stat-label">Intentional 404s (no rule)</span><span class="stat-value">${count('404').toLocaleString()}</span></div>
     <p style="font-size:12px;color:#666;">The rules are listed in the <strong>Redirect Map Report</strong>; deploy from the redirect CSV or the Migration Tracker.</p>`;
@@ -28485,7 +28541,7 @@ function reportMigrationChecklist() {
 
   body += auditorAppendixHtml([
     { title: `Pages to update (${evolve.length.toLocaleString()})`, html: evolve.length ? reportTableHtml(['Title', 'URL', 'Notes'],
-      evolve.map(r => [r[titleCol] || '', r[urlCol] || '', r[notesCol()] || '']), { moreNote: 'Filter the sidebar to Evolve for the full list.' }) : '' },
+      evolve.map(r => [r[titleCol] || '', r[urlCol] || '', r[notesCol()] || '']), { moreNote: 'Filter the sidebar to Revise for the full list.' }) : '' },
   ]);
 
   const title = 'Migration Checklist';
@@ -28904,8 +28960,8 @@ function checkRedirectChains() {
         'no-target':    'The crawl records no destination for these, so nothing can be carried forward. Decide whether each URL should redirect somewhere or be allowed to 404.',
         'loop':         'These resolve back to their own URL. Always wrong — repoint or retire each one.',
         'dead':         'These redirect to a URL that returns 4xx. The rule sends visitors to a dead end; retire it (set the destination to 404) or repoint it.',
-        'undecided':    'The destination is a page in this audit that nobody has made a KKE call on yet. If it turns out to be Kill, this rule points at nothing. Decide those pages — the redirects re-derive themselves afterwards.',
-        'target-retired': 'The destination is marked Kill (with no redirect of its own) or Consolidate (with no target picked), so the rule lands on a page that will not exist. Finish the destination page\u2019s decision, or repoint these.',
+        'undecided':    'The destination is a page in this audit that nobody has made a decision on yet. If it turns out to be Archive, this rule points at nothing. Decide those pages — the redirects re-derive themselves afterwards.',
+        'target-retired': 'The destination is marked Archive (with no redirect of its own) or Consolidate (with no target picked), so the rule lands on a page that will not exist. Finish the destination page\u2019s decision, or repoint these.',
         'uncrawled':    'The destination is on a site you are migrating but was not in this crawl, so the app cannot confirm it survives. Widen the crawl or confirm each by hand.',
         'out-of-scope': 'The destination is on a site marked out of scope, so nothing here will maintain it. Confirm the rule should still point there.',
         'external':     'The destination is off-site. These carry forward verbatim — nothing to resolve, listed so you can confirm you still want to send traffic there.',
@@ -29007,7 +29063,7 @@ const REDIRECT_HEALTH_CATEGORIES = [
     why: 'A page pointing at its own URL is a redirect loop. This is always wrong.',
     action: 'Clear it, or re-point at the page’s sitemap node' },
   { key: 'orphan', fixable: true, title: 'Not on the sitemap, but carrying a redirect',
-    why: 'A Keep or Evolve page with no sitemap placement is not moving, so it needs no redirect. These are usually left over from a sitemap that was built and then deleted.',
+    why: 'A Migrate or Revise page with no sitemap placement is not moving, so it needs no redirect. These are usually left over from a sitemap that was built and then deleted.',
     action: 'Clear the redirect' },
   { key: 'stale', fixable: true, title: 'Redirect disagrees with the page’s sitemap node',
     why: 'The page is placed on the sitemap, but its redirect points somewhere the sitemap does not.',
@@ -29072,7 +29128,7 @@ function computeRedirectHealth() {
 
     // Kill and Consolidate destinations are theirs to own — the resolver already
     // re-derives them, and the chain check covers their other failure mode.
-    if (kke === 'kill' || kke === 'consolidate') return;
+    if (kke === 'archive' || kke === 'consolidate') return;
 
     if (!node) {
       // Could a person have meant this? If it still resolves to a live node, assume so.
@@ -29137,7 +29193,7 @@ function openRedirectHealthCheck() {
 
   cats.forEach(c => {
     const block = document.createElement('div');
-    const accent = c.fixable ? 'var(--kke-evolve)' : 'var(--text-muted)';
+    const accent = c.fixable ? 'var(--kke-revise)' : 'var(--text-muted)';
     block.style.cssText = 'border-left:3px solid ' + accent + ';padding-left:10px;';
 
     const head = document.createElement('div');
@@ -29242,9 +29298,9 @@ function runPreHandoffCheck() {
   const rows = reportRows();
   const unreviewed = rows.filter(r => !effectiveKke(r));
   checks.push({
-    title: 'Every page has a KKE decision',
+    title: 'Every page has a decision',
     items: unreviewed.map(u),
-    fix: `Filter the sidebar to "Unreviewed" and assign a status (or run a Suggested-KKE pass).`,
+    fix: `Filter the sidebar to "Unreviewed" and assign a status (or run a Suggested-MRA pass).`,
   });
 
   const noTarget = rows.filter(rowConsolidateNeedsTarget);
@@ -29256,9 +29312,9 @@ function runPreHandoffCheck() {
 
   const deadTarget = rows.filter(rowConsolidateHasDeadTarget);
   checks.push({
-    title: 'Consolidate targets are live (not Kill/Exclude)',
+    title: 'Consolidate targets are live (not Archive/Exclude)',
     items: deadTarget.map(u),
-    fix: `Use the "Consolidate -> Kill/Exclude target" filter; set the target back to Evolve, or repoint the source.`,
+    fix: `Use the "Consolidate -> Archive/Exclude target" filter; set the target back to Revise, or repoint the source.`,
   });
 
   // The rows the redirect CSV ships as "(TBD)": a page is going away and
@@ -29342,7 +29398,7 @@ function runPreHandoffCheck() {
 
   checks.forEach(c => {
     const ok = c.items.length === 0;
-    const accent = ok ? 'var(--accent)' : 'var(--kke-evolve)';
+    const accent = ok ? 'var(--accent)' : 'var(--kke-revise)';
     body += `<div style="margin-bottom:14px;border-left:3px solid ${accent};padding-left:10px;">`;
     body += `<div style="font-weight:600;font-size:13px;">${ok ? '&#10003;' : '&#9888;'} ${escapeHtml(c.title)} <span style="color:${accent};font-weight:500;">&mdash; ${ok ? 'passed' : c.items.length + ' issue' + (c.items.length !== 1 ? 's' : '')}</span></div>`;
     if (!ok) {
@@ -29400,8 +29456,8 @@ function openKkeVsSmeView() {
       <div style="font-size:13px;color:var(--text-secondary);">
         <strong>${reviewed.length}</strong> SME-reviewed
         &middot; <span style="color:var(--accent-text);">${agreeN} agree</span>
-        &middot; <span style="color:var(--kke-evolve);">${changedN} changed</span>
-        &middot; <span style="color:var(--kke-kill);">${pendingN} pending</span>
+        &middot; <span style="color:var(--kke-revise);">${changedN} changed</span>
+        &middot; <span style="color:var(--kke-archive);">${pendingN} pending</span>
         ${unreviewedN ? `&middot; <span style="color:var(--text-muted);">${unreviewedN} not yet reviewed</span>` : ''}
       </div>
       <span style="flex:1"></span>
@@ -29445,7 +29501,7 @@ function openKkeVsSmeView() {
       const title = titleCol ? String(row[titleCol] || '') : '';
       let status;
       if (c.agree) status = `<span style="color:var(--accent-text);font-weight:500;">✓ Agree</span>`;
-      else if (c.changed) status = `<span style="color:${c.pending ? 'var(--kke-kill)' : 'var(--kke-evolve)'};font-weight:500;">${c.pending ? '⚠ Pending' : '↳ Resolved'}</span>`;
+      else if (c.changed) status = `<span style="color:${c.pending ? 'var(--kke-archive)' : 'var(--kke-revise)'};font-weight:500;">${c.pending ? '⚠ Pending' : '↳ Resolved'}</span>`;
       else status = `<span style="color:var(--text-muted);">${escapeHtml(c.sme)}</span>`;
 
       const smeCell = c.changed ? badge(c.changedTo) : `<span style="color:var(--text-muted);">${escapeHtml(c.sme)}</span>`;
@@ -29468,7 +29524,7 @@ function openKkeVsSmeView() {
   render('all');
 
   const api = openModal({
-    title: 'KKE vs SME',
+    title: 'MRA vs SME',
     body,
     width: '94vw',
     className: 'kvs-modal',
@@ -29582,7 +29638,7 @@ function gatherAssigneeBriefData(role, person) {
     const id = String(r['Sitemap_ID'] || '').trim();
     if (!id) return;
     const eff = String(r[finalKkeCol()] || r[kkeCol()] || '').trim().toLowerCase();
-    if (eff === 'kill' || eff === 'consolidate') return;
+    if (eff === 'archive' || eff === 'consolidate') return;
     pageCounts[id] = (pageCounts[id] || 0) + 1;
     if (!assignedByNav.has(id)) assignedByNav.set(id, []);
     assignedByNav.get(id).push(r);
@@ -29699,7 +29755,7 @@ function assigneeBriefBuiltinHtml(data) {
   </div>`;
 
   const mergePill = (n) => n > 0
-    ? `<span title="${n} page${n !== 1 ? 's' : ''} consolidated into this page" style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:9px;background:var(--kke-evolve-bg,#fff7ed);color:var(--kke-evolve,#b45309);border:1px solid var(--kke-evolve,#fcd9a8);white-space:nowrap;">merges ${n}</span>`
+    ? `<span title="${n} page${n !== 1 ? 's' : ''} consolidated into this page" style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:9px;background:var(--kke-revise-bg,#fff7ed);color:var(--kke-revise,#b45309);border:1px solid var(--kke-revise,#fcd9a8);white-space:nowrap;">merges ${n}</span>`
     : '';
 
   const briefBox = (kicker, md) =>
@@ -29725,7 +29781,7 @@ function assigneeBriefBuiltinHtml(data) {
       const pill = p.status
         ? `<span style="font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid ${statusColor(p.status)};color:${statusColor(p.status)};">${escapeHtml(p.status)}</span>`
         : '<span style="color:var(--text-muted);">—</span>';
-      const countCell = `${p.sourceCount}${p.mergeTotal ? ` <span style="color:var(--kke-evolve,#b45309);" title="${p.mergeTotal} consolidated in across these pages">(+${p.mergeTotal})</span>` : ''}`;
+      const countCell = `${p.sourceCount}${p.mergeTotal ? ` <span style="color:var(--kke-revise,#b45309);" title="${p.mergeTotal} consolidated in across these pages">(+${p.mergeTotal})</span>` : ''}`;
       body += `<tr style="border-top:1px solid var(--border);">
         <td style="padding:4px 6px;">${p.hasBrief ? '★ ' : ''}${escapeHtml(p.breadcrumb)}</td>
         <td style="padding:4px 6px;font-family:var(--font-mono);word-break:break-all;">${escapeHtml(p.url) || '<span style="color:var(--text-muted)">—</span>'}</td>
@@ -29825,7 +29881,7 @@ function showNavCoverageReport() {
     if (String(r['Sitemap_ID'] || '').trim()) return false;
     if (isFragmentRow(r)) return false;
     const eff = effectiveKke(r);
-    return eff === 'Keep' || eff === 'Evolve';
+    return eff === 'Migrate' || eff === 'Revise';
   });
   const placed = rows.filter(r => String(r['Sitemap_ID'] || '').trim());
 
@@ -29834,7 +29890,7 @@ function showNavCoverageReport() {
   const pathMismatches = [];
   placed.forEach(row => {
     const eff = effectiveKke(row);
-    if (eff === 'Kill' || eff === 'Consolidate' || eff === 'Exclude') return;
+    if (eff === 'Archive' || eff === 'Consolidate' || eff === 'Exclude') return;
     const computed = String(row['Computed Path'] || '').trim();
     const url = String(row[urlCol] || '').trim();
     if (!computed || !url) return;
@@ -29890,7 +29946,7 @@ function showNavCoverageReport() {
   }
   // The page-by-page worklist is for the audit team, not the client.
   body += auditorAppendixHtml([
-    { title: `Pages that still need a place (${needsPlacement.length.toLocaleString()})`, intro: 'Kept or evolved pages with no sitemap home. Sidebar filter: <em>Needs placement</em>.',
+    { title: `Pages that still need a place (${needsPlacement.length.toLocaleString()})`, intro: 'Migrate or Revise pages with no sitemap home. Sidebar filter: <em>Needs placement</em>.',
       html: needsPlacement.length ? reportTableHtml(['URL', 'Decision'], needsPlacement.map(r => [r[urlCol] || '', effectiveKke(r)]), { moreNote: 'The Needs placement filter lists them all.' }) : '' },
   ]);
 
@@ -29966,6 +30022,7 @@ function showSmeExportModal() {
   filterVal.addEventListener('change', updatePreview);
 
   filterType.value = '';
+  $('sme-export-legacy-wording').checked = false;   // a per-worksheet choice, never sticky
   filterVal.classList.add('hidden');
   updatePreview();
 
@@ -29996,6 +30053,7 @@ function showSmeExportModal() {
                            notesCol(), smeDecisionCol(), smeNotesCol(), contentOwnerCol()]
       .filter(h => state.headers.includes(h));
     const splitByOwner = $('sme-export-split-owner').checked;
+    const vocabulary = $('sme-export-legacy-wording').checked ? 'kke' : 'mra';
 
     // Build export rows — keep Content_Owner for splitting, blank SME decision/notes
     const exportRows = rows.map(r => {
@@ -30032,7 +30090,8 @@ function showSmeExportModal() {
         headers: exportHeaders,
         rows: ownerRows,
         smeOptions,
-        smeDecisionCol: smeDecisionCol()
+        smeDecisionCol: smeDecisionCol(),
+        vocabulary
       }));
 
       const result = await window.electronAPI.smeExportMulti({ files });
@@ -30045,7 +30104,7 @@ function showSmeExportModal() {
       const defaultName = [ps.clientName, ps.projectName, 'SME Review', filterLabel].filter(Boolean).join(' - ') + '.xlsx';
       const result = await window.electronAPI.smeExport({
         headers: exportHeaders, rows: exportRows, defaultName,
-        smeOptions, smeDecisionCol: smeDecisionCol()
+        smeOptions, smeDecisionCol: smeDecisionCol(), vocabulary
       });
       if (result.success) {
         showToast(`Exported ${result.count} rows for SME review`, 'success');
@@ -30122,7 +30181,7 @@ async function smeImport() {
     }
   });
 
-  // Auto-populate Final_KKE from SME decisions
+  // Auto-populate Final_MRA from SME decisions
   let autoPopulated = 0;
   state.editedRows.forEach(row => {
     const final_ = String(row[finalKkeCol()] || '').trim();
@@ -30148,8 +30207,9 @@ async function smeImport() {
 
   const parts = [`${matched} URLs matched`, `${merged} values imported`];
   if (skipped) parts.push(`${skipped} kept existing`);
-  if (autoPopulated) parts.push(`${autoPopulated} Final KKE auto-set`);
-  showToast(parts.join(', '), 'success');
+  if (autoPopulated) parts.push(`${autoPopulated} Final MRA auto-set`);
+  const legacy = legacyVocabularyText(data.legacyVocabulary);
+  showToast(parts.join(', ') + (legacy ? '. ' + legacy : ''), 'success');
 
   // Count unresolved conflicts and offer to resolve
   const conflicts = state.editedRows.filter(r => {
@@ -30167,15 +30227,15 @@ async function smeImport() {
   }
 }
 
-/** After SME decisions land in Final_KKE, offer the consolidation review when
+/** After SME decisions land in Final_MRA, offer the consolidation review when
  *  the client changed any. Consolidation is the one decision whose follow-up
- *  (where does the content go?) the Final_KKE value alone can't carry. */
+ *  (where does the content go?) the Final_MRA value alone can't carry. */
 async function maybeOfferConsolidateReview() {
   const n = countConsolidateReview();
   if (!n) return;
   if (await confirmDialog({
     title: 'Review consolidations?',
-    message: `${n} page${n !== 1 ? 's' : ''} where the client's Final KKE changes a consolidation, or the SME left notes on one. Review them now?`,
+    message: `${n} page${n !== 1 ? 's' : ''} where the client's Final MRA changes a consolidation, or the SME left notes on one. Review them now?`,
     confirmLabel: 'Review',
     cancelLabel: 'Later',
   })) openConsolidateReviewDialog();
@@ -30259,10 +30319,10 @@ function openSmeResolveDialog() {
       actions.className = 'sme-cr-actions';
       const confirmBtn = document.createElement('button');
       confirmBtn.textContent = '✓';
-      confirmBtn.title = 'Set Final KKE';
+      confirmBtn.title = 'Set Final MRA';
       confirmBtn.addEventListener('click', () => {
         const val = select.value;
-        if (!val) { showToast('Select a Final KKE value', 'error'); return; }
+        if (!val) { showToast('Select a Final MRA value', 'error'); return; }
         c.row[finalKkeCol()] = val;
         setDirty(true); changedAny = true;
         conflicts.splice(idx, 1);
@@ -30296,7 +30356,7 @@ function openSmeResolveDialog() {
   function onDone() { cleanup(); if (changedAny) setTimeout(maybeOfferConsolidateReview, 200); }
 
   async function onAcceptAll() {
-    if (!(await confirmDialog({ title: 'Accept SME suggestions', message: `Set Final KKE to SME's suggestion for all ${conflicts.length} rows?`, confirmLabel: 'Accept all' }))) return;
+    if (!(await confirmDialog({ title: 'Accept SME suggestions', message: `Set Final MRA to SME's suggestion for all ${conflicts.length} rows?`, confirmLabel: 'Accept all' }))) return;
     conflicts.forEach(c => {
       if (c.suggested) c.row[finalKkeCol()] = c.suggested;
     });
@@ -30306,7 +30366,7 @@ function openSmeResolveDialog() {
   }
 
   async function onKeepAll() {
-    if (!(await confirmDialog({ title: 'Keep original', message: `Set Final KKE to original KKE Recommendation for all ${conflicts.length} rows?`, confirmLabel: 'Keep original' }))) return;
+    if (!(await confirmDialog({ title: 'Migrate original', message: `Set Final MRA to original MRA Recommendation for all ${conflicts.length} rows?`, confirmLabel: 'Migrate original' }))) return;
     conflicts.forEach(c => {
       c.row[finalKkeCol()] = c.row[kkeCol()] || '';
     });
@@ -30420,7 +30480,7 @@ function tvDefaultWidth(colName) {
 
 // Phase 1: columns added but hidden by default in Table View; user can reveal via column picker
 const TV_HIDDEN_BY_DEFAULT = new Set([
-  'Suggested_KKE_Sources',
+  'Suggested_MRA_Sources',
   'Source_CMS_URL',
   'New_CMS_URL',
   'Design_Patterns',
@@ -30699,8 +30759,9 @@ function renderTableVisibleRows() {
         badge.textContent = val;
         cell.appendChild(badge);
       } else {
-        cell.textContent = val;
-        cell.title = String(val);
+        const shown = val;
+        cell.textContent = shown;
+        cell.title = String(shown);
       }
 
       if (editableCols.has(col.name)) {
@@ -30775,7 +30836,7 @@ function tvStartInlineEdit(cell, colName, origIndex) {
       committed = true;
       const newVal = select.value;
       const oldVal = row[colName] || '';
-      if (isKkeType && newVal === 'Kill' && oldVal !== 'Kill') {
+      if (isKkeType && newVal === 'Archive' && oldVal !== 'Archive') {
         const ok = await promptKillCleanup(origIndex);
         if (!ok) { cell.classList.remove('editing'); renderTableVisibleRows(); return; }
       }
@@ -30784,7 +30845,7 @@ function tvStartInlineEdit(cell, colName, origIndex) {
         cell.classList.remove('editing');
         renderTableVisibleRows();
         // The picker will set KKE=Consolidate + Consolidate_Into when a target is chosen.
-        // Only applies to the KKE column; for Final_KKE, just record the value.
+        // Only applies to the KKE column; for Final_MRA, just record the value.
         if (colName === kkeCol()) {
           openConsolidatePicker(origIndex);
           return;
@@ -31052,7 +31113,7 @@ function resyncNavBasedRedirects() {
   state.editedRows.forEach((row, origIndex) => {
     const existing = String(row['Redirect_Destination'] || '').trim();
     if (existing === '404') return; // intentional deindex — never touch
-    // Effective KKE, as everywhere else redirects are derived (an SME's Final_KKE wins).
+    // Effective KKE, as everywhere else redirects are derived (an SME's Final_MRA wins).
     const kke = String(row[finalKkeCol()] || row[kkeCol()] || '').trim().toLowerCase();
 
     const navID = String(row['Sitemap_ID'] || '').trim();
@@ -31062,7 +31123,7 @@ function resyncNavBasedRedirects() {
       // resolve through the sitemap). Skipping them meant a "re-derive" after a
       // Site Domain fix left every retired 301 on the old value. Only values the
       // app wrote are touched here; a person's pick stays theirs.
-      if (kke !== 'kill' && kke !== 'consolidate') return;
+      if (kke !== 'archive' && kke !== 'consolidate') return;
       if (isFragmentRow(row)) return;
       const src = String(row[REDIRECT_SRC_COL] || '').trim();
       if (src === 'manual') return;
@@ -31081,7 +31142,7 @@ function resyncNavBasedRedirects() {
 
     let newUrl = '';
 
-    if (kke === 'kill' || kke === 'consolidate') {
+    if (kke === 'archive' || kke === 'consolidate') {
       // Kill/Consolidate: redirect destination is the sitemap node's new path
       newUrl = pathToUrl(node.computedPath);
     } else {
@@ -31414,8 +31475,8 @@ function renderRedirectEditor() {
     // Fragments / embeddable content objects have no public URL — never need a redirect.
     if (isFragmentRow(row)) continue;
 
-    // Effective KKE: Final_KKE (from SME resolve) takes precedence over the raw
-    // KKE_Recommendation — matches the resolver and every other "effective KKE" consumer.
+    // Effective KKE: Final_MRA (from SME resolve) takes precedence over the raw
+    // MRA_Recommendation — matches the resolver and every other "effective KKE" consumer.
     const status = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
     const statusLower = status.toLowerCase();
     const computedPath = String(row['Computed Path'] || '').trim();
@@ -31442,18 +31503,18 @@ function renderRedirectEditor() {
     }
 
     // Kill pages
-    if (statusLower === 'kill') {
-      const resolvedDest = ctx.computeAutoDestination(row, 'kill');
+    if (statusLower === 'archive') {
+      const resolvedDest = ctx.computeAutoDestination(row, 'archive');
       // explicit per-row overrides everything
       const finalDest = existingDest || resolvedDest;
       redirectEntries.push({
         origIndex: i,
         row,
         sourceUrl,
-        status: 'Kill',
+        status: 'Archive',
         defaultDest: resolvedDest,
         currentDest: finalDest,
-        reason: 'kill'
+        reason: 'archive'
       });
       continue;
     }
@@ -31584,7 +31645,7 @@ function renderRedirectEditor() {
   });
 
   // Stats
-  const killCount = redirectEntries.filter(e => e.reason === 'kill').length;
+  const killCount = redirectEntries.filter(e => e.reason === 'archive').length;
   const movedCount = redirectEntries.filter(e => e.reason === 'url-changed').length;
   const customCount = redirectEntries.filter(e => {
     const dest = String(e.row[REDIRECT_DEST_COL] || '').trim();
@@ -31601,7 +31662,7 @@ function renderRedirectEditor() {
   if (filteredEntries.length === 0) {
     const msg = filterVal
       ? 'No redirects match the selected filter.'
-      : 'No redirects needed — no Kill pages or URL changes found.';
+      : 'No redirects needed — no Archive pages or URL changes found.';
     body.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px;">${msg}</div>`;
     return;
   }
@@ -31809,7 +31870,7 @@ async function exportRedirectMap() {
   }));
 
   if (redirectRows.length === 0) {
-    showToast('No redirects needed — no Kill pages or URL mismatches found', 'error');
+    showToast('No redirects needed — no Archive pages or URL mismatches found', 'error');
     return;
   }
 
@@ -31961,7 +32022,8 @@ async function importMergeAudit() {
   const parts = [`${matched} URLs matched`, `${merged} values imported`];
   if (skipped) parts.push(`${skipped} kept existing`);
   if (added) parts.push(`${added} new rows added`);
-  showToast(parts.join(', '), 'success');
+  const legacy = legacyVocabularyText(data.legacyVocabulary);
+  showToast(parts.join(', ') + (legacy ? '. ' + legacy : ''), 'success');
 }
 
 function showImportMergeModal(fileInfo) {
@@ -32000,12 +32062,13 @@ function showImportMergeModal(fileInfo) {
       btnApply.disabled = true;
       const data = await window.electronAPI.importAuditMergeReadSheet({ filePath, sheetName });
       if (data.error) {
-        colList.innerHTML = `<div style="padding:10px;color:var(--kke-kill);font-size:12px;">${data.error}</div>`;
+        colList.innerHTML = `<div style="padding:10px;color:var(--kke-archive);font-size:12px;">${data.error}</div>`;
         currentData = null;
         return;
       }
       currentData = data;
-      info.textContent = `${fileName} → ${sheetName} — ${data.rows.length} rows, ${data.headers.length} columns`;
+      info.textContent = `${fileName} → ${sheetName} — ${data.rows.length} rows, ${data.headers.length} columns`
+        + (data.legacyVocabulary?.legacy ? ` · ${legacyVocabularyText(data.legacyVocabulary)}` : '');
       populateColList(data.headers);
       btnApply.disabled = false;
     }
@@ -32191,8 +32254,8 @@ function setupMultiBar() {
     // path does (the single-row KKE button, Final KKE, Table View inline edit).
     // Rows already Kill are excluded — they were cleaned when they got there.
     // Cancelling the cleanup cancels the whole action, as it does elsewhere.
-    if (a === 'kke' && v === 'Kill') {
-      const toAsk = targets.filter(i => String(state.editedRows[i][kkeCol()] || '').trim() !== 'Kill');
+    if (a === 'kke' && v === 'Archive') {
+      const toAsk = targets.filter(i => String(state.editedRows[i][kkeCol()] || '').trim() !== 'Archive');
       if (!(await promptBulkKillCleanup(toAsk))) return;
     }
     let touched = 0;
@@ -32360,7 +32423,7 @@ function openDeleteRowsDialog(targets, onDone) {
     warn.push(`<strong>${impact.orphanedConsolidations.length} other page${impact.orphanedConsolidations.length !== 1 ? 's' : ''}</strong> consolidate into pages you're deleting. Those pages will be left pointing at nothing, and their redirects can't be derived.`);
   }
   if (impact.decided) {
-    warn.push(`<strong>${impact.decided}</strong> of these carry a KKE decision — this is reviewed work, not just crawl noise.`);
+    warn.push(`<strong>${impact.decided}</strong> of these carry a decision — this is reviewed work, not just crawl noise.`);
   }
   if (impact.placed) {
     warn.push(`<strong>${impact.placed}</strong> are placed on the sitemap. Their nodes stay; the page counts drop.`);
@@ -32369,7 +32432,7 @@ function openDeleteRowsDialog(targets, onDone) {
     warn.push(`<strong>${impact.withRedirect}</strong> have a redirect destination that will be lost from the redirect map.`);
   }
   const warnHtml = warn.length
-    ? `<div style="margin:12px 0;padding:10px 12px;border:1px solid var(--kke-kill);border-radius:6px;background:var(--kke-kill-bg);">
+    ? `<div style="margin:12px 0;padding:10px 12px;border:1px solid var(--kke-archive);border-radius:6px;background:var(--kke-archive-bg);">
          <div style="font-size:12px;font-weight:600;margin-bottom:6px;">What this breaks</div>
          <ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.6;">${warn.map(w => `<li>${w}</li>`).join('')}</ul>
        </div>`
@@ -32608,7 +32671,7 @@ function detectDuplicates() {
   const fingerprints = new Map(); // fingerprint → [origIndex, ...]
   state.editedRows.forEach((row, i) => {
     const eff = String(row[finalKkeCol()] || row[kkeCol()] || '').trim();
-    if (eff === 'Kill' || eff === 'Exclude') return;
+    if (eff === 'Archive' || eff === 'Exclude') return;
     const fp = dupFields.map(f => String(row[f] || '').trim().toLowerCase()).join('||');
     if (!fp || fp === dupFields.map(() => '').join('||')) return; // skip empty
     if (!fingerprints.has(fp)) fingerprints.set(fp, []);
@@ -32667,7 +32730,7 @@ function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
 // with a reason. Nothing is applied until a person accepts it in this dialog,
 // and acceptance goes through the same write paths a hand edit does —
 // applyMultiAction / the audience helpers — so it is change-logged, undoable in
-// one Cmd+Z, and refreshes Suggested_KKE like any other edit. A second
+// one Cmd+Z, and refreshes Suggested_MRA like any other edit. A second
 // change-log entry per accepted row records the provenance (source + rationale),
 // the way '(row deleted)' records a deletion.
 //
@@ -32802,7 +32865,7 @@ async function openProposalReviewDialog() {
           <td style="padding:6px 8px;font-size:12px;white-space:nowrap;"><button type="button" class="btn btn-sm btn-ghost _pr-toggle" data-gi="${gi}" title="Show pages">▸</button> <strong>${escapeHtml(g.field)}</strong></td>
           <td style="padding:6px 8px;font-size:12px;">${escapeHtml(String(g.value).slice(0, 120))}</td>
           <td style="padding:6px 8px;text-align:right;"><strong>${g.items.length.toLocaleString()}</strong></td>
-          <td style="padding:6px 8px;font-size:11px;color:${g.unusable ? 'var(--kke-kill)' : 'var(--text-muted)'};">${escapeHtml(curSummary(g))}${g.sources.size ? `<div style="font-size:10px;">from ${escapeHtml([...g.sources].join(', '))}</div>` : ''}</td>
+          <td style="padding:6px 8px;font-size:11px;color:${g.unusable ? 'var(--kke-archive)' : 'var(--text-muted)'};">${escapeHtml(curSummary(g))}${g.sources.size ? `<div style="font-size:10px;">from ${escapeHtml([...g.sources].join(', '))}</div>` : ''}</td>
         </tr>
         <tbody class="proposal-group-rows">${detail}</tbody>
       </tbody>`;
@@ -32819,7 +32882,7 @@ async function openProposalReviewDialog() {
       </p>
       <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px;">
         Tags, audiences and jobs are <em>added</em> to a page, never removed; a note is appended under an existing one; everything else replaces the current value.
-        A <strong>Consolidate_Into</strong> proposal sets the page to Consolidate with that page as its target (overriding a Final KKE), the same as the Consolidate picker; you're asked once about sitemap and redirect cleanup, and once about moving the targets to Evolve.
+        A <strong>Consolidate_Into</strong> proposal sets the page to Consolidate with that page as its target (overriding a Final MRA), the same as the Consolidate picker; you're asked once about sitemap and redirect cleanup, and once about moving the targets to Revise.
         ▸ shows the pages in a group with each one's current value and the reason.
       </p>
       <div style="max-height:50vh;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);">
@@ -32874,7 +32937,7 @@ async function resolveProposalGroups(ordered, api, decision) {
 
   // Accepting Kill offers the same sitemap/redirect cleanup every other Kill
   // path does; cancelling it cancels the whole accept, as elsewhere.
-  const killIdx = items.filter(it => it.kind === 'kke' && it.p.value === 'Kill' && String(it.row[kkeCol()] || '').trim() !== 'Kill').map(it => it.origIndex);
+  const killIdx = items.filter(it => it.kind === 'kke' && it.p.value === 'Archive' && String(it.row[kkeCol()] || '').trim() !== 'Archive').map(it => it.origIndex);
   if (killIdx.length && !(await promptBulkKillCleanup([...new Set(killIdx)]))) return false;
   // Consolidate retires the URL too, so the same cleanup question applies — asked
   // once for the batch, where the Consolidate picker asks it page by page.
@@ -32906,14 +32969,14 @@ async function resolveProposalGroups(ordered, api, decision) {
   // question for every target in the batch that isn't already Evolve (or itself
   // consolidating — a chain, which the cycle and dead-target checks cover).
   const targetIdx = [...new Set(consolidateItems.map(it => it.targetIndex).filter(i => i >= 0))]
-    .filter(i => !['Evolve', 'Consolidate'].includes(effectiveKke(state.editedRows[i])));
+    .filter(i => !['Revise', 'Consolidate'].includes(effectiveKke(state.editedRows[i])));
   if (targetIdx.length) {
     const urlCol = state.urlColumn || 'Address';
     const names = targetIdx.slice(0, 6).map(i => '• ' + (String(state.editedRows[i]['Title 1'] || '').trim() || state.editedRows[i][urlCol]));
     const ok = await confirmDialog({
-      title: `Set ${targetIdx.length} target page${targetIdx.length !== 1 ? 's' : ''} to Evolve?`,
+      title: `Set ${targetIdx.length} target page${targetIdx.length !== 1 ? 's' : ''} to Revise?`,
       message: `These pages are receiving another page's content, so they no longer stay as they are:\n\n${names.join('\n')}${targetIdx.length > 6 ? `\n…and ${targetIdx.length - 6} more` : ''}\n\nEvolve is the signal that a page needs work.`,
-      confirmLabel: 'Set to Evolve', cancelLabel: 'Leave them'
+      confirmLabel: 'Set to Revise', cancelLabel: 'Leave them'
     });
     if (ok) {
       for (const i of targetIdx) {
@@ -32921,10 +32984,10 @@ async function resolveProposalGroups(ordered, api, decision) {
         for (const col of [kkeCol(), finalKkeCol()]) {
           const old = String(t[col] || '');
           if (col === finalKkeCol() && !old) continue;   // only overwrite a Final that exists
-          if (old === 'Evolve' || (col === finalKkeCol() && col === kkeCol())) continue;
-          t[col] = 'Evolve';
-          logChange(i, col, old, 'Evolve');
-          undoItems.push({ origIndex: i, field: col, oldValue: old, newValue: 'Evolve' });
+          if (old === 'Revise' || (col === finalKkeCol() && col === kkeCol())) continue;
+          t[col] = 'Revise';
+          logChange(i, col, old, 'Revise');
+          undoItems.push({ origIndex: i, field: col, oldValue: old, newValue: 'Revise' });
         }
         refreshRowInList(i);
       }
@@ -33021,7 +33084,7 @@ async function openClaudeDialog() {
   const st = await window.electronAPI.claudeLaunchStatus();
   const pend = await window.electronAPI.proposalsPending();
   const n = pend && pend.supported ? pend.count : 0;
-  const line = (label, html, bad) => `<div style="font-size:12px;${bad ? 'color:var(--kke-kill);' : ''}"><strong>${label}:</strong> ${html}</div>`;
+  const line = (label, html, bad) => `<div style="font-size:12px;${bad ? 'color:var(--kke-archive);' : ''}"><strong>${label}:</strong> ${html}</div>`;
   const projectLine = st.projectOk
     ? line('Project', `<code style="word-break:break-all;">${escapeHtml(state.filePath || '')}</code>`)
     : line('Project', escapeHtml(st.projectReason || 'none'), true);

@@ -35,7 +35,7 @@ In the **Components** cluster of the audit bar:
 
 **Reports → Component Inventory…** produces:
 
-- a per-component **frequency table** with a KKE breakdown,
+- a per-component **frequency table** with an MRA breakdown,
 - a **one-off flag** for components appearing on ≤2 pages (candidates to drop or consolidate),
 - the **top co-occurring pairs** (components that tend to appear together).
 

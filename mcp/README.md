@@ -74,7 +74,7 @@ Every release also carries them as `transmission-skill-<name>.zip` assets, so yo
 node mcp/sample/make-sample-project.js        # → mcp/sample/alpha-university.transmission
 ```
 
-That writes a deterministic 314-row fictional university audit with a sitemap, audiences, saved filters and three weeks of change history — and seven planted problems (a Keep page that 404s, Consolidate pages with no target, a Kill in a priority-audience section, SME overrides, an undecided tail) for the skills to find. The script prints the list.
+That writes a deterministic 314-row fictional university audit with a sitemap, audiences, saved filters and three weeks of change history — and seven planted problems (a Migrate page that 404s, Consolidate pages with no target, an Archive in a priority-audience section, SME overrides, an undecided tail) for the skills to find. The script prints the list.
 
 ## What it can do
 
@@ -105,7 +105,7 @@ One visible side effect: reading a project that the app has closed leaves empty 
 
 `propose_changes` queues a request (page URL, field, value, one-line rationale) in a `proposals` table inside the project file. It never touches the audit: the app shows the queue (✦ in the title bar, **Proposals** in the sidebar, Project → Review Proposals) and the auditor accepts or rejects there. Accepted values are written by the app through its own paths — change-logged with a `(proposal accepted)` entry carrying the source and rationale, one `Cmd+Z` per batch. `list_proposals` shows what's queued, accepted or rejected.
 
-Allowed fields: decision, notes, tags, group, primary tag, content type, theme, renders-as, migration track, published status, audiences, primary audience, jobs. Controlled values are checked against the project's own libraries; `Consolidate` is refused (it needs a target only the app's picker can set); tags/audiences/jobs are added, never removed; a note is appended. `Final_KKE`, `_`-columns, sitemap placement, redirects and consolidation targets cannot be proposed. The whole batch is validated before any of it is written, and a pending proposal for the same page + field is replaced rather than stacked.
+Allowed fields: decision, notes, tags, group, primary tag, content type, theme, renders-as, migration track, published status, audiences, primary audience, jobs. Controlled values are checked against the project's own libraries; `Consolidate` is refused (it needs a target only the app's picker can set); tags/audiences/jobs are added, never removed; a note is appended. `Final_MRA`, `_`-columns, sitemap placement, redirects and consolidation targets cannot be proposed. The whole batch is validated before any of it is written, and a pending proposal for the same page + field is replaced rather than stacked.
 
 The table is created on demand without touching the file's schema version; the app stamps schema v2 when it next opens the project.
 

@@ -138,14 +138,14 @@ The app window's `minWidth`/`minHeight` (`main.js`, 960×640) is the floor; veri
 | `.btn-primary` | Green affirmative action. Exactly **one per footer**, rightmost. |
 | `.btn-ghost` | Secondary / Cancel / utility. Transparent. |
 | `.btn-primary.btn-danger` | Destructive **primary** action (filled red). Use via `confirmDialog({danger:true})` or `class="btn btn-sm btn-primary btn-danger"`. |
-| `.nb-clear` / `.rb-clear` | Inline chip clear (the small **×** on the Sitemap and Redirect badges): transparent, `color: inherit`, `opacity: 0.65` → `1` and `var(--kke-kill)` on hover. The pattern for an icon-only clear inside a badge. |
+| `.nb-clear` / `.rb-clear` | Inline chip clear (the small **×** on the Sitemap and Redirect badges): transparent, `color: inherit`, `opacity: 0.65` → `1` and `var(--kke-archive)` on hover. The pattern for an icon-only clear inside a badge. |
 
 ### 2.2 Rules
 
 - **Footer buttons are `btn btn-sm …`.** No full-size `btn` in footers.
 - **Order:** utilities (ghost) on the left → spacer → `Cancel` (ghost) → **primary** (rightmost). The factory enforces this; hand-built footers must match.
 - **One primary per dialog.** Everything else is `.btn-ghost`.
-- **Destructive:** the *primary* destructive action uses `.btn-danger` (filled red). A *secondary* destructive action sitting next to a Save (e.g. "Delete Node" in an editor footer) uses ghost + red text: `class="btn btn-sm btn-ghost" style="color:var(--kke-kill);"`. Both conventions exist on purpose — pick by whether removal is the main action.
+- **Destructive:** the *primary* destructive action uses `.btn-danger` (filled red). A *secondary* destructive action sitting next to a Save (e.g. "Delete Node" in an editor footer) uses ghost + red text: `class="btn btn-sm btn-ghost" style="color:var(--kke-archive);"`. Both conventions exist on purpose — pick by whether removal is the main action.
 - **Labels:** use the specific verb for the primary action — `Save`, `Export`, `Import`, `Apply`, `Assign`, `Delete`. Use `Done` only for live-saved / acknowledge-and-close dialogs (e.g. Project Settings, which persists as you type). Use `Cancel` for dismiss-without-committing.
 
 ---
@@ -219,7 +219,7 @@ action the user cannot physically reach is worse than no action at all.
 ## 7. Colors, tokens, typography
 
 - **All colors and key dimensions come from `:root` custom properties.** Edit tokens there; don't hardcode hex values in component rules or inline styles.
-- Common tokens: `--accent` (primary green), `--danger`, `--kke-keep/kill/evolve/consolidate/exclude` (+ `*-bg`), `--text-primary/secondary/muted`, `--bg-surface/main/hover/field-bar`, `--border` / `--border-light`, `--radius`, `--sidebar-w`, `--font-sans` / `--font-mono`.
+- Common tokens: `--accent` (primary green), `--danger`, `--kke-migrate/kill/evolve/consolidate/exclude` (+ `*-bg`), `--text-primary/secondary/muted`, `--bg-surface/main/hover/field-bar`, `--border` / `--border-light`, `--radius`, `--sidebar-w`, `--font-sans` / `--font-mono`.
 - Fonts: IBM Plex Sans (UI) / IBM Plex Mono (URLs, codes, keys). Base 14px; **never below 11px**.
 - Dark mode is automatic (follows macOS). Because you use tokens, your UI adapts for free — verify contrast holds in both themes.
 

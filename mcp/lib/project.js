@@ -24,6 +24,7 @@
 'use strict';
 
 const rubricsLib = require('./rubrics');
+const Terminology = require('./terminology');
 const pageText = require('./page-text');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -35,7 +36,7 @@ const SUPPORTED_SCHEMA_VERSION = 2;
 // The one thing this server writes, and the only table it may write to. A
 // proposal is a REQUEST — "set this field on this page to this value, because…"
 // — that a person accepts or rejects in the app, which then writes the value
-// through its own paths (change log, undo, Suggested_KKE refresh). Nothing here
+// through its own paths (change log, undo, Suggested_MRA refresh). Nothing here
 // ever touches `rows`, so the app's in-memory copy stays the truth and its
 // autosave can never collide with us.
 //
@@ -61,18 +62,18 @@ const PROPOSALS_DDL = `
 const PROPOSAL_COLUMNS = ['id', 'created_at', 'batch', 'source', 'url', 'field', 'value', 'rationale', 'status', 'resolved_at', 'resolved_by'];
 
 // Fields a proposal may name. Keyed by the canonical column name; `map` keys
-// resolve through the project's column map (a file may call KKE "Recommendation").
+// resolve through the project's column map (a file may call the decision column "Recommendation").
 // `kind` decides how the app applies it: 'set' replaces the cell; 'add' merges
 // into a comma-separated cell (a proposal can add a tag or an audience, never
 // remove one); 'note' appends to a non-blank Notes cell rather than overwriting
-// what a person wrote. Deliberately absent: Final_KKE (the SME's call), every
+// what a person wrote. Deliberately absent: Final_MRA (the SME's call), every
 // `_`-prefixed column, the Sitemap_* / Computed Path / Redirect_Destination /
 // Consolidate_Into family (the engine derives those from decisions, and a
 // proposal must not fake one), and Suggested_* (machine columns already).
 const CONSOLIDATE_ID_COLUMN = '_ConsolidateTargetId';
 
 const PROPOSAL_FIELDS = {
-  KKE_Recommendation: { map: 'kke', kind: 'set', vocab: 'kke' },
+  MRA_Recommendation: { map: 'kke', kind: 'set', vocab: 'kke' },
   Notes:              { map: 'notes', kind: 'note' },
   Tags:               { map: 'tags', kind: 'add' },
   Group:              { map: 'group', kind: 'set' },
@@ -80,14 +81,14 @@ const PROPOSAL_FIELDS = {
   Page_Type:          { kind: 'set' },
   Content_Theme:      { kind: 'set' },
   Content_Nature:     { kind: 'set', vocab: ['Page', 'Content Object', 'Fragment', 'Generated'] },
-  Migration_Track:    { kind: 'set', vocab: ['Scripted', 'Migrate Records', 'Configure', 'Manual Rebuild', 'Merge', 'Kill/Redirect'] },
+  Migration_Track:    { kind: 'set', vocab: ['Scripted', 'Migrate Records', 'Configure', 'Manual Rebuild', 'Merge', 'Archive/Redirect'] },
   Published_Status:   { kind: 'set', vocab: ['Published', 'Unpublished', 'Draft', '404'] },
   Audiences:          { kind: 'add', vocab: 'audiences' },
   Primary_Audience:   { kind: 'set', vocab: 'audiences-one' },
   Jobs_Served:        { kind: 'add', vocab: 'jobs' },
   // Consolidate, with its target: the value is the URL of the page the content
   // merges into. Accepting it in the app runs the same path as the Consolidate
-  // picker (identity + display columns, cycle guards, the Evolve nudge).
+  // picker (identity + display columns, cycle guards, the Revise nudge).
   Consolidate_Into:   { kind: 'consolidate' }
 };
 const PROPOSAL_MAX_BATCH = 2000;
@@ -121,7 +122,7 @@ function sqlite() {
 const URL_CANDIDATES = ['address', 'url', 'link', 'website', 'href', 'uri'];
 
 const AUDIT_COL_CANDIDATES = {
-  kke:          ['KKE_Recommendation', 'KKE Rec', 'KKE Recommendation', 'KKE', 'Recommendation'],
+  kke:          ['MRA_Recommendation', 'MRA Recommendation', 'MRA', 'KKE_Recommendation', 'KKE Rec', 'KKE Recommendation', 'KKE', 'Recommendation'],
   tags:         ['Tags', 'KKE Tags', 'Audit Tags'],
   notes:        ['Notes', 'Notes/Rationale', 'Rationale', 'Audit Notes'],
   group:        ['Group', 'Audit Group', 'Page Group'],
@@ -129,11 +130,11 @@ const AUDIT_COL_CANDIDATES = {
   smeDecision:  ['SME_Decision', 'SME Decision', 'SME Rec'],
   smeNotes:     ['SME_Notes', 'SME Notes'],
   contentOwner: ['Content_Owner', 'Content Owner', 'Owner', 'SME'],
-  finalKke:     ['Final_KKE', 'Final KKE', 'Final Recommendation']
+  finalKke:     ['Final_MRA', 'Final MRA', 'Final_KKE', 'Final KKE', 'Final Recommendation']
 };
 const AUDIT_COL_DEFAULTS = {
-  kke: 'KKE_Recommendation', tags: 'Tags', notes: 'Notes', group: 'Group', primaryTag: 'Primary Tag',
-  smeDecision: 'SME_Decision', smeNotes: 'SME_Notes', contentOwner: 'Content_Owner', finalKke: 'Final_KKE'
+  kke: 'MRA_Recommendation', tags: 'Tags', notes: 'Notes', group: 'Group', primaryTag: 'Primary Tag',
+  smeDecision: 'SME_Decision', smeNotes: 'SME_Notes', contentOwner: 'Content_Owner', finalKke: 'Final_MRA'
 };
 
 // Columns the app injects on open (injectAndOrderAuditColumns + NAV_COLUMNS in
@@ -143,11 +144,11 @@ const AUDIT_COL_DEFAULTS = {
 const KNOWN_AUDIT_COLUMNS = [
   '_Flagged', '_AssessedAt', '_AssessmentResult', 'Redirect_Destination', 'Consolidate_Into',
   'Published_Status', 'Page_Type', 'Content_Theme', 'Content_Nature', 'Migration_Track',
-  'Suggested_KKE', 'Suggested_KKE_Sources', 'Source_CMS_URL', 'New_CMS_URL', 'Target_Content_Type',
+  'Suggested_MRA', 'Suggested_MRA_Sources', 'Source_CMS_URL', 'New_CMS_URL', 'Target_Content_Type',
   'Design_Patterns', 'Audiences', 'Primary_Audience', 'Jobs_Served', 'Source_Site', 'Page_Breadcrumb',
   '_ConsolidateTargetId', '_Suggested_Audiences', '_RedirectSource',
   'Sitemap_ID', 'Sitemap_Destination', 'Computed Path', 'Sitemap_SortID',
-  'GA_KKE_Recommendation', 'GA_Score'
+  'GA_MRA_Recommendation', 'GA_Score'
 ];
 
 const LEGACY_NAV_COLUMN_RENAMES = [
@@ -156,7 +157,7 @@ const LEGACY_NAV_COLUMN_RENAMES = [
   ['Nav_SortID', 'Sitemap_SortID']
 ];
 
-const BUILTIN_KKE = ['Keep', 'Kill', 'Evolve', 'Consolidate', 'Exclude'];
+const BUILTIN_KKE = ['Migrate', 'Revise', 'Archive', 'Consolidate', 'Exclude'];
 const AUDIENCE_NONE = '— None (no target audience)';
 
 function detectUrlColumn(headers) {
@@ -253,7 +254,7 @@ function fieldFilterMatches(row, ff, getValue) {
 // ─── Virtual fields ──────────────────────────────────────────────────────────
 
 const VIRTUAL_FIELDS = {
-  '@effective_kke':   'Final_KKE when set, else the KKE recommendation. Blank = unreviewed.',
+  '@effective_decision': 'Final_MRA when set, else the MRA recommendation. Blank = unreviewed.',
   '@content_kind':    'content | redirect (3xx) | gone (4xx), from the crawl Status Code. 5xx is content.',
   '@redirect_state':  'none (blank, undecided) | 404 (deliberately no redirect) | set',
   '@host':            'URL host with www. removed',
@@ -346,6 +347,17 @@ function loadProject(filePath) {
   return new Project(abs, stamp, raw);
 }
 
+/** Changelog byField rows with KKE_* and MRA_* spellings folded together (a
+ *  project saved under both vocabularies has both in its log). */
+function mergeFieldCounts(rows) {
+  const by = new Map();
+  for (const r of rows) {
+    const f = Terminology.header(r.field, 'mra');
+    by.set(f, (by.get(f) || 0) + r.count);
+  }
+  return [...by].map(([field, count]) => ({ field, count })).sort((a, b) => b.count - a.count);
+}
+
 // ─── Project ─────────────────────────────────────────────────────────────────
 
 class Project {
@@ -366,8 +378,14 @@ class Project {
       for (const r of this.rows) { r[newName] = r[oldName]; delete r[oldName]; }
     }
 
+    // The file may be in either vocabulary (the app writes the auditor's
+    // preference); everything below reads MRA. Mirrors main.js readProject():
+    // convert, resolve the column map, then convert any custom-mapped columns.
+    this.settings = Terminology.convertSettings(this.settings || {}, 'mra');
+    Terminology.convertTableInPlace(this.headers, this.rows, 'mra', null);
     const projectMap = (this.settings.columnMap && typeof this.settings.columnMap === 'object') ? this.settings.columnMap : null;
     this.columnMap = computeColumnMap(this.headers, projectMap);
+    Terminology.convertTableInPlace(this.headers, this.rows, 'mra', this.columnMap);
     this.urlColumn = detectUrlColumn(this.headers) || 'Address';
     this.statusCodeColumn = this.headers.find(h => h.toLowerCase() === 'status code') || '';
     this.titleColumn = this.headers.includes('Title 1') ? 'Title 1' : (this.headers.includes('Title') ? 'Title' : '');
@@ -467,12 +485,13 @@ class Project {
     const n = String(name || '').trim();
     if (!n) throw new Error('A field name is required.');
     if (n[0] === '@') {
-      const v = n.toLowerCase();
+      // @effective_kke is the pre-MRA spelling; keep it working for old prompts.
+      const v = n.toLowerCase() === '@effective_kke' ? '@effective_decision' : n.toLowerCase();
       if (!VIRTUAL_FIELDS[v]) throw new Error(`Unknown virtual field "${n}". Available: ${Object.keys(VIRTUAL_FIELDS).join(', ')}`);
       return v;
     }
     if (this.headers.includes(n)) return n;
-    const hit = this._headerByLower.get(n.toLowerCase());
+    const hit = this._headerByLower.get(n.toLowerCase()) || this._headerByLower.get(Terminology.header(n, 'mra').toLowerCase());
     if (hit) return hit;
     const needle = n.toLowerCase().replace(/[^a-z0-9]/g, '');
     const near = this.headers.filter(h => {
@@ -485,7 +504,7 @@ class Project {
   value(row, field) {
     if (field[0] !== '@') return row[field] ?? '';
     switch (field) {
-      case '@effective_kke':  return this.effectiveKke(row);
+      case '@effective_decision': return this.effectiveKke(row);
       case '@content_kind':   return this.contentKind(row);
       case '@redirect_state': return this.redirectState(row);
       case '@host':           return this.host(row);
@@ -511,7 +530,11 @@ class Project {
       if (!FIELD_FILTER_OPERATORS.includes(ff.operator)) {
         throw new Error(`Unknown operator "${ff.operator}". Available: ${FIELD_FILTER_OPERATORS.join(', ')}`);
       }
-      return { field: this.resolveField(ff.field), operator: ff.operator, value: ff.value };
+      const field = this.resolveField(ff.field);
+      // A legacy decision word (Keep / Kill / Evolve) filters for the same decision.
+      const decision = field === '@effective_decision' || [this.columnMap.kke, this.columnMap.finalKke, 'Suggested_MRA', 'GA_MRA_Recommendation'].includes(field);
+      const value = decision && typeof ff.value === 'string' ? Terminology.value(ff.value, 'mra') : ff.value;
+      return { field, operator: ff.operator, value };
     });
   }
 
@@ -520,7 +543,7 @@ class Project {
   }
 
   /** The part of renderer.js applyFilter() a saved filter exercises: text search
-   *  (scope "all" — saved filters don't record a scope), field filters, the KKE
+   *  (scope "all" — saved filters don't record a scope), field filters, the decision
    *  checkbox set (statuses OR specials), and the group filter. */
   _savedFilterPredicate(name) {
     const saved = this.savedFilters().find(f => String(f.name || '').toLowerCase() === String(name).toLowerCase());
@@ -557,7 +580,7 @@ class Project {
   _specialMatches(s, row, kke) {
     const m = this.columnMap;
     const eff = () => String(row[m.finalKke] || row[m.kke] || '').trim();
-    const carried = () => { const e = eff(); return e === 'Keep' || e === 'Evolve'; };
+    const carried = () => { const e = eff(); return e === 'Migrate' || e === 'Revise'; };
     switch (s) {
       case '_unreviewed':        return !kke;
       case '_flagged':           return String(row['_Flagged'] || '').trim() === '1';
@@ -568,9 +591,9 @@ class Project {
         return !!id && this._sharedIds().has(id);
       }
       case '_suggested-disagree':
-        try { const p = JSON.parse(row['Suggested_KKE_Sources'] || ''); return !!(p && p.disagreement); } catch (_) { return false; }
+        try { const p = JSON.parse(row['Suggested_MRA_Sources'] || ''); return !!(p && p.disagreement); } catch (_) { return false; }
       case '_suggested-mismatch': {
-        const sug = String(row['Suggested_KKE'] || '').trim();
+        const sug = String(row['Suggested_MRA'] || '').trim();
         return !!sug && !!kke && sug !== kke;
       }
       case '_needs-audience':    return !parseCsvCell(row['Audiences']).length && carried();
@@ -636,7 +659,7 @@ class Project {
     const pct = (n, d) => d ? Math.round((n / d) * 1000) / 10 : 0;
     const libSize = key => Array.isArray(this.settings[key]) ? this.settings[key].length : 0;
 
-    const placedCarried = content.filter(r => ['Keep', 'Evolve'].includes(this.effectiveKke(r)) && !this.isFragment(r));
+    const placedCarried = content.filter(r => ['Migrate', 'Revise'].includes(this.effectiveKke(r)) && !this.isFragment(r));
 
     return {
       file: this.filePath,
@@ -659,7 +682,7 @@ class Project {
       contentInventory: { reviewed: reviewed(content), of: content.length, pct: pct(reviewed(content), content.length), basis: 'content pages only — the figure to quote to a client' },
       effectiveKke: { allRows: tally(inScopeRows), contentOnly: tally(content) },
       placement: {
-        keepEvolveContentPages: placedCarried.length,
+        migrateReviseContentPages: placedCarried.length,
         placedInSitemap: placedCarried.filter(r => String(r['Sitemap_ID'] || '').trim()).length
       },
       sitemap: { nodes: this.navNodes.length, topLevel: this.navRoots.length },
@@ -752,7 +775,7 @@ class Project {
 
   queryRows({ columns, sortBy, sortDir, limit, offset, ...sel } = {}) {
     const rows = this.select(sel);
-    const defaults = [this.urlColumn, this.titleColumn, this.statusCodeColumn, '@effective_kke'].filter(Boolean);
+    const defaults = [this.urlColumn, this.titleColumn, this.statusCodeColumn, '@effective_decision'].filter(Boolean);
     const cols = (Array.isArray(columns) && columns.length ? columns : defaults).map(c => this.resolveField(c));
     if (!cols.includes(this.urlColumn)) cols.unshift(this.urlColumn);   // URL is the row's identity
 
@@ -864,7 +887,7 @@ class Project {
     this._navCounts = null;
   }
 
-  /** `live` mirrors navPageCounts() (behind _navPageCountsCache()) — direct pages, Kill/Consolidate
+  /** `live` mirrors navPageCounts() (behind _navPageCountsCache()) — direct pages, Archive/Consolidate
    *  excluded, since those Sitemap_IDs are redirect hints rather than pages that
    *  will live there. `subtree` mirrors computeSubtreePageCounts() — every row
    *  anywhere beneath, whatever its decision: how much content is under here. */
@@ -876,7 +899,7 @@ class Project {
       if (!id) continue;
       all.set(id, (all.get(id) || 0) + 1);
       const eff = this.effectiveKke(r).toLowerCase();
-      if (eff !== 'kill' && eff !== 'consolidate') live.set(id, (live.get(id) || 0) + 1);
+      if (eff !== 'archive' && eff !== 'consolidate') live.set(id, (live.get(id) || 0) + 1);
     }
     const subtree = new Map(), liveBelow = new Map();
     const walk = node => {
@@ -934,7 +957,7 @@ class Project {
       totalNodes: this.navNodes.length,
       shown: emitted,
       truncated: truncated ? `stopped at ${cap} nodes — narrow with rootId or a smaller depth` : undefined,
-      counts: 'livePages = pages assigned directly to the node, Kill/Consolidate excluded. subtreeRows = every row assigned anywhere beneath it, any decision. netNew = no page of its own but live pages below.',
+      counts: 'livePages = pages assigned directly to the node, Archive/Consolidate excluded. subtreeRows = every row assigned anywhere beneath it, any decision. netNew = no page of its own but live pages below.',
       tree
     };
   }
@@ -946,7 +969,7 @@ class Project {
       if (this.isFragment(r)) return false;           // no public URL, so no redirect
       if (this.redirectState(r) !== 'none') return true;
       const eff = this.effectiveKke(r);
-      return eff === 'Kill' || eff === 'Consolidate';  // owes one, hasn't got one
+      return eff === 'Archive' || eff === 'Consolidate';  // owes one, hasn't got one
     });
     const prov = r => String(r['_RedirectSource'] || '').trim() || (this.redirectState(r) === 'none' ? '' : 'unknown');
     if (provenance) rows = rows.filter(r => prov(r) === provenance);
@@ -968,7 +991,7 @@ class Project {
       }
       return {
         rows: rows.length,
-        notes: 'owedButBlank = Kill/Consolidate pages with no destination yet. provenance "unknown" = written before provenance was recorded; do not assume a person chose it. Fragments are excluded.',
+        notes: 'owedButBlank = Archive/Consolidate pages with no destination yet. provenance "unknown" = written before provenance was recorded; do not assume a person chose it. Fragments are excluded.',
         bySite: [...bySite.values()].sort((a, b) => (b.set + b.owedButBlank) - (a.set + a.owedButBlank))
       };
     }
@@ -991,7 +1014,8 @@ class Project {
   changelog({ url, field, auditor, since, until, limit, offset, summary } = {}) {
     const where = [], args = [];
     if (url)     { where.push('url = ?'); args.push(String(url)); }
-    if (field)   { where.push('field = ? COLLATE NOCASE'); args.push(String(field)); }
+    // The log holds whichever vocabulary the file was saved in; match both.
+    if (field)   { where.push('(field = ? COLLATE NOCASE OR field = ? COLLATE NOCASE)'); args.push(Terminology.header(String(field), 'mra'), Terminology.header(String(field), 'kke')); }
     if (auditor) { where.push('auditor = ? COLLATE NOCASE'); args.push(String(auditor)); }
     if (since)   { where.push('timestamp >= ?'); args.push(String(since)); }
     if (until)   { where.push('timestamp <= ?'); args.push(String(until)); }
@@ -1006,14 +1030,15 @@ class Project {
       if (summary) {
         return {
           total,
-          byField: db.prepare(`SELECT field, count(*) AS count FROM changelog ${w} GROUP BY field ORDER BY count DESC LIMIT 50`).all(...args).map(plain),
+          byField: mergeFieldCounts(db.prepare(`SELECT field, count(*) AS count FROM changelog ${w} GROUP BY field ORDER BY count DESC LIMIT 50`).all(...args).map(plain)),
           byAuditor: db.prepare(`SELECT auditor, count(*) AS count, min(timestamp) AS first, max(timestamp) AS last FROM changelog ${w} GROUP BY auditor ORDER BY count DESC`).all(...args).map(plain)
         };
       }
       const entries = db.prepare(`SELECT timestamp, auditor, url, field, old_value, new_value FROM changelog ${w} ORDER BY id DESC LIMIT ? OFFSET ?`)
         .all(...args, cap, off)
-        .map(e => ({ timestamp: e.timestamp, auditor: e.auditor, url: e.url, field: e.field, from: clip(e.old_value, 300), to: clip(e.new_value, 300) }));
-      return { total, offset: off, returned: entries.length, order: 'newest first', entries };
+        .map(e => ({ timestamp: e.timestamp, auditor: e.auditor, url: e.url, field: e.field, from: e.old_value, to: e.new_value }));
+      const mra = Terminology.convertChangeLog(entries, 'mra').map(e => ({ ...e, from: clip(e.from, 300), to: clip(e.to, 300) }));
+      return { total, offset: off, returned: mra.length, order: 'newest first', entries: mra };
     });
   }
 
@@ -1032,7 +1057,7 @@ class Project {
       };
     }
     const want = Array.isArray(statuses) && statuses.length
-      ? statuses.map(x => String(x).toLowerCase()).filter(x => rubricsLib.RUBRIC_STATUSES.includes(x))
+      ? statuses.map(x => Terminology.rubricKey(String(x).toLowerCase(), 'mra')).filter(x => rubricsLib.RUBRIC_STATUSES.includes(x))
       : rubricsLib.RUBRIC_STATUSES;
     const out = {};
     for (const st of want) {
@@ -1128,8 +1153,10 @@ Project.prototype._resolveProposalField = function (name) {
   const info = this.proposalFieldInfo();
   const n = String(name || '').trim();
   const hit = Object.keys(info).find(c => c === n) || Object.keys(info).find(c => c.toLowerCase() === n.toLowerCase())
-    || Object.keys(info).find(c => info[c].canonical.toLowerCase() === n.toLowerCase());
-  if (!hit) throw new Error(`"${n}" is not a field proposals may change. Allowed: ${Object.keys(info).join(', ')}. Final_KKE, sitemap placement, redirects and consolidation targets can only be set in the app.`);
+    || Object.keys(info).find(c => info[c].canonical.toLowerCase() === n.toLowerCase())
+    // Legacy KKE spellings (KKE_Recommendation) name the same field.
+    || Object.keys(info).find(c => info[c].canonical.toLowerCase() === Terminology.header(n, 'mra').toLowerCase());
+  if (!hit) throw new Error(`"${n}" is not a field proposals may change. Allowed: ${Object.keys(info).join(', ')}. Final_MRA, sitemap placement, redirects and consolidation targets can only be set in the app.`);
   return { column: hit, ...info[hit] };
 };
 
@@ -1162,7 +1189,7 @@ Project.prototype._checkConsolidateProposal = function (row, targetRaw, rational
     cur = this.findRows(next)[0];
   }
   const tk = this.effectiveKke(target);
-  if (tk === 'Kill' || tk === 'Exclude') return { ok: false, reason: `the target is marked ${tk}, so the content would have nowhere to land` };
+  if (tk === 'Archive' || tk === 'Exclude') return { ok: false, reason: `the target is marked ${tk}, so the content would have nowhere to land` };
   return { ok: true, column: 'Consolidate_Into', value: targetUrl, current: String(row.Consolidate_Into || '').trim(), url: pageUrl, rationale };
 };
 
@@ -1173,7 +1200,10 @@ Project.prototype._checkProposal = function (c) {
   const rationale = String(c.rationale || '').trim();
   if (!rationale) throw new Error(`${url}: a change needs a \`rationale\` — the auditor reads it before accepting.`);
   const f = this._resolveProposalField(c.field);
-  const raw = c.value;
+  // A legacy value (Keep / Kill/Redirect) is the same decision in the old words.
+  const toMra = v => f.canonical === 'Migration_Track' ? Terminology.track(v, 'mra') : Terminology.value(v, 'mra');
+  const decisionish = f.canonical === 'MRA_Recommendation' || f.canonical === 'Migration_Track';
+  const raw = !decisionish ? c.value : (Array.isArray(c.value) ? c.value.map(toMra) : toMra(c.value));
   const values = Array.isArray(raw) ? raw.map(v => String(v).trim()).filter(Boolean) : String(raw ?? '').split(f.kind === 'add' ? ',' : '\u0000').map(v => v.trim()).filter(Boolean);
   if (!values.length) throw new Error(`${url}: ${f.column} needs a non-empty value; proposals cannot clear a field.`);
   if (f.kind !== 'add' && f.kind !== 'note' && values.length > 1 && !Array.isArray(raw)) values.splice(1);

@@ -1,4 +1,4 @@
-# Kill
+# Archive
 
 Each rule below is an independent signal — any one is sufficient to flag a page for removal.
 

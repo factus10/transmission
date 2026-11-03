@@ -33,12 +33,12 @@ function extract(name) {
 
 const PRELUDE = String.raw`
 var state = {};
-const BUILTIN_KKE = ['Keep', 'Kill', 'Evolve', 'Consolidate', 'Exclude'];
-function kkeCol() { return 'KKE_Recommendation'; }
+const BUILTIN_KKE = ['Migrate', 'Archive', 'Revise', 'Consolidate', 'Exclude'];
+function kkeCol() { return 'MRA_Recommendation'; }
 function tagsCol() { return 'Tags'; }
 function notesCol() { return 'Notes'; }
 function groupCol() { return 'Group'; }
-function finalKkeCol() { return 'Final_KKE'; }
+function finalKkeCol() { return 'Final_MRA'; }
 function smeDecisionCol() { return 'SME_Decision'; }
 function parseSmeDecision() { return { reviewed: false, agree: false, changed: false, value: '' }; }
 `;
@@ -56,7 +56,7 @@ vm.runInThisContext(
   extract('siteOfRow') +
   extract('rowSiteInScope') +
   extract('reportRows') +
-  // Decision counts read the effective KKE (Final_KKE wins) — real, not stubbed.
+  // Decision counts read the effective KKE (Final_MRA wins) — real, not stubbed.
   extract('effectiveKke') +
   // Sections come from the shared tally that Content Inventory and the
   // Executive Summary also read.
@@ -69,12 +69,12 @@ function seed(rows, { withStatusCol = true, siteLibrary = [], host = 'x.test' } 
   state = {
     urlColumn: 'Address',
     headers: withStatusCol
-      ? ['Address', 'Status Code', 'KKE_Recommendation', 'Group']
-      : ['Address', 'KKE_Recommendation', 'Group'],
+      ? ['Address', 'Status Code', 'MRA_Recommendation', 'Group']
+      : ['Address', 'MRA_Recommendation', 'Group'],
     editedRows: rows.map(([sc, kke, group, rowHostName], i) => {
       const r = {
         Address: `https://${rowHostName || host}/p${i}`,
-        KKE_Recommendation: kke || '',
+        MRA_Recommendation: kke || '',
         Group: group || '',
       };
       if (withStatusCol) r['Status Code'] = sc;
@@ -129,9 +129,9 @@ describe('nonContentKind — what the status code says the URL was', () => {
 describe('gatherProgressStats — both readings, side by side', () => {
   test('splits the crawl into content and non-content', () => {
     seed([
-      ['200', 'Keep'], ['200', 'Kill'], ['200', ''],
-      ['301', 'Kill'], ['301', 'Kill'],
-      ['404', 'Kill'],
+      ['200', 'Migrate'], ['200', 'Archive'], ['200', ''],
+      ['301', 'Archive'], ['301', 'Archive'],
+      ['404', 'Archive'],
     ]);
     const s = gatherProgressStats();
     assert.equal(s.total, 6);              // every crawled URL
@@ -143,15 +143,15 @@ describe('gatherProgressStats — both readings, side by side', () => {
 
   test('the content KKE mix excludes redirects triaged to Kill', () => {
     // The bug this exists to prevent: 3 Kills reported when only 1 is a page.
-    seed([['200', 'Keep'], ['200', 'Kill'], ['301', 'Kill'], ['301', 'Kill']]);
+    seed([['200', 'Migrate'], ['200', 'Archive'], ['301', 'Archive'], ['301', 'Archive']]);
     const s = gatherProgressStats();
-    assert.equal(s.kkeCounts['Kill'], 3);          // all-rows reading, unchanged
-    assert.equal(s.contentKkeCounts['Kill'], 1);   // what a client should be told
-    assert.equal(s.contentKkeCounts['Keep'], 1);
+    assert.equal(s.kkeCounts['Archive'], 3);          // all-rows reading, unchanged
+    assert.equal(s.contentKkeCounts['Archive'], 1);   // what a client should be told
+    assert.equal(s.contentKkeCounts['Migrate'], 1);
   });
 
   test('the all-rows numbers are untouched, so auditor progress still covers every row', () => {
-    seed([['200', 'Keep'], ['301', 'Kill'], ['404', '']]);
+    seed([['200', 'Migrate'], ['301', 'Archive'], ['404', '']]);
     const s = gatherProgressStats();
     assert.equal(s.total, 3);
     assert.equal(s.reviewed, 2);
@@ -159,7 +159,7 @@ describe('gatherProgressStats — both readings, side by side', () => {
   });
 
   test('content review progress is measured against content pages only', () => {
-    seed([['200', 'Keep'], ['200', ''], ['301', 'Kill'], ['301', 'Kill']]);
+    seed([['200', 'Migrate'], ['200', ''], ['301', 'Archive'], ['301', 'Archive']]);
     const s = gatherProgressStats();
     assert.equal(s.contentTotal, 2);
     assert.equal(s.contentReviewed, 1);
@@ -169,7 +169,7 @@ describe('gatherProgressStats — both readings, side by side', () => {
 
   test('an all-200 crawl reports content numbers identical to the totals', () => {
     // No behavior change for a clean inventory.
-    seed([['200', 'Keep'], ['200', 'Kill'], ['200', '']]);
+    seed([['200', 'Migrate'], ['200', 'Archive'], ['200', '']]);
     const s = gatherProgressStats();
     assert.equal(s.nonContent, 0);
     assert.equal(s.contentTotal, s.total);
@@ -179,7 +179,7 @@ describe('gatherProgressStats — both readings, side by side', () => {
   });
 
   test('a crawl of nothing but redirects reports zero content pages, not a divide-by-zero', () => {
-    seed([['301', 'Kill'], ['302', 'Kill']]);
+    seed([['301', 'Archive'], ['302', 'Archive']]);
     const s = gatherProgressStats();
     assert.equal(s.contentTotal, 0);
     assert.equal(s.contentPct, 0);
@@ -206,7 +206,7 @@ describe('out-of-scope sites are excluded from the figures', () => {
     // "otherwise a site that isn't being migrated still drags down every
     // completion percentage".
     seed([
-      ['200', 'Keep', '', 'main.test'],
+      ['200', 'Migrate', '', 'main.test'],
       ['200', '', '', 'main.test'],
       ['200', '', '', 'old.test'],
       ['200', '', '', 'old.test'],
@@ -215,14 +215,14 @@ describe('out-of-scope sites are excluded from the figures', () => {
     assert.equal(s.total, 2);
     assert.equal(s.unreviewed, 1);
     assert.equal(s.pct, 50, 'an out-of-scope site must not drag the percentage down');
-    assert.equal(s.kkeCounts['Keep'], 1);
+    assert.equal(s.kkeCounts['Migrate'], 1);
   });
 
   test('out-of-scope rows are excluded from the content split too', () => {
     seed([
-      ['200', 'Keep', '', 'main.test'],
-      ['301', 'Kill', '', 'main.test'],
-      ['301', 'Kill', '', 'old.test'],
+      ['200', 'Migrate', '', 'main.test'],
+      ['301', 'Archive', '', 'main.test'],
+      ['301', 'Archive', '', 'old.test'],
     ], { siteLibrary: LIB });
     const s = gatherProgressStats();
     assert.equal(s.contentTotal, 1);
@@ -230,7 +230,7 @@ describe('out-of-scope sites are excluded from the figures', () => {
   });
 
   test('a project with nothing out of scope is completely unaffected', () => {
-    seed([['200', 'Keep', '', 'main.test'], ['200', '', '', 'main.test']],
+    seed([['200', 'Migrate', '', 'main.test'], ['200', '', '', 'main.test']],
          { siteLibrary: [{ label: 'Main', hosts: ['main.test'], inScope: true }] });
     const s = gatherProgressStats();
     assert.equal(s.total, 2);
@@ -240,7 +240,7 @@ describe('out-of-scope sites are excluded from the figures', () => {
   test('a row on a host the registry does not cover is still counted', () => {
     // rowSiteInScope() treats "no matching entry" as in scope; only an explicit
     // no opts a site out, so an unregistered host can never vanish silently.
-    seed([['200', 'Keep', '', 'unknown.test']], { siteLibrary: LIB });
+    seed([['200', 'Migrate', '', 'unknown.test']], { siteLibrary: LIB });
     assert.equal(gatherProgressStats().total, 1);
   });
 });
@@ -251,10 +251,10 @@ describe('section tallies', () => {
     // Summary's "By Section" must match its content-page total. One tally
     // cannot be right for both.
     seed([
-      ['200', 'Keep', 'Academics'],
-      ['200', 'Kill', 'Academics'],
-      ['301', 'Kill', 'Academics'],
-      ['404', 'Kill', 'News'],
+      ['200', 'Migrate', 'Academics'],
+      ['200', 'Archive', 'Academics'],
+      ['301', 'Archive', 'Academics'],
+      ['404', 'Archive', 'News'],
     ]);
     const s = gatherProgressStats();
     assert.deepEqual(s.groups, [['Academics', 3], ['News', 1]]);
@@ -263,8 +263,8 @@ describe('section tallies', () => {
 
   test('content section counts sum to the content total', () => {
     seed([
-      ['200', 'Keep', 'A'], ['200', 'Keep', 'B'], ['200', '', 'B'],
-      ['301', 'Kill', 'A'],
+      ['200', 'Migrate', 'A'], ['200', 'Migrate', 'B'], ['200', '', 'B'],
+      ['301', 'Archive', 'A'],
     ]);
     const s = gatherProgressStats();
     const summed = s.contentGroups.reduce((n, [, c]) => n + c, 0);
@@ -272,7 +272,7 @@ describe('section tallies', () => {
   });
 
   test('ungrouped rows simply do not appear, in either tally', () => {
-    seed([['200', 'Keep', ''], ['200', 'Keep', 'A']]);
+    seed([['200', 'Migrate', ''], ['200', 'Migrate', 'A']]);
     const s = gatherProgressStats();
     assert.deepEqual(s.contentGroups, [['A', 1]]);
   });
@@ -297,24 +297,24 @@ describe('the Executive Summary reports the content figures', () => {
 });
 
 describe('gatherProgressStats — the decision that counts is the effective one', () => {
-  test('a client Final_KKE is counted instead of the recommendation', () => {
-    seed([['200', 'Kill'], ['200', 'Keep'], ['200', '']]);
-    state.editedRows[0].Final_KKE = 'Keep';        // client overrode Kill
-    state.editedRows[2].Final_KKE = 'Evolve';      // client decided an unreviewed page
+  test('a client Final_MRA is counted instead of the recommendation', () => {
+    seed([['200', 'Archive'], ['200', 'Migrate'], ['200', '']]);
+    state.editedRows[0].Final_MRA = 'Migrate';        // client overrode Kill
+    state.editedRows[2].Final_MRA = 'Revise';      // client decided an unreviewed page
     const s = gatherProgressStats();
-    assert.equal(s.kkeCounts.Kill, 0);
-    assert.equal(s.kkeCounts.Keep, 2);
-    assert.equal(s.kkeCounts.Evolve, 1);
+    assert.equal(s.kkeCounts.Archive, 0);
+    assert.equal(s.kkeCounts.Migrate, 2);
+    assert.equal(s.kkeCounts.Revise, 1);
     assert.equal(s.unreviewed, 0);
   });
 
   test('SME percentages stay within their own denominator', () => {
     // A Final value on a row with no recommendation used to count toward
     // finalResolved but not smeTotal, pushing "resolved" past 100%.
-    seed([['200', 'Keep'], ['200', ''], ['200', '']]);
-    state.editedRows[1].Final_KKE = 'Kill';
-    state.editedRows[2].Final_KKE = 'Keep';
-    state.editedRows[0].Final_KKE = 'Keep';
+    seed([['200', 'Migrate'], ['200', ''], ['200', '']]);
+    state.editedRows[1].Final_MRA = 'Archive';
+    state.editedRows[2].Final_MRA = 'Migrate';
+    state.editedRows[0].Final_MRA = 'Migrate';
     const s = gatherProgressStats();
     assert.equal(s.smeTotal, 1);
     assert.equal(s.finalResolved, 1);
@@ -324,7 +324,7 @@ describe('gatherProgressStats — the decision that counts is the effective one'
 
 describe('sectionTally — one section count for every report', () => {
   test('sections plus the no-section bucket add up to the total', () => {
-    seed([['200', 'Keep', 'News'], ['200', 'Kill', 'News'], ['200', '', 'About'], ['200', 'Keep', ''], ['301', 'Kill', 'News']]);
+    seed([['200', 'Migrate', 'News'], ['200', 'Archive', 'News'], ['200', '', 'About'], ['200', 'Migrate', ''], ['301', 'Archive', 'News']]);
     const t = sectionTally(state.editedRows);
     assert.equal(t.total, 5);
     assert.equal(t.sections[0].name, 'News');
@@ -332,14 +332,14 @@ describe('sectionTally — one section count for every report', () => {
     assert.equal(t.sections.reduce((n, x) => n + x.total, 0) + t.ungrouped.total, t.total);
   });
   test('content-only drops 3xx/4xx, and decisions are the effective KKE', () => {
-    seed([['200', 'Kill', 'News'], ['301', 'Kill', 'News'], ['404', 'Kill', 'News']]);
-    state.editedRows[0].Final_KKE = 'Keep';
+    seed([['200', 'Archive', 'News'], ['301', 'Archive', 'News'], ['404', 'Archive', 'News']]);
+    state.editedRows[0].Final_MRA = 'Migrate';
     const t = sectionTally(state.editedRows, { contentOnly: true });
     assert.equal(t.total, 1);
-    assert.deepEqual(t.sections[0].kke, { Keep: 1 });
+    assert.deepEqual(t.sections[0].kke, { Migrate: 1 });
   });
   test('gatherProgressStats reads its section counts from the same tally', () => {
-    seed([['200', 'Keep', 'News'], ['301', 'Kill', 'News'], ['200', 'Kill', 'About']]);
+    seed([['200', 'Migrate', 'News'], ['301', 'Archive', 'News'], ['200', 'Archive', 'About']]);
     const s = gatherProgressStats();
     assert.deepEqual(s.groups, [['News', 2], ['About', 1]]);
     assert.deepEqual(s.contentGroups, [['About', 1], ['News', 1]]);

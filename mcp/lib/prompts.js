@@ -49,7 +49,7 @@ const PROMPTS = [
   {
     name: 'ask-the-audit', title: 'Ask the audit',
     description: 'Answer a question from the project with real counts, each traceable to a filter you can reproduce in Transmission.',
-    argument: { name: 'question', description: 'What you want to know, e.g. "how many Keep pages under /news have no audience?"', required: false },
+    argument: { name: 'question', description: 'What you want to know, e.g. "how many Migrate pages under /news have no audience?"', required: false },
     request: v => v ? `Answer this from the audit: ${v}` : 'Use these rules for every question I ask about the audit in this conversation. Start by orienting yourself in the project, then ask me what I want to know.'
   }
 ];
