@@ -27,7 +27,7 @@ These pair with the in-app **Help → Product Tour** (the live 5-step walkthroug
 |---|-----------|-----------|
 | 1 | Launch to the welcome screen; click **Open a file**, pick the crawl. | "Open a Screaming Frog export — or any spreadsheet with URLs." |
 | 2 | File loads; sidebar fills; click a row → page renders in the built-in browser. | "Every page loads right here, next to its metadata." |
-| 3 | Press **1**, then ↓ to next row, **2**, **3**… let auto-advance carry you. | "Decide each page — 1 Migrate, 2 Archive, 3 Revise, 4 Consolidate, 5 Exclude. It advances automatically." |
+| 3 | Press **1**, then ↓ to next row, **2**, **3**… let auto-advance carry you. | "Decide each page — 1 Migrate, 2 Revise, 3 Archive, 4 Consolidate, 5 Exclude. It advances automatically." |
 | 4 | Press **]** to jump past several decided rows to the next blank one. | "Press the bracket key to skip straight to the next undecided page." |
 | 5 | Open **Notes**, type a line, then the **Snippets** menu → insert a saved snippet. | "Add rationale as you go — and reuse standard notes from the snippets menu." |
 | 6 | Glance at the title bar: ⟳ Saving… → ✓ All changes saved. | "It saves automatically, straight back to your file." |
