@@ -4,21 +4,23 @@
 
 Every other document describes **what the tool can do**. This one describes **what to do, in what order, and why that order matters**. The [User Guide](./USER_GUIDE.md) is the reference you'll come back to for any single feature; this is the sequence you run once per engagement.
 
+*A note on the words: the decisions are **Migrate / Revise / Archive** (MRA), plus Consolidate and Exclude. They were called Keep / Kill / Evolve (KKE) until recently, and mean the same things — Migrate was Keep, Revise was Evolve, Archive was Kill. Files and worksheets in the old words are read as MRA automatically; for a client who still thinks in the old terms, the SME export can write that one worksheet as Keep / Kill / Evolve.*
+
 ---
 
 ## Before anything: the opinions this tool holds
 
 Transmission is not neutral. A handful of decisions are baked in, and every one of them will bite you if you don't know about it. Read these once — they take two minutes and they prevent most early mistakes.
 
-**A blank cell means *nobody has looked yet*.** It never means "no". This is the single most important idea in the tool. A blank KKE is unreviewed. A blank `Audiences` cell is unreviewed. When you review something and conclude the answer is genuinely negative, you say so explicitly — tag the audience `— None (no target audience)`, set the KKE to `Exclude`. The distinction is what lets the tool tell "we haven't got to it" apart from "we decided against it", and every report and suggestion depends on it.
+**A blank cell means *nobody has looked yet*.** It never means "no". This is the single most important idea in the tool. A blank MRA is unreviewed. A blank `Audiences` cell is unreviewed. When you review something and conclude the answer is genuinely negative, you say so explicitly — tag the audience `— None (no target audience)`, set the MRA to `Exclude`. The distinction is what lets the tool tell "we haven't got to it" apart from "we decided against it", and every report and suggestion depends on it.
 
 **Content you set aside still needs a decision.** Marking a site out of scope narrows your report totals; it does not make the pages go away, and the tool will keep telling you so in a banner on every report. If a property genuinely isn't part of the work, record that as `Exclude` on the rows. Filtering is a lens; the decision belongs on the page.
 
-**The tool suggests; you decide.** `Suggested_KKE` is a weighted vote from analytics, a rubric, and audience tiers. It never writes to your `KKE_Recommendation`. When the sources disagree the badge says so — that disagreement is usually more informative than any single source, so look at it rather than around it.
+**The tool suggests; you decide.** `Suggested_MRA` is a weighted vote from analytics, a rubric, and audience tiers. It never writes to your `MRA_Recommendation`. When the sources disagree the badge says so — that disagreement is usually more informative than any single source, so look at it rather than around it.
 
 **The crawl's own declarations beat our guesses.** Where a site states something — `rel=canonical`, a status code — the tool reads it rather than inferring from URL patterns. A parameter-name rule is a guess about someone else's CMS; a canonical is that CMS telling you the answer.
 
-**`Kill` and `Exclude` are different.** `Kill` means the page is being removed and its URL needs a redirect decision. `Exclude` means the page isn't part of this audit's inventory at all — an alternate view, an out-of-scope property, an internal tool. Killing something you meant to exclude pollutes your redirect map with rules nobody needs.
+**`Archive` and `Exclude` are different.** `Archive` means the page is being removed and its URL needs a redirect decision. `Exclude` means the page isn't part of this audit's inventory at all — an alternate view, an out-of-scope property, an internal tool. Archiving something you meant to exclude pollutes your redirect map with rules nobody needs.
 
 **A crawled URL is not a page.** Reports count *content pages*, not rows. A URL that returned a redirect (3xx) or an error (4xx) never served content, so it is broken out and named in the Executive Summary rather than folded into the migration total — otherwise the headline invites the wrong question at the readout. A 5xx *is* counted as content: a broken page is a page, and fixing it is work. Both readings stay available — your own progress covers every row, because a redirect still has to be triaged.
 
@@ -60,7 +62,7 @@ Steps 0–3 are close to mandatory. Everything after depends on what you were hi
 
 The whole triage undoes with one `Cmd+Z`, so it's safe to run and look at.
 
-**Redirects triage into `Kill`, and their destinations look after themselves.** A 3xx is a rule the live site already has. Triage copies its current destination in, and from then on the app re-derives it on every save — if the page it points at moves in your new sitemap, gets consolidated, or is retired, the rule follows. You do not have to revisit them when the tree changes. What the app *can't* resolve — a destination that was never crawled, one that's now a 404, one on a site you've marked out of scope — is listed by `Migration → Redirect Chain Check`, and the `Inherited redirect needs review` filter is the worklist. Run it once near the end, not now.
+**Redirects triage into `Archive`, and their destinations look after themselves.** A 3xx is a rule the live site already has. Triage copies its current destination in, and from then on the app re-derives it on every save — if the page it points at moves in your new sitemap, gets consolidated, or is retired, the rule follows. You do not have to revisit them when the tree changes. What the app *can't* resolve — a destination that was never crawled, one that's now a 404, one on a site you've marked out of scope — is listed by `Migration → Redirect Chain Check`, and the `Inherited redirect needs review` filter is the worklist. Run it once near the end, not now.
 
 **Exclude is the tool here, not deletion.** Both triages *record* a decision on every row rather than removing it, and that is deliberate: an audit has to be able to say what it looked at and why something was dropped. `Exclude` keeps the row, its history, and its explanation while keeping it out of every report and every count.
 
@@ -87,7 +89,7 @@ Twenty minutes here saves days later, because most of it feeds automatic behavio
 
 - **Paste from workshop…** takes the table straight from your spreadsheet: name, tier, description.
 - No workshop yet? **Seed starter list…** offers a *Higher education* or *General organization* set to start from — but treat that as scaffolding, not an answer.
-- **Set the tiers.** Everything downstream reads them: the picker's ordering, the coverage reports, and the audience vote in `Suggested_KKE`. A library left at the default `Secondary` for everything is inert — it will not be wrong, it will simply do nothing.
+- **Set the tiers.** Everything downstream reads them: the picker's ordering, the coverage reports, and the audience vote in `Suggested_MRA`. A library left at the default `Secondary` for everything is inert — it will not be wrong, it will simply do nothing.
 
 **Jobs to be done** (same tab, below Audiences) — the other half of the discovery workshop. Audiences answer *who*; jobs answer *what they came to do*. **Paste from workshop…** takes the table: short label, full statement, which audiences have it (blank = everybody).
 
@@ -97,7 +99,7 @@ Twenty minutes here saves days later, because most of it feeds automatic behavio
 
 **Target Spec Library** (`Project → Target Spec Library…`) — also replatform-only, and only worth it if you're running the build. These are the page templates and content models the new site is assembled from; each carries default build guidance and a writer brief that pre-fill a page when you assign the spec in step 7. Seed the 12 built-ins and edit from there.
 
-**Rubric and analytics** — optional, both feed `Suggested_KKE`. If you have GA4 data in the crawl the tool offers to configure it on open.
+**Rubric and analytics** — optional, both feed `Suggested_MRA`. If you have GA4 data in the crawl the tool offers to configure it on open.
 
 ---
 
@@ -105,13 +107,13 @@ Twenty minutes here saves days later, because most of it feeds automatic behavio
 
 **Do not start clicking through pages yet.** Almost every classification is true of a whole section at once, and the Multi-bar exists for exactly this.
 
-Filter to a section — the search box, the KKE filter, or **+ Field filter** for any column — then apply to everything visible: set Group, Content Type, Published Status, or **Add Audience**.
+Filter to a section — the search box, the MRA filter, or **+ Field filter** for any column — then apply to everything visible: set Group, Content Type, Published Status, or **Add Audience**.
 
 Audience and job tagging in particular are bulk jobs. Filter to `/admissions/`, select all, tag *Prospective Students* and *Compare programs*, move on. A large site is a few dozen passes plus hand-correction. Four filters give you the worklists:
 
-- **Needs audience** — Keep/Evolve pages nobody has assessed yet
+- **Needs audience** — Migrate/Revise pages nobody has assessed yet
 - **Serves no priority audience** — reviewed, and everything it serves is off-strategy
-- **Needs a job** — Keep/Evolve pages with no job tagged
+- **Needs a job** — Migrate/Revise pages with no job tagged
 - **Audience suggested by AI** — a suggestion is waiting on your accept or reject
 
 **Then close the long tail.** Bulk passes get the obvious sections; two tools finish the job.
@@ -130,9 +132,9 @@ Audience and job tagging in particular are bulk jobs. Filter to `/admissions/`, 
 
 Now go page by page. The loop is: read the page in the built-in browser, make the call, capture why.
 
-- **Keep · Kill · Evolve · Consolidate · Exclude** — keyboard shortcuts for each; the sidebar advances automatically if you want it to.
+- **Migrate · Archive · Revise · Consolidate · Exclude** — keyboard shortcuts for each; the sidebar advances automatically if you want it to.
 - **Notes are the deliverable.** Six months later the note is why anyone believes the decision. Write for the client, not for yourself.
-- **Watch the Suggested KKE badge.** It shows the winning source (`GA: Kill`, `Audience: Keep`) and flags disagreement with a ⚠. Disagreement is signal: *high traffic, no priority audience* is usually a legacy hub; *low traffic, priority audience* argues for promotion, not removal.
+- **Watch the Suggested MRA badge.** It shows the winning source (`GA: Archive`, `Audience: Migrate`) and flags disagreement with a ⚠. Disagreement is signal: *high traffic, no priority audience* is usually a legacy hub; *low traffic, priority audience* argues for promotion, not removal.
 - **Consolidate opens a picker** so you name the surviving page. That relationship writes the redirect later, so it's worth getting right at the point of decision.
 - **Record components if the build team needs them.** The `Components` quick-chip reveals a chip input for the UI patterns on the page — hero, card grid, accordion. This is the only thing that feeds the **Component Inventory** report, and it's cheap while you're already looking at the page. Skip it entirely if nobody downstream asked.
 
@@ -146,7 +148,7 @@ Where the client's experts confirm or overturn your calls. Usually the point of 
 
 `SME → Export for SME Review…` produces a standalone spreadsheet with dropdowns, optionally split per content owner. Audience columns ride along — SMEs are frequently the only people who know who actually reads a page.
 
-Then `Import SME Decisions…`, `Compare KKE vs SME…` to see the conflicts side by side, and `Resolve Conflicts…` to produce `Final_KKE`. From that point on, `Final_KKE` is what every report and export reads.
+Then `Import SME Decisions…`, `Compare MRA vs SME…` to see the conflicts side by side, and `Resolve Conflicts…` to produce `Final_MRA`. From that point on, `Final_MRA` is what every report and export reads.
 
 ---
 
@@ -158,7 +160,7 @@ Only if you're replatforming.
 
 A URL-derived tree is only an information architecture if the URLs carry one, and plenty don't. Read the dialog's prediction before you generate: on a flat CMS where every article sits at `/some-slug`, each page becomes its own top-level section — one real audit produced 548 sections from ~1,900 pages. Bucket depth won't change that, because sections come from the *first* URL segment. That's a finding about the site, not a fault in the tool, but it does produce a tree too big to draw, so the dialog offers to sweep the single-page sections into one section as part of the same step. If it lands that way anyway, the **shape check** (the ⚠ in the Sitemap toolbar's stats line, and offered when you open the Visual Sitemap) measures what you've got and what each repair would buy — including telling you when the repairs aren't enough, because grouping hundreds of pages into the eight sections the new site needs is your judgment, not a button.
 
-Then place pages: the **Needs sitemap placement** filter finds Keep/Evolve pages with no home yet, and the Multi-bar's **Assign to Sitemap…** places many at once.
+Then place pages: the **Needs sitemap placement** filter finds Migrate/Revise pages with no home yet, and the Multi-bar's **Assign to Sitemap…** places many at once.
 
 Useful checks while you're here: **Sitemap Coverage Report** (empty nodes, overloaded nodes), and the **Consolidation Candidates** tool for nodes that ended up with several pages.
 
@@ -194,9 +196,9 @@ Symptoms, in rough order of how obvious they are:
 
 - A page whose redirect destination is **its own URL** — a loop, and always wrong.
 - A redirect whose path corresponds to **no node in the current tree** (a fossil of the deleted one).
-- A **Keep or Evolve page with no sitemap placement that still carries a redirect**. It isn't moving, so it shouldn't have one at all. This is usually the largest group and the easiest to miss.
+- A **Migrate or Revise page with no sitemap placement that still carries a redirect**. It isn't moving, so it shouldn't have one at all. This is usually the largest group and the easiest to miss.
 
-To find them, use sidebar field filters — `Redirect_Destination is-not-blank` combined with `Sitemap_ID is-blank`, with the KKE filter on Keep + Evolve, isolates that last group exactly.
+To find them, use sidebar field filters — `Redirect_Destination is-not-blank` combined with `Sitemap_ID is-blank`, with the MRA filter on Migrate + Revise, isolates that last group exactly.
 
 To fix them, run **Migration → Redirect Health Check…**. It finds all three classes, groups them, shows every affected page, and repairs the groups you tick in a single undoable step. Anything whose destination still resolves to a real node in your sitemap is reported but never changed automatically — that may be a deliberate "send this to the parent", and only you know.
 
@@ -204,13 +206,13 @@ The Redirect Editor's **Re-derive from sitemap** is the blunter alternative: it 
 
 > The cleanest habit remains the one above: a descriptive tree lives in its own archived copy, and the working file only ever holds the future state.
 
-**Show it.** The Sitemap toolbar's **Visual Sitemap** renders the tree as an interactive box diagram — this is the artifact clients actually react to. Color it by KKE, section, phase, page status, or an audit field; export a shareable standalone HTML for the client, a PDF for the deck, or push it to a **Miro** board if the client works there (connect once in App Settings). **Treemap** answers a different question — where the content actually *is*, sized by page count — and is usually the more uncomfortable picture.
+**Show it.** The Sitemap toolbar's **Visual Sitemap** renders the tree as an interactive box diagram — this is the artifact clients actually react to. Color it by MRA, section, phase, page status, or an audit field; export a shareable standalone HTML for the client, a PDF for the deck, or push it to a **Miro** board if the client works there (connect once in App Settings). **Treemap** answers a different question — where the content actually *is*, sized by page count — and is usually the more uncomfortable picture.
 
 ---
 
 ## 6. Redirects
 
-Largely automatic if steps 3 and 5 were done properly — every `Kill` and every page whose URL changed already has a destination derived.
+Largely automatic if steps 3 and 5 were done properly — every `Archive` and every page whose URL changed already has a destination derived.
 
 Open the **Redirects** view (`Cmd+Shift+R`) to review, override, and fill gaps. `404` in a destination is meaningful: it means *deliberately let this die*, as distinct from blank, which means *not decided yet*.
 
@@ -247,7 +249,7 @@ This is what feeds **Reports → Migration Direction Brief…**, which prints on
 
 **Migration menu** — `Pre-Handoff Check…` runs every pre-flight check at once; run it before you ship anything. `Migration Tracker…` is the engineering hand-off. `Export Redirect Map (CSV)…` is the redirect config itself, split per source domain when there's more than one.
 
-**Questions no report answers** — the MCP server (`mcp/server.js`, developer preview) lets Claude Desktop or Claude Code read the project and answer ad hoc questions with real counts: *Kill pages by section, content only; which sections the SME overturned; what serves the Alumni audience*. Start it from the app (✦ → Open in Claude). Four skills ride along (`/audit-status`, `/section-review`, `/decision-consistency`, `ask-the-audit`) that follow this document's order and conventions, and anything Claude proposes comes back as **proposals** you accept or reject in the app — never a direct write. Read-only, safe beside the open app, and it carries the conventions above (blank = unreviewed, Kill vs Exclude, content vs crawled URLs) so the answers are read the way the reports are. Setup in the User Guide §16.
+**Questions no report answers** — the MCP server (`mcp/server.js`, developer preview) lets Claude Desktop or Claude Code read the project and answer ad hoc questions with real counts: *Archive pages by section, content only; which sections the SME overturned; what serves the Alumni audience*. Start it from the app (✦ → Open in Claude). Four skills ride along (`/audit-status`, `/section-review`, `/decision-consistency`, `ask-the-audit`) that follow this document's order and conventions, and anything Claude proposes comes back as **proposals** you accept or reject in the app — never a direct write. Read-only, safe beside the open app, and it carries the conventions above (blank = unreviewed, Archive vs Exclude, content vs crawled URLs) so the answers are read the way the reports are. Setup in the User Guide §16.
 
 **File → Package for Handoff…** zips the project with a README for the receiving team. **File → Export…** covers everything else — filtered rows, audit decisions, or a client-facing column subset via export profiles.
 
@@ -280,9 +282,9 @@ This is what feeds **Reports → Migration Direction Brief…**, which prints on
 
 **Using blank to mean "no".** Blank means unreviewed. Say no explicitly.
 
-**Killing what you meant to exclude.** `Kill` puts a page in the redirect map. `Exclude` says it was never in the inventory.
+**Archiving what you meant to exclude.** `Archive` puts a page in the redirect map. `Exclude` says it was never in the inventory.
 
-**Treating Suggested KKE as the answer.** It's a weighted vote from partial signals. Its disagreements are more useful than its agreements.
+**Treating Suggested MRA as the answer.** It's a weighted vote from partial signals. Its disagreements are more useful than its agreements.
 
 **Reaching for AI audience suggestion first.** It learns nothing from an empty library and an untagged crawl. Tag by hand, bulk-tag, inherit from section, *then* pay for the remainder.
 
@@ -300,5 +302,5 @@ This is what feeds **Reports → Migration Direction Brief…**, which prints on
 
 - [User Guide](./USER_GUIDE.md) — the full reference, feature by feature
 - [Quick Start](./QUICK_START.md) — the five-minute version of the core loop
-- [Content Audit Framework](./CONTENT_AUDIT_FRAMEWORK.md) — the thinking behind KKE
+- [Content Audit Framework](./CONTENT_AUDIT_FRAMEWORK.md) — the thinking behind MRA
 - [Content Audit Method](./methodology/README.md) — the reasoning underneath this sequence

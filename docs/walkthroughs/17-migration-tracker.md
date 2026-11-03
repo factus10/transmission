@@ -1,8 +1,8 @@
 # Migration Tracker Hand-off Walkthrough
 
-How to package the whole audit into one multi-sheet workbook the migration team can execute against — the single artifact that carries decisions, build metadata, redirects, and the kill list.
+How to package the whole audit into one multi-sheet workbook the migration team can execute against — the single artifact that carries decisions, build metadata, redirects, and the archive list.
 
-> Prerequisite: KKE calls, sitemap placement, and (ideally) build metadata in place. Run the **Pre-Handoff Check** first.
+> Prerequisite: MRA calls, sitemap placement, and (ideally) build metadata in place. Run the **Pre-Handoff Check** first.
 
 ---
 
@@ -16,16 +16,16 @@ How to package the whole audit into one multi-sheet workbook the migration team 
 
 ## 1. Export it
 
-**Migration → Migration Tracker…** opens the export dialog with sheet/option toggles. Choose what to include (e.g. whether Kill/Exclude rows appear in Source Pages, whether phased nodes are included), then export. Default filename: `{project-slug}-migration-tracker-YYYY-MM-DD.xlsx`.
+**Migration → Migration Tracker…** opens the export dialog with sheet/option toggles. Choose what to include (e.g. whether Archive/Exclude rows appear in Source Pages, whether phased nodes are included), then export. Default filename: `{project-slug}-migration-tracker-YYYY-MM-DD.xlsx`.
 
 ---
 
 ## 2. What each sheet carries
 
 - **Sitemap Plan** — one row per sitemap node: sort, number, breadcrumb, label, URL, **Page Status**, **Build Pattern**, **Builder / Writer**, build guidance, writer brief, migration notes, source-page count, net-new flag, phase, in-menu, external URL. The build team's master plan.
-- **Source Pages** — audit rows joined to their sitemap node: KKE / Final KKE / Suggested KKE, Content Type, Group, Primary Tag, and the target breadcrumb / path / pattern / status. The "where does each old page go" map.
-- **Redirects** — Kill rows + non-Kill URL changes; intentional `404`s surface as "(404) — intentional deindex".
-- **Archive** — Kill rows with their notes and tags, for client reference (what was removed and why).
+- **Source Pages** — audit rows joined to their sitemap node: MRA / Final MRA / Suggested MRA, Content Type, Group, Primary Tag, and the target breadcrumb / path / pattern / status. The "where does each old page go" map.
+- **Redirects** — Archive rows + non-Archive URL changes; intentional `404`s surface as "(404) — intentional deindex".
+- **Archive** — Archive rows with their notes and tags, for client reference (what was removed and why).
 
 ---
 
@@ -38,7 +38,7 @@ Re-run after any meaningful change — new placements, build-metadata edits, red
 ## Quick checklist for "tracker ready"
 
 - [ ] **Pre-Handoff Check** clean before exporting
-- [ ] Sheet/option toggles set for this hand-off (Kill inclusion, phased nodes)
+- [ ] Sheet/option toggles set for this hand-off (Archive inclusion, phased nodes)
 - [ ] **Sitemap Plan** carries the build metadata the team needs
 - [ ] **Redirects** sheet matches the Redirect Map
 - [ ] Exported with a clear, dated filename

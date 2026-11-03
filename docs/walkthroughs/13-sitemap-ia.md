@@ -2,7 +2,7 @@
 
 How to build the **future-state sitemap** and place every page you're keeping onto it. This is where the audit stops being a list of pages and becomes the shape of the new site.
 
-> Prerequisite: you've made KKE calls (at least **Keep** / **Evolve**) on the pages that matter. Placement operates on those rows; **Kill** and **Consolidate** pages don't get placed (they fold into a target or redirect).
+> Prerequisite: you've made MRA calls (at least **Migrate** / **Revise**) on the pages that matter. Placement operates on those rows; **Archive** and **Consolidate** pages don't get placed (they fold into a target or redirect).
 
 ---
 
@@ -10,7 +10,7 @@ How to build the **future-state sitemap** and place every page you're keeping on
 
 - The **audit rows** answer "what do we do with each *existing* page?"
 - The **sitemap** answers "what is the *new* site?" — its sections, hierarchy, and URLs.
-- You connect the two by **placing** each Keep/Evolve page onto a sitemap node. A node can carry **0** source pages (net-new), **1**, or **many** (a consolidation target).
+- You connect the two by **placing** each Migrate/Revise page onto a sitemap node. A node can carry **0** source pages (net-new), **1**, or **many** (a consolidation target).
 - The tree is the source of truth for breadcrumbs and the computed URL of every node. Rename a node and the change cascades to its descendants and to every page assigned under it.
 
 Open the tree with **Cmd+Shift+T** (or the **Sitemap** tab in the view switcher). The **stats line** under the toolbar is your dashboard — learn to read it (see §6).
@@ -19,19 +19,19 @@ Open the tree with **Cmd+Shift+T** (or the **Sitemap** tab in the view switcher)
 
 ---
 
-## 1. Place every Keep/Evolve page
+## 1. Place every Migrate/Revise page
 
 Goal: drive **need placement** in the stats line to **0**.
 
-"Need placement" = Keep/Evolve rows with no sitemap node yet. To find and assign them:
+"Need placement" = Migrate/Revise rows with no sitemap node yet. To find and assign them:
 
-1. **Audit** view (**Cmd+1**) → **KKE** filter → check **Keep** + **Evolve** → **+ Field filter** → field `Sitemap_ID`, operator **is blank** → **Apply**.
+1. **Audit** view (**Cmd+1**) → **MRA** filter → check **Migrate** + **Revise** → **+ Field filter** → field `Sitemap_ID`, operator **is blank** → **Apply**.
 2. For each row, click **Sitemap** (in the **DECIDE** cluster) → drill to the right node → **Assign**. Use **+ Child** in the picker footer to create a new node inline if no good home exists yet.
 3. To place many similar pages at once: multi-select them in the sidebar (**Cmd/Shift-click**), then use the Multi-bar's **Assign to Sitemap…** action — pick an existing node or create a new bucket, and choose whether the pages land as direct children or keep their URL structure.
 
 > Fast path: the stats line's **N need placement** link is clickable — it jumps you straight to the audit view filtered to exactly those rows. Work the list down to zero.
 
-Consolidation note: pages you marked **Consolidate** don't need placement — they fold into their target. The *target* page (usually **Evolve**) is what gets the sitemap node.
+Consolidation note: pages you marked **Consolidate** don't need placement — they fold into their target. The *target* page (usually **Revise**) is what gets the sitemap node.
 
 ---
 
@@ -90,7 +90,7 @@ The stats line reads, in order:
 
 `N nodes · M current (A assigned, H net new, E empty) · [phase buckets] · P pages placed · [F fragments] · [status tallies] · X need placement`
 
-- **need placement → 0** is your "every Keep/Evolve page is in the IA" check (§1).
+- **need placement → 0** is your "every Migrate/Revise page is in the IA" check (§1).
 - **empty** is your coverage-gap count (§5).
 - **status tallies** (e.g. "5 built · 3 in progress") track build completion — covered in the Build & Direction walkthrough.
 
@@ -107,7 +107,7 @@ Also: **Collapse All** / **Expand All**, and fold state persists across re-rende
 
 If several pages landed on one node, they may be consolidation candidates:
 
-- Toolbar → **Consolidation Candidates…** lists every node with **2+** assigned pages. Pick the target (→ **Evolve**); the rest become **Consolidate** pointing at it, with their sitemap assignment cleared.
+- Toolbar → **Consolidation Candidates…** lists every node with **2+** assigned pages. Pick the target (→ **Revise**); the rest become **Consolidate** pointing at it, with their sitemap assignment cleared.
 
 ---
 
@@ -128,7 +128,7 @@ If several pages landed on one node, they may be consolidation candidates:
 
 ## Quick checklist for "good IA"
 
-- [ ] **need placement = 0** — every Keep/Evolve page sits on a node
+- [ ] **need placement = 0** — every Migrate/Revise page sits on a node
 - [ ] No **empty** leaf nodes left unexplained (assign / net-new / phase / delete)
 - [ ] No **duplicate Sitemap_ID** warning in the stats line
 - [ ] No red **duplicate-slug** highlights within a branch

@@ -1,6 +1,6 @@
 ---
 name: section-review
-description: Review one section of a Transmission content audit with the strategist — profile its pages, surface the patterns a person would spot after twenty of them, and propose Keep/Kill/Evolve/Consolidate calls for the undecided ones as a worksheet to confirm. Use when asked to "go through", "review", "work through", "help me decide" or "what should we do with" a section, directory, URL prefix, sitemap node, content type or group of pages in the audit.
+description: Review one section of a Transmission content audit with the strategist — profile its pages, surface the patterns a person would spot after twenty of them, and propose Migrate/Revise/Archive/Consolidate calls for the undecided ones as a worksheet to confirm. Use when asked to "go through", "review", "work through", "help me decide" or "what should we do with" a section, directory, URL prefix, sitemap node, content type or group of pages in the audit.
 argument-hint: "<section — a URL prefix like /news, a Group name, or a sitemap node>"
 ---
 
@@ -8,7 +8,7 @@ argument-hint: "<section — a URL prefix like /news, a Group name, or a sitemap
 
 The audit pass is where a strategist's hours go: open a page, decide, write why, next. Most of a section is decided by its pattern — the same type, the same age, the same traffic — and the exceptions are what deserve attention. This skill does the pattern work from the project data so the person can spend their judgement on the exceptions.
 
-It **proposes**; it never decides. Output is a worksheet the strategist confirms and then applies in the app (one row at a time, or in bulk with the Multi-bar on a filtered list). Follow the `ask-the-audit` ground rules: blank = unreviewed, content pages only, `@effective_kke`, every list reproducible.
+It **proposes**; it never decides. Output is a worksheet the strategist confirms and then applies in the app (one row at a time, or in bulk with the Multi-bar on a filtered list). Follow the `ask-the-audit` ground rules: blank = unreviewed, content pages only, `@effective_decision`, every list reproducible.
 
 ## 1. Pin down the section
 
@@ -25,22 +25,22 @@ Always add `{field:"@content_kind",operator:"equals",value:"content"}` unless th
 
 Run these and read them together:
 
-1. **Size and state** — `aggregate groupBy:["@effective_kke"] filters:SECTION`.
-2. **What it's made of** — `aggregate groupBy:["Page_Type","@effective_kke"] filters:SECTION`, then the same over `Content_Owner`, `Audiences` and whatever date / analytics columns exist (`describe_columns` without arguments lists them; crawl exports vary — look for `Last Modified`, `GA4 Sessions`, `Word Count`, `Inlinks`).
-3. **Sub-structure** — `aggregate groupBy:["@path_2","@effective_kke"] filters:SECTION` (for a deep section, `@path_2` is the year or subsection — the single most useful cut).
-4. **The decided part, as precedent** — `query_rows filters:SECTION + [{field:"@effective_kke",operator:"is-not-blank"}] columns:["Title 1","Page_Type","@effective_kke","Notes","Last Modified"] limit:40 sortBy:"Last Modified"`. The Notes on decided pages are the auditor's own reasoning; reuse their words and thresholds (e.g. "archival news; no traffic") rather than inventing new criteria.
-5. **The undecided part** — `query_rows filters:SECTION + [{field:"@effective_kke",operator:"is-blank"}] columns:["Title 1","Page_Type","Status Code","Last Modified","GA4 Sessions","Inlinks","Word Count","Audiences","Suggested_KKE"] limit:200 sortBy:"GA4 Sessions" sortDir:"desc"` (use whichever traffic/date/size columns exist). Page through `nextOffset` if needed; if more than ~200 are undecided, work by `@path_2` sub-group instead of all at once and say so.
-6. **Signals already in the file** — `Suggested_KKE` (the app's weighted vote from analytics, rubric and audience) and `Suggested_KKE_Sources` (`disagreement:true` means the sources disagreed, which is itself informative). `Audiences` tier, via `get_libraries which:["audiences"]`.
+1. **Size and state** — `aggregate groupBy:["@effective_decision"] filters:SECTION`.
+2. **What it's made of** — `aggregate groupBy:["Page_Type","@effective_decision"] filters:SECTION`, then the same over `Content_Owner`, `Audiences` and whatever date / analytics columns exist (`describe_columns` without arguments lists them; crawl exports vary — look for `Last Modified`, `GA4 Sessions`, `Word Count`, `Inlinks`).
+3. **Sub-structure** — `aggregate groupBy:["@path_2","@effective_decision"] filters:SECTION` (for a deep section, `@path_2` is the year or subsection — the single most useful cut).
+4. **The decided part, as precedent** — `query_rows filters:SECTION + [{field:"@effective_decision",operator:"is-not-blank"}] columns:["Title 1","Page_Type","@effective_decision","Notes","Last Modified"] limit:40 sortBy:"Last Modified"`. The Notes on decided pages are the auditor's own reasoning; reuse their words and thresholds (e.g. "archival news; no traffic") rather than inventing new criteria.
+5. **The undecided part** — `query_rows filters:SECTION + [{field:"@effective_decision",operator:"is-blank"}] columns:["Title 1","Page_Type","Status Code","Last Modified","GA4 Sessions","Inlinks","Word Count","Audiences","Suggested_MRA"] limit:200 sortBy:"GA4 Sessions" sortDir:"desc"` (use whichever traffic/date/size columns exist). Page through `nextOffset` if needed; if more than ~200 are undecided, work by `@path_2` sub-group instead of all at once and say so.
+6. **Signals already in the file** — `Suggested_MRA` (the app's weighted vote from analytics, rubric and audience) and `Suggested_MRA_Sources` (`disagreement:true` means the sources disagreed, which is itself informative). `Audiences` tier, via `get_libraries which:["audiences"]`.
 
 ## 3. Find the patterns
 
 State the two to four patterns that explain most of the section, each with a count, e.g.:
 
-- *92 of 104 news posts dated 2016–2021 are Kill with the note "archival news; no traffic"; 2023–24 posts are Keep.*
+- *92 of 104 news posts dated 2016–2021 are Archive with the note "archival news; no traffic"; 2023–24 posts are Migrate.*
 - *Every department has a `/research` sub-page; 5 are Consolidate into the central Research section, 2 have no target yet.*
 - *Nothing under /student-life has an audience tagged or a decision.*
 
-Then the **exceptions** — pages that break their own pattern (a Keep inside a Kill year, a page with real traffic marked Kill, a Keep with a 404). These are the ones worth a human's minute.
+Then the **exceptions** — pages that break their own pattern (a Migrate inside an Archive year, a page with real traffic marked Archive, a Migrate with a 404). These are the ones worth a human's minute.
 
 ## 4. Propose
 
@@ -48,23 +48,23 @@ For each undecided page (or each sub-group when the section is large), one propo
 
 | URL | Proposed | Why | Confidence |
 |---|---|---|---|
-| /news/2022/… | Kill | Same pattern as 2016–21: archival, 3 sessions, no priority audience | high |
-| /about/mission | Keep | Core institutional page; links from 14 pages | medium — no owner has looked at it |
-| /academics/departments/english | **ask** | Department landing with 1,200 sessions but no audience tagged; the other 7 departments are Keep — confirm before assuming | low |
+| /news/2022/… | Archive | Same pattern as 2016–21: archival, 3 sessions, no priority audience | high |
+| /about/mission | Migrate | Core institutional page; links from 14 pages | medium — no owner has looked at it |
+| /academics/departments/english | **ask** | Department landing with 1,200 sessions but no audience tagged; the other 7 departments are Migrate — confirm before assuming | low |
 
 Rules for proposals:
 
-- Use `Suggested_KKE` as one input, not the answer; say when you're agreeing with it and when you're not and why.
-- Prefer the decision the section's own precedent implies. If there is no precedent (nothing decided yet), say so and propose conservatively — Keep/Evolve for pages with traffic or a priority audience, **ask** for the rest — rather than inventing a Kill threshold.
-- Never propose Consolidate without naming the target page, and never propose Kill on a Primary-audience page without flagging it explicitly.
-- Blank audiences are *unassessed*, not a reason to Kill.
+- Use `Suggested_MRA` as one input, not the answer; say when you're agreeing with it and when you're not and why.
+- Prefer the decision the section's own precedent implies. If there is no precedent (nothing decided yet), say so and propose conservatively — Migrate/Revise for pages with traffic or a priority audience, **ask** for the rest — rather than inventing an Archive threshold.
+- Never propose Consolidate without naming the target page, and never propose Archive on a Primary-audience page without flagging it explicitly.
+- Blank audiences are *unassessed*, not a reason to Archive.
 - If the project has a glossary (`get_libraries which:["glossary"]`), use its tag definitions when suggesting tags.
 
 ## 5. Hand it back
 
 End with:
 
-- **Apply in the app** — the sidebar filter that shows exactly the proposed-Kill set (and the proposed-Keep set), so the strategist can select-all and use the Multi-bar: e.g. *Search `/news/2022/`, KKE filter = Unreviewed, then Apply → KKE → Kill.* Where the proposal isn't bulk-shaped, say so. Use the app's controls, not server syntax: search box (scope URL) for a path, **KKE filter = Unreviewed**, **+ Field filter** on real columns (`Page_Type equals Directory`), never `@path_1` or `filters:[…]`.
+- **Apply in the app** — the sidebar filter that shows exactly the proposed-Archive set (and the proposed-Migrate set), so the strategist can select-all and use the Multi-bar: e.g. *Search `/news/2022/`, MRA filter = Unreviewed, then Apply → MRA → Archive.* Where the proposal isn't bulk-shaped, say so. Use the app's controls, not server syntax: search box (scope URL) for a path, **MRA filter = Unreviewed**, **+ Field filter** on real columns (`Page_Type equals Directory`), never `@path_1` or `filters:[…]`.
 - **Exceptions to look at by hand** — the short list from step 3.
 - **What I couldn't see** — e.g. the app's duplicate detection, page content itself (you have metadata, not the page), anything the user asked that the columns don't carry.
 - **Offer to queue it** — one line: *"Say the word and I'll queue the N high-confidence proposals for you to accept in Transmission."* Do not call `propose_changes` until they say yes.

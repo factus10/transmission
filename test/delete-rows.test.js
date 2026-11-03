@@ -51,7 +51,7 @@ function logChange(origIndex, field, oldValue, newValue) {
   if (oldValue === newValue) return;
   _sessionChangeLog.push({ row: origIndex + 1, field, from: String(oldValue || ''), to: String(newValue || '') });
 }
-function effectiveKke(row) { return String(row['Final_KKE'] || row['KKE_Recommendation'] || '').trim(); }
+function effectiveKke(row) { return String(row['Final_MRA'] || row['MRA_Recommendation'] || '').trim(); }
 function invalidateNavPageCountsCache() { _note('invalidateNav'); }
 function detectDuplicates() { _note('detectDuplicates'); }
 function setDirty(v) { _note('setDirty'); }
@@ -162,8 +162,8 @@ describe('deleteRows — index-addressed state is cleared, never left stale', ()
     // A surviving entry would write its old value into whatever row now sits
     // at that index — silent corruption, and it would report success.
     seed(5);
-    _undoStack.push({ origIndex: 4, field: 'KKE_Recommendation', oldValue: '', newValue: 'Kill' });
-    _redoStack.push({ origIndex: 3, field: 'KKE_Recommendation', oldValue: '', newValue: 'Keep' });
+    _undoStack.push({ origIndex: 4, field: 'MRA_Recommendation', oldValue: '', newValue: 'Archive' });
+    _redoStack.push({ origIndex: 3, field: 'MRA_Recommendation', oldValue: '', newValue: 'Migrate' });
     deleteRows([0]);
     assert.equal(_undoStack.length, 0);
     assert.equal(_redoStack.length, 0);
@@ -212,7 +212,7 @@ describe('deleteRows — the change log', () => {
 describe('deleteRowsImpact — what the deletion breaks', () => {
   test('a survivor consolidating into a doomed row is reported as orphaned', () => {
     seed(4, (r, i) => {
-      if (i === 1) { r._ConsolidateTargetId = 'https://x/p0'; r.KKE_Recommendation = 'Consolidate'; }
+      if (i === 1) { r._ConsolidateTargetId = 'https://x/p0'; r.MRA_Recommendation = 'Consolidate'; }
     });
     const impact = deleteRowsImpact([0]);
     assert.equal(impact.orphanedConsolidations.length, 1);
@@ -238,7 +238,7 @@ describe('deleteRowsImpact — what the deletion breaks', () => {
   test('counts placed, decided and redirect-carrying rows among the doomed', () => {
     seed(5, (r, i) => {
       if (i < 3) r.Sitemap_ID = 'N00' + i;
-      if (i < 2) r.KKE_Recommendation = 'Keep';
+      if (i < 2) r.MRA_Recommendation = 'Migrate';
       if (i === 0) r.Redirect_Destination = 'https://x/elsewhere';
     });
     const impact = deleteRowsImpact([0, 1, 2, 3]);
@@ -247,8 +247,8 @@ describe('deleteRowsImpact — what the deletion breaks', () => {
     assert.equal(impact.withRedirect, 1);
   });
 
-  test('Final_KKE counts as a decision even when KKE_Recommendation is blank', () => {
-    seed(2, (r, i) => { if (i === 0) r.Final_KKE = 'Evolve'; });
+  test('Final_MRA counts as a decision even when MRA_Recommendation is blank', () => {
+    seed(2, (r, i) => { if (i === 0) r.Final_MRA = 'Revise'; });
     assert.equal(deleteRowsImpact([0, 1]).decided, 1);
   });
 

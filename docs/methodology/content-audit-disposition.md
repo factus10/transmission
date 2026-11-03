@@ -6,9 +6,9 @@ last-reviewed: 2026-04-28
 
 # Content Audit Disposition (CAD)
 
-The proposed framework that decompresses [KKE's five dimensions](./the-five-dimensions.md) into separate columns. CAD is what a future revision of our methodology should look like once we're ready to break with single-column KKE.
+The proposed framework that decompresses [MRA's five dimensions](./the-five-dimensions.md) into separate columns. CAD is what a future revision of our methodology should look like once we're ready to break with single-column MRA.
 
-> **Status:** this is a proposal, not yet implemented. The audit tool today operates on KKE with operational tooling that mitigates KKE's failure modes (see [Patterns Where KKE Breaks](./patterns.md)). CAD is the long-term direction.
+> **Status:** this is a proposal, not yet implemented. The audit tool today operates on MRA with operational tooling that mitigates MRA's failure modes (see [Patterns Where MRA Breaks](./patterns.md)). CAD is the long-term direction.
 
 ## The acronym
 
@@ -64,17 +64,17 @@ Only meaningful when `Scope = InScope`.
 | `PendingStakeholder` | Sent for business decision |
 | `Resolved` | Final answer |
 
-## Mapping classic KKE onto CAD
+## Mapping MRA onto CAD
 
-| KKE | Scope | ContentFate | URLFate |
+| MRA | Scope | ContentFate | URLFate |
 |---|---|---|---|
-| Keep | InScope | Preserve | Preserve OR Move |
-| Kill | InScope | Retire | Redirect OR 404 |
-| Evolve | InScope | Improve | Preserve OR Move |
+| Migrate | InScope | Preserve | Preserve OR Move |
+| Archive | InScope | Retire | Redirect OR 404 |
+| Revise | InScope | Improve | Preserve OR Move |
 | Consolidate | InScope | Merge | Redirect (to target) |
 | Exclude (current usage) | OutOfCrawl OR Deferred OR OutOfAuthority OR ComplianceHold | (n/a) | (n/a) |
 
-The five-state KKE shorthand survives as a **derived view** of the underlying disposition. Auditors can think "this is a Kill" while the data captures that more precisely as `InScope / Retire / Redirect-to-/general-products`.
+The five-state MRA shorthand survives as a **derived view** of the underlying disposition. Auditors can think "this is an Archive" while the data captures that more precisely as `InScope / Retire / Redirect-to-/general-products`.
 
 ## Authority becomes formal
 
@@ -86,17 +86,17 @@ When authorities disagree, the disagreement *is* a signal — surface it in repo
 
 Three reasons CAD lives as a proposal rather than a shipped feature:
 
-1. **Backward compatibility.** Real audits are in flight using KKE. A clean break would orphan them. The migration path needs to be a layering, not a replacement.
-2. **Auditor cognitive load.** Three columns instead of one is more to track per page. The folksonomy of KKE is genuinely useful as shorthand. CAD has to coexist with KKE-as-summary, not replace it.
-3. **Tooling readiness.** The current audit tool handles KKE with workarounds. A CAD-native tool would need redesigned UI for the three-column model — picker, filters, reports, the whole stack.
+1. **Backward compatibility.** Real audits are in flight using MRA. A clean break would orphan them. The migration path needs to be a layering, not a replacement.
+2. **Auditor cognitive load.** Three columns instead of one is more to track per page. The folksonomy of MRA is genuinely useful as shorthand. CAD has to coexist with MRA-as-summary, not replace it.
+3. **Tooling readiness.** The current audit tool handles MRA with workarounds. A CAD-native tool would need redesigned UI for the three-column model — picker, filters, reports, the whole stack.
 
 ## Migration path
 
 Non-breaking adoption:
 
-1. **Layer the new columns alongside KKE.** Add `Scope`, `ContentFate`, `URLFate`, `ProcessState` as optional audit columns. Keep `KKE_Recommendation`.
-2. **Auto-derive in both directions.** Tools fill the new columns from KKE values using the mapping table above. KKE is computed from the new columns when those are set. Auditors using KKE alone keep working; auditors who want granularity get it.
-3. **Profile-driven UI.** Project Settings includes a "Disposition mode" toggle. Default for new projects: KKE mode. Advanced projects opt in to CAD mode.
+1. **Layer the new columns alongside MRA.** Add `Scope`, `ContentFate`, `URLFate`, `ProcessState` as optional audit columns. Keep `MRA_Recommendation`.
+2. **Auto-derive in both directions.** Tools fill the new columns from MRA values using the mapping table above. MRA is computed from the new columns when those are set. Auditors using MRA alone keep working; auditors who want granularity get it.
+3. **Profile-driven UI.** Project Settings includes a "Disposition mode" toggle. Default for new projects: MRA mode. Advanced projects opt in to CAD mode.
 4. **Reports adapt.** Migration Checklist and similar reports surface whichever level of granularity the project uses.
 
 ## What CAD doesn't fix
@@ -116,11 +116,11 @@ These are separate concerns documented in their own pages (TBD — see [related 
 - **How do you express "Consolidate plus Split"?** Take page A, merge half its content into B, half into C. Combinations of fates aren't representable as single-value enums.
 - **Should "Replace" and "Improve" be on a spectrum?** Or are they categorically different? Maybe a 0–10 "rewrite intensity" alongside the binary.
 - **Pages that should become navigation-only landing pads?** A high-traffic but thin page might be best repurposed as a nav node. Not Preserve, not Improve — something else.
-- **Non-page content?** PDFs, images, downloadable assets currently get shoehorned into KKE. May need a parallel framework.
+- **Non-page content?** PDFs, images, downloadable assets currently get shoehorned into MRA. May need a parallel framework.
 
 ## See also
 
-- [Why KKE Falls Short — The Five Dimensions](./the-five-dimensions.md)
-- [Patterns Where KKE Breaks](./patterns.md)
+- [Why MRA Falls Short — The Five Dimensions](./the-five-dimensions.md)
+- [Patterns Where MRA Breaks](./patterns.md)
 - [Vocabulary Governance](./vocabulary-governance.md) — necessary operational layer
-- [KKE: The Classic Framework](./kke-classic.md) — what we use today
+- [KKE: The Classic Framework](./kke-classic.md) — the original vocabulary MRA renames

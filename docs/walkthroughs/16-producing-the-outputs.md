@@ -2,7 +2,7 @@
 
 What every report is *for* and when to run it. The audit's value is in the deliverables — this is the map of which one answers which question.
 
-> Prerequisite: an audited file. Most reports work with partial data, but read best once KKE calls, classification, and (for IA reports) the sitemap are in place.
+> Prerequisite: an audited file. Most reports work with partial data, but read best once MRA calls, classification, and (for IA reports) the sitemap are in place.
 
 ---
 
@@ -16,7 +16,7 @@ What every report is *for* and when to run it. The audit's value is in the deliv
 
 ## 1. Stakeholder reports (Reports menu)
 
-- **Executive Summary…** — the top-line story: counts by KKE call, what's being kept/killed/evolved, the shape of the work. Lead with this in a client readout.
+- **Executive Summary…** — the top-line story: counts by MRA call, what's being migrated/revised/archived, the shape of the work. Lead with this in a client readout.
 - **Content Inventory by Section…** — the full inventory grouped by Group/section. The detailed "here's every page and its decision" appendix.
 - **SME Review Status…** — where the expert review stands (approved / changed / pending). Run during the SME loop.
 
@@ -41,7 +41,7 @@ If the audit carries audience tagging or spans several source sites, five more r
 - **Migration Direction Brief…** — per-person worklists for the **Writer / Builder / Migrator** roles, grouped by target spec (see **Build & Direction**). Supports custom templates.
 - **Migration Checklist…** — the retain / remove / update / redirect summary the migration team works from.
 - **Net New Content Brief…** — every sitemap node that needs brand-new content written.
-- **Redirect Map Report…** — Kill / URL-changed / intentional-404 redirects (see **Redirects**).
+- **Redirect Map Report…** — Archive / URL-changed / intentional-404 redirects (see **Redirects**).
 
 ---
 

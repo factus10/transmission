@@ -87,9 +87,9 @@ const SANKEY_SHAPES = [
 ];
 
 function reportRows() { return state.editedRows; }
-function effectiveKke(row) { return String(row['Final_KKE'] || row['KKE_Recommendation'] || '').trim(); }
+function effectiveKke(row) { return String(row['Final_MRA'] || row['MRA_Recommendation'] || '').trim(); }
 function allKkeStates() {
-  return ['Keep', 'Kill', 'Evolve', 'Consolidate', 'Exclude'].concat((state.customKkeStates || []).map(s => s.label));
+  return ['Migrate', 'Revise', 'Archive', 'Consolidate', 'Exclude'].concat((state.customKkeStates || []).map(s => s.label));
 }
 function findConsolidateTargetRow(row) {
   const id = String(row['_ConsolidateTargetId'] || '').trim();
@@ -115,7 +115,7 @@ function setDirty() { state._dirty = true; }
 // exist here; the hexes below are those same values from styles.css. The custom
 // -state branch is the real logic and is what the tests exercise.
 function treemapKkeColor(label) {
-  const builtin = ({ Keep: '#15703a', Kill: '#b91c1c', Evolve: '#854d0e', Consolidate: '#4338ca', Exclude: '#636363' })[label];
+  const builtin = ({ Migrate: '#15703a', Archive: '#b91c1c', Revise: '#854d0e', Consolidate: '#4338ca', Exclude: '#636363' })[label];
   if (builtin) return builtin;
   const custom = (state.customKkeStates || []).find(s => s.label === label);
   return custom ? custom.color : '#9aa0ab';
@@ -146,7 +146,7 @@ const TREE = [node('n1', 'Home', [
 ])];
 
 const row = (addr, kke, sitemapId, extra) =>
-  Object.assign({ Address: addr, KKE_Recommendation: kke, Sitemap_ID: sitemapId || '' }, extra || {});
+  Object.assign({ Address: addr, MRA_Recommendation: kke, Sitemap_ID: sitemapId || '' }, extra || {});
 
 function setState(rows, over) {
   globalThis.state = Object.assign({
@@ -173,7 +173,7 @@ describe('harness', () => {
   test('the sandbox has the globals the extracted code needs', () => {
     // Regression guard for trap 1: without URL, every row is silently skipped
     // because the resolvers swallow the ReferenceError.
-    setState([row('https://x.edu/academics/a', 'Keep', 'n11')]);
+    setState([row('https://x.edu/academics/a', 'Migrate', 'n11')]);
     assert.equal(API.computeSankeyFlows(1).flows.length, 1);
     assert.equal(API.computeSankeyFlows(1).skipped, 0);
   });
@@ -185,67 +185,67 @@ describe('source axis', () => {
     // placed row's breadcrumb (the TARGET IA), which would make every placed
     // page flow Academics -> Academics and show nothing.
     setState([
-      row('https://x.edu/academics/biology', 'Keep', 'n11'),
-      row('https://x.edu/admissions/apply', 'Keep', 'n20'),
+      row('https://x.edu/academics/biology', 'Migrate', 'n11'),
+      row('https://x.edu/admissions/apply', 'Migrate', 'n20'),
     ]);
     assert.deepEqual(flowsOf(1), [
-      ['Academics', 'Keep', 'Academics', 1],
-      ['Admissions', 'Keep', 'Admissions', 1],
+      ['Academics', 'Migrate', 'Academics', 1],
+      ['Admissions', 'Migrate', 'Admissions', 1],
     ]);
   });
 
   test('a shared path prefix is stripped, not turned into one bucket', () => {
     setState([
-      row('https://alpha.edu/college/academics/bio', 'Keep', 'n11'),
-      row('https://alpha.edu/college/admissions/apply', 'Keep', 'n20'),
-      row('https://alpha.edu/college/news/story', 'Kill'),
+      row('https://alpha.edu/college/academics/bio', 'Migrate', 'n11'),
+      row('https://alpha.edu/college/admissions/apply', 'Migrate', 'n20'),
+      row('https://alpha.edu/college/news/story', 'Archive'),
     ]);
     assert.deepEqual(flowsOf(1), [
-      ['Academics', 'Keep', 'Academics', 1],
-      ['Admissions', 'Keep', 'Admissions', 1],
-      ['News', 'Kill', RETIRED, 1],
+      ['Academics', 'Migrate', 'Academics', 1],
+      ['Admissions', 'Migrate', 'Admissions', 1],
+      ['News', 'Archive', RETIRED, 1],
     ]);
   });
 
   test('a locale prefix is stepped past, so columns are topics not languages', () => {
     setState(['en', 'es', 'de'].flatMap(loc => [
-      row(`https://x.edu/${loc}/academics/bio`, 'Keep', 'n11'),
-      row(`https://x.edu/${loc}/admissions/apply`, 'Keep', 'n20'),
+      row(`https://x.edu/${loc}/academics/bio`, 'Migrate', 'n11'),
+      row(`https://x.edu/${loc}/admissions/apply`, 'Migrate', 'n20'),
     ]));
     assert.deepEqual(flowsOf(1), [
-      ['Academics', 'Keep', 'Academics', 3],
-      ['Admissions', 'Keep', 'Admissions', 3],
+      ['Academics', 'Migrate', 'Academics', 3],
+      ['Admissions', 'Migrate', 'Admissions', 3],
     ]);
   });
 
   test('depth splits deeper sections apart', () => {
     setState([
-      row('https://x.edu/academics/programs/bio', 'Keep', 'n11'),
-      row('https://x.edu/academics/advising/faq', 'Keep', 'n11'),
-      row('https://x.edu/admissions/apply', 'Keep', 'n20'),
+      row('https://x.edu/academics/programs/bio', 'Migrate', 'n11'),
+      row('https://x.edu/academics/advising/faq', 'Migrate', 'n11'),
+      row('https://x.edu/admissions/apply', 'Migrate', 'n20'),
     ]);
     assert.deepEqual(flowsOf(1), [
-      ['Academics', 'Keep', 'Academics', 2],
-      ['Admissions', 'Keep', 'Admissions', 1],
+      ['Academics', 'Migrate', 'Academics', 2],
+      ['Admissions', 'Migrate', 'Admissions', 1],
     ]);
     assert.deepEqual(flowsOf(2), [
-      ['Academics / Advising', 'Keep', 'Academics', 1],
-      ['Academics / Programs', 'Keep', 'Academics', 1],
-      ['Admissions', 'Keep', 'Admissions', 1],
+      ['Academics / Advising', 'Migrate', 'Academics', 1],
+      ['Academics / Programs', 'Migrate', 'Academics', 1],
+      ['Admissions', 'Migrate', 'Admissions', 1],
     ]);
   });
 
   test('labels holding spaces and separators still tally apart', () => {
     // The tally key is NUL-joined precisely because these labels exist.
     setState([
-      row('https://x.edu/news-and-events/gala', 'Kill'),
-      row('https://x.edu/news-and-events/talk', 'Keep', 'n30'),
-      row('https://x.edu/admissions/apply', 'Keep', 'n20'),
+      row('https://x.edu/news-and-events/gala', 'Archive'),
+      row('https://x.edu/news-and-events/talk', 'Migrate', 'n30'),
+      row('https://x.edu/admissions/apply', 'Migrate', 'n20'),
     ]);
     assert.deepEqual(flowsOf(1), [
-      ['Admissions', 'Keep', 'Admissions', 1],
-      ['News And Events', 'Keep', 'News', 1],
-      ['News And Events', 'Kill', RETIRED, 1],
+      ['Admissions', 'Migrate', 'Admissions', 1],
+      ['News And Events', 'Archive', RETIRED, 1],
+      ['News And Events', 'Migrate', 'News', 1],
     ]);
   });
 });
@@ -253,16 +253,16 @@ describe('source axis', () => {
 describe('terminal buckets', () => {
   test('Kill / Exclude / unplaced / unreviewed each land in the right endpoint', () => {
     setState([
-      row('https://x.edu/news/2019-gala', 'Kill'),
+      row('https://x.edu/news/2019-gala', 'Archive'),
       row('https://x.edu/athletics/roster', 'Exclude'),
-      row('https://x.edu/about/history', 'Keep'),   // decided, but not placed
+      row('https://x.edu/about/history', 'Migrate'),   // decided, but not placed
       row('https://x.edu/about/staff', ''),         // never reviewed
     ]);
     assert.deepEqual(flowsOf(1), [
       ['About', '(unreviewed)', UNPLACED, 1],
-      ['About', 'Keep', UNPLACED, 1],
+      ['About', 'Migrate', UNPLACED, 1],
       ['Athletics', 'Exclude', OUT_OF_SCOPE, 1],
-      ['News', 'Kill', RETIRED, 1],
+      ['News', 'Archive', RETIRED, 1],
     ]);
   });
 });
@@ -272,11 +272,11 @@ describe('consolidation', () => {
     setState([
       row('https://x.edu/a/one', 'Consolidate', '', { _ConsolidateTargetId: 'https://x.edu/a/two' }),
       row('https://x.edu/a/two', 'Consolidate', '', { _ConsolidateTargetId: 'https://x.edu/b/master' }),
-      row('https://x.edu/b/master', 'Keep', 'n11'),
+      row('https://x.edu/b/master', 'Migrate', 'n11'),
     ]);
     assert.deepEqual(flowsOf(1), [
       ['A', 'Consolidate', 'Academics', 2],
-      ['B', 'Keep', 'Academics', 1],
+      ['B', 'Migrate', 'Academics', 1],
     ]);
   });
 
@@ -284,22 +284,22 @@ describe('consolidation', () => {
     setState([
       row('https://x.edu/a/one', 'Consolidate', '', { _ConsolidateTargetId: 'https://x.edu/a/two' }),
       row('https://x.edu/a/two', 'Consolidate', '', { _ConsolidateTargetId: 'https://x.edu/a/one' }),
-      row('https://x.edu/other/z', 'Keep', 'n20'),   // keeps /a/ from reading as a site-wide prefix
+      row('https://x.edu/other/z', 'Migrate', 'n20'),   // keeps /a/ from reading as a site-wide prefix
     ]);
     assert.deepEqual(flowsOf(1), [
       ['A', 'Consolidate', UNPLACED, 2],
-      ['Other', 'Keep', 'Admissions', 1],
+      ['Other', 'Migrate', 'Admissions', 1],
     ]);
   });
 
   test('an off-inventory master falls to unplaced rather than vanishing', () => {
     setState([
       row('https://x.edu/a/one', 'Consolidate', '', { _ConsolidateTargetId: 'https://gone.example/x' }),
-      row('https://x.edu/other/z', 'Keep', 'n20'),
+      row('https://x.edu/other/z', 'Migrate', 'n20'),
     ]);
     assert.deepEqual(flowsOf(1), [
       ['A', 'Consolidate', UNPLACED, 1],
-      ['Other', 'Keep', 'Admissions', 1],
+      ['Other', 'Migrate', 'Admissions', 1],
     ]);
   });
 });
@@ -307,9 +307,9 @@ describe('consolidation', () => {
 describe('graph shapes', () => {
   test('every page leaves the source column and arrives somewhere, in both shapes', () => {
     setState([
-      row('https://x.edu/academics/a', 'Keep', 'n11'),
-      row('https://x.edu/academics/b', 'Evolve', 'n11'),
-      row('https://x.edu/news/c', 'Kill'),
+      row('https://x.edu/academics/a', 'Migrate', 'n11'),
+      row('https://x.edu/academics/b', 'Revise', 'n11'),
+      row('https://x.edu/news/c', 'Archive'),
       row('https://x.edu/athletics/d', 'Exclude'),
       row('https://x.edu/about/e', 'Consolidate', '', { _ConsolidateTargetId: 'https://x.edu/academics/a' }),
     ]);
@@ -330,8 +330,8 @@ describe('graph shapes', () => {
 
   test('no zero-width bands, and every endpoint resolves to a declared node', () => {
     setState([
-      row('https://x.edu/academics/a', 'Keep', 'n11'),
-      row('https://x.edu/news/c', 'Kill'),
+      row('https://x.edu/academics/a', 'Migrate', 'n11'),
+      row('https://x.edu/news/c', 'Archive'),
     ]);
     const { views } = API.buildSankeyViews(API.computeSankeyFlows(1).flows, { axes: ['section'] });
     for (const key of Object.keys(views)) {
@@ -346,11 +346,11 @@ describe('graph shapes', () => {
 describe('decision shape (incl. user-added KKE states)', () => {
   function decisionFixture() {
     setState([
-      row('https://x.edu/news/a', 'Kill'),
-      row('https://x.edu/news/b', 'Archive'),        // a state the user added
-      row('https://x.edu/about/c', 'Keep', 'n11'),
+      row('https://x.edu/news/a', 'Archive'),
+      row('https://x.edu/news/b', 'On Hold'),        // a state the user added
+      row('https://x.edu/about/c', 'Migrate', 'n11'),
       row('https://x.edu/about/d', ''),
-    ], { customKkeStates: [{ label: 'Archive', color: '#00aaaa' }] });
+    ], { customKkeStates: [{ label: 'On Hold', color: '#00aaaa' }] });
     return API.buildSankeyViews(API.computeSankeyFlows(1).flows, { axes: ['section'] });
   }
 
@@ -362,12 +362,12 @@ describe('decision shape (incl. user-added KKE states)', () => {
     const dec = decisionFixture().views['section|dec'];
     assert.deepEqual(
       dec.nodes.filter(n => n.layer === 1).map(n => n.label).sort(),
-      ['(unreviewed)', 'Archive', 'Keep', 'Kill']);
+      ['(unreviewed)', 'Archive', 'Migrate', 'On Hold']);
   });
 
   test('a custom state keeps the color configured for it', () => {
     const dec = decisionFixture().views['section|dec'];
-    assert.equal(dec.nodes.find(n => n.label === 'Archive').color, '#00aaaa');
+    assert.equal(dec.nodes.find(n => n.label === 'On Hold').color, '#00aaaa');
   });
 
   test('conserves', () => {
@@ -376,27 +376,27 @@ describe('decision shape (incl. user-added KKE states)', () => {
 
   test('legend follows the project KKE vocabulary, with unreviewed last', () => {
     assert.deepEqual(decisionFixture().legends.decision.map(e => e.label),
-      ['Keep', 'Kill', 'Archive', '(unreviewed)']);
+      ['Migrate', 'Archive', 'On Hold', '(unreviewed)']);
   });
 });
 
 describe('multi-site consolidation', () => {
   test('with no registry, two sites\' /about stay apart', () => {
     setState([
-      row('https://a.com/about/x', 'Keep', 'n20'),
-      row('https://b.com/about/x', 'Keep', 'n20'),
+      row('https://a.com/about/x', 'Migrate', 'n20'),
+      row('https://b.com/about/x', 'Migrate', 'n20'),
     ]);
     assert.deepEqual(flowsOf(1), [
-      ['a.com › About', 'Keep', 'Admissions', 1],
-      ['b.com › About', 'Keep', 'Admissions', 1],
+      ['a.com › About', 'Migrate', 'Admissions', 1],
+      ['b.com › About', 'Migrate', 'Admissions', 1],
     ]);
   });
 
   test('several hosts of one registered site fold into one site label', () => {
     setState([
-      row('https://www.alpha.edu/about/a', 'Keep', 'n11'),
-      row('https://news.alpha.edu/x/b', 'Keep', 'n11'),
-      row('https://beta.org/about/c', 'Kill'),
+      row('https://www.alpha.edu/about/a', 'Migrate', 'n11'),
+      row('https://news.alpha.edu/x/b', 'Migrate', 'n11'),
+      row('https://beta.org/about/c', 'Archive'),
     ], {
       siteLibrary: [
         { label: 'Alpha University', hosts: ['alpha.edu', 'news.alpha.edu'] },
@@ -411,8 +411,8 @@ describe('multi-site consolidation', () => {
 
   test('both axes produce every shape, and the site axis conserves', () => {
     setState([
-      row('https://alpha.edu/about/a', 'Keep', 'n11'),
-      row('https://beta.org/about/c', 'Kill'),
+      row('https://alpha.edu/about/a', 'Migrate', 'n11'),
+      row('https://beta.org/about/c', 'Archive'),
     ], {
       siteLibrary: [
         { label: 'Alpha University', hosts: ['alpha.edu'] },
@@ -439,7 +439,7 @@ describe('source cap', () => {
     const rows = [];
     hosts.forEach(h => secs.forEach(sec => {
       for (let i = 0; i < 20; i++) {
-        rows.push(row(`https://${h}/${sec}/p${i}`, ['Keep', 'Evolve', 'Kill', 'Exclude'][i % 4], i % 4 < 2 ? 'n11' : ''));
+        rows.push(row(`https://${h}/${sec}/p${i}`, ['Migrate', 'Revise', 'Archive', 'Exclude'][i % 4], i % 4 < 2 ? 'n11' : ''));
       }
     }));
     setState(rows);
@@ -460,7 +460,7 @@ describe('source cap', () => {
   });
 
   test('is a no-op when the column is already small enough', () => {
-    setState([row('https://x.edu/academics/a', 'Keep', 'n11'), row('https://x.edu/news/b', 'Kill')]);
+    setState([row('https://x.edu/academics/a', 'Migrate', 'n11'), row('https://x.edu/news/b', 'Archive')]);
     const flows = API.computeSankeyFlows(1).flows;
     const capped = API.sankeyCapSources(flows, 'section', 20);
     assert.equal(capped.folded, 0);
@@ -535,12 +535,12 @@ describe('engine template', () => {
   const view = {
     columns: ['Current section', 'Decision'],
     nodes: [{ id: '0|A', label: 'A', layer: 0, color: '#111' },
-            { id: '1|Keep', label: 'Keep', layer: 1, color: '#15703a' }],
-    links: [{ s: '0|A', t: '1|Keep', value: 5, decision: 'Keep', colors: { decision: '#15703a', source: '#111' } }],
+            { id: '1|Keep', label: 'Migrate', layer: 1, color: '#15703a' }],
+    links: [{ s: '0|A', t: '1|Keep', value: 5, decision: 'Migrate', colors: { decision: '#15703a', source: '#111' } }],
   };
   const data = {
     title: 'T', views: { 'section|dec': view },
-    legends: { decision: [{ color: '#15703a', label: 'Keep' }], section: [] },
+    legends: { decision: [{ color: '#15703a', label: 'Migrate' }], section: [] },
     froms: [{ key: 'section', label: 'Current section' }],
     shapes: [{ key: 'dec', label: '→ Decision' }],
     defaultFrom: 'section', defaultShape: 'dec',
