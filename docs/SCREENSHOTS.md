@@ -1,6 +1,6 @@
 # Screenshot Checklist
 
-Capture these views to showcase the app's features. Use the Stanford OHS crawl (or similar) for realistic data. Assign a mix of KKE statuses to several rows first so badges and the progress bar have color.
+Capture these views to showcase the app's features. Use the Stanford OHS crawl (or similar) for realistic data. Assign a mix of MRA statuses to several rows first so badges and the progress bar have color.
 
 **Recommended window size:** 1440x900
 
@@ -8,12 +8,12 @@ Capture these views to showcase the app's features. Use the Stanford OHS crawl (
 
 ### Core Workflow
 1. **Empty state** — app launched, no file open ("No file open" + Open File button)
-2. **Main audit view** — file loaded, row selected, page visible in browser, KKE buttons and metadata in field bar
-3. **KKE assignment** — a row with Keep/Kill/Evolve status showing the colored badge in the sidebar
+2. **Main audit view** — file loaded, row selected, page visible in browser, MRA buttons and metadata in field bar
+3. **MRA assignment** — a row with Migrate/Revise/Archive status showing the colored badge in the sidebar
 
 ### Sidebar & Filtering
 4. **Text search active** — filter text entered, row count showing filtered results
-5. **KKE status filter** — dropdown open showing filter options (All, Keep, Kill, Evolve, etc.)
+5. **MRA status filter** — dropdown open showing filter options (All, Migrate, Revise, Archive, etc.)
 6. **Multi-select** — several rows selected with the bulk action bar visible at bottom of sidebar
 7. **Flagged rows** — a few rows with star icons lit, filtered to "Flagged"
 
@@ -28,7 +28,7 @@ Capture these views to showcase the app's features. Use the Stanford OHS crawl (
 13. **Drag-to-assign** — sidebar row being dragged onto a tree node (if capturable)
 
 ### Redirect Editor
-14. **Redirect editor** — full-panel view showing Kill pages with source URLs, destination fields, and default destination input
+14. **Redirect editor** — full-panel view showing Archive pages with source URLs, destination fields, and default destination input
 
 ### Progress & Reports
 15. **Progress dashboard** — modal open showing client/project fields, stats, color bar, group breakdown
@@ -45,8 +45,8 @@ Capture these views to showcase the app's features. Use the Stanford OHS crawl (
 22. **Batch assessment** — progress indicator showing batch AI assessment running
 
 ### Settings & Configuration
-23. **Settings popover** — settings open showing auto-advance, rubric dir, API key, custom KKE states, sidebar columns
-24. **Custom KKE states** — a custom state defined and visible in the KKE buttons row
+23. **Settings popover** — settings open showing auto-advance, rubric dir, API key, custom decision states, sidebar columns
+24. **Custom decision states** — a custom state defined and visible in the MRA buttons row
 
 ### Help
 25. **Help window** — separate help window open alongside the main app window
@@ -74,8 +74,8 @@ Capture these views to showcase the app's features. Use the Stanford OHS crawl (
 
 ### New Workflows (this release)
 39. **Pre-Handoff Check** — the report modal showing a mix of passed (✓) and flagged (⚠) checks with fix hints
-40. **AI Suggest for Unreviewed** — a populated Suggested_KKE badge after an AI pass (or the progress toast mid-run)
-41. **Compare KKE vs SME** — the full-screen comparison: summary counts, status filter, and the Auditor / SME / Final / Status table
+40. **AI Suggest for Unreviewed** — a populated Suggested_MRA badge after an AI pass (or the progress toast mid-run)
+41. **Compare MRA vs SME** — the full-screen comparison: summary counts, status filter, and the Auditor / SME / Final / Status table
 42. **Note snippets** — the Notes popover with the Snippets… menu open
 43. **Page thumbnail** — hovering a visited sidebar row with the screenshot preview popped out beside it
 44. **Save state** — title bar showing "✓ All changes saved" (and/or "⟳ Saving…")
@@ -85,7 +85,7 @@ Capture these views to showcase the app's features. Use the Stanford OHS crawl (
 ## Tips
 
 - Use the Stanford OHS crawl for realistic data
-- Assign a mix of KKE statuses to several rows first so badges and the progress bar have color; assign a few pages to sitemap nodes and set 2–3 SME decisions so the migration, IA, and KKE-vs-SME shots have content
+- Assign a mix of MRA statuses to several rows first so badges and the progress bar have color; assign a few pages to sitemap nodes and set 2–3 SME decisions so the migration, IA, and MRA-vs-SME shots have content
 - Window size around 1440x900 captures well without feeling cramped
 - Capture light mode first, then switch system appearance for the dark mode shot
 - For the thumbnail shot, visit a few rows first (so they're cached) before hovering

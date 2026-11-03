@@ -1,6 +1,8 @@
 # Transmission
 
-A macOS desktop app for auditing website content. Load a Screaming Frog crawl export (or any spreadsheet with URLs), review each page in an embedded browser, and record Keep/Kill/Evolve decisions directly in the file.
+A macOS desktop app for auditing website content. Load a Screaming Frog crawl export (or any spreadsheet with URLs), review each page in an embedded browser, and record Migrate/Revise/Archive decisions directly in the file.
+
+> **Formerly Keep / Kill / Evolve.** The decision vocabulary is now **Migrate / Revise / Archive** (MRA): Keep → Migrate, Evolve → Revise, Kill → Archive, with Consolidate and Exclude unchanged. Older files with KKE column names and values open as before and are saved as MRA. Worksheets that come back in the old words (an SME round sent out before the rename, a second auditor's file, an audit template) are translated as they're read, and the app says how many decisions it re-worded. For a client still working in the old terms, the SME export has a one-off *Use Keep / Kill / Evolve wording* option.
 
 **Version 2.10.0** — "How Soon Is Now?"
 
@@ -31,9 +33,9 @@ The list below is a feature catalog, not a how-to.
 - **Client Export profiles** — **File → Export… → Client Export** exports just the columns an audience needs (filtered or all rows). Ships with **Client Summary** and **Full** built-ins; save your own named profiles and they travel with the project.
 
 ### Ask an AI about the audit (MCP server)
-- **Read-only MCP server** — `mcp/server.js` exposes a `.transmission` project to any Model Context Protocol client (Claude Desktop, Claude Code), so the questions the Reports menu doesn't answer — *how many Keep pages under `/news` have no audience? which sections did the SME overturn most?* — get a real number instead of an Excel pivot. Counts grouped by any columns, filtered with the same field filters (and saved filters) the sidebar uses; one page's full record with its change history; the sitemap with page counts; redirects with who wrote them; the audit trail.
+- **Read-only MCP server** — `mcp/server.js` exposes a `.transmission` project to any Model Context Protocol client (Claude Desktop, Claude Code), so the questions the Reports menu doesn't answer — *how many Migrate pages under `/news` have no audience? which sections did the SME overturn most?* — get a real number instead of an Excel pivot. Counts grouped by any columns, filtered with the same field filters (and saved filters) the sidebar uses; one page's full record with its change history; the sitemap with page counts; redirects with who wrote them; the audit trail.
 - **Safe beside the running app** — opens the project read-only, never migrates it, and picks up each autosave on its next call. It cannot change anything; writes are planned as proposals you accept in the app.
-- **Proposals come back into the app.** Claude can queue changes (page · field · value · reason) that you **accept or reject** in Transmission — the ✦ button shows how many are waiting, Review Proposals groups them by what's proposed, and accepting writes through the app's own paths: change-logged with the reason, one `Cmd+Z` for the batch. Nothing is written until you accept; `Final_KKE`, placement and redirects can't be proposed at all.
+- **Proposals come back into the app.** Claude can queue changes (page · field · value · reason) that you **accept or reject** in Transmission — the ✦ button shows how many are waiting, Review Proposals groups them by what's proposed, and accepting writes through the app's own paths: change-logged with the reason, one `Cmd+Z` for the batch. Nothing is written until you accept; `Final_MRA`, placement and redirects can't be proposed at all.
 - **One button to start.** ✦ → **Open in Claude** installs Transmission as a Claude desktop extension and opens the Claude app connected to the open project — nothing to install but Claude. The audit playbooks (status, section review, consistency check) are in the chat's **+** menu. With Claude Code installed, the same dialog opens a Code session with them loaded as skills instead.
 - **Needs Node 22.13+**, has no dependencies, and is not part of the app's JavaScript bundle (it ships as a resource). Setup in [`mcp/README.md`](mcp/README.md); design in [`docs/dev/MCP_SERVER_PROPOSAL.md`](docs/dev/MCP_SERVER_PROPOSAL.md).
 
@@ -41,14 +43,14 @@ The list below is a feature catalog, not a how-to.
 - **Open any spreadsheet** (.xlsx, .xls, .xlsm, .ods, .csv) or a `.transmission` project — designed for Screaming Frog exports
 - **File → Open Recent** — submenu of the 10 most recent files (newest first), with "Clear Recent Files" at the bottom. Files that have moved/been deleted show with `(missing)` and are disabled. Useful when juggling multiple projects.
 - **Two-panel layout** — filterable row list on the left, embedded browser on the right
-- **KKE decisions** — Keep, Kill, Evolve, Exclude (plus custom states you define)
-- **Kill cleanup prompt** — when changing KKE to Kill on a page that already has a sitemap assignment or redirect destination, the app asks whether to clear them. Applies to single-row KKE buttons, Final KKE, bulk KKE, and Table View inline edits.
+- **MRA decisions** — Migrate, Revise, Archive, Exclude (plus custom states you define)
+- **Archive cleanup prompt** — when changing MRA to Archive on a page that already has a sitemap assignment or redirect destination, the app asks whether to clear them. Applies to single-row MRA buttons, Final MRA, bulk MRA, and Table View inline edits.
 - **Redirect indicator** — when the selected page has a redirect destination, a small amber badge in the audit bar's **Decide** cluster shows where it goes (`↪ /new-path`, full URL on hover); click it to open that page in the Redirect Editor, or the **×** to clear the destination. The literal `404` shows as a `404` badge (intentional deindex).
 - **Tags** — freeform chip input, stored as comma-separated values
 - **Notes** — per-page rationale in a popover
 - **Groups & Primary Tag** — categorize pages into groups with a primary tag
 - **Auto-save** — changes save automatically after a short idle (≈0.4s in `.transmission` projects, 2s in spreadsheets), with a clear title-bar state (● Unsaved → ⟳ Saving… → ✓ All changes saved)
-- **Jump to next unreviewed** — press `]` to skip to the next page without a KKE decision
+- **Jump to next unreviewed** — press `]` to skip to the next page without an MRA decision
 - **Note snippets** — save reusable rationale text and insert it into any Notes popover
 - **Session resume cue** — reopening a partly-done audit shows where you left off
 
@@ -57,8 +59,8 @@ The list below is a feature catalog, not a how-to.
 - **Keyboard cheat-sheet** — press `?` anywhere (or Help → Keyboard Shortcuts, `Cmd+/`)
 - **Searchable help** — the Help window has a sticky search box (Cmd+F focuses it) that filters sections live
 - **Pre-Handoff Check** (Migration menu) — one command runs every pre-flight check (unreviewed rows, consolidate targets, redirect chains, duplicate sitemap IDs, empty sitemap leaves) into a single exportable pass/issue report
-- **AI Suggest for Unreviewed** (Project menu) — fills `Suggested_KKE` for undecided pages via the rubric + Claude (requires your API key); never touches your human KKE
-- **Compare KKE vs SME** (SME menu) — full-screen side-by-side of auditor vs SME decisions, click-through to any row
+- **AI Suggest for Unreviewed** (Project menu) — fills `Suggested_MRA` for undecided pages via the rubric + Claude (requires your API key); never touches your human MRA
+- **Compare MRA vs SME** (SME menu) — full-screen side-by-side of auditor vs SME decisions, click-through to any row
 - **Page thumbnails** — hover a visited row in the sidebar to preview its screenshot (captured on visit, kept in memory only)
 - **Check for Updates** — checks automatically at launch and via **Help → Check for Updates…**; when a newer version is out, shows a **What's New** changelog (opened in a small internal browser window) and a **Download** link. Installs are still manual (drag the new build to Applications) — nothing downloads or installs itself.
 - **Consistent dialogs** — every modal closes on Esc / backdrop-click, with a unified close button and footer layout
@@ -77,10 +79,10 @@ The View menu mirrors these and adds **Audit Progress…** (`Cmd+P`), zoom contr
 - **App menu (macOS) / File (Win/Linux)** — Preferences (`Cmd+,`)
 - **File** — Open · Open Recent · Save · **Save As Project…** (`Cmd+Shift+S`) · Import/Merge · Merge Auditor Decisions · Save/Load Template · **Export…** (unified Cmd+Shift+E) · **Export Full Workbook (.xlsx)…**
 - **View** — view switcher mirrors + Audit Progress + zoom
-- **Project** — Project Settings · Glossary · **Audience Library** · Content Type Registry · Target Spec Library · Component Library · **AI Suggest for Unreviewed** · Run Rubric · Refresh GA KKE · Recompute Suggested KKE · Triage Non-200 Pages
+- **Project** — Project Settings · Glossary · **Audience Library** · Content Type Registry · Target Spec Library · Component Library · **AI Suggest for Unreviewed** · Run Rubric · Refresh GA MRA · Recompute Suggested MRA · Triage Non-200 Pages
 - **Migration** (export & validation tools) — **Pre-Handoff Check** · Migration Tracker · Export Redirect Map (CSV) · Redirect Chain Check · **Redirect Health Check**
 - **Reports** (all reports, grouped) — Executive Summary · Content Inventory · SME Review Status · Menu Report · Sitemap Coverage · Component Inventory · **Audience Coverage · Audience × Section Matrix · Site Consolidation Overview · Cross-Site Duplicate Overlap** · Migration Checklist · **Build Status** · Net New Content Brief · Redirect Map Report
-- **SME** — Export · Import · **Compare KKE vs SME** · Resolve Conflicts
+- **SME** — Export · Import · **Compare MRA vs SME** · Resolve Conflicts
 - **Help** — Getting Started · Product Tour · Keyboard Shortcuts (`Cmd+/`) · Transmission Help · Online Documentation · Check for Updates… · Help
 
 The unified Export dialog (`File → Export…`) is a single chooser for: Filtered Rows (xlsx) · Audit Decisions (CSV/JSON) · Redirect Map (CSV) · Migration Tracker (xlsx multi-sheet) · Client Export (column profiles, xlsx).
@@ -92,7 +94,7 @@ The unified Export dialog (`File → Export…`) is a single chooser for: Filter
 - Resizable columns via drag handles
 - **Columns...** button opens a column config dialog to choose which columns are visible
 - **Frozen row number column** — the # column stays frozen when scrolling horizontally
-- **Inline editing** — double-click audit columns (KKE, Tags, Notes, Group, Primary Tag, SME Decision, SME Notes, Content Owner, Final KKE) to edit inline. KKE-type columns show a dropdown, text columns show a text input. Commit on blur or Enter, cancel with Escape. **Tab / Shift+Tab** commits and moves to the adjacent editable column on the same row.
+- **Inline editing** — double-click audit columns (MRA, Tags, Notes, Group, Primary Tag, SME Decision, SME Notes, Content Owner, Final MRA) to edit inline. MRA-type columns show a dropdown, text columns show a text input. Commit on blur or Enter, cancel with Escape. **Tab / Shift+Tab** commits and moves to the adjacent editable column on the same row.
 - **Keyboard navigation** — Arrow Up/Down and j/k navigate rows when no input is focused; the selected row scrolls into view automatically
 - Independent sort and filter state from the sidebar — switching back preserves both
 - Row selection syncs between Table View and the sidebar
@@ -107,7 +109,7 @@ Two separate concerns, kept distinct: **what the content *is*** (its type) and *
 
 ### Migration Classification
 - **Content Nature** ("Renders as") and **Migration Track** dropdowns in the audit bar (hidden by default; toggle via Preferences → Show Migration fields, or via the `MIGRATE` chip in the field-bar-top)
-- **Ghost suggestion** for Migration Track derived from KKE + Content Nature, with the Content Type Registry providing a fallback when Content Nature is blank — click the dashed badge to accept
+- **Ghost suggestion** for Migration Track derived from MRA + Content Nature, with the Content Type Registry providing a fallback when Content Nature is blank — click the dashed badge to accept
 - **Auto-flow defaults** when Content Type changes: the registry fills blank Content_Nature, Migration_Track, and Target_Content_Type; never overwrites human input
 - **Unclassified filter** in the sidebar toolbar — one-click filter for rows whose Content Nature is blank
 
@@ -132,9 +134,9 @@ The migration delivery deliverable lives on the **sitemap**: each node carries B
 ### SME Review Workflow
 A dedicated **SME** top-level menu for subject-matter-expert review:
 
-- **Export for SME Review** — exports an `.xlsx` with a column subset (Address, Title, KKE_Recommendation, Notes, SME_Decision, SME_Notes, Content_Owner). Filter by Group or Primary Tag before exporting. The SME Decision column includes Excel data validation dropdowns. Uses ExcelJS for export.
-- **Import SME Decisions** — merges SME responses back into the audit file by URL matching. Auto-populates Final_KKE: "Approve" copies the original KKE_Recommendation; "Change: X" extracts X as the new decision.
-- **Resolve Conflicts** — opens a modal showing rows where the SME disagrees with the original recommendation. Per-row Final_KKE dropdown, plus bulk "Accept All SME" / "Keep All Original" actions.
+- **Export for SME Review** — exports an `.xlsx` with a column subset (Address, Title, MRA_Recommendation, Notes, SME_Decision, SME_Notes, Content_Owner). Filter by Group or Primary Tag before exporting. The SME Decision column includes Excel data validation dropdowns. Uses ExcelJS for export.
+- **Import SME Decisions** — merges SME responses back into the audit file by URL matching. Auto-populates Final_MRA: "Approve" copies the original MRA_Recommendation; "Change: X" extracts X as the new decision.
+- **Resolve Conflicts** — opens a modal showing rows where the SME disagrees with the original recommendation. Per-row Final_MRA dropdown, plus bulk "Accept All SME" / "Keep All Original" actions.
 
 ### Global Search (Cmd+F)
 - **Cmd+F** opens a floating search bar in the top-right corner that works from any view
@@ -164,30 +166,30 @@ A dedicated **SME** top-level menu for subject-matter-expert review:
 | `Cmd+Shift+M` | Menus |
 | `Cmd+Shift+E` | Export filtered rows |
 | `Cmd+,` | Open Preferences |
-| `Cmd+Z` | Undo last KKE change |
+| `Cmd+Z` | Undo last MRA change |
 | `Cmd+Shift+Z` | Redo |
-| `1` / `2` / `3` / `4` / `0` | Keep / Kill / Evolve / Exclude / Clear (when no input focused) |
+| `1` / `2` / `3` / `4` / `0` | Migrate / Revise / Archive / Exclude / Clear (when no input focused) |
 | `F` | Toggle flag on selected row |
 | `↑` / `↓` or `k` / `j` | Navigate rows |
 
 ### Filtering & Selection
 - **Text search** — filters rows by any column value. A scope selector attached to the left of the search box lets you narrow matching to **URL only** or **Title only**, making search results intentional rather than catching metadata you didn't mean to match. Default ("All fields") preserves the original behavior.
-- **KKE status filter** — checkbox dropdown supporting multi-select. Includes built-in states, custom states, and special filters: Unreviewed, Flagged, Duplicates, SME Conflicts, Pending Final KKE, **Consolidate (no target)**, **Shared sitemap node (2+ pages)**. All checked items are OR'd together.
+- **MRA status filter** — checkbox dropdown supporting multi-select. Includes built-in states, custom states, and special filters: Unreviewed, Flagged, Duplicates, SME Conflicts, Pending Final MRA, **Consolidate (no target)**, **Shared sitemap node (2+ pages)**. All checked items are OR'd together.
 - **Group filter** — filter by assigned group
 - **Flagged filter** — show only flagged/bookmarked rows
 - **Duplicate filter** — show rows with identical Title/H1/Meta Description
 - **Field filter** — `+ Field filter` button in the sidebar toolbar opens a popup to filter on **any column** with operators: `is blank`, `is not blank`, `contains`, `doesn't contain`, `equals`, `doesn't equal`, `starts with`, `ends with`, `is greater than`, `is less than`. Multiple filters AND together. Active filters render as removable chips in the toolbar. The text operators are case-insensitive and whitespace-tolerant; `is greater than` / `is less than` compare **numerically** when both sides are numbers (comma grouping allowed) and otherwise fall back to character-by-character ASCII order, which is case-sensitive. Blank cells match neither direction.
 ### Non-200 Status Code Triage
 - **Project → Triage Non-200 Pages…** opens a dialog listing all rows with non-200 status codes (3xx, 4xx, 5xx), grouped by code
-- Per-code action dropdowns let you batch-assign a KKE value (Kill, Exclude, Keep, Evolve) to all rows of that code in one click
+- Per-code action dropdowns let you batch-assign an MRA value (Archive, Exclude, Migrate, Revise) to all rows of that code in one click
 - The dialog is also **auto-offered on file open** when non-200 rows are detected and haven't been triaged yet
 - Sidebar rows with non-200 status codes show a small colored badge: **amber** for 3xx redirects, **red** for 4xx/5xx errors
-- Rows remain fully retrievable and are not hidden — triage only sets KKE values; you can still review and override individual rows afterward
+- Rows remain fully retrievable and are not hidden — triage only sets MRA values; you can still review and override individual rows afterward
 
-- **Inherited redirects carry forward, and stay correct** — a 3xx in the crawl is a rule the live site already has. Triage copies its destination in, but the destination is then **re-derived on every save** rather than frozen: if the page it points at moves in the new sitemap, is consolidated into another page, or is retired, the rule follows it there. A live-site chain (A→B→C) collapses to a single hop, so no rule lands on a URL that is itself being retired. **Redirect Chain Check** (Migration menu) reports what can't be resolved automatically, in named groups — no destination recorded, redirects to itself, destination is a dead 4xx, **destination has no KKE decision yet**, destination is being retired with nowhere to go, destination not in this crawl, destination on an out-of-scope site — and separates those from off-site destinations, which carry forward verbatim. The `Inherited redirect needs review` sidebar filter is the worklist, and the Pre-Handoff Check counts what's left. The undecided-destination check keys on the **KKE decision, not sitemap placement** — so it works the same whether your new site re-maps every URL or preserves them 1:1 and never uses the sitemap at all.
-- **Content pages vs crawled URLs** — a crawl lists every URL that responded, so a raw row count silently counts inherited 301s and dead URLs as pages to migrate. Transmission separates the two everywhere it reports a number: the **Executive Summary** leads with `URLs crawled` broken into existing redirects (3xx), not found (4xx) and **content pages**, and every figure below it — the KKE bar, the percentages, the findings — is over content pages only. 5xx stays counted as content, because a broken page is still a page. The split is derived from the crawl's own `Status Code`, so it's right in existing projects with no setup, and the `Existing redirect (3xx — not content)` and `Not content (3xx or 4xx)` sidebar filters show you the rows behind the number.
+- **Inherited redirects carry forward, and stay correct** — a 3xx in the crawl is a rule the live site already has. Triage copies its destination in, but the destination is then **re-derived on every save** rather than frozen: if the page it points at moves in the new sitemap, is consolidated into another page, or is retired, the rule follows it there. A live-site chain (A→B→C) collapses to a single hop, so no rule lands on a URL that is itself being retired. **Redirect Chain Check** (Migration menu) reports what can't be resolved automatically, in named groups — no destination recorded, redirects to itself, destination is a dead 4xx, **destination has no MRA decision yet**, destination is being retired with nowhere to go, destination not in this crawl, destination on an out-of-scope site — and separates those from off-site destinations, which carry forward verbatim. The `Inherited redirect needs review` sidebar filter is the worklist, and the Pre-Handoff Check counts what's left. The undecided-destination check keys on the **MRA decision, not sitemap placement** — so it works the same whether your new site re-maps every URL or preserves them 1:1 and never uses the sitemap at all.
+- **Content pages vs crawled URLs** — a crawl lists every URL that responded, so a raw row count silently counts inherited 301s and dead URLs as pages to migrate. Transmission separates the two everywhere it reports a number: the **Executive Summary** leads with `URLs crawled` broken into existing redirects (3xx), not found (4xx) and **content pages**, and every figure below it — the MRA bar, the percentages, the findings — is over content pages only. 5xx stays counted as content, because a broken page is still a page. The split is derived from the crawl's own `Status Code`, so it's right in existing projects with no setup, and the `Existing redirect (3xx — not content)` and `Not content (3xx or 4xx)` sidebar filters show you the rows behind the number.
 - **Delete rows permanently** — the Multi-bar's `⚠ Delete rows permanently…` action removes rows from the project outright, for the noise a crawl arrives with that isn't a page at all. It is the one destructive action in the app: it can't be undone, it clears the session's undo history (every undo entry addresses a row by position, and a deletion moves them), and it requires typing `PERMANENTLY DELETE`. Before you commit, it reports what the deletion *breaks* — pages that consolidate into one you're deleting, sitemap placements, reviewed decisions, redirect destinations — and every removal is written to the change log. Prefer `Exclude` for anything that's a real URL you simply aren't auditing; deletion is for rows that shouldn't be in the inventory at all.
-- **Saved filters** — capture text search + KKE filter + group filter + field filters as a named bundle in the file's `KKE_Settings` sheet. Select "+ Save current filter..." in the dropdown to save; restore any saved filter to instantly re-apply all four dimensions.
+- **Saved filters** — capture text search + MRA filter + group filter + field filters as a named bundle in the file's `MRA_Settings` sheet. Select "+ Save current filter..." in the dropdown to save; restore any saved filter to instantly re-apply all four dimensions.
 - **Sortable URL column** — click the header to sort ascending/descending
 - **Multi-select** — Cmd+click to toggle, Shift+click for range; the checkbox in the **#** column header selects every visible (filtered) row at once (indeterminate when only some are selected)
 
@@ -197,30 +199,30 @@ A dedicated **SME** top-level menu for subject-matter-expert review:
 - Filter to flagged rows only via the status dropdown
 
 ### Row Color Coding
-- Sidebar rows have subtle KKE-tinted backgrounds — light green for Keep, light red for Kill, light yellow for Evolve, light gray for Exclude
+- Sidebar rows have subtle MRA-tinted backgrounds — light green for Migrate, light red for Archive, light yellow for Revise, light gray for Exclude
 - Gives instant visual scanning of audit progress without reading badges
 
 ### Sidebar Customization
 - **Configurable columns** — choose which spreadsheet columns appear in the sidebar row list (Preferences → Sidebar columns)
-- **Extra KKE comparison columns** — click the **+** button at the right end of the sidebar column header strip to add extra KKE-type columns (SME Decision, Final KKE, Content Owner, etc.) as additional badge columns in every sidebar row. Useful for comparing KKE Recommendation vs SME Decision at a glance. Column labels are abbreviated (SME_Decision -> "SME", Final_KKE -> "Final"). Click the x on a column header to remove it. Persisted in prefs.
+- **Extra MRA comparison columns** — click the **+** button at the right end of the sidebar column header strip to add extra MRA-type columns (SME Decision, Final MRA, Content Owner, etc.) as additional badge columns in every sidebar row. Useful for comparing MRA Recommendation vs SME Decision at a glance. Column labels are abbreviated (SME_Decision -> "SME", Final_MRA -> "Final"). Click the x on a column header to remove it. Persisted in prefs.
 - **Scrollable URL cells** — URL cells in the sidebar become horizontally scrollable on hover, with a thin scrollbar, so long URLs that were previously cut off can be read in full.
-- **Column mapping quick access** — a small gear icon next to "KKE" in the sidebar column header strip opens Preferences for column mapping configuration.
-- **Two-row sidebar toolbar** — Row 1: full-width search input with a clear button. Row 2: KKE filter dropdown, Group filter, row count, Saved filters dropdown + save button.
+- **Column mapping quick access** — a small gear icon next to "MRA" in the sidebar column header strip opens Preferences for column mapping configuration.
+- **Two-row sidebar toolbar** — Row 1: full-width search input with a clear button. Row 2: MRA filter dropdown, Group filter, row count, Saved filters dropdown + save button.
 - **Resizable** — drag the divider to resize the sidebar
 
 ### Quick Stats Bar
 - Persistent bar at the bottom of the sidebar showing "X/Y reviewed (Z%)" with a thin colored progress bar
-- Updates in real time as you make KKE decisions
+- Updates in real time as you make MRA decisions
 - Always visible when a file is open
 
 ### Progress Dashboard
 - Open via **View > Progress Dashboard** to see audit progress
 - **Client & Project fields** — editable names that persist in the spreadsheet
-- Total pages, % reviewed, breakdown by KKE status
-- Stacked color bar showing Keep/Kill/Evolve/Exclude proportions
+- Total pages, % reviewed, breakdown by MRA status
+- Stacked color bar showing Migrate/Revise/Archive/Exclude proportions
 - Counts for flagged, tagged, and noted pages
 - Breakdown by group
-- **SME Review section** — counts of SME-reviewed pages, approved vs. changed decisions, and Final KKE resolution status
+- **SME Review section** — counts of SME-reviewed pages, approved vs. changed decisions, and Final MRA resolution status
 - **Export PDF / HTML** — generate a branded progress report as a PDF or Word-compatible HTML file for client sharing
 
 ### Batch Operations — the unified Multi-bar
@@ -229,7 +231,7 @@ A single action bar at the bottom of the sidebar adapts to context:
 - **"Apply to N filtered:"** when filters are narrowing the list and nothing's selected
 - Hidden when neither applies
 
-The Action dropdown lists every applicable bulk operation: **Set KKE · Set Published Status · Set Content Type · Set Content Theme · Set Group · Set Primary Tag · Add Tag · Assign to Sitemap…**. Pick action → second dropdown shows the values for that action (with a `— Clear` option at the top of every list except *Add Tag*) → confirm → apply. Selection wins over filtering when both apply. Every change is logged to the audit trail.
+The Action dropdown lists every applicable bulk operation: **Set MRA · Set Published Status · Set Content Type · Set Content Theme · Set Group · Set Primary Tag · Add Tag · Assign to Sitemap…**. Pick action → second dropdown shows the values for that action (with a `— Clear` option at the top of every list except *Add Tag*) → confirm → apply. Selection wins over filtering when both apply. Every change is logged to the audit trail.
 
 **Assign to Sitemap…** is the one exception to the pick-a-value pattern — Apply opens a dialog instead: choose an existing sitemap node, or create a new bucket (top-level or nested under a node you pick), and every target page becomes its own new child node there, with slug and label auto-derived from its URL and title (duplicates de-duplicated automatically). Pages already on the sitemap are skipped. Built for placing dozens or hundreds of pages at once — e.g. filter to "Needs sitemap placement" and assign the whole batch — then reorganize with the Sitemap editor's drag-and-drop.
 
@@ -256,9 +258,9 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 - **Duplicate slug detection** — slugs that conflict with siblings are highlighted in red
 - **Slug validation** — slugs are validated on assignment to prevent duplicates
 - **Duplicate Sitemap_ID detection** — when 2+ sitemap nodes share the same `ID`, the toolbar shows a red ⚠ link with the count. Click → confirms → renumbers duplicates with new unique IDs (the first node in each group keeps the original). Pages assigned to the shared ID stay with the first node; the rest may need manual reassignment via the sitemap picker.
-- **Consolidation Candidates** — toolbar button opens a bulk-resolve modal listing every sitemap node with 2+ assigned pages. Pick a target with a radio button, Apply makes the target Evolve and the rest Consolidate pointing to the target. Filter bar lets you exclude rows by KKE state or Group (e.g. de-scope an entire "Post Launch" section in one click).
-- **Net new badge** — nodes that have child pages assigned but no page of their own show a yellow "NEW" badge in the Pages column, with a subtle yellow row tint. Reference (alias) nodes are excluded — they don't count toward NEW or empty stats since they don't own content. Stats bar shows the count. Double-click a NEW node to open its editor: an amber banner points at the Build section's Page Status field for tracking progress ("Not Started" → "In Progress"), and a **Create Page** button turns it into a real spreadsheet row (Keep, tagged `net-new`, assigned to the node) so it flows through the rest of the audit and migration tracker — once it has a page, the node stops being flagged as net new.
-- **Create Sitemap from Audit** (Project menu) — auto-generates a starter sitemap tree straight from the crawl's own URLs, for a file with no sitemap yet (or extending one — it only merges, matching section names by label rather than ever replacing anything). Pick a bucket depth (how many URL segments become nested sections before the rest folds into one page) and whether to include Kill/Exclude/unreviewed rows, then Generate. `/about/leadership` becomes About → Leadership automatically; reorganize freely afterward with the Sitemap editor's drag-and-drop.
+- **Consolidation Candidates** — toolbar button opens a bulk-resolve modal listing every sitemap node with 2+ assigned pages. Pick a target with a radio button, Apply makes the target Revise and the rest Consolidate pointing to the target. Filter bar lets you exclude rows by MRA state or Group (e.g. de-scope an entire "Post Launch" section in one click).
+- **Net new badge** — nodes that have child pages assigned but no page of their own show a yellow "NEW" badge in the Pages column, with a subtle yellow row tint. Reference (alias) nodes are excluded — they don't count toward NEW or empty stats since they don't own content. Stats bar shows the count. Double-click a NEW node to open its editor: an amber banner points at the Build section's Page Status field for tracking progress ("Not Started" → "In Progress"), and a **Create Page** button turns it into a real spreadsheet row (Migrate, tagged `net-new`, assigned to the node) so it flows through the rest of the audit and migration tracker — once it has a page, the node stops being flagged as net new.
+- **Create Sitemap from Audit** (Project menu) — auto-generates a starter sitemap tree straight from the crawl's own URLs, for a file with no sitemap yet (or extending one — it only merges, matching section names by label rather than ever replacing anything). Pick a bucket depth (how many URL segments become nested sections before the rest folds into one page) and whether to include Archive/Exclude/unreviewed rows, then Generate. `/about/leadership` becomes About → Leadership automatically; reorganize freely afterward with the Sitemap editor's drag-and-drop.
   - **It predicts the tree before it builds it** — how many top-level sections you'll get, how many of those hold a single page, and which crawl artifacts (`/tag`, `/category`, `/wp-content`) are in the mix. Worth reading: the tool can only find hierarchy your URLs already have, and on a flat CMS every article at `/some-slug` becomes its own top-level section (one real audit: **548 sections from 1,859 pages**). **Bucket depth won't change that** — sections come from the *first* URL segment. When it looks like that, the dialog offers to sweep the single-page sections into one named section as part of the same step, so what lands is a tree you can actually open.
   - **It asks what the tree is for** — *where pages are going* (the default) or *where pages are today*. The second is a client-facing snapshot, and it offers **Save a copy first…**, because placing a page writes its `Computed Path` and the resolver then derives a redirect from it — correct for a future-state tree, meaningless for one describing where pages already are.
 - **Empty branch indicator** — `○` shows for both empty leaves and parents whose entire subtree has no pages (no descendants with content either). Tooltip distinguishes the two cases. Helps spot redundant aspirational structure for cleanup.
@@ -298,12 +300,12 @@ The Action dropdown lists every applicable bulk operation: **Set KKE · Set Publ
 A fully interactive box-tree you build, refine, and hand off — the Sitemap Editor's **Visual Sitemap** button renders the **content IA** as one tree rooted at your homepage. Click cards to collapse/expand, scroll to zoom, drag to pan, **Fit** to frame.
 - **Shape check** — a sitemap can be structurally perfect and still be too big to draw. When yours is, the app says so *before* opening the diagram (and the Sitemap toolbar's stats line carries a clickable **⚠** any time). It reports your top-level section count, the exact size the diagram will be and the zoom it will open at — measured with the real layout engine, so the numbers are the ones you'll get — then names the causes with a repair for each: **top-level sections holding a single page** (the flat-site signature — move them under one section), **crawl artifacts** like `/tag` and `/wp-content` (remove the sections; the pages stay in the audit, just unplaced), and **sections too wide to lay out** (mark collapsed). Ticking repairs shows the tree you'd end up with, and says plainly when they aren't enough — grouping hundreds of pages into the handful of real sections a new site needs is judgement, not a button. **Open the diagram anyway** is always offered: "this site has no IA" is a finding worth showing a client.
 - **Smart layout** — each branch lays out **horizontally** (children fan sideways) or **vertically** (children stack indented below) automatically, controlled by two thresholds in the toolbar: **Vertical from depth** and **or if children ≥**. Right-click any node to **force horizontal / vertical** or override it later.
-- **Color rules** — a rule engine (Settings → **Colors**): color by depth or by top-level section out of the box, add your own rules, drag to reorder, and right-click a single node to **set its color**. Conditions match on depth, depth range, section, value, **links to another site**, or **any of 15 fields** — seven carried on the sitemap node (Phase, Node Type, Page Status, Build Pattern, Builder, Writer, Migrator) and eight read from the audit rows (Content Type, KKE, Final KKE, Renders as, Migration Track, Content Theme, Published Status, Target Content Type). Field coloring gives one color per value in use plus a "not set" bucket so gaps are visible; Page Status reuses the colors you've already assigned it in Project Settings. **Mark external links** is a one-click button that colors off-site destinations distinctly, layered on top of whatever scheme you're already using. Uses your **Client brand** palette (Project Settings → Identity) when set.
+- **Color rules** — a rule engine (Settings → **Colors**): color by depth or by top-level section out of the box, add your own rules, drag to reorder, and right-click a single node to **set its color**. Conditions match on depth, depth range, section, value, **links to another site**, or **any of 15 fields** — seven carried on the sitemap node (Phase, Node Type, Page Status, Build Pattern, Builder, Writer, Migrator) and eight read from the audit rows (Content Type, MRA, Final MRA, Renders as, Migration Track, Content Theme, Published Status, Target Content Type). Field coloring gives one color per value in use plus a "not set" bucket so gaps are visible; Page Status reuses the colors you've already assigned it in Project Settings. **Mark external links** is a one-click button that colors off-site destinations distinctly, layered on top of whatever scheme you're already using. Uses your **Client brand** palette (Project Settings → Identity) when set.
 - **Combined conditions, split properties** — a single rule can test more than one condition, and different visual properties can be driven by different rules, so you can encode one dimension as color and another as line style at the same time.
-- **Dominant vs. contains** — a node usually holds several pages, so a rule can test either the node's **dominant** value ("this section is mostly Articles") or whether **any page under it** matches ("this section contains something we're killing").
+- **Dominant vs. contains** — a node usually holds several pages, so a rule can test either the node's **dominant** value ("this section is mostly Articles") or whether **any page under it** matches ("this section contains something we're archiving").
 - **Card styling** — cards render as a **color band** or in the **heavy-outline** convention most sitemap decks use (white box, thick colored border); that toggle and per-rule line style (solid / dashed / dotted) live in Settings → **Colors**, while corner radius and inner padding are in Settings → **Layout**.
 - **Settings panel** — **Layout** (card sizes & spacing, corner radius and padding, plus a **Connectors** section), **Colors** (rules + per-node overrides), and **Legend** (editable labels) tabs, with **Save as my defaults** so new projects start the way you like.
-- **Connector color and weight** — Settings → **Layout** → **Connectors** sets one **line color** for every connector, and a **line weight** of *Uniform* or **By content volume**, where each line's thickness reflects how many pages sit beneath it: a 200-page section draws as a thick trunk, a 4-page corner draws thin. **Base width** / **Max width** are the two ends of that scale, compressed on purpose so one enormous section doesn't flatten the rest into identical hairlines. Volume counts every page assigned beneath a node, Kill and Consolidate included — the line answers *how much content is under here*, which is a different question from the card's page badge. Saves with the project and carries into the HTML, PDF, PNG **and Miro** exports.
+- **Connector color and weight** — Settings → **Layout** → **Connectors** sets one **line color** for every connector, and a **line weight** of *Uniform* or **By content volume**, where each line's thickness reflects how many pages sit beneath it: a 200-page section draws as a thick trunk, a 4-page corner draws thin. **Base width** / **Max width** are the two ends of that scale, compressed on purpose so one enormous section doesn't flatten the rest into identical hairlines. Volume counts every page assigned beneath a node, Archive and Consolidate included — the line answers *how much content is under here*, which is a different question from the card's page badge. Saves with the project and carries into the HTML, PDF, PNG **and Miro** exports.
 - **Stacked pages** — multi-page leaves and collapsed branches render with a "more underneath" stack; build phase shows as a solid (current) vs dashed (phased) border.
 - **Counts** — a toolbar dropdown decides what the line under each card's label says. By default a card stays clean until you collapse it, and then reports what it's hiding (*"6 pages hidden"*); you can also put that sub-page count on every branch, show each node's **assigned audit pages** instead, or turn the line off. Saved with the project and honored by every export.
 - **Share it** — **Export HTML** writes a self-contained, **interactive** file a client opens in any browser (collapse/zoom/pan, no app needed); **Export PDF** prints the current view to a single right-sized page; **Export PNG** writes the whole diagram as a plain image, for slides and documents that can't place a PDF.
@@ -316,16 +318,16 @@ A fully interactive box-tree you build, refine, and hand off — the Sitemap Edi
 Content inventory as a squarified treemap — boxes sized by page count, colored by what's actually happening to them. Sitemap toolbar → **Treemap**, next to Visual Sitemap.
 - **Pick Depth and Color by, then Generate** — a small dialog up front (no live in-webview settings for now; change either and regenerate).
 - **Depth** rolls deeper levels up into the box above them (Depth 2 = top-level sections, broken into their direct children; Unlimited = the real tree, however deep it goes).
-- **Color by KKE decision** — each box shows its dominant Keep/Kill/Evolve/Consolidate/Exclude outcome and the composition percentage. **Color by top-level section**, or — only when Depth is Unlimited, since a rolled-up box has no single value to report — **Phase, Node Type, Page Status, Build Pattern, or any assignee role** (Page Status reuses the colors you've already assigned it in Project Settings).
-- **Set the colors** — open the **Legend** and every entry has a color well: change **Keep**, or a section, or a Page Status, and every box in that category follows. **Right-click any box** to override just that one, for calling out a single section in a client deck; **Reset colors** puts it all back. Your palette saves with the project, per coloring mode, and carries into every export.
+- **Color by MRA decision** — each box shows its dominant Migrate/Revise/Archive/Consolidate/Exclude outcome and the composition percentage. **Color by top-level section**, or — only when Depth is Unlimited, since a rolled-up box has no single value to report — **Phase, Node Type, Page Status, Build Pattern, or any assignee role** (Page Status reuses the colors you've already assigned it in Project Settings).
+- **Set the colors** — open the **Legend** and every entry has a color well: change **Migrate**, or a section, or a Page Status, and every box in that category follows. **Right-click any box** to override just that one, for calling out a single section in a client deck; **Reset colors** puts it all back. Your palette saves with the project, per coloring mode, and carries into every export.
 - Pan/zoom/Fit, a legend, and **Export HTML** / **Export PDF** / **Export PNG** / **Export to Miro**, same as the Visual Sitemap.
 
 ### Content Flow
 Where the current site's content ends up in the new sitemap, as a flow diagram — band thickness is page count. Sitemap toolbar → **Content Flow**, next to Treemap.
-- **Three readings, toggled in the view** — **→ Decision** maps the current site straight onto its Keep/Kill/Evolve/Consolidate/Exclude calls (including any states you've added yourself, each with its own block and color); **→ New sitemap** answers "where did this section's content go"; **→ Decision → New** shows both at once, which is the version to put in front of a client. Color the bands by decision or by source.
+- **Three readings, toggled in the view** — **→ Decision** maps the current site straight onto its Migrate/Revise/Archive/Consolidate/Exclude calls (including any states you've added yourself, each with its own block and color); **→ New sitemap** answers "where did this section's content go"; **→ Decision → New** shows both at once, which is the version to put in front of a client. Color the bands by decision or by source.
 - **Name your sites** — source sites start out named after their domain, which is all the app can infer. Since that name labels a whole column of the diagram, the setup dialog offers to rename any that are still bare domains, right there. They're editable any time in **Project Settings → Sites** (where you also set which hosts belong to which site, the CMS, the owner, and whether a site is in scope at all), and the names travel with the project.
 - **On a multi-site consolidation the left column can be the source site** — usually the better read, since the unit of work in a consolidation is the site: which site contributes what, and where does it go. Offered automatically whenever the audit spans more than one source site, and it leads by default. Section labels are qualified by site name (`Beta College › About`) so two sites' `/about` can't silently merge, and a site served from both `www.` and a subdomain still counts as one site.
-- **Pages that arrive nowhere are shown, not dropped** — **Retired** (Kill), **Out of scope** (Exclude), and **Not yet placed** (no sitemap home yet). In most audits that's the largest number on the diagram, and a flow chart that omits it is misleading.
+- **Pages that arrive nowhere are shown, not dropped** — **Retired** (Archive), **Out of scope** (Exclude), and **Not yet placed** (no sitemap home yet). In most audits that's the largest number on the diagram, and a flow chart that omits it is misleading.
 - **Consolidated pages flow through to their master's destination** — the URL dies but the content survives, so it's counted as arriving, with the band still colored as Consolidate. Chained consolidations resolve all the way through.
 - **Current-site sections are read from the URL path** (shared path prefixes and locale prefixes stripped, per host); new-sitemap sections from where each page is placed in the tree. A small dialog picks how deep the current-site axis goes — top-level by default, or split `/academics/programs` from `/academics/advising`.
 - **It stays readable at consolidation scale** — a five-site audit can produce sixty current-site sections, enough to leave the diagram no room to draw itself. Small sections past the top 20 group into one **Other** block (page totals still add up, and the count is reported), and labels are dropped rather than overlapped where blocks get thin — every block keeps its color and its hover detail regardless.
@@ -333,7 +335,7 @@ Where the current site's content ends up in the new sitemap, as a flow diagram �
 - **On a Miro board** the flow becomes blocks and weighted connectors, since Miro has no ribbon shape. What survives is the reading — what exists, how big, what connects to what, in what color — but band thickness is Miro's own 1–24 stroke scale rather than the exact proportion drawn on screen.
 
 ### Rubrics & Assessment
-- Define Keep/Kill/Evolve/Exclude criteria as markdown rubric files
+- Define Migrate/Revise/Archive/Exclude criteria as markdown rubric files
 - **Field rules** — auto-evaluated against spreadsheet data (12+ operators)
 - **Content rules** — plain English for manual review or AI evaluation
 - **In-app rubric editor** — edit rubric files directly (Preferences → Rubrics > Edit)
@@ -354,12 +356,12 @@ Where the current site's content ends up in the new sitemap, as a flow diagram �
 The audit bar is structured as a **vertical flow of labeled cluster cards**. Each cluster has a colored uppercase pill on its left edge identifying the activity, and the pill is clickable to collapse the cluster to a summary line. Cluster visibility persists per-user.
 
 **Cluster: DECIDE (blue)** — the core call + per-row actions
-- **KKE buttons** — Keep, Kill, Evolve, Consolidate, Exclude (plus custom states). The Consolidate button opens a target picker.
-- **Suggested_KKE badge** — read-only, color-coded, shows the unified GA + Rubric recommendation with source prefix (e.g., `GA: Kill`). ⚠ when sources disagree. Click for the source breakdown popover.
+- **MRA buttons** — Migrate, Revise, Archive, Consolidate, Exclude (plus custom states). The Consolidate button opens a target picker.
+- **Suggested_MRA badge** — read-only, color-coded, shows the unified GA + Rubric recommendation with source prefix (e.g., `GA: Archive`). ⚠ when sources disagree. Click for the source breakdown popover.
 - **Assess** — runs the rubric against the current row
 - **Notes** — popover for per-page rationale (red dot when notes exist)
 - **Sitemap** — assigns the page to a sitemap node. When a sitemap assignment exists, a green pill shows the leaf label with a small **×** to clear (confirmation modal lets you optionally delete the now-empty node).
-- **SME readout + Final KKE** — when **Show SME fields** is on, SME Decision shows as a read-only display (set via SME → Import) and Final KKE is a dropdown. Final collapses to a green ✓ chip when it matches the KKE call.
+- **SME readout + Final MRA** — when **Show SME fields** is on, SME Decision shows as a read-only display (set via SME → Import) and Final MRA is a dropdown. Final collapses to a green ✓ chip when it matches the MRA call.
 
 *(Tree and Redirects buttons that used to live here are now in the persistent view switcher at the top of the window.)*
 
@@ -373,7 +375,7 @@ The audit bar is structured as a **vertical flow of labeled cluster cards**. Eac
 
 **Cluster: MIGRATE (amber, toggleable)** — delivery classification
 - **Nature** — Page / Content Object (Record) / Fragment / Generated
-- **Track** — Scripted / Migrate Records / Configure / Manual Rebuild / Merge / Kill/Redirect, with a ghost suggestion derived from KKE + Content_Nature
+- **Track** — Scripted / Migrate Records / Configure / Manual Rebuild / Merge / Archive/Redirect, with a ghost suggestion derived from MRA + Content_Nature
 
 **Cluster: CMS (green)** — admin links into both CMSes
 - **Source CMS** and **New CMS** URL fields with one-click open-in-browser
@@ -396,31 +398,31 @@ A system for cataloging the UI design patterns present on each page, helping ens
 
 **Reports → Component Inventory…:**
 - Summary stats: pages audited, distinct patterns found, one-off pattern count
-- Full inventory table: pattern name, category, complexity, page count, KKE breakdown per pattern
+- Full inventory table: pattern name, category, complexity, page count, MRA breakdown per pattern
 - **One-off patterns** (≤ 2 pages) are flagged — potential custom one-off builds or content to cut
 - **Top co-occurring pattern pairs** — shows which patterns always appear together, revealing natural page templates
 
 ### Consolidate (Content Merging)
-- **Consolidate** is a fifth KKE state alongside Keep / Kill / Evolve / Exclude — for pages whose content should be merged into another page in the inventory rather than killed outright
-- Why it exists: most audits include a lot of "near-duplicate" pages (multiple landing pages on the same topic, overlapping FAQs, blog posts that should be one comprehensive guide). Kill discards their value; Evolve leaves cannibalization in place; Consolidate is the merge
+- **Consolidate** is a fifth decision state alongside Migrate / Revise / Archive / Exclude — for pages whose content should be merged into another page in the inventory rather than archived outright
+- Why it exists: most audits include a lot of "near-duplicate" pages (multiple landing pages on the same topic, overlapping FAQs, blog posts that should be one comprehensive guide). Archive discards their value; Revise leaves cannibalization in place; Consolidate is the merge
 - **Consolidate target picker** — virtual-scrolled, filterable, sortable list of every page in the inventory; pinned source URL + SME Notes hint at the top; current target shown in an indigo callout when reassigning, with a **"Go to page →"** link that jumps straight to the target row
-- **Duplicate-destination guard** — marking a page Keep/Evolve (or assigning its sitemap node) when another Keep/Evolve page already shares that destination triggers a **"Did you mean to Consolidate?"** prompt naming the other page, with a one-click **Consolidate into it**. Catches accidental duplicate placements as they happen, not just when the Consolidation Candidates workflow is later run
+- **Duplicate-destination guard** — marking a page Migrate/Revise (or assigning its sitemap node) when another Migrate/Revise page already shares that destination triggers a **"Did you mean to Consolidate?"** prompt naming the other page, with a one-click **Consolidate into it**. Catches accidental duplicate placements as they happen, not just when the Consolidation Candidates workflow is later run
 - **`Consolidate_Into` column** — stores the destination using the target page's **Computed Path** (new site URL) when one is available, falling back to the inventory URL. The value updates automatically when the target page gains a sitemap assignment.
-- **Dead target warning** — an amber dot appears on the Consolidate button when the consolidation target has been set to Kill or Exclude (a misconfiguration that needs attention)
-- **"Consolidate → Kill/Exclude target" sidebar filter** — surfaces all pages whose consolidation target has been killed or excluded, so you can resolve the entire set at once
+- **Dead target warning** — an amber dot appears on the Consolidate button when the consolidation target has been set to Archive or Exclude (a misconfiguration that needs attention)
+- **"Consolidate → Archive/Exclude target" sidebar filter** — surfaces all pages whose consolidation target has been archived or excluded, so you can resolve the entire set at once
 - **Pre-save sweep** — before writing the file, any stale `Consolidate_Into` values (inventory URLs that now have a computed path) are resolved to the new computed URL automatically
 - **"Shared sitemap node (2+ pages)" sidebar filter** — surfaces all pages where the Sitemap_ID is shared with one or more other pages, so you can find consolidation candidates in the sidebar
-- **Consolidation Candidates workflow** — Sitemap Editor toolbar button opens a bulk-resolve modal: every multi-page sitemap node listed with its pages, pick a target with a radio button, Apply sets the target to Evolve and the others to Consolidate pointing to the target. Skip defers groups; counter tracks progress. Filter bar above the list lets you exclude rows by KKE state (chip checkboxes for every value present in row data, including typos) or by Group (multi-select, useful for de-scoping a section like "Post Launch")
-- **"Consolidate (no target)" filter** — surfaces rows where KKE or Final_KKE is Consolidate but `Consolidate_Into` is empty (typically after an SME import where the target wasn't specified). The live count also shows as a **"⚠ N Consolidate: no target"** chip in the sidebar toolbar, appearing only when there are any — click it to filter to exactly those. A Consolidate with no target is the one KKE value that isn't a finished decision: it says the page goes away without saying where its content and its redirect go.
+- **Consolidation Candidates workflow** — Sitemap Editor toolbar button opens a bulk-resolve modal: every multi-page sitemap node listed with its pages, pick a target with a radio button, Apply sets the target to Revise and the others to Consolidate pointing to the target. Skip defers groups; counter tracks progress. Filter bar above the list lets you exclude rows by MRA state (chip checkboxes for every value present in row data, including typos) or by Group (multi-select, useful for de-scoping a section like "Post Launch")
+- **"Consolidate (no target)" filter** — surfaces rows where MRA or Final_MRA is Consolidate but `Consolidate_Into` is empty (typically after an SME import where the target wasn't specified). The live count also shows as a **"⚠ N Consolidate: no target"** chip in the sidebar toolbar, appearing only when there are any — click it to filter to exactly those. A Consolidate with no target is the one MRA value that isn't a finished decision: it says the page goes away without saying where its content and its redirect go.
 - **Self-consolidation and cycles are refused** — a page can't consolidate into itself, or into a page that consolidates back into it. Either is a redirect loop plus content that never lands anywhere. The target picker also excludes candidates by URL, not just by row, so a duplicate Address in the crawl can't be picked as its own target.
-- **The target is nudged to Evolve** — merging another page's content into a page is work, and Evolve is the signal that there's work to do. Picking a target marked **Keep** (which claims the page is unchanged) or **Kill/Exclude** (a destination being removed) asks whether to set it to Evolve. Overridable; the consolidation stands either way
+- **The target is nudged to Revise** — merging another page's content into a page is work, and Revise is the signal that there's work to do. Picking a target marked **Migrate** (which claims the page is unchanged) or **Archive/Exclude** (a destination being removed) asks whether to set it to Revise. Overridable; the consolidation stands either way
 - The picker shows the row's SME Notes as a yellow hint when present, since SMEs often write target URLs there
 
 ### Tag & Group Glossary
 - **File > Edit Glossary…** opens a modal to add descriptions to every tag and group
 - Markdown editor with a thin toolbar (bold, italic, list, link, code) and live preview
 - Entries for tags you've created, groups you've used, and anything in the glossary itself
-- Stored per-file in a hidden `KKE_Glossary` sheet (Type / Name / Notes) so the glossary travels with the audit
+- Stored per-file in a hidden `MRA_Glossary` sheet (Type / Name / Notes) so the glossary travels with the audit
 - Tag chips and the Group select in the audit bar show the glossary note as a hover tooltip
 - **Export for Word…** button in the glossary modal generates a standalone `.html` file (client-branded with your project/client names) that Word opens with formatting preserved. Ready to drop into a content strategy deliverable.
 
@@ -429,11 +431,11 @@ Makes audience prioritization and jobs-to-be-done workshop output a real input t
 
 - **`Audiences`** (multi-value chips) records every audience a page does real work for; **`Primary_Audience`** records who it's mainly for (auto-filled when only one is tagged).
 - **Per-project library** with a **tier** per audience — Primary / Secondary / Tertiary / Not a target — plus a color. Lives on its own visible **`Audiences`** sheet, so the workshop output can be pasted in and kept as a working document. Managed in `Project → Audience Library…`. Paste your workshop output straight in, or seed an opt-in starter list — **Higher education** or **General organization** (all at Secondary; the ranking is yours to set).
-- **A blank cell means *unreviewed*, not "serves nobody."** The reserved *— None (no target audience)* entry is the positive call, and only it argues Kill.
+- **A blank cell means *unreviewed*, not "serves nobody."** The reserved *— None (no target audience)* entry is the positive call, and only it argues Archive.
 - **Bulk tagging** via the Multi-bar (Add / Remove Audience, Set Primary Audience) — the only realistic way to tag a large crawl. Worklist filters: **Needs audience**, **Serves no priority audience**, and **Audience suggested by AI**.
 - **Fill Audiences from Section…** spreads audiences you have already tagged in a section onto that section's untagged pages. Free, no API key, only fills blanks, and reverses with one **Cmd+Z**. A section needs at least 3 tagged pages with an audience on half of them before it may speak for the rest.
 - **Suggest Audiences with AI…** reads each page's title, H1, meta description, URL and section against *your* audience library and proposes who it serves. **It never writes the `Audiences` column** — suggestions land in a review queue grouped by answer, so a few thousand pages collapse into a few dozen judgements. Accept per group, or take them one at a time from the audit bar. Runs on your own Claude API key; Opus 5 / Sonnet 5 / Haiku 4.5.
-- **Feeds Suggested_KKE** as a weighted source, colors the Visual Sitemap and Treemap by Primary Audience, and rides along in the Migration Tracker and SME export.
+- **Feeds Suggested_MRA** as a weighted source, colors the Visual Sitemap and Treemap by Primary Audience, and rides along in the Migration Tracker and SME export.
 - **Reports** — Audience Coverage (with a Risks section) and Audience × Section Matrix.
 
 ### URL Variant Triage
@@ -459,28 +461,28 @@ When an audit merges multiple existing sites — `www.company.com`, `home.anothe
 - **Two consolidation reports** — **Site Consolidation Overview** (what each site contributes: pages, disposition, audiences, overlap, redirect rules required) and **Cross-Site Duplicate Overlap** (pages whose title, H1 and meta description appear on more than one site — the merge worklist).
 - Transmission warns if several sites are in scope and no **Site Domain** is set, since redirect destinations would otherwise be built on whichever domain happens to come first.
 
-### Suggested_KKE (Unified Suggestion Engine)
-The audit bar's suggestion badge surfaces a unified recommendation drawn from multiple sources, prefixed with the winning source name (e.g., `GA: Kill`, `Rubric: Evolve`).
+### Suggested_MRA (Unified Suggestion Engine)
+The audit bar's suggestion badge surfaces a unified recommendation drawn from multiple sources, prefixed with the winning source name (e.g., `GA: Archive`, `Rubric: Revise`).
 
-- **GA source** — generates a Keep/Kill/Evolve recommendation from four GA4 metrics: Sessions, Engagement Rate, Average Session Duration, Views per Session. PERCENTRANK normalization, weighted composite, configurable thresholds.
+- **GA source** — generates a Migrate/Revise/Archive recommendation from four GA4 metrics: Sessions, Engagement Rate, Average Session Duration, Views per Session. PERCENTRANK normalization, weighted composite, configurable thresholds.
 - **Rubric source** — field-rule + LLM assessment (per-row Assess button or batch via `Project → Run Rubric on filtered rows…`).
-- **Audience source** — turns the audience prioritization workshop into a vote: serving a **Primary** audience argues Keep, serving only Tertiary/off-target audiences argues Evolve, and an explicit *— None (no target audience)* argues Kill. Untagged and Secondary-only pages abstain, so an untagged project is unaffected. See [Audience tagging](#audience-tagging).
-- **Suggested_KKE column** stores the winning recommendation; **Suggested_KKE_Sources** is a JSON sidecar with the per-source breakdown.
+- **Audience source** — turns the audience prioritization workshop into a vote: serving a **Primary** audience argues Migrate, serving only Tertiary/off-target audiences argues Revise, and an explicit *— None (no target audience)* argues Archive. Untagged and Secondary-only pages abstain, so an untagged project is unaffected. See [Audience tagging](#audience-tagging).
+- **Suggested_MRA column** stores the winning recommendation; **Suggested_MRA_Sources** is a JSON sidecar with the per-source breakdown.
 - **Disagreement detection** — when sources disagree, the badge gets a dashed amber border with a ⚠ glyph. The popover highlights the disagreement.
-- **One-time migration on file open** — files with legacy `GA_KKE_Recommendation` or `_AssessmentResult` get their values seeded into `Suggested_KKE` so the badge renders right away.
-- **Configuration** — `Project → Project Settings → Suggestions` tab. GA sub-config opens the existing column-mapping / weights / thresholds dialog; source weights tune per-source preference. `Project → Recompute Suggested KKE` reruns the orchestrator.
-- Suggestions never overwrite the human `KKE_Recommendation` — they're a signal, not a decision.
+- **One-time migration on file open** — files with legacy `GA_MRA_Recommendation` or `_AssessmentResult` get their values seeded into `Suggested_MRA` so the badge renders right away.
+- **Configuration** — `Project → Project Settings → Suggestions` tab. GA sub-config opens the existing column-mapping / weights / thresholds dialog; source weights tune per-source preference. `Project → Recompute Suggested MRA` reruns the orchestrator.
+- Suggestions never overwrite the human `MRA_Recommendation` — they're a signal, not a decision.
 
 ### Project Settings
 **Project → Project Settings…** opens a centered, draggable modal with **five tabs**:
 
-1. **Identity** — Client / Project name (shown in progress dashboard and PDFs), Site domain (the single domain the new site lives on — target for redirects + sitemap paths; the field rejects lists of domains, and a malformed saved value is flagged on open), Default redirect destination (fallback for Kill pages without a custom redirect; changing it offers to rewrite matching existing values).
-2. **KKE States** — Custom KKE states (label + color picker). Stored per-project AND globally so new files inherit them. Each row shows usage count and a **Merge…** button to reassign rows from one state to another (used for typo cleanup). Rogue values (KKE values in row data that aren't in your defined states) appear in a separate sub-section with their own Merge buttons.
-3. **Suggestions** — GA Analytics source (button opens the existing GA KKE configuration dialog), Rubric source (button runs batch rubric), per-source weights with **Save & Recompute** action. Last-run stats shown.
+1. **Identity** — Client / Project name (shown in progress dashboard and PDFs), Site domain (the single domain the new site lives on — target for redirects + sitemap paths; the field rejects lists of domains, and a malformed saved value is flagged on open), Default redirect destination (fallback for Archive pages without a custom redirect; changing it offers to rewrite matching existing values).
+2. **Decision states** — Custom decision states (label + color picker). Stored per-project AND globally so new files inherit them. Each row shows usage count and a **Merge…** button to reassign rows from one state to another (used for typo cleanup). Rogue values (MRA values in row data that aren't in your defined states) appear in a separate sub-section with their own Merge buttons.
+3. **Suggestions** — GA Analytics source (button opens the existing GA MRA configuration dialog), Rubric source (button runs batch rubric), per-source weights with **Save & Recompute** action. Last-run stats shown.
 4. **Migration** — **Page Statuses** (color, rename, reorder, delete with cascade-clear across sitemap nodes) and **Assignees** (rename, delete with cascade-clear). Inline-addable from anywhere they're picked.
 5. **Saved Filters** — list of saved filter bundles with Apply / Delete per row.
 
-All settings are stored in the `KKE_Settings` sheet and travel with the file.
+All settings are stored in the `MRA_Settings` sheet and travel with the file.
 
 ### Preferences
 - Open via **Transmission → Preferences…** on macOS (or **File → Preferences…** on Windows/Linux). Shortcut: `Cmd+,` / `Ctrl+,`.
@@ -489,52 +491,52 @@ All settings are stored in the `KKE_Settings` sheet and travel with the file.
 
 ### Redirect Editor
 - Click **Redirects** in the view switcher (or `Cmd+Shift+R`) to open a **full-width** redirect map editor (sidebar is hidden)
-- Shows all Kill pages and pages whose URL changed via sitemap mapping
+- Shows all Archive pages and pages whose URL changed via sitemap mapping
 - The `404` literal in `Redirect_Destination` is treated as a first-class "intentional deindex" — a **404** toggle button next to each row's destination input flips between a destination URL and `404`. Rows marked `404` style as amber-italic and appear in their own section in the Redirect Map Report.
 - Each row displays: status badge, title (clickable — navigates to that row in audit view), current URL, editable destination URL
 - Set per-row destinations manually or pick from the sitemap (600px wide picker, anchored to right edge)
-- **Status filter** — dropdown to filter by KKE status or "URL Changed"
+- **Status filter** — dropdown to filter by MRA status or "URL Changed"
 - **Text search** — filter by URL, title, or destination
 - **Column sorting** — click Status, Title, Current URL, or Destination URL headers (asc/desc/none)
 - **Find/Replace** — toolbar button opens a bar with Find and Replace fields. Find/Replace **filters** the list (shows only matching rows, not just highlights). Exact match checkbox available. Respects status filter and text search. Live match count shown as you type. "Replace All" applies the substitution to all matching destination URLs. Replace value can be blank to clear destinations.
-- **Re-derive from sitemap** — toolbar button re-syncs redirect destinations from current sitemap assignments. Useful after reorganizing the sitemap when many existing destinations are out of date. Kill/Consolidate rows get the sitemap path as their destination; Keep/Evolve rows are updated only if their URL is actually changing; unplaced Kill/Consolidate rows with an app-derived destination (consolidation target or inherited 3xx) are re-resolved too; rows with an explicit `404` destination, and destinations set by hand, are skipped.
+- **Re-derive from sitemap** — toolbar button re-syncs redirect destinations from current sitemap assignments. Useful after reorganizing the sitemap when many existing destinations are out of date. Archive/Consolidate rows get the sitemap path as their destination; Migrate/Revise rows are updated only if their URL is actually changing; unplaced Archive/Consolidate rows with an app-derived destination (consolidation target or inherited 3xx) are re-resolved too; rows with an explicit `404` destination, and destinations set by hand, are skipped.
 - **Scroll to current page** — when opening the redirect editor while viewing a page, the editor scrolls to and briefly highlights that page's row
-- **Redirect destination resolution on save** — before saving, all Kill and URL-changed pages have their `Redirect_Destination` column populated with the resolved value (explicit > sitemap path > default > blank). No more homepage fallback — blank means retired/404.
+- **Redirect destination resolution on save** — before saving, all Archive and URL-changed pages have their `Redirect_Destination` column populated with the resolved value (explicit > sitemap path > default > blank). No more homepage fallback — blank means retired/404.
 - Site domain and default destination are configured in Project Settings (File menu)
 
 ### Reports & Analysis
-- **Redirect Chain Detection** — Reports > Redirect Chain Check scans Kill pages and flags any whose redirect destination is itself a Kill page, catching redirect chains before implementation. Results shown in a dialog.
-- **Redirect Health Check** — Migration > Redirect Health Check finds redirects that no longer agree with the sitemap: pages redirecting to themselves, Keep/Evolve pages carrying a redirect while not on the sitemap at all, and destinations left behind by a tree that has since been rebuilt. Groups them, shows every affected page, and repairs the ones you tick in a single undoable step. Destinations that still resolve to a real node are reported but never changed automatically.
+- **Redirect Chain Detection** — Reports > Redirect Chain Check scans Archive pages and flags any whose redirect destination is itself an Archive page, catching redirect chains before implementation. Results shown in a dialog.
+- **Redirect Health Check** — Migration > Redirect Health Check finds redirects that no longer agree with the sitemap: pages redirecting to themselves, Migrate/Revise pages carrying a redirect while not on the sitemap at all, and destinations left behind by a tree that has since been rebuilt. Groups them, shows every affected page, and repairs the ones you tick in a single undoable step. Destinations that still resolve to a real node are reported but never changed automatically.
 - **Sitemap Coverage Report** — Reports > Sitemap Coverage Report analyzes the sitemap: empty leaf nodes (no pages, no children), hub nodes (children but no direct pages), overloaded nodes (5+ pages), and path mismatches (page URL doesn't match computed sitemap path).
 
 ### Client Reports
 Client-facing reports available from the Reports menu, all exportable as PDF or HTML (Word-compatible):
 
-- **Executive Summary** — total pages, KKE distribution bar, auto-generated key findings, SME review status, breakdown by section
-- **Content Inventory by Section** — per-group breakdown with KKE distribution, sample pages, notes counts
+- **Executive Summary** — total pages, MRA distribution bar, auto-generated key findings, SME review status, breakdown by section
+- **Content Inventory by Section** — per-group breakdown with MRA distribution, sample pages, notes counts
 - **SME Review Status** — overall SME completion, per-Content Owner table (assigned/reviewed/%/approved/changed/unresolved), unresolved conflicts list
-- **Redirect Map Report** — summary (total/kill/URL-changed), redirect chain warnings, full redirect tables grouped by type
+- **Redirect Map Report** — summary (total/archive/URL-changed), redirect chain warnings, full redirect tables grouped by type
 - **Net New Content Brief** — the writer hand-off: section landing pages, new pages with no source content, and placeholders still to write, grouped by writer and section with status, template and writer brief
 - **Migration Checklist** — the migration on one page: readiness, what happens to the pages, redirect totals, pages to write
 - **Build Status** — Page Status by section and by person (builder / writer / migrator), with blocked pages listed
-- **Component Inventory** — summary stats (pages audited, distinct patterns, one-off count), full per-pattern table (category, complexity, page count, KKE breakdown), one-off pattern flags, and top co-occurring pattern pairs
-- **Content Type Crosswalk** — one row per current content type → renders-as → target (new-CMS) content type → target spec → migration track, with page volume, KKE breakdown, and a "no crosswalk" flag for current types lacking a registry entry. For the CMS architect planning the type migration.
+- **Component Inventory** — summary stats (pages audited, distinct patterns, one-off count), full per-pattern table (category, complexity, page count, MRA breakdown), one-off pattern flags, and top co-occurring pattern pairs
+- **Content Type Crosswalk** — one row per current content type → renders-as → target (new-CMS) content type → target spec → migration track, with page volume, MRA breakdown, and a "no crosswalk" flag for current types lacking a registry entry. For the CMS architect planning the type migration.
 - **Migration Direction Brief** — a per-person worklist for the Writer, Builder, or Migrator role, grouped by spec, leading with the type-level reference (writer brief / build guidance / migration mapping) and listing the pages that follow it.
 
 All reports use a shared infrastructure (`buildReportShell()`, `showReport()`, `exportReport()`) and can be exported as PDF or HTML from the progress modal.
 
 ### Export & Import
 - **Export filtered rows** — save the current filtered/sorted view as a new .xlsx file (`Cmd+Shift+E`)
-- **Export audit decisions** — export just the audit columns (KKE, Tags, Notes, Group, etc.) as CSV or JSON
+- **Export audit decisions** — export just the audit columns (MRA, Tags, Notes, Group, etc.) as CSV or JSON
 - **Export redirect map** — generate a CSV of 301 redirects using destinations from the redirect editor
 - **Import/merge** — merge audit decisions from another spreadsheet by URL matching (existing decisions are preserved)
   - **Multi-sheet support** — sheet picker when the import file contains multiple sheets
   - **Multi-column selection** — checkboxes to choose which columns to import, with "exists"/"new" badges indicating whether each column already exists in the current file
   - **Add new URLs** — "Add new URLs not in current file" checkbox (checked by default) adds rows from the import file that don't exist in your spreadsheet, with all available data copied over. Toast reports new rows added count.
-- **Audit templates** — File > Save Audit Template exports the current audit configuration (visible fields, tag library, group library, sidebar columns, custom KKE states, column mapping, auto-advance, project settings) as a `.kke-template.json` file. File > Load Audit Template imports and applies all settings. Useful for teams doing multiple audits with consistent configuration.
-- **Multi-auditor merge** — File > Merge Auditor Decisions opens another auditor's file and merges their KKE recommendations by URL matching. Empty cells are filled automatically. Conflicts (both auditors reviewed the same row differently) open a resolution dialog with per-row dropdowns and "Accept All Theirs" / "Keep All Mine" bulk actions.
+- **Audit templates** — File > Save Audit Template exports the current audit configuration (visible fields, tag library, group library, sidebar columns, custom decision states, column mapping, auto-advance, project settings) as a `.kke-template.json` file. File > Load Audit Template imports and applies all settings. Useful for teams doing multiple audits with consistent configuration.
+- **Multi-auditor merge** — File > Merge Auditor Decisions opens another auditor's file and merges their MRA recommendations by URL matching. Empty cells are filled automatically. Conflicts (both auditors reviewed the same row differently) open a resolution dialog with per-row dropdowns and "Accept All Theirs" / "Keep All Mine" bulk actions.
 - **Bulk SME export by content owner** — the SME Export modal has a "Split into separate files by Content Owner" checkbox. Exports each owner's rows as a separate xlsx file into a chosen folder, each with data validation dropdowns.
-- **Changelog / Audit trail** — KKE, SME Decision, and Final KKE changes are logged automatically. The log is written to a `KKE_ChangeLog` sheet on save (Timestamp, Row, URL, Field, Old Value, New Value). The sheet accumulates entries across sessions and is hidden from the data sheet picker.
+- **Changelog / Audit trail** — MRA, SME Decision, and Final MRA changes are logged automatically. The log is written to an `MRA_ChangeLog` sheet on save (Timestamp, Row, URL, Field, Old Value, New Value). The sheet accumulates entries across sessions and is hidden from the data sheet picker.
 
 ### Appearance (Light / Dark / System)
 - **App Settings** (the ⚙ button, or File → App Settings) has an **Appearance** control at the top — a **System / Light / Dark** segmented toggle. Per-user preference; default **System**, which follows the macOS system appearance.
@@ -542,7 +544,7 @@ All reports use a shared infrastructure (`buildReportShell()`, `showReport()`, `
 - **The embedded browser always renders crawled pages as designed** — the webview is never dark-mode-adapted, regardless of this setting or the OS appearance — so reviewing pages in the app stays faithful to how they actually look.
 
 ### Undo/Redo
-- `Cmd+Z` / `Cmd+Shift+Z` for KKE changes
+- `Cmd+Z` / `Cmd+Shift+Z` for MRA changes
 - 100-action stack per session, cleared on file reload
 
 ---
@@ -611,7 +613,7 @@ The app injects these columns if not already present:
 
 | Column | Purpose |
 |--------|---------|
-| `KKE_Recommendation` | Keep, Kill, Evolve, Exclude, or custom state |
+| `MRA_Recommendation` | Migrate, Revise, Archive, Exclude, or custom state |
 | `Tags` | Comma-separated labels |
 | `Notes` | Free-text rationale |
 | `Group` | Page group assignment |
@@ -619,22 +621,22 @@ The app injects these columns if not already present:
 | `_Flagged` | Row bookmark (1 = flagged) |
 | `_AssessedAt` | ISO timestamp of last assessment |
 | `_AssessmentResult` | Result of last assessment |
-| `Redirect_Destination` | Custom redirect URL for Kill/moved pages |
-| `SME_Decision` | SME review decision: Approve, Change: Keep/Kill/Evolve/Exclude |
+| `Redirect_Destination` | Custom redirect URL for Archive/moved pages |
+| `SME_Decision` | SME review decision: Approve, Change: Migrate/Revise/Archive/Exclude |
 | `SME_Notes` | Free-text SME commentary |
 | `Content_Owner` | Assigned content owner (free text) |
-| `Final_KKE` | Resolved final decision (same values as KKE_Recommendation, includes Consolidate) |
-| `Consolidate_Into` | Target page URL when KKE is Consolidate (the page absorbing this one's content) |
+| `Final_MRA` | Resolved final decision (same values as MRA_Recommendation, includes Consolidate) |
+| `Consolidate_Into` | Target page URL when MRA is Consolidate (the page absorbing this one's content) |
 | `Published_Status` | Published / Unpublished / Draft / 404 — for CMS-export workflows where unpublished pages need to be flagged in bulk |
 | `Page_Type` | **Content Type** (UI label) — broad page categorization (Landing page, PDP, Article, etc.); picks from a global library you can extend. Stored header name stays `Page_Type` for backward compatibility |
 | `Content_Theme` | Single-select site-specific theme — picks from a per-project library |
-| `GA_KKE_Recommendation` | Analytics-derived Keep/Kill/Evolve (populated by GA KKE feature) |
-| `GA_Score` | Composite 0–1 score backing `GA_KKE_Recommendation` |
+| `GA_MRA_Recommendation` | Analytics-derived Migrate/Revise/Archive (populated by GA MRA feature) |
+| `GA_Score` | Composite 0–1 score backing `GA_MRA_Recommendation` |
 | `Content_Nature` | **Renders as** (UI label): Page / Content Object (= "Record (own page)") / Fragment / Generated — how the row surfaces in the new CMS |
-| `Migration_Track` | Scripted / Migrate Records / Configure / Manual Rebuild / Merge / Kill/Redirect |
+| `Migration_Track` | Scripted / Migrate Records / Configure / Manual Rebuild / Merge / Archive/Redirect |
 | `Target_Content_Type` | The new-CMS content type this page maps to; auto-filled (blanks only) from the Content Type Registry crosswalk, overridable per row |
-| `Suggested_KKE` | Computed unified suggestion (GA + Rubric; folded in from standalone rubric) |
-| `Suggested_KKE_Sources` | JSON sidecar holding per-source breakdown for the suggestion badge |
+| `Suggested_MRA` | Computed unified suggestion (GA + Rubric; folded in from standalone rubric) |
+| `Suggested_MRA_Sources` | JSON sidecar holding per-source breakdown for the suggestion badge |
 | `Source_CMS_URL` | Admin/edit URL in the source CMS — populated manually; future phase auto-fills from CMS exports |
 | `New_CMS_URL` | Admin/edit URL in the new CMS — populated manually; future phase auto-fills from migration results |
 | `Design_Patterns` | Comma-separated design pattern names tagged on the page (populated via the PATTERNS audit bar cluster) |
@@ -648,24 +650,24 @@ Column names are auto-detected from common variations. You can override the mapp
 | Sheet | Purpose |
 |-------|---------|
 | `Sitemap` | Sitemap nodes (legacy name: `NavStructure`, still auto-detected and upgraded on open) |
-| `KKE_Settings` | Project-level key/value store (includes `gaKkeConfig` as JSON) |
-| `KKE_ChangeLog` | Audit trail of KKE / SME / Final KKE changes |
-| `KKE_Glossary` | Tag & group descriptions (Type / Name / Notes, markdown) |
+| `MRA_Settings` | Project-level key/value store (includes `gaKkeConfig` as JSON) |
+| `MRA_ChangeLog` | Audit trail of MRA / SME / Final MRA changes |
+| `MRA_Glossary` | Tag & group descriptions (Type / Name / Notes, markdown) |
 | `ContentTypeRegistry` | The current→target **crosswalk**: per current content type → default `Content_Nature` (renders-as), `Target_Content_Type`, `Target_Spec`, `Migration_Track`, and notes. Curated defaults seeded opt-in. Edit via Project → Content Type Registry… |
 | `PatternLibrary` | **Target Spec Library** (UI label): per-project specs each target content type is built from. Per spec: `Kind` (Page Template / Content Model), Description, Build Guidance default, Writer Brief default, **Migration Mapping default**, Default Migration Track, **Fields** (schema, for Content Models), Notes. 12 curated defaults seeded opt-in. Edit via Project → Target Spec Library… |
 | `DesignPatternLibrary` | Per-project design pattern catalog (Name, Category, Complexity, Description, Design System URL, Aliases, Notes). 57 curated defaults seeded opt-in. Edit via Project → Component Library… |
 
-### Project Settings (KKE_Settings Sheet)
+### Project Settings (MRA_Settings Sheet)
 
-The app stores project-level settings in a `KKE_Settings` sheet (key/value pairs). This sheet travels with the file, so settings are shared with anyone who opens it. Currently stores:
+The app stores project-level settings in an `MRA_Settings` sheet (key/value pairs). This sheet travels with the file, so settings are shared with anyone who opens it. Currently stores:
 
 | Key | Purpose |
 |-----|---------|
 | `clientName` | Client name (shown in progress dashboard and PDF export) |
 | `projectName` | Project name (shown in progress dashboard and PDF export) |
 | `siteDomain` | Target domain for redirect URLs and sitemap paths |
-| `defaultRedirectUrl` | Default redirect destination for Kill pages |
-| `customKkeStates` | Custom KKE statuses with labels and colors (JSON) |
+| `defaultRedirectUrl` | Default redirect destination for Archive pages |
+| `customKkeStates` | Custom MRA statuses with labels and colors (JSON) |
 
 ### Sitemap Columns
 
@@ -705,10 +707,10 @@ first time they're opened — see `renameLegacyNavColumns()` in `main.js`.
 
 ## Rubric Format
 
-Each KKE status has a `.md` file in the rubrics folder:
+Each MRA status has a `.md` file in the rubrics folder:
 
 ```markdown
-# Keep
+# Migrate
 
 ## Field Rules
 - Status Code is 200
@@ -757,7 +759,7 @@ kke-audit-tool/
 
 Per-user preferences stored in `~/Library/Application Support/Transmission/prefs.json` (macOS) or the platform equivalent on Windows/Linux:
 
-- **Auto-advance** — move to next row after assigning KKE status
+- **Auto-advance** — move to next row after assigning MRA status
 - **Show SME fields** / **Show Migration fields** — visibility of those audit-bar clusters
 - **hideBlankMetadata** — ⊘/◉ toggle state for the metadata row
 - **collapsedClusters** — per-cluster collapse state

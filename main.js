@@ -4,6 +4,7 @@ const fs = require('fs');
 const XLSX = require('xlsx');
 const ExcelJS = require('exceljs');
 const { ProjectStore, PROJECT_EXT } = require('./project-store');
+const Terminology = require('./src/terminology.js');
 const miro = require('./miro');
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -13,6 +14,10 @@ let helpWindow = null;
 let changelogWindow = null;
 let currentFilePath = null;
 let currentSheetName = null;
+// Column map of the open file (computeColumnMap result). The save paths need it
+// to know which columns carry decision values when converting to the user's
+// preferred vocabulary — a decision column can be mapped to any header name.
+let currentColumnMap = null;
 let navSheetInfo = null;  // { sheetName }
 
 // SQLite persistence for .transmission project files. Open whenever the current
@@ -66,7 +71,7 @@ const DOCS_SITE_URL = 'https://factus10.github.io/transmission-updates/docs/';
 const NAV_COLUMNS   = ['Sitemap_ID', 'Sitemap_Destination', 'Computed Path', 'Sitemap_SortID'];
 
 // Candidate names for auto-detecting audit columns (first match wins, case-insensitive)
-const KKE_CANDIDATES  = ['KKE_Recommendation', 'KKE Rec', 'KKE Recommendation', 'KKE', 'Recommendation'];
+const KKE_CANDIDATES  = ['MRA_Recommendation', 'MRA Recommendation', 'MRA', 'KKE_Recommendation', 'KKE Rec', 'KKE Recommendation', 'KKE', 'Recommendation'];
 const TAGS_CANDIDATES = ['Tags', 'KKE Tags', 'Audit Tags'];
 const NOTES_CANDIDATES = ['Notes', 'Notes/Rationale', 'Rationale', 'Audit Notes'];
 const GROUP_CANDIDATES = ['Group', 'Audit Group', 'Page Group'];
@@ -74,7 +79,7 @@ const PRIMARY_TAG_CANDIDATES = ['Primary Tag', 'Primary_Tag', 'Main Tag'];
 const SME_DECISION_CANDIDATES = ['SME_Decision', 'SME Decision', 'SME Rec'];
 const SME_NOTES_CANDIDATES = ['SME_Notes', 'SME Notes'];
 const CONTENT_OWNER_CANDIDATES = ['Content_Owner', 'Content Owner', 'Owner', 'SME'];
-const FINAL_KKE_CANDIDATES = ['Final_KKE', 'Final KKE', 'Final Recommendation'];
+const FINAL_KKE_CANDIDATES = ['Final_MRA', 'Final MRA', 'Final_KKE', 'Final KKE', 'Final Recommendation'];
 
 function detectAuditCol(headers, candidates) {
   const lower = headers.map(h => h.toLowerCase().trim());
@@ -94,7 +99,7 @@ function detectAuditCol(headers, candidates) {
 function computeColumnMap(headers, filePath, projectMap) {
   const prefs = loadPrefs();
   const fileName = path.basename(filePath);
-  const savedMap = prefs.columnMappings?.[fileName] || null;
+  const savedMap = Terminology.convertColumnMap(prefs.columnMappings?.[fileName] || null, 'mra');
   const honor = (map, key) => {
     const v = map?.[key];
     return v && headers.includes(v) ? v : null;
@@ -102,7 +107,7 @@ function computeColumnMap(headers, filePath, projectMap) {
   const honorSaved = (key) => honor(projectMap, key) || honor(savedMap, key);
 
   return {
-    kke:   honorSaved('kke')   || detectAuditCol(headers, KKE_CANDIDATES)  || 'KKE_Recommendation',
+    kke:   honorSaved('kke')   || detectAuditCol(headers, KKE_CANDIDATES)  || 'MRA_Recommendation',
     tags:  honorSaved('tags')  || detectAuditCol(headers, TAGS_CANDIDATES) || 'Tags',
     notes: honorSaved('notes') || detectAuditCol(headers, NOTES_CANDIDATES) || 'Notes',
     group:        honorSaved('group')        || detectAuditCol(headers, GROUP_CANDIDATES)          || 'Group',
@@ -110,7 +115,7 @@ function computeColumnMap(headers, filePath, projectMap) {
     smeDecision:  honorSaved('smeDecision')  || detectAuditCol(headers, SME_DECISION_CANDIDATES)  || 'SME_Decision',
     smeNotes:     honorSaved('smeNotes')     || detectAuditCol(headers, SME_NOTES_CANDIDATES)     || 'SME_Notes',
     contentOwner: honorSaved('contentOwner') || detectAuditCol(headers, CONTENT_OWNER_CANDIDATES) || 'Content_Owner',
-    finalKke:     honorSaved('finalKke')     || detectAuditCol(headers, FINAL_KKE_CANDIDATES)     || 'Final_KKE'
+    finalKke:     honorSaved('finalKke')     || detectAuditCol(headers, FINAL_KKE_CANDIDATES)     || 'Final_MRA'
   };
 }
 
@@ -125,7 +130,7 @@ function injectAndOrderAuditColumns(headers, rows, columnMap) {
                      '_Flagged', '_AssessedAt', '_AssessmentResult', 'Redirect_Destination', 'Consolidate_Into',
                      'Published_Status', 'Page_Type', 'Content_Theme',
                      // Phase 1: classification + delivery + suggestion + CMS links
-                     'Content_Nature', 'Migration_Track', 'Suggested_KKE', 'Suggested_KKE_Sources',
+                     'Content_Nature', 'Migration_Track', 'Suggested_MRA', 'Suggested_MRA_Sources',
                      'Source_CMS_URL', 'New_CMS_URL',
                      // Content-type crosswalk: target (new-CMS) content type, auto-mapped from Page_Type
                      'Target_Content_Type',
@@ -196,6 +201,92 @@ function renameLegacyNavColumns(headers, rows) {
       delete r[oldName];
     });
   });
+}
+
+// ─── Decision vocabulary (src/terminology.js) ────────────────────────────────
+// Everything inside the app is MRA (Migrate / Revise / Archive), and every file
+// is written in MRA. Keep / Evolve / Kill (the vocabulary before the rename) is
+// only ever READ: files, worksheets, templates and merges in the old words are
+// converted on the way in, permanently, so work started before the rename keeps
+// importing correctly. The one deliberate exception is the SME export's
+// per-worksheet "legacy wording" option, for clients still mid-project.
+
+// Read side: headers + row keys + decision cells → MRA, in place. Runs twice
+// around computeColumnMap: once with no map (renames the standard headers so the
+// map resolves to MRA names), then with the map so a decision column mapped to
+// a custom header ('Recommendation') gets its values converted too.
+function normalizeTableToMra(headers, rows, columnMap) {
+  Terminology.convertTableInPlace(headers, rows, 'mra', columnMap || null);
+}
+
+// Write side: a COPY of the save payload guaranteed MRA. The renderer only holds
+// MRA, so this is normally a no-op; it matters for history carried in from an
+// older file (Save As Project's source change log), which may be in the old words.
+function payloadAsMra({ headers, rows, projectSettings, changeLog }) {
+  const cm = currentColumnMap || (projectSettings && projectSettings.columnMap) || null;
+  const t = Terminology.convertTable(headers || [], rows || [], 'mra', cm);
+  let ps = projectSettings;
+  if (ps && ps.columnMap) ps = { ...ps, columnMap: Terminology.convertColumnMap(ps.columnMap, 'mra') };
+  return { headers: t.headers, rows: t.rows, projectSettings: ps, changeLog: Terminology.convertChangeLog(changeLog, 'mra') };
+}
+
+// Column references stored OUTSIDE a file (user prefs, audit templates) may
+// name pre-rename headers ('Final_KKE'). Strings, and objects carrying the name
+// under name/key/field, are translated; anything else passes through.
+function headerRefsToMra(list) {
+  if (!Array.isArray(list)) return list;
+  return list.map(x => {
+    if (typeof x === 'string') return Terminology.header(x, 'mra');
+    if (x && typeof x === 'object') {
+      const o = { ...x };
+      ['name', 'key', 'field', 'column'].forEach(k => { if (typeof o[k] === 'string') o[k] = Terminology.header(o[k], 'mra'); });
+      return o;
+    }
+    return x;
+  });
+}
+
+/**
+ * A worksheet coming back in (SME import, Import/Merge, Merge Auditor) → MRA,
+ * in place, using the same two-pass conversion as opening a file. Returns how
+ * much was translated so the caller can say so: a client's decisions being
+ * rewritten is something the auditor should see happen, not discover.
+ */
+function translateIncomingTable(headers, rows) {
+  const before = { headers: headers.slice(), rows: rows.map(r => ({ ...r })) };
+  normalizeTableToMra(headers, rows, null);
+  const cm = computeColumnMap(headers, currentFilePath || '', null);
+  normalizeTableToMra(headers, rows, cm);
+  const renamedHeaders = before.headers.filter((h, i) => headers[i] !== h);
+  let cells = 0;
+  rows.forEach((r, i) => {
+    before.headers.forEach((h, j) => {
+      const was = before.rows[i][h];
+      const now = r[headers[j]];
+      if (String(was ?? '') !== String(now ?? '')) cells++;
+    });
+  });
+  return { renamedHeaders, cells, legacy: renamedHeaders.length > 0 || cells > 0 };
+}
+
+// Find a structural sheet by its canonical name, under either vocabulary's spelling.
+function findStructuralSheet(sheetNames, canonicalName) {
+  const aliases = Terminology.sheetAliases(canonicalName);
+  return sheetNames.find(s => aliases.includes(s.toLowerCase()));
+}
+
+// Rename a sheet in place, keeping its position. No-op if `from` is missing or
+// already named `to`; if `to` already exists too, the `from` copy is dropped.
+function renameWorkbookSheet(workbook, from, to) {
+  if (!from || from === to || !workbook.Sheets[from]) return;
+  const idx = workbook.SheetNames.indexOf(from);
+  if (workbook.Sheets[to]) {
+    workbook.SheetNames.splice(idx, 1);
+  } else {
+    workbook.SheetNames[idx] = to;
+    workbook.Sheets[to] = workbook.Sheets[from];
+  }
+  delete workbook.Sheets[from];
 }
 
 // ─── Preferences ─────────────────────────────────────────────────────────────
@@ -462,8 +553,8 @@ function buildMenu() {
         { label: 'AI Suggest for Unreviewed…',   click: send('menu-suggest-unreviewed') },
         { label: 'Rubrics…',                     click: send('menu-rubrics') },
         { label: 'Run Rubric on filtered rows…', click: send('menu-rubric-batch') },
-        { label: 'Refresh GA KKE',               click: send('menu-ga-kke-refresh') },
-        { label: 'Recompute Suggested KKE',      click: send('menu-suggested-kke-recompute') }
+        { label: 'Refresh GA MRA',                 click: send('menu-ga-kke-refresh') },
+        { label: 'Recompute Suggested MRA',        click: send('menu-suggested-kke-recompute') }
       ]
     },
 
@@ -516,7 +607,7 @@ function buildMenu() {
         { label: 'Export for SME Review…',  click: send('menu-sme-export') },
         { label: 'Import SME Decisions…',   click: send('menu-sme-import') },
         { type: 'separator' },
-        { label: 'Compare KKE vs SME…',     click: send('menu-kke-vs-sme') },
+        { label: 'Compare MRA vs SME…',       click: send('menu-kke-vs-sme') },
         { label: 'Resolve Conflicts…',      click: send('menu-sme-resolve') },
         { label: 'Review Consolidations…',  click: send('menu-consolidate-review') }
       ]
@@ -569,7 +660,7 @@ function readWorkbook(filePath, targetSheet) {
     // Structural sheets (not selectable as data sheets). 'navstructure' is the
     // legacy name for the sitemap-tree sheet (now written as 'Sitemap') — kept
     // here so older files still hide it from the data-sheet picker pre-migration.
-    const structuralNames = new Set(['navstructure', 'sitemap', 'kke_settings', 'kke_changelog', 'kke_glossary', 'contenttyperegistry', 'patternlibrary', 'designpatternlibrary', 'audiences', 'sites', 'jobs']);
+    const structuralNames = new Set(['navstructure', 'sitemap', 'kke_settings', 'kke_changelog', 'kke_glossary', 'mra_settings', 'mra_changelog', 'mra_glossary', 'contenttyperegistry', 'patternlibrary', 'designpatternlibrary', 'audiences', 'sites', 'jobs']);
     const dataSheets = allSheetNames.filter(s => !structuralNames.has(s.toLowerCase()));
 
     // Pick which sheet to load
@@ -644,17 +735,17 @@ function readWorkbook(filePath, targetSheet) {
       console.warn('Dedup applied:', dedupReport);
     }
 
-    // Early peek at KKE_Settings for a file-level column mapping (the full
-    // settings parse happens further down; this small sheet is cheap to read twice)
+    // Early peek at MRA_Settings (KKE_Settings in older files) for a file-level
+    // column mapping (the full settings parse happens further down; this small
+    // sheet is cheap to read twice)
     let projectColumnMap = null;
-    const earlySettingsSheet = allSheetNames.find(s => s.toLowerCase() === 'kke_settings');
+    const earlySettingsSheet = findStructuralSheet(allSheetNames, 'MRA_Settings');
     if (earlySettingsSheet) {
       try {
         const early = parseSettingsSheet(workbook.Sheets[earlySettingsSheet]);
-        if (early.columnMap && typeof early.columnMap === 'object') projectColumnMap = early.columnMap;
+        if (early.columnMap && typeof early.columnMap === 'object') projectColumnMap = Terminology.convertColumnMap(early.columnMap, 'mra');
       } catch (e) { /* fall back to prefs/auto-detect */ }
     }
-    const columnMap = computeColumnMap(headers, filePath, projectColumnMap);
 
     // Build row objects keyed by original header positions BEFORE reordering
     const origHeaders = [...headers];
@@ -663,6 +754,11 @@ function readWorkbook(filePath, targetSheet) {
       origHeaders.forEach((h, j) => { obj[h] = row[j] ?? ''; });
       return obj;
     });
+
+    normalizeTableToMra(headers, rows, null);
+    const columnMap = computeColumnMap(headers, filePath, projectColumnMap);
+    normalizeTableToMra(headers, rows, columnMap);
+    currentColumnMap = columnMap;
 
     renameLegacyNavColumns(headers, rows);
     injectAndOrderAuditColumns(headers, rows, columnMap);
@@ -685,15 +781,15 @@ function readWorkbook(filePath, targetSheet) {
       navSheetInfo = null;
     }
 
-    // Check for KKE_Settings sheet (project-level key/value store)
+    // Check for MRA_Settings sheet (project-level key/value store; KKE_Settings in older files)
     let projectSettings = {};
-    const settingsSheetName = allSheetNames.find(s => s.toLowerCase() === 'kke_settings');
+    const settingsSheetName = findStructuralSheet(allSheetNames, 'MRA_Settings');
     if (settingsSheetName) {
-      projectSettings = parseSettingsSheet(workbook.Sheets[settingsSheetName]);
+      projectSettings = Terminology.convertSettings(parseSettingsSheet(workbook.Sheets[settingsSheetName]), 'mra');
     }
 
-    // Check for KKE_Glossary sheet (tag + group notes)
-    const glossarySheetName = allSheetNames.find(s => s.toLowerCase() === 'kke_glossary');
+    // Check for MRA_Glossary sheet (tag + group notes; KKE_Glossary in older files)
+    const glossarySheetName = findStructuralSheet(allSheetNames, 'MRA_Glossary');
     if (glossarySheetName) {
       projectSettings.glossary = parseGlossarySheet(workbook.Sheets[glossarySheetName]);
     }
@@ -786,7 +882,10 @@ function navTreeFromFlatNodes(flatNodes) {
 function readProject(filePath) {
   try {
     projectStore.open(filePath);
-    const { headers, rows, navNodes, projectSettings, sheetName, parseErrors } = projectStore.readAll();
+    const raw = projectStore.readAll();
+    const { headers, rows, navNodes, sheetName, parseErrors } = raw;
+    // A project saved under the KKE preference stores KKE columns/values/settings.
+    const projectSettings = Terminology.convertSettings(raw.projectSettings || {}, 'mra');
 
     if (headers.length === 0) {
       throw new Error('Project file contains no data.');
@@ -810,8 +909,11 @@ function readProject(filePath) {
     // Same post-processing as the xlsx path: column mapping (honoring the
     // project's own saved mapping, then per-user overrides) + injection of any
     // audit columns added since the project was last saved.
+    normalizeTableToMra(headers, rows, null);
     const columnMap = computeColumnMap(headers, filePath,
       (projectSettings.columnMap && typeof projectSettings.columnMap === 'object') ? projectSettings.columnMap : null);
+    normalizeTableToMra(headers, rows, columnMap);
+    currentColumnMap = columnMap;
     renameLegacyNavColumns(headers, rows);
     injectAndOrderAuditColumns(headers, rows, columnMap);
     rows.forEach((r, i) => { r._rowIndex = i + 1; });
@@ -985,7 +1087,7 @@ function clampCell(v) {
 function writeSettingsSheet(workbook, settings) {
   if (!settings || Object.keys(settings).length === 0) return [];
   // These each live in their own structural sheet — never duplicate them into the
-  // KKE_Settings key/value cells. Their JSON copy can exceed Excel's 32767-char
+  // MRA_Settings key/value cells. Their JSON copy can exceed Excel's 32767-char
   // per-cell limit, which makes the whole workbook write throw and aborts the save.
   const {
     glossary: _glossary,
@@ -1012,14 +1114,14 @@ function writeSettingsSheet(workbook, settings) {
     // into the shape callers expect — dropping it is the least-bad option, but
     // the caller must tell the user, not just log it.
     if (typeof serialized === 'string' && serialized.length > MAX_CELL) {
-      console.warn(`[KKE] Settings "${key}" is ${serialized.length} chars — exceeds the ${MAX_CELL}-char cell limit; skipping it so the save can complete.`);
+      console.warn(`[settings] Settings "${key}" is ${serialized.length} chars — exceeds the ${MAX_CELL}-char cell limit; skipping it so the save can complete.`);
       dropped.push(key);
       continue;
     }
     aoa.push([key, serialized]);
   }
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  const sheetName = 'KKE_Settings';
+  const sheetName = 'MRA_Settings';
   if (workbook.SheetNames.includes(sheetName)) {
     workbook.Sheets[sheetName] = ws;
   } else {
@@ -1036,18 +1138,18 @@ const DEFAULT_CONTENT_TYPE_REGISTRY = [
   // Page-shaped content (typically Scripted)
   { contentType: 'Landing Page',         defaultContentNature: 'Page',           defaultMigrationTrack: 'Scripted',         notes: 'Authored marketing or campaign page; usually has a body, hero, CTAs.' },
   { contentType: 'About / Static Page',  defaultContentNature: 'Page',           defaultMigrationTrack: 'Scripted',         notes: 'Hand-authored informational page that doesn\'t change often.' },
-  { contentType: 'Program / Degree',     defaultContentNature: 'Page',           defaultMigrationTrack: 'Scripted',         notes: 'Program or degree page; rich landing-style layout. Standard review per KKE rubric.' },
-  { contentType: 'Department',           defaultContentNature: 'Page',           defaultMigrationTrack: 'Scripted',         notes: 'Department page. Standard review per KKE rubric.' },
-  { contentType: 'Center / Institute',   defaultContentNature: 'Page',           defaultMigrationTrack: 'Scripted',         notes: 'Research center or institute page. Standard review per KKE rubric.' },
+  { contentType: 'Program / Degree',     defaultContentNature: 'Page',           defaultMigrationTrack: 'Scripted',         notes: 'Program or degree page; rich landing-style layout. Standard review per the rubric.' },
+  { contentType: 'Department',           defaultContentNature: 'Page',           defaultMigrationTrack: 'Scripted',         notes: 'Department page. Standard review per the rubric.' },
+  { contentType: 'Center / Institute',   defaultContentNature: 'Page',           defaultMigrationTrack: 'Scripted',         notes: 'Research center or institute page. Standard review per the rubric.' },
   { contentType: 'Homepage',             defaultContentNature: 'Page',           defaultMigrationTrack: 'Manual Rebuild',   notes: 'Top-of-site homepage; almost always unique enough to rebuild by hand.' },
   { contentType: 'Form Page',            defaultContentNature: 'Page',           defaultMigrationTrack: 'Manual Rebuild',   notes: 'Forms rarely script-migrate cleanly; rebuild in the new CMS\'s form tool.' },
-  { contentType: 'PDF',                  defaultContentNature: 'Page',           defaultMigrationTrack: 'Manual Rebuild',   notes: 'PDFs that should become web pages. If retiring the PDF, KKE = Kill instead.' },
+  { contentType: 'PDF',                  defaultContentNature: 'Page',           defaultMigrationTrack: 'Manual Rebuild',   notes: 'PDFs that should become web pages. If retiring the PDF, Archive instead.' },
   // Content objects (typically Migrate Records)
   { contentType: 'Article',              defaultContentNature: 'Content Object', defaultMigrationTrack: 'Migrate Records',     notes: 'Editorial article or post. Maps to an article content type in the new CMS.' },
   { contentType: 'Blog Post',            defaultContentNature: 'Content Object', defaultMigrationTrack: 'Migrate Records',     notes: 'Blog/news entry. Maps to a content-type entry in the new CMS.' },
   { contentType: 'News',                 defaultContentNature: 'Content Object', defaultMigrationTrack: 'Migrate Records',     notes: 'News post. Subject to the project\'s news-age cutoff.' },
   { contentType: 'Press Release',        defaultContentNature: 'Content Object', defaultMigrationTrack: 'Migrate Records',     notes: 'Press release record.' },
-  { contentType: 'Event',                defaultContentNature: 'Content Object', defaultMigrationTrack: 'Migrate Records',     notes: 'Event listing. Past events may KKE = Kill per the framework.' },
+  { contentType: 'Event',                defaultContentNature: 'Content Object', defaultMigrationTrack: 'Migrate Records',     notes: 'Event listing. Past events may be Archived per the framework.' },
   { contentType: 'Faculty Profile',      defaultContentNature: 'Content Object', defaultMigrationTrack: 'Migrate Records',     notes: 'Faculty/staff bio. Maps to a person content type.' },
   { contentType: 'Alumni Spotlight',     defaultContentNature: 'Content Object', defaultMigrationTrack: 'Migrate Records',     notes: 'Alumni profile/spotlight. Subject to the project\'s spotlight age rules.' },
   { contentType: 'Case Study',           defaultContentNature: 'Content Object', defaultMigrationTrack: 'Migrate Records',     notes: 'Long-form case study record.' },
@@ -1188,7 +1290,7 @@ const AUDIENCE_STARTER_SETS = {
 // Shared across both sets: the reserved "reviewed, serves nobody" entry.
 const AUDIENCE_NONE_ENTRY = {
   name: AUDIENCE_NONE, tier: 'Not a target', color: '#9ca3af',
-  description: 'Reviewed and serves no audience we are investing in. A Kill argument — distinct from an untagged page.',
+  description: 'Reviewed and serves no audience we are investing in. An Archive argument — distinct from an untagged page.',
   notes: ''
 };
 
@@ -1481,7 +1583,7 @@ Purpose: explain the program, what it leads to, and how to apply.
 Tone: aspirational, concrete, scannable.
 Required elements: program description, curriculum overview, careers/outcomes, contact, apply CTA.`,
     defaultMigrationTrack: 'Scripted',
-    notes: 'Standard review per KKE rubric. Often the highest-traffic pages in the site.'
+    notes: 'Standard review per the rubric. Often the highest-traffic pages in the site.'
   },
   {
     patternName: 'Department Page',
@@ -1500,7 +1602,7 @@ Purpose: showcase the department's identity, people, and offerings.
 Tone: institutional, but distinctive — what makes this department unique?
 Required: ~100-word identity statement; rest pulls from linked content types.`,
     defaultMigrationTrack: 'Scripted',
-    notes: 'Standard review per KKE rubric.'
+    notes: 'Standard review per the rubric.'
   },
   {
     patternName: 'Event',
@@ -1517,7 +1619,7 @@ Required: ~100-word identity statement; rest pulls from linked content types.`,
 Purpose: explain what the event is and how to attend.
 Required: title, date/time, location, who's hosting, brief description, register/RSVP CTA.`,
     defaultMigrationTrack: 'Migrate Records',
-    notes: 'Past events may KKE = Kill per the framework. Event listing pages are Configure.'
+    notes: 'Past events may be Archived per the framework. Event listing pages are Configure.'
   },
   {
     patternName: 'Static / Informational Page',
@@ -1777,7 +1879,7 @@ function writeGlossarySheet(workbook, glossary) {
   const groups = glossary.groups || {};
   const tagKeys = Object.keys(tags).filter(k => String(tags[k] || '').trim());
   const groupKeys = Object.keys(groups).filter(k => String(groups[k] || '').trim());
-  const sheetName = 'KKE_Glossary';
+  const sheetName = 'MRA_Glossary';
   const HEADER = ['Type', 'Name', 'Notes'];
   if (tagKeys.length === 0 && groupKeys.length === 0) {
     writeEmptyStructuralSheet(workbook, sheetName, HEADER);
@@ -1805,6 +1907,10 @@ function detectUrlColumn(headers) {
 
 function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projectSettings, changeLog, opts = {}) {
   try {
+    // Always MRA. Old KKE_* structural sheets are renamed to their MRA names
+    // below before being written, so a converted file never carries both.
+    ({ headers, rows, projectSettings, changeLog } = payloadAsMra({ headers, rows, projectSettings, changeLog }));
+    const term = 'mra';
     const aoa = [headers];
     for (const row of rows) {
       aoa.push(headers.map(h => clampCell(row[h] ?? '')));
@@ -1823,6 +1929,14 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
     } else {
       workbook = XLSX.utils.book_new();
     }
+
+    // An existing file may carry the structural sheets under either vocabulary's
+    // name; move them to the MRA name so the writers below replace (not
+    // duplicate) them and the change-log append reads the existing history.
+    ['MRA_Settings', 'MRA_ChangeLog', 'MRA_Glossary'].forEach(canon => {
+      const found = findStructuralSheet(workbook.SheetNames, canon);
+      if (found && found !== canon) renameWorkbookSheet(workbook, found, canon);
+    });
 
     const worksheet = XLSX.utils.aoa_to_sheet(aoa);
 
@@ -2083,18 +2197,28 @@ function writeWorkbook(filePath, headers, rows, newNavNodes, allNavNodes, projec
 
     // Append to change log sheet (or replace it wholesale when the caller is
     // exporting a project's full history — re-exporting would otherwise duplicate)
-    if (changeLog && changeLog.length > 0) {
-      const clName = 'KKE_ChangeLog';
+    // An existing log is rewritten even with nothing to append, so history
+    // written under the other vocabulary follows the preference too.
+    const hasNewLog = !!(changeLog && changeLog.length > 0);
+    if (hasNewLog || workbook.Sheets['MRA_ChangeLog']) {
+      const clName = 'MRA_ChangeLog';
       const clHeaders = ['Timestamp', 'Row', 'URL', 'Field', 'Old Value', 'New Value', 'Auditor'];
       let existingRows = [];
       if (!opts.replaceChangeLog && workbook.Sheets[clName]) {
         const existing = XLSX.utils.sheet_to_json(workbook.Sheets[clName], { header: 1, defval: '' });
-        if (existing.length > 1) existingRows = existing.slice(1); // skip header
+        if (existing.length > 1) {
+          // History written under the other vocabulary is converted with the rest.
+          existingRows = Terminology.convertChangeLog(existing.slice(1).map(r => ({
+            r, field: r[3], from: r[4], to: r[5]
+          })), term).map(e => { const r = e.r.slice(); r[3] = e.field; r[4] = e.from; r[5] = e.to; return r; });
+        }
       }
-      const newRows = changeLog.map(e => [e.timestamp, e.row, e.url || '', e.field, e.from, e.to, e.auditor || '']);
-      const allRows = [clHeaders, ...existingRows, ...newRows];
-      workbook.Sheets[clName] = XLSX.utils.aoa_to_sheet(allRows);
-      if (!workbook.SheetNames.includes(clName)) workbook.SheetNames.push(clName);
+      if (hasNewLog || existingRows.length) {
+        const newRows = (changeLog || []).map(e => [e.timestamp, e.row, e.url || '', e.field, e.from, e.to, e.auditor || '']);
+        const allRows = [clHeaders, ...existingRows, ...newRows];
+        workbook.Sheets[clName] = XLSX.utils.aoa_to_sheet(allRows);
+        if (!workbook.SheetNames.includes(clName)) workbook.SheetNames.push(clName);
+      }
     }
 
     // Strip ALL formulas — SheetJS can't faithfully round-trip cross-sheet
@@ -2169,7 +2293,8 @@ ipcMain.handle('save-file', async (event, { headers, rows, newNavNodes, allNavNo
   if (isProjectFile(currentFilePath)) {
     try {
       if (!projectStore.isOpen) projectStore.open(currentFilePath);
-      const result = projectStore.saveAll({ headers, rows, allNavNodes, projectSettings, changeLog, sheetName: currentSheetName });
+      const conv = payloadAsMra({ headers, rows, projectSettings, changeLog });
+      const result = projectStore.saveAll({ ...conv, allNavNodes, sheetName: currentSheetName });
       if (result.success) mainWindow?.webContents.send('save-success', currentFilePath);
       return result;
     } catch (err) {
@@ -2182,14 +2307,14 @@ ipcMain.handle('save-file', async (event, { headers, rows, newNavNodes, allNavNo
   return result;
 });
 
-// Read a workbook's KKE_ChangeLog sheet as changelog entries, so Save As
-// Project can carry the spreadsheet's accumulated history into the DB.
-// (The app always writes the sheet as 'KKE_ChangeLog', so the exact-name
-// `sheets` filter keeps this read cheap — no need to parse the data sheets.)
+// Read a workbook's change-log sheet as changelog entries, so Save As Project
+// can carry the spreadsheet's accumulated history into the DB. (The app always
+// writes it as 'MRA_ChangeLog' or 'KKE_ChangeLog', so the exact-name `sheets`
+// filter keeps this read cheap — no need to parse the data sheets.)
 function readWorkbookChangeLog(filePath) {
   try {
-    const wb = XLSX.readFile(filePath, { type: 'file', sheets: 'KKE_ChangeLog' });
-    const ws = wb.Sheets['KKE_ChangeLog'];
+    const wb = XLSX.readFile(filePath, { type: 'file', sheets: ['MRA_ChangeLog', 'KKE_ChangeLog'] });
+    const ws = wb.Sheets['MRA_ChangeLog'] || wb.Sheets['KKE_ChangeLog'];
     if (!ws) return [];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
     return rows.slice(1)
@@ -2227,9 +2352,13 @@ ipcMain.handle('save-as-project', async (event, payload) => {
       ? readWorkbookChangeLog(currentFilePath)
       : [];
     projectStore.create(result.filePath);
+    const conv = payloadAsMra({ ...payload, changeLog: [...sourceLog, ...(payload.changeLog || [])] });
     projectStore.saveAll({
       ...payload,
-      changeLog: [...sourceLog, ...(payload.changeLog || [])],
+      headers: conv.headers,
+      rows: conv.rows,
+      projectSettings: conv.projectSettings,
+      changeLog: conv.changeLog,
       sheetName: currentSheetName || 'Data'
     });
     // Saved column mappings are keyed by basename (incl. extension), so a
@@ -2300,7 +2429,15 @@ ipcMain.handle('proposals-pending', () => {
 ipcMain.handle('proposals-list', () => {
   const reason = proposalsUnavailableReason();
   if (reason) return { success: false, error: reason, proposals: [] };
-  try { return { success: true, proposals: projectStore.readProposals('pending') }; }
+  try {
+    // A Claude session (or an older server) may have queued KKE field names/values.
+    const proposals = projectStore.readProposals('pending').map(p => {
+      const field = Terminology.header(p.field, 'mra');
+      const conv = Terminology.convertChangeLog([{ field, from: '', to: p.value }], 'mra')[0];
+      return { ...p, field, value: conv.to };
+    });
+    return { success: true, proposals };
+  }
   catch (e) { return { success: false, error: e.message, proposals: [] }; }
 });
 
@@ -2814,7 +2951,8 @@ function openChangelogWindow(url) {
 ipcMain.handle('get-prefs', () => {
   const prefs = loadPrefs();
   return {
-    visibleFields: prefs.visibleFields || DEFAULT_VISIBLE_FIELDS,
+    // Header names in prefs may predate the rename; translate on the way out.
+    visibleFields: headerRefsToMra(prefs.visibleFields) || DEFAULT_VISIBLE_FIELDS,
     tagLibrary:    prefs.tagLibrary    || DEFAULT_TAG_LIBRARY,
     autoAdvance:   prefs.autoAdvance !== undefined ? prefs.autoAdvance : true,
     groupLibrary:  prefs.groupLibrary || [],
@@ -2823,11 +2961,11 @@ ipcMain.handle('get-prefs', () => {
     filterText:    prefs.filterText    || '',
     rubricDir:       prefs.rubricDir       || getDefaultRubricDir(),
     claudeApiKey:    prefs.claudeApiKey    || '',
-    sidebarColumns:  prefs.sidebarColumns  || [],
+    sidebarColumns:  headerRefsToMra(prefs.sidebarColumns)  || [],
     customKkeStates: prefs.customKkeStates || [],
-    tableColumns:    prefs.tableColumns || null,
-    extraKkeCols:    prefs.extraKkeCols || [],
-    kkeFilter:       prefs.kkeFilter || null,
+    tableColumns:    headerRefsToMra(prefs.tableColumns) || null,
+    extraKkeCols:    headerRefsToMra(prefs.extraKkeCols) || [],
+    kkeFilter:       prefs.kkeFilter ? Terminology.convertSettings({ kkeFilter: prefs.kkeFilter }, 'mra').kkeFilter : null,
     showSmeFields:   prefs.showSmeFields || false,
     showMigrationFields: prefs.showMigrationFields || false,
     showDesignPatterns: prefs.showDesignPatterns || false,
@@ -3233,7 +3371,7 @@ function parseFormulaExpr(formula) {
   }
 
   function parseClassify() {
-    // classify({col}, 0: "Kill", 40: "Evolve", 70: "Keep")
+    // classify({col}, 0: "Archive", 40: "Revise", 70: "Migrate")
     expect('LPAREN');
     const valueExpr = parseExpr();
     const thresholds = [];
@@ -3416,10 +3554,19 @@ function evaluateComputedColumns(definitions, rows, headers) {
   return { results, errors };
 }
 
+// A rubric file for `status` (MRA key: 'migrate'), falling back to the legacy
+// KKE file name ('keep.md') so a library written before the rename still loads.
+function rubricFilePath(dir, status) {
+  const fp = path.join(dir, `${status}.md`);
+  if (fs.existsSync(fp)) return fp;
+  const legacy = path.join(dir, `${Terminology.rubricKey(status, 'kke')}.md`);
+  return fs.existsSync(legacy) ? legacy : fp;
+}
+
 function loadAllRubrics(rubricDir) {
   const rubrics = {};
   for (const status of rubricsLib().PAGE_LEVEL_STATUSES) {
-    const fp = path.join(rubricDir, `${status}.md`);
+    const fp = rubricFilePath(rubricDir, status);
     rubrics[status] = fs.existsSync(fp) ? parseRubricFile(fp) : { fieldRules: [], contentRules: [], patterns: [] };
   }
   return rubrics;
@@ -3435,7 +3582,7 @@ function readRubricLibrary() {
   const dir = rubricLibraryDir();
   const files = {};
   for (const status of rubricsLib().RUBRIC_STATUSES) {
-    const fp = path.join(dir, `${status}.md`);
+    const fp = rubricFilePath(dir, status);
     try { files[status] = fs.existsSync(fp) ? fs.readFileSync(fp, 'utf8') : ''; } catch (_) { files[status] = ''; }
   }
   return { dir, files };
@@ -3453,6 +3600,7 @@ function hasProjectRubrics(texts) {
  */
 function resolvePageLevelRubrics(texts) {
   if (hasProjectRubrics(texts)) {
+    texts = Terminology.convertSettings({ rubrics: texts }, 'mra').rubrics;
     return { rubrics: rubricsLib().parseRubricSet(texts, rubricsLib().PAGE_LEVEL_STATUSES), source: 'project' };
   }
   const prefs = loadPrefs();
@@ -3539,7 +3687,7 @@ ipcMain.handle('set-file-rubric-dir', async (event, { rubricDir }) => {
 ipcMain.handle('read-rubric-file', async (event, { status }) => {
   const prefs = loadPrefs();
   const dir = prefs.rubricDir || getDefaultRubricDir();
-  const fp = path.join(dir, `${status}.md`);
+  const fp = rubricFilePath(dir, Terminology.rubricKey(status, 'mra'));
   try {
     if (fs.existsSync(fp)) return { content: fs.readFileSync(fp, 'utf8') };
     return { content: '' };
@@ -3553,7 +3701,7 @@ ipcMain.handle('write-rubric-file', async (event, { status, content }) => {
   const dir = prefs.rubricDir || getDefaultRubricDir();
   try {
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, `${status}.md`), content, 'utf8');
+    fs.writeFileSync(path.join(dir, `${Terminology.rubricKey(status, 'mra')}.md`), content, 'utf8');
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
@@ -3755,7 +3903,7 @@ function buildAudienceBatchPrompt(pages) {
 }
 
 function buildLLMPrompt(row, rubrics) {
-  let prompt = `You are a content auditor assessing a web page. Based on the page metadata and the rubric rules below, recommend a KKE status: Keep, Kill, Evolve, or Exclude.\n\n`;
+  let prompt = `You are a content auditor assessing a web page. Based on the page metadata and the rubric rules below, recommend a decision: Migrate (move it to the new site as is), Revise (move it, but it needs work), Archive (retire it and redirect), or Exclude (not part of the inventory).\n\n`;
   prompt += `## Page Metadata\n`;
   for (const [key, val] of Object.entries(row)) {
     if (key === '_rowIndex' || !val) continue;
@@ -3769,7 +3917,7 @@ function buildLLMPrompt(row, rubrics) {
     }
   }
   prompt += `\nRespond in this exact JSON format:\n`;
-  prompt += `{"recommendation": "Keep|Kill|Evolve|Exclude", "confidence": "high|medium|low", "reasoning": "brief explanation"}\n`;
+  prompt += `{"recommendation": "Migrate|Revise|Archive|Exclude", "confidence": "high|medium|low", "reasoning": "brief explanation"}\n`;
   prompt += `Return only the JSON, no other text.`;
   return prompt;
 }
@@ -3779,7 +3927,8 @@ function parseLLMResponse(text) {
     const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     const parsed = JSON.parse(cleaned);
     return {
-      recommendation: parsed.recommendation || null,
+      // A model that answers in the old vocabulary still lands on a valid value.
+      recommendation: parsed.recommendation ? Terminology.value(parsed.recommendation, 'mra') : null,
       confidence: parsed.confidence || 'low',
       reasoning: parsed.reasoning || ''
     };
@@ -3996,7 +4145,9 @@ ipcMain.handle('import-audit-merge-read-sheet', async (event, { filePath, sheetN
       headers.forEach((h, j) => { obj[h] = row[j] ?? ''; });
       return obj;
     });
-    return { headers, rows, filePath, sheetName };
+    // Worksheets sent out before the rename come back in Keep / Kill / Evolve.
+    const legacyVocabulary = translateIncomingTable(headers, rows);
+    return { headers, rows, filePath, sheetName, legacyVocabulary };
   } catch (e) {
     return { error: e.message };
   }
@@ -4133,7 +4284,13 @@ ipcMain.handle('export-migration-tracker', async (event, { defaultName, sheets, 
  *  this ~45-line ExcelJS+JSZip build and had already drifted apart (the split-by-
  *  owner copy carried terser validation error strings), which is exactly the way a
  *  fix to one silently misses the other. */
-async function buildSmeWorkbookBuffer({ headers, rows, smeOptions, smeDecisionCol }) {
+async function buildSmeWorkbookBuffer({ headers, rows, smeOptions, smeDecisionCol, vocabulary }) {
+  // MRA, unless this one worksheet is going to a client whose project began
+  // before the rename (the export dialog's "legacy wording" option). Whatever
+  // comes back is read as MRA on import either way.
+  const term = Terminology.normTerm(vocabulary);
+  ({ headers, rows } = Terminology.convertTable(headers || [], rows || [], term, currentColumnMap));
+  if (Array.isArray(smeOptions)) smeOptions = smeOptions.map(o => Terminology.smeDecision(o, term));
   const workbook = new ExcelJS.Workbook();
   const ws = workbook.addWorksheet('SME Review');
 
@@ -4194,7 +4351,7 @@ async function buildSmeWorkbookBuffer({ headers, rows, smeOptions, smeDecisionCo
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 
-ipcMain.handle('sme-export', async (event, { headers, rows, defaultName, smeOptions, smeDecisionCol }) => {
+ipcMain.handle('sme-export', async (event, { headers, rows, defaultName, smeOptions, smeDecisionCol, vocabulary }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     title: 'Export for SME Review',
     defaultPath: defaultName || 'sme-review.xlsx',
@@ -4202,7 +4359,7 @@ ipcMain.handle('sme-export', async (event, { headers, rows, defaultName, smeOpti
   });
   if (result.canceled) return { success: false, error: 'Cancelled' };
   try {
-    const fixedBuf = await buildSmeWorkbookBuffer({ headers, rows, smeOptions, smeDecisionCol });
+    const fixedBuf = await buildSmeWorkbookBuffer({ headers, rows, smeOptions, smeDecisionCol, vocabulary });
     fs.writeFileSync(result.filePath, fixedBuf);
     return { success: true, filePath: result.filePath, count: rows.length };
   } catch (e) {
@@ -4371,8 +4528,8 @@ ipcMain.handle('export-report-html', async (event, { html, defaultName }) => {
 ipcMain.handle('save-audit-template', async (event, { template }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
     title: 'Save Audit Template',
-    defaultPath: (template.name || 'audit-template') + '.kke-template.json',
-    filters: [{ name: 'KKE Template', extensions: ['json'] }]
+    defaultPath: (template.name || 'audit-template') + '.audit-template.json',
+    filters: [{ name: 'Audit Template', extensions: ['json'] }]
   });
   if (result.canceled) return { success: false, error: 'Cancelled' };
   try {
@@ -4386,12 +4543,19 @@ ipcMain.handle('save-audit-template', async (event, { template }) => {
 ipcMain.handle('load-audit-template', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Load Audit Template',
-    filters: [{ name: 'KKE Template', extensions: ['json'] }],
+    filters: [{ name: 'Audit Template', extensions: ['json'] }],
     properties: ['openFile']
   });
   if (result.canceled || !result.filePaths.length) return null;
   try {
     const data = JSON.parse(fs.readFileSync(result.filePaths[0], 'utf8'));
+    // A template saved before the rename names KKE columns and states.
+    if (data && typeof data === 'object') {
+      ['visibleFields', 'sidebarColumns', 'tableColumns', 'extraKkeCols'].forEach(k => { if (data[k]) data[k] = headerRefsToMra(data[k]); });
+      if (data.columnMap) data.columnMap = Terminology.convertColumnMap(data.columnMap, 'mra');
+      if (data.projectSettings) data.projectSettings = Terminology.convertSettings(data.projectSettings, 'mra');
+      if (data.kkeFilter) data.kkeFilter = Terminology.convertSettings({ kkeFilter: data.kkeFilter }, 'mra').kkeFilter;
+    }
     return { template: data, filePath: result.filePaths[0] };
   } catch (e) {
     return { error: e.message };

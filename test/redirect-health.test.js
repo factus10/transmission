@@ -51,8 +51,8 @@ const REDIRECT_DEST_COL = 'Redirect_Destination';
 const REDIRECT_SRC_COL = '_RedirectSource';
 const CONSOLIDATE_COL = 'Consolidate_Into';
 const CONSOLIDATE_ID_COL = '_ConsolidateTargetId';
-function kkeCol() { return 'KKE_Recommendation'; }
-function finalKkeCol() { return 'Final_KKE'; }
+function kkeCol() { return 'MRA_Recommendation'; }
+function finalKkeCol() { return 'Final_MRA'; }
 function consolidateTargetAddr(row) {
   return String(row['_ConsolidateTargetId'] || '').trim() || String(row['Consolidate_Into'] || '').trim();
 }
@@ -76,7 +76,7 @@ const B = 'https://example.edu/alumni';
 
 function row(over) {
   return Object.assign({
-    Address: '', KKE_Recommendation: '', Final_KKE: '',
+    Address: '', MRA_Recommendation: '', Final_MRA: '',
     Redirect_Destination: '', _RedirectSource: '',
     _ConsolidateTargetId: '', Consolidate_Into: '', Content_Nature: '', 'Sitemap_ID': '',
   }, over);
@@ -130,8 +130,8 @@ describe('a cleared loop stays cleared', () => {
     // out of the cycle by returning the last URL it saw — which is the row's
     // own URL, i.e. a self-redirect.
     setState([
-      row({ Address: A, KKE_Recommendation: 'Consolidate', _ConsolidateTargetId: B, Redirect_Destination: A, _RedirectSource: 'auto' }),
-      row({ Address: B, KKE_Recommendation: 'Consolidate', _ConsolidateTargetId: A }),
+      row({ Address: A, MRA_Recommendation: 'Consolidate', _ConsolidateTargetId: B, Redirect_Destination: A, _RedirectSource: 'auto' }),
+      row({ Address: B, MRA_Recommendation: 'Consolidate', _ConsolidateTargetId: A }),
     ]);
     const r = fixAndSave();
     assert.equal(r.before, 1, 'the loop should be found');
@@ -141,8 +141,8 @@ describe('a cleared loop stays cleared', () => {
 
   test('kill page whose consolidate target chains back to it', () => {
     setState([
-      row({ Address: A, KKE_Recommendation: 'Kill', _ConsolidateTargetId: B, Redirect_Destination: A, _RedirectSource: 'auto' }),
-      row({ Address: B, KKE_Recommendation: 'Consolidate', _ConsolidateTargetId: A }),
+      row({ Address: A, MRA_Recommendation: 'Archive', _ConsolidateTargetId: B, Redirect_Destination: A, _RedirectSource: 'auto' }),
+      row({ Address: B, MRA_Recommendation: 'Consolidate', _ConsolidateTargetId: A }),
     ]);
     const r = fixAndSave();
     assert.equal(r.before, 1);
@@ -152,8 +152,8 @@ describe('a cleared loop stays cleared', () => {
   test('a loop already in the file self-heals on save, with no health check run', () => {
     // Unknown provenance — every file written before _RedirectSource existed.
     setState([
-      row({ Address: A, KKE_Recommendation: 'Consolidate', _ConsolidateTargetId: B, Redirect_Destination: A, _RedirectSource: '' }),
-      row({ Address: B, KKE_Recommendation: 'Consolidate', _ConsolidateTargetId: A }),
+      row({ Address: A, MRA_Recommendation: 'Consolidate', _ConsolidateTargetId: B, Redirect_Destination: A, _RedirectSource: '' }),
+      row({ Address: B, MRA_Recommendation: 'Consolidate', _ConsolidateTargetId: A }),
     ]);
     resolveRedirectDestinations();
     assert.equal(computeRedirectHealth().self.length, 0);
@@ -163,8 +163,8 @@ describe('a cleared loop stays cleared', () => {
 describe('the fix does not overreach', () => {
   test('a real consolidate redirect is still derived', () => {
     setState([
-      row({ Address: A, KKE_Recommendation: 'Consolidate', _ConsolidateTargetId: B }),
-      row({ Address: B, KKE_Recommendation: 'Keep' }),
+      row({ Address: A, MRA_Recommendation: 'Consolidate', _ConsolidateTargetId: B }),
+      row({ Address: B, MRA_Recommendation: 'Migrate' }),
     ]);
     resolveRedirectDestinations();
     assert.equal(state.editedRows[0].Redirect_Destination, B, 'A should still redirect to B');
@@ -173,22 +173,22 @@ describe('the fix does not overreach', () => {
 
   test('a hand-typed destination is never touched', () => {
     setState([
-      row({ Address: A, KKE_Recommendation: 'Kill', Redirect_Destination: B, _RedirectSource: 'manual' }),
-      row({ Address: B, KKE_Recommendation: 'Keep' }),
+      row({ Address: A, MRA_Recommendation: 'Archive', Redirect_Destination: B, _RedirectSource: 'manual' }),
+      row({ Address: B, MRA_Recommendation: 'Migrate' }),
     ]);
     resolveRedirectDestinations();
     assert.equal(state.editedRows[0].Redirect_Destination, B);
   });
 
   test('an intentional 404 survives', () => {
-    setState([row({ Address: A, KKE_Recommendation: 'Kill', Redirect_Destination: '404', _RedirectSource: 'manual' })]);
+    setState([row({ Address: A, MRA_Recommendation: 'Archive', Redirect_Destination: '404', _RedirectSource: 'manual' })]);
     resolveRedirectDestinations();
     assert.equal(state.editedRows[0].Redirect_Destination, '404');
   });
 
   test('a cross-site redirect sharing a path is not treated as a loop', () => {
     setState([
-      row({ Address: 'https://alpha.edu/about', KKE_Recommendation: 'Kill', Redirect_Destination: 'https://beta.edu/about', _RedirectSource: 'manual' }),
+      row({ Address: 'https://alpha.edu/about', MRA_Recommendation: 'Archive', Redirect_Destination: 'https://beta.edu/about', _RedirectSource: 'manual' }),
     ]);
     assert.equal(computeRedirectHealth().self.length, 0);
     resolveRedirectDestinations();

@@ -1,15 +1,15 @@
 # Multi-auditor Merge Walkthrough
 
-How to combine KKE decisions when more than one auditor worked the same inventory in parallel — merge their file into yours and resolve the disagreements.
+How to combine MRA decisions when more than one auditor worked the same inventory in parallel — merge their file into yours and resolve the disagreements.
 
-> Prerequisite: two audited copies of the **same** inventory (same URLs), each with KKE calls.
+> Prerequisite: two audited copies of the **same** inventory (same URLs), each with MRA calls.
 
 ---
 
 ## 0. The mental model
 
 - Two auditors split a large crawl, each making calls in their own copy of the file.
-- Merging reads the **other** auditor's decisions, matches rows by URL, and reports **agreements** vs **conflicts** (where the two of you made different KKE calls on the same page).
+- Merging reads the **other** auditor's decisions, matches rows by URL, and reports **agreements** vs **conflicts** (where the two of you made different MRA calls on the same page).
 - You resolve conflicts one at a time, choosing whose call wins — the merge never silently overwrites.
 
 ---

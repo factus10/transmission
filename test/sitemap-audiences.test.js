@@ -38,7 +38,7 @@ const AUDIENCES_COL = 'Audiences';
 const AUDIENCE_NONE = '— None (no target audience)';
 function rowSiteInScope(row) { return row._outOfScope !== true; }
 function rowAudienceSuggestion() { return null; }
-function audEffectiveKke(row) { return String(row.Final_KKE || row.KKE_Recommendation || '').trim(); }
+function audEffectiveKke(row) { return String(row.Final_MRA || row.MRA_Recommendation || '').trim(); }
 var state = null;
 `;
 vm.runInThisContext(PRELUDE + '\n' + EXTRACTED.map(extract).join('\n\n'));
@@ -60,7 +60,7 @@ function flat(nodes, out = []) { nodes.forEach(n => { out.push(n); flat(n.childr
 function setState(rows, navTree = tree()) {
   state = { editedRows: rows, filteredRows: [], navTree, navNodes: flat(navTree), audienceLibrary: LIB };
 }
-const row = (over) => Object.assign({ Address: 'https://x.edu/p', KKE_Recommendation: '', Audiences: '', Sitemap_ID: '' }, over);
+const row = (over) => Object.assign({ Address: 'https://x.edu/p', MRA_Recommendation: '', Audiences: '', Sitemap_ID: '' }, over);
 
 describe('extraction', () => {
   test('every lifted function is present', () => {
@@ -96,13 +96,13 @@ describe('inheritance', () => {
 describe('fill plan', () => {
   test('fills blank, eligible, placed rows with the effective audiences', () => {
     setState([
-      row({ Sitemap_ID: 'n3', KKE_Recommendation: 'Keep' }),                       // inherits Students
+      row({ Sitemap_ID: 'n3', MRA_Recommendation: 'Migrate' }),                       // inherits Students
       row({ Sitemap_ID: 'n4' }),                                                    // unreviewed, Faculty
-      row({ Sitemap_ID: 'n3', KKE_Recommendation: 'Keep', Audiences: 'Alumni' }),  // already tagged
-      row({ Sitemap_ID: 'n3', KKE_Recommendation: 'Kill' }),                       // not carried forward
-      row({ Sitemap_ID: 'n5', KKE_Recommendation: 'Keep' }),                       // node has none
-      row({ KKE_Recommendation: 'Keep' }),                                         // unplaced
-      row({ Sitemap_ID: 'n1', KKE_Recommendation: 'Keep', _outOfScope: true }),    // out of scope
+      row({ Sitemap_ID: 'n3', MRA_Recommendation: 'Migrate', Audiences: 'Alumni' }),  // already tagged
+      row({ Sitemap_ID: 'n3', MRA_Recommendation: 'Archive' }),                       // not carried forward
+      row({ Sitemap_ID: 'n5', MRA_Recommendation: 'Migrate' }),                       // node has none
+      row({ MRA_Recommendation: 'Migrate' }),                                         // unplaced
+      row({ Sitemap_ID: 'n1', MRA_Recommendation: 'Migrate', _outOfScope: true }),    // out of scope
     ]);
     const plan = sitemapAudienceFillPlan();
     assert.deepEqual(plan.map(p => [p.origIndex, p.audiences]), [[0, ['Students']], [1, ['Faculty']]]);

@@ -1,8 +1,8 @@
 # Migration Track — Baseline Definitions
 
-Migration Track answers a different question than KKE: **how does this page move into the new system?** Where KKE is a content-quality call (owned by content strategists), Migration Track is a delivery call (owned by technical architects, developers, and the content team executing the migration). The two correlate but don't determine each other.
+Migration Track answers a different question than MRA: **how does this page move into the new system?** Where MRA is a content-quality call (owned by content strategists), Migration Track is a delivery call (owned by technical architects, developers, and the content team executing the migration). The two correlate but don't determine each other.
 
-Six tracks: **Scripted**, **Migrate Records**, **Configure**, **Manual Rebuild**, **Merge**, **Kill/Redirect**. Plus blank (not yet decided).
+Six tracks: **Scripted**, **Migrate Records**, **Configure**, **Manual Rebuild**, **Merge**, **Archive/Redirect**. Plus blank (not yet decided).
 
 ---
 
@@ -26,7 +26,7 @@ Scripted is the default for content that's structured well enough to extract fro
 - Content lives as structured records (faculty, events, articles), not pages → **Migrate Records**
 - The page is system-generated and the new CMS will regenerate it from data → **Configure**
 - The page should fold into another → **Merge**
-- The page isn't moving forward → **Kill/Redirect**
+- The page isn't moving forward → **Archive/Redirect**
 
 ### What Scripted commits the project to
 
@@ -58,7 +58,7 @@ Migrate Records applies to content that's *about* something — a faculty member
 - The content is a freeform page that happens to be about a topic → **Scripted**
 - The new CMS will *generate* the listing/index pages dynamically from these records — only the records themselves are Migrate Records; the listing pages are **Configure**
 - The records are too inconsistent or messy to map cleanly → **Manual Rebuild**
-- The content is being retired → **Kill/Redirect**
+- The content is being retired → **Archive/Redirect**
 
 ### What Migrate Records commits the project to
 
@@ -90,7 +90,7 @@ Configure applies to pages that aren't really *content* in the migration sense �
 
 - The page has authored content (intro paragraph, custom hero, curated callouts) that needs to migrate even if the listing portion is generated → **Manual Rebuild** (or Scripted if the authored portion fits a pattern)
 - The page is a one-off landing that *looks* like a hub but is actually authored → **Scripted** or **Manual Rebuild**
-- Underlying records aren't migrating → **Kill/Redirect**
+- Underlying records aren't migrating → **Archive/Redirect**
 
 ### What Configure commits the project to
 
@@ -109,11 +109,11 @@ If a page has zero hand-authored content — no body, no intro, no curated copy 
 
 **Manual Rebuild = "A human builds this page in the new CMS, by hand, in the new authoring tools."**
 
-Manual Rebuild is the catch-all for pages that don't fit a script-migrated mold. The reasons vary — content needs revision (Evolve), the layout is unique enough that scripting it isn't worth the effort, the source data is too messy to transform reliably, the new CMS uses such different building blocks that there's no clean automated path. The commonality: someone sits in the new CMS and creates the page from scratch (or from a substantially edited version of the source).
+Manual Rebuild is the catch-all for pages that don't fit a script-migrated mold. The reasons vary — content needs revision (Revise), the layout is unique enough that scripting it isn't worth the effort, the source data is too messy to transform reliably, the new CMS uses such different building blocks that there's no clean automated path. The commonality: someone sits in the new CMS and creates the page from scratch (or from a substantially edited version of the source).
 
 ### When to choose Manual Rebuild
 
-- KKE is **Evolve** — content is changing as part of the migration, so manual work is happening anyway
+- MRA is **Revise** — content is changing as part of the migration, so manual work is happening anyway
 - Layout is unique, complex, or component-heavy in ways the migration script can't handle reliably
 - Source content is inconsistent enough that scripting it would produce more cleanup than just rebuilding
 - New CMS components are different enough that "scripted migration" would mean dumping content into a rich-text field — defeating the point of the new system
@@ -131,7 +131,7 @@ Manual Rebuild is the catch-all for pages that don't fit a script-migrated mold.
 - A human's time, in the new CMS, with the source content available for reference
 - A clear ownership question: who does the rebuild — content team, agency, vendor, internal staff?
 - A schedule: rebuilds bottleneck on people, not on machines. They can't all happen the day before launch.
-- Documentation of what "done" looks like, especially when KKE = Evolve and the rebuild is also a content revision
+- Documentation of what "done" looks like, especially when MRA = Revise and the rebuild is also a content revision
 
 ### Authoring rule
 
@@ -143,18 +143,18 @@ Manual Rebuild is the most expensive track per page. If you find yourself classi
 
 **Merge = "This page's content (or what's worth keeping of it) gets folded into another page during migration."**
 
-Merge is the delivery counterpart to KKE = Consolidate. The page itself doesn't migrate; instead, a human takes its content (selectively, often heavily edited) and incorporates it into the target page. The source URL redirects to the target. From the new system's perspective, the source page never existed.
+Merge is the delivery counterpart to MRA = Consolidate. The page itself doesn't migrate; instead, a human takes its content (selectively, often heavily edited) and incorporates it into the target page. The source URL redirects to the target. From the new system's perspective, the source page never existed.
 
 ### When to choose Merge
 
-- KKE is **Consolidate** — the content decision has already been made; Merge is the delivery realization
-- The target page exists in the inventory and is itself migrating (Keep, Evolve, or being newly built)
+- MRA is **Consolidate** — the content decision has already been made; Merge is the delivery realization
+- The target page exists in the inventory and is itself migrating (Migrate, Revise, or being newly built)
 - A human will do the merging — either the content team, the agency, or the client
 
 ### When *not* to choose Merge
 
-- The source page should fold in but no target is named → not ready for Merge; resolve the KKE decision first
-- The source page should disappear without folding anywhere → **Kill/Redirect**
+- The source page should fold in but no target is named → not ready for Merge; resolve the MRA decision first
+- The source page should disappear without folding anywhere → **Archive/Redirect**
 - The source page is fine on its own → **Scripted** / **Manual Rebuild**
 
 ### What Merge commits the project to
@@ -170,24 +170,24 @@ Merge is editorial work disguised as migration work. Budget accordingly. A Merge
 
 ---
 
-## Kill/Redirect
+## Archive/Redirect
 
-**Kill/Redirect = "This page does not exist in the new system. The URL either redirects somewhere or returns a 404."**
+**Archive/Redirect = "This page does not exist in the new system. The URL either redirects somewhere or returns a 404."**
 
-Kill/Redirect is the delivery counterpart to KKE = Kill. No content migrates. The only deliverable is a redirect rule (or an explicit decision to let the URL 404). All editorial work on this page stops at the audit; the rest is engineering.
+Archive/Redirect is the delivery counterpart to MRA = Archive. No content migrates. The only deliverable is a redirect rule (or an explicit decision to let the URL 404). All editorial work on this page stops at the audit; the rest is engineering.
 
-### When to choose Kill/Redirect
+### When to choose Archive/Redirect
 
-- KKE is **Kill**
-- KKE is **Exclude** *only when* the page nonetheless needs a redirect rule written by this project (rare; usually Exclude pages are out of scope for redirects too)
+- MRA is **Archive**
+- MRA is **Exclude** *only when* the page nonetheless needs a redirect rule written by this project (rare; usually Exclude pages are out of scope for redirects too)
 
-### When *not* to choose Kill/Redirect
+### When *not* to choose Archive/Redirect
 
 - The page is moving forward in any form → any other track
 - The page is consolidating into another → **Merge**
-- KKE is Exclude and the project has no responsibility for the URL → leave Migration Track blank
+- MRA is Exclude and the project has no responsibility for the URL → leave Migration Track blank
 
-### What Kill/Redirect commits the project to
+### What Archive/Redirect commits the project to
 
 - A redirect destination — either a URL or the literal sentinel `404` (intentional deindex)
 - Inclusion in the redirect manifest delivered to engineering
@@ -196,30 +196,30 @@ Kill/Redirect is the delivery counterpart to KKE = Kill. No content migrates. Th
 
 ### Authoring rule
 
-Kill/Redirect is the simplest track to *execute* but the easiest to get wrong by default. A confused redirect that points users to a tangentially-related page is worse than a 404. When the destination would be a stretch, prefer 404 — and document the choice in Notes so SEO and engineering see the intent.
+Archive/Redirect is the simplest track to *execute* but the easiest to get wrong by default. A confused redirect that points users to a tangentially-related page is worse than a 404. When the destination would be a stretch, prefer 404 — and document the choice in Notes so SEO and engineering see the intent.
 
 ---
 
 ## Cross-cutting principles
 
-**Migration Track is owned by the technical architect, not the content strategist.** The strategist's KKE call drives a *suggested* default Migration Track, but the architect makes the final call based on what scripts can actually handle, what the new CMS supports, and what the project budget allows.
+**Migration Track is owned by the technical architect, not the content strategist.** The strategist's MRA call drives a *suggested* default Migration Track, but the architect makes the final call based on what scripts can actually handle, what the new CMS supports, and what the project budget allows.
 
-**The KKE → Migration Track suggestion table:**
+**The MRA → Migration Track suggestion table:**
 
-| KKE | Content Nature | Default Migration Track |
+| MRA | Content Nature | Default Migration Track |
 |-----|----------------|------------------------|
-| Keep | Page | Scripted |
-| Keep | Content Object (Record) | Migrate Records |
-| Keep | Fragment | Migrate Records |
-| Keep | Generated | Configure |
-| Evolve | (any) | Manual Rebuild |
+| Migrate | Page | Scripted |
+| Migrate | Content Object (Record) | Migrate Records |
+| Migrate | Fragment | Migrate Records |
+| Migrate | Generated | Configure |
+| Revise | (any) | Manual Rebuild |
 | Consolidate | (any) | Merge |
-| Kill | (any) | Kill/Redirect |
+| Archive | (any) | Archive/Redirect |
 | Exclude | (any) | (blank — usually no track) |
 
 This is a *suggestion*, not a determination. Override freely with Notes explaining why.
 
-**Migration Track timing differs by track.** Configure can happen any time after the underlying records are migrated. Scripted and Migrate Records run in batches. Manual Rebuild and Merge are bottlenecked on people and have to be scheduled. Kill/Redirect is a single deliverable at launch. Don't assume a uniform timeline.
+**Migration Track timing differs by track.** Configure can happen any time after the underlying records are migrated. Scripted and Migrate Records run in batches. Manual Rebuild and Merge are bottlenecked on people and have to be scheduled. Archive/Redirect is a single deliverable at launch. Don't assume a uniform timeline.
 
 **The "I gave up and dumped it in a rich text field" outcome.** When a Scripted migration fails on a page and the script falls back to dumping raw HTML into a rich-text field, that's a *failed Scripted* outcome that should be reclassified as **Manual Rebuild** post-launch (the content is technically there, but the build quality is unacceptable). Phase 3+ tooling will track this via a `Migration_Status` field populated from the technical team's success/failure list.
 
@@ -229,4 +229,4 @@ This is a *suggestion*, not a determination. Override freely with Notes explaini
 
 ---
 
-*Companion document to the KKE Rubric Baseline. Same structure, different layer.*
+*Companion document to the MRA Rubric Baseline. Same structure, different layer.*

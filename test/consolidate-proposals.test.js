@@ -20,16 +20,16 @@ function liftSchemaSql() {
   return src.slice(open + 'this.db.exec(`'.length, close) + '\n' + src.slice(pStart + 'const PROPOSALS_DDL = `'.length, pEnd);
 }
 
-const HEADERS = ['Address', 'Title 1', 'KKE_Recommendation', 'Final_KKE', 'Consolidate_Into', '_ConsolidateTargetId'];
+const HEADERS = ['Address', 'Title 1', 'MRA_Recommendation', 'Final_MRA', 'Consolidate_Into', '_ConsolidateTargetId'];
 const r = o => Object.assign(Object.fromEntries(HEADERS.map(h => [h, ''])), o);
 const ROWS = [
-  r({ Address: 'https://a.edu/programs', KKE_Recommendation: 'Keep' }),
-  r({ Address: 'https://a.edu/programs/minor', KKE_Recommendation: '' }),
-  r({ Address: 'https://a.edu/programs/old', KKE_Recommendation: 'Kill' }),
+  r({ Address: 'https://a.edu/programs', MRA_Recommendation: 'Migrate' }),
+  r({ Address: 'https://a.edu/programs/minor', MRA_Recommendation: '' }),
+  r({ Address: 'https://a.edu/programs/old', MRA_Recommendation: 'Archive' }),
   // b consolidates into c, so proposing c → b is a loop.
-  r({ Address: 'https://a.edu/b', KKE_Recommendation: 'Consolidate', _ConsolidateTargetId: 'https://a.edu/c' }),
-  r({ Address: 'https://a.edu/c', KKE_Recommendation: 'Keep' }),
-  r({ Address: 'https://a.edu/done', KKE_Recommendation: 'Consolidate', _ConsolidateTargetId: 'https://a.edu/programs' })
+  r({ Address: 'https://a.edu/b', MRA_Recommendation: 'Consolidate', _ConsolidateTargetId: 'https://a.edu/c' }),
+  r({ Address: 'https://a.edu/c', MRA_Recommendation: 'Migrate' }),
+  r({ Address: 'https://a.edu/done', MRA_Recommendation: 'Consolidate', _ConsolidateTargetId: 'https://a.edu/programs' })
 ];
 
 let dir, file;
@@ -71,12 +71,12 @@ test('loops, dying targets, unknown targets and no-ops are skipped with a reason
   assert.equal(res.queued, 0);
   assert.deepEqual(res.skipped.map(s => s.reason), [
     'the target already consolidates back into this page',
-    'the target is marked Kill, so the content would have nowhere to land',
+    'the target is marked Archive, so the content would have nowhere to land',
     'the target https://elsewhere.org/x is not a page in this audit',
     'already consolidating into that page'
   ]);
 });
 
 test('Consolidate without a target is still refused on the decision field', () => {
-  assert.throws(() => propose([{ url: 'https://a.edu/programs/minor', field: 'KKE_Recommendation', value: 'Consolidate', rationale: 'x' }]), /cannot be "Consolidate"/);
+  assert.throws(() => propose([{ url: 'https://a.edu/programs/minor', field: 'MRA_Recommendation', value: 'Consolidate', rationale: 'x' }]), /cannot be "Consolidate"/);
 });

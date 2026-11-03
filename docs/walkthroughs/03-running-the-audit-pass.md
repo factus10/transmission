@@ -10,19 +10,19 @@ The core loop: look at a page, make the call, move on. This is where you'll spen
 
 - One row = one existing page. Selecting it loads the page in the **embedded browser** and fills the **field bar** above it.
 - The field bar is organized into **clusters** — **Decide**, **Classify**, and (when enabled) **Migrate**, **Components**, **CMS**. You'll live in **Decide**.
-- The whole loop is keyboard-driven: **arrow keys** to move between rows, **1–5** to set the KKE call, and with **auto-advance** on you're carried to the next page automatically. You rarely click.
+- The whole loop is keyboard-driven: **arrow keys** to move between rows, **1–5** to set the MRA call, and with **auto-advance** on you're carried to the next page automatically. You rarely click.
 
 ---
 
 ## 1. Make the call
 
-With a row selected, the **Decide** cluster shows the **KKE** buttons. Set the recommendation by keyboard:
+With a row selected, the **Decide** cluster shows the **MRA** buttons. Set the recommendation by keyboard:
 
 | Key | Call |
 |---|---|
-| **1** | Keep |
-| **2** | Kill |
-| **3** | Evolve |
+| **1** | Migrate |
+| **2** | Archive |
+| **3** | Revise |
 | **4** | Consolidate |
 | **5** | Exclude |
 
@@ -38,7 +38,7 @@ With a row selected, the **Decide** cluster shows the **KKE** buttons. Set the r
 
 - **Notes** (Decide cluster) opens a popover for rationale; a dot indicator shows when a row has notes.
 - **F** flags / unflags the current row (★). Flagged rows are filterable later (the **Flagged** special filter) — use it to mark "come back to this."
-- **Assess** runs the rubric against the current page (see **Suggested_KKE**).
+- **Assess** runs the rubric against the current page (see **Suggested_MRA**).
 
 ---
 
@@ -49,7 +49,7 @@ The **Classify** cluster carries descriptive metadata — fill what's useful whi
 - **Content Type** — the page's current-CMS type (the key into the migration crosswalk). A **→** hint shows the mapped target type.
 - **Theme**, **Published** (Published / Unpublished / Draft / 404 / Missing), **Group**, **Primary** tag, and free **Tags**.
 
-> Don't over-classify on the first pass. Set Content Type and KKE; leave the rest for batch operations or a second sweep.
+> Don't over-classify on the first pass. Set Content Type and MRA; leave the rest for batch operations or a second sweep.
 
 ---
 
@@ -67,7 +67,7 @@ The **webview toolbar** below the field bar gives you:
 
 ## Quick checklist for "a clean pass"
 
-- [ ] Every page you intend to review has a **KKE** call (no unreviewed rows left — check with `]`)
+- [ ] Every page you intend to review has an **MRA** call (no unreviewed rows left — check with `]`)
 - [ ] Rationale captured in **Notes** where the call isn't obvious
 - [ ] **Content Type** set where it'll drive migration classification
 - [ ] Tricky pages **flagged (F)** for a second look

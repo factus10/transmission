@@ -1,14 +1,14 @@
 // ════════════════════════════════════════════════════════════════════════════
-// Consolidate follows the EFFECTIVE KKE (Final_KKE wins)
+// Consolidate follows the EFFECTIVE KKE (Final_MRA wins)
 //
 // Run with `npm test`. Same sandbox approach as sankey.test.js — see
 // docs/dev/TESTING.md for why renderer.js is lifted by source text.
 //
-// WHAT THIS GUARDS. rowIsConsolidate() used to OR KKE_Recommendation with
-// Final_KKE, so a client who overrode an auditor's "Consolidate" with "Keep" was
+// WHAT THIS GUARDS. rowIsConsolidate() used to OR MRA_Recommendation with
+// Final_MRA, so a client who overrode an auditor's "Consolidate" with "Migrate" was
 // silently ignored — the page kept its target, its consolidation redirect and
 // its place in the consolidate worklists. Everything else in the engine already
-// read Final_KKE first; this was the one consumer that didn't.
+// read Final_MRA first; this was the one consumer that didn't.
 //
 // The review worklist (consolidateReviewKind) is the other half: the cases where
 // the client changed a consolidation and a person should look.
@@ -44,8 +44,8 @@ function extract(name) {
 const PRELUDE = String.raw`
 const CONSOLIDATE_COL = 'Consolidate_Into';
 const CONSOLIDATE_ID_COL = '_ConsolidateTargetId';
-function kkeCol() { return 'KKE_Recommendation'; }
-function finalKkeCol() { return 'Final_KKE'; }
+function kkeCol() { return 'MRA_Recommendation'; }
+function finalKkeCol() { return 'Final_MRA'; }
 function smeNotesCol() { return 'SME_Notes'; }
 var state = null;
 `;
@@ -56,7 +56,7 @@ const T = 'https://example.edu/master';
 
 function row(over) {
   return Object.assign({
-    Address: 'https://example.edu/page', KKE_Recommendation: '', Final_KKE: '',
+    Address: 'https://example.edu/page', MRA_Recommendation: '', Final_MRA: '',
     SME_Notes: '', Consolidate_Into: '', _ConsolidateTargetId: '',
   }, over);
 }
@@ -70,53 +70,53 @@ describe('extraction', () => {
   });
 });
 
-describe('rowIsConsolidate follows Final_KKE', () => {
+describe('rowIsConsolidate follows Final_MRA', () => {
   beforeEach(() => setState([]));
 
   test('recommendation alone still counts', () => {
-    assert.equal(rowIsConsolidate(row({ KKE_Recommendation: 'Consolidate' })), true);
+    assert.equal(rowIsConsolidate(row({ MRA_Recommendation: 'Consolidate' })), true);
   });
   test('a client Keep overrides the recommendation', () => {
-    const r = row({ KKE_Recommendation: 'Consolidate', Final_KKE: 'Keep', _ConsolidateTargetId: T });
+    const r = row({ MRA_Recommendation: 'Consolidate', Final_MRA: 'Migrate', _ConsolidateTargetId: T });
     assert.equal(rowIsConsolidate(r), false);
     assert.equal(rowConsolidateNeedsTarget(r), false, 'an overridden consolidation is not a to-do');
     assert.equal(rowHasInactiveConsolidateTarget(r), true);
   });
   test('a client Consolidate over a Keep recommendation counts, and needs a target', () => {
-    const r = row({ KKE_Recommendation: 'Keep', Final_KKE: 'Consolidate' });
+    const r = row({ MRA_Recommendation: 'Migrate', Final_MRA: 'Consolidate' });
     assert.equal(rowIsConsolidate(r), true);
     assert.equal(rowConsolidateNeedsTarget(r), true);
   });
   test('rowMentionsConsolidate still sees either column (for data migration)', () => {
-    assert.equal(rowMentionsConsolidate(row({ KKE_Recommendation: 'Consolidate', Final_KKE: 'Keep' })), true);
+    assert.equal(rowMentionsConsolidate(row({ MRA_Recommendation: 'Consolidate', Final_MRA: 'Migrate' })), true);
   });
 });
 
 describe('consolidation review worklist', () => {
   test('client-consolidate: Final says Consolidate, recommendation did not', () => {
-    const r = row({ KKE_Recommendation: 'Evolve', Final_KKE: 'Consolidate' });
+    const r = row({ MRA_Recommendation: 'Revise', Final_MRA: 'Consolidate' });
     setState([r]);
     assert.equal(consolidateReviewKind(r), 'client-consolidate');
   });
   test('client-override only when an inactive target is left behind', () => {
-    const withTarget = row({ KKE_Recommendation: 'Consolidate', Final_KKE: 'Keep', _ConsolidateTargetId: T });
-    const without = row({ Address: 'https://example.edu/b', KKE_Recommendation: 'Consolidate', Final_KKE: 'Keep' });
+    const withTarget = row({ MRA_Recommendation: 'Consolidate', Final_MRA: 'Migrate', _ConsolidateTargetId: T });
+    const without = row({ Address: 'https://example.edu/b', MRA_Recommendation: 'Consolidate', Final_MRA: 'Migrate' });
     setState([withTarget, without]);
     assert.equal(consolidateReviewKind(withTarget), 'client-override');
     assert.equal(consolidateReviewKind(without), '');
   });
   test('client-notes: both agree but the SME commented', () => {
-    const r = row({ KKE_Recommendation: 'Consolidate', Final_KKE: 'Consolidate', _ConsolidateTargetId: T, SME_Notes: 'merge into /about instead' });
+    const r = row({ MRA_Recommendation: 'Consolidate', Final_MRA: 'Consolidate', _ConsolidateTargetId: T, SME_Notes: 'merge into /about instead' });
     setState([r]);
     assert.equal(consolidateReviewKind(r), 'client-notes');
   });
-  test('no Final_KKE means the client has not spoken — nothing to review', () => {
-    const r = row({ KKE_Recommendation: 'Consolidate', SME_Notes: 'hm' });
+  test('no Final_MRA means the client has not spoken — nothing to review', () => {
+    const r = row({ MRA_Recommendation: 'Consolidate', SME_Notes: 'hm' });
     setState([r]);
     assert.equal(consolidateReviewKind(r), '');
   });
   test('reviewing clears a row until its decision changes', () => {
-    const r = row({ KKE_Recommendation: 'Keep', Final_KKE: 'Consolidate', _ConsolidateTargetId: T });
+    const r = row({ MRA_Recommendation: 'Migrate', Final_MRA: 'Consolidate', _ConsolidateTargetId: T });
     setState([r]);
     assert.equal(countConsolidateReview(), 1);
     markConsolidateReviewed(r);

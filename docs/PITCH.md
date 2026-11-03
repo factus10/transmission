@@ -22,7 +22,7 @@ The standard industry process looks like this:
 
 1. Crawl the site with a tool like Screaming Frog to export every URL with its metadata — titles, descriptions, status codes, word counts, internal links.
 2. Pull that export into a spreadsheet. Add columns for traffic data, keyword rankings, and audit decisions.
-3. Open each URL in a browser. Compare what you see on the page to what's in the spreadsheet. Record your decision: keep it, kill it, or evolve it.
+3. Open each URL in a browser. Compare what you see on the page to what's in the spreadsheet. Record your decision: migrate it, revise it, or archive it.
 4. Repeat for every page on the site.
 
 For a 500-page site, this takes days. For a 5,000-page site, it takes weeks. The auditor spends most of their time switching between browser tabs and spreadsheet rows, losing their place, copying data between tools, and fighting with Excel's row limits and filter quirks.
@@ -35,17 +35,17 @@ We built a proprietary content audit platform that eliminates the manual overhea
 
 **The page and the data, side by side.** Our tool loads your crawl data in a filterable sidebar alongside an embedded browser showing each page. No more switching between windows. Your strategist sees the metadata, the live page, and the audit controls in a single view.
 
-**Structured decisions, not spreadsheet chaos.** Every page gets a clear recommendation — Keep, Kill, Evolve, or Exclude — with tags, notes, and group assignments. Decisions are recorded in a structured format that feeds directly into migration plans, redirect maps, and content briefs.
+**Structured decisions, not spreadsheet chaos.** Every page gets a clear recommendation — Migrate, Revise, Archive, or Exclude — with tags, notes, and group assignments. Decisions are recorded in a structured format that feeds directly into migration plans, redirect maps, and content briefs.
 
 **Rubric-driven consistency.** We define evaluation criteria upfront as rubrics — specific, measurable rules tailored to your site. "If the page has fewer than 300 words and fewer than 2 internal links, flag it for review." "If the status code is 200 and the page is indexable with more than 500 words, it's a keeper." These rules are applied automatically across every page, ensuring consistent evaluation regardless of which strategist is reviewing.
 
 **AI-assisted assessment.** For subjective criteria that can't be captured in a simple rule — content quality, topical relevance, brand alignment — our platform integrates AI evaluation against your custom rubrics. This doesn't replace human judgment; it augments it, giving strategists a data-informed starting point for every page.
 
-**Analytics-informed recommendations.** When we have access to your Google Analytics, the platform generates a second Keep/Kill/Evolve recommendation drawn from actual traffic data — sessions, engagement rate, time on page, views per session — normalized and weighted into a composite score. The strategist sees this analytics-derived signal alongside their own judgment for every page. It never overrides the human decision; it's one more data point on top of the rubric and AI assessment.
+**Analytics-informed recommendations.** When we have access to your Google Analytics, the platform generates a second Migrate/Revise/Archive recommendation drawn from actual traffic data — sessions, engagement rate, time on page, views per session — normalized and weighted into a composite score. The strategist sees this analytics-derived signal alongside their own judgment for every page. It never overrides the human decision; it's one more data point on top of the rubric and AI assessment.
 
 **Client-shareable glossary.** Tags and groups aren't just internal bookkeeping — they carry meaning. The platform lets us attach descriptions to every tag and group used on the audit, and export that glossary as a formatted Word-ready document. The definitions that drove our decisions become part of your deliverable.
 
-**Content consolidation as a first-class decision.** Most audits frame the choice as Keep, Kill, or Evolve — but a huge share of real audit work is *merging* near-duplicate pages: multiple landing pages competing for the same keyword, overlapping FAQs, blog posts on the same topic. Kill loses their accumulated value; Evolve leaves the cannibalization problem in place. Our platform treats Consolidate as a fifth recommendation with its own workflow: each consolidated page is explicitly tied to the target page absorbing its content, and redirects automatically chase the target through any URL changes the target itself goes through. The Consolidation Candidates workflow finds every multi-page overlap on the site and lets the strategist resolve them in bulk — the difference between catching consolidation opportunities and silently missing them.
+**Content consolidation as a first-class decision.** Most audits frame the choice as keep, kill, or evolve (we say Migrate, Revise, or Archive) — but a huge share of real audit work is *merging* near-duplicate pages: multiple landing pages competing for the same keyword, overlapping FAQs, blog posts on the same topic. Archive loses their accumulated value; Revise leaves the cannibalization problem in place. Our platform treats Consolidate as a fifth recommendation with its own workflow: each consolidated page is explicitly tied to the target page absorbing its content, and redirects automatically chase the target through any URL changes the target itself goes through. The Consolidation Candidates workflow finds every multi-page overlap on the site and lets the strategist resolve them in bulk — the difference between catching consolidation opportunities and silently missing them.
 
 **Real-time progress tracking.** At any point during the audit, we can give you a status update: how many pages have been reviewed, the breakdown by recommendation, and how decisions map to your site structure. No waiting until the end for a summary — we can generate a branded progress report on demand and share it as a PDF.
 
@@ -53,7 +53,7 @@ We built a proprietary content audit platform that eliminates the manual overhea
 
 **The sitemap arrives as a working artifact, not a screenshot.** The architecture we plan doesn't stay locked inside our tool. The visual sitemap publishes directly onto a Miro board as real, editable Miro shapes — one per page, positioned exactly as laid out, connected parent to child. Not a flat image pasted into a slide: a board your stakeholders can move around, comment on, and reorganize live in a workshop, in the environment they already work in. A 400-page site pushes across in about a minute. It's a one-way publish, which is the point — the board is where the conversation happens, while the audit data behind it stays authoritative in our platform.
 
-**And the board is readable at a glance.** Sitemap cards can be colored by any of fifteen dimensions: the delivery properties of a page (its phase, its build status, who's writing it, who's building it, who's migrating it) or the audit decisions themselves — content type, Keep/Kill/Evolve, migration track, publishing status, target content type. Rules can combine conditions, and different visual properties can be driven by different rules, so one dimension reads as color while another reads as line style. Because a section usually holds many pages, a rule can ask either what that section *mostly* is or whether it *contains* anything in a given state — "this is mostly articles," or "there's something in here we're killing." Cards render as a color band or in the heavy-outline convention most sitemap decks already use. The effect is one board where "what kind of page is this" and "what did we decide to do with it" are both legible without cross-referencing a spreadsheet.
+**And the board is readable at a glance.** Sitemap cards can be colored by any of fifteen dimensions: the delivery properties of a page (its phase, its build status, who's writing it, who's building it, who's migrating it) or the audit decisions themselves — content type, Migrate/Revise/Archive, migration track, publishing status, target content type. Rules can combine conditions, and different visual properties can be driven by different rules, so one dimension reads as color while another reads as line style. Because a section usually holds many pages, a rule can ask either what that section *mostly* is or whether it *contains* anything in a given state — "this is mostly articles," or "there's something in here we're archiving." Cards render as a color band or in the heavy-outline convention most sitemap decks already use. The effect is one board where "what kind of page is this" and "what did we decide to do with it" are both legible without cross-referencing a spreadsheet.
 
 **Two more pictures, for the two questions the sitemap can't answer.** A sitemap shows the shape of the site; it doesn't show where the *weight* is, and it doesn't show what happens to the content you have today. So the same data draws two further diagrams. A **treemap** sizes every section by how much content is actually in it and colors it by what we've decided to do with it — usually the more uncomfortable picture, because the section everyone talks about turns out to be forty pages while the one nobody mentions is eight hundred. And a **content flow** diagram traces the current site into the new one: which sections (or, in a consolidation, which *sites*) feed which parts of the new architecture, how much is being retired, and how much isn't placed yet — one image that answers "where does all of this go?" Every diagram exports as an interactive HTML file your team opens in a browser with nothing installed, as a PDF for the deck, as a plain image for slides, or onto a Miro board.
 
@@ -71,7 +71,7 @@ We built a proprietary content audit platform that eliminates the manual overhea
 
 **More consistent results.** Rubric-driven evaluation means every page is held to the same standard. When three strategists audit different sections of your site, the criteria don't drift. The rubric is the source of truth.
 
-**Actionable output, not just a spreadsheet.** The audit produces structured data that flows directly into your next steps. The platform includes a built-in redirect editor where strategists set redirect destinations for every killed page and every page whose URL changes — picking from the planned sitemap or specifying external URLs. The result is a ready-to-implement CSV of 301 redirects that your development team can import directly into any CMS, CDN, or server configuration. No manual redirect spreadsheet assembly. Content briefs for pages that need to evolve, sitemap placements for the pages you're keeping — it all comes out of the same workflow.
+**Actionable output, not just a spreadsheet.** The audit produces structured data that flows directly into your next steps. The platform includes a built-in redirect editor where strategists set redirect destinations for every archived page and every page whose URL changes — picking from the planned sitemap or specifying external URLs. The result is a ready-to-implement CSV of 301 redirects that your development team can import directly into any CMS, CDN, or server configuration. No manual redirect spreadsheet assembly. Content briefs for pages that need revising, sitemap placements for the pages you're keeping — it all comes out of the same workflow.
 
 **Transparency throughout.** You don't have to wait for a final report to understand what's happening with your content. We can generate a branded progress report at any point during the audit and share it with you as a PDF — showing the current status, breakdown by recommendation, and group-level detail. A built-in Table View lets strategists view, sort, and filter the full spreadsheet without leaving the tool — no need to open Excel alongside the platform. Filtered exports let us share relevant subsets with different stakeholders — your SEO team sees one view, your content editors see another, your developers see the redirect map.
 
@@ -107,7 +107,7 @@ Use these as talking points. Adapt to context.
 
 ### The Consolidation Angle
 
-> "Something most audit processes get wrong: they only think about Keep / Kill / Evolve. But on most sites we audit, a third or more of the work is actually *merging* — three landing pages competing for the same keyword, four blog posts on the same topic, two FAQ pages with overlapping questions. If you Kill those, you throw away their value. If you Evolve them, you leave the cannibalization in place across multiple 'improved' pages.
+> "Something most audit processes get wrong: they only think about Migrate / Revise / Archive. But on most sites we audit, a third or more of the work is actually *merging* — three landing pages competing for the same keyword, four blog posts on the same topic, two FAQ pages with overlapping questions. If you Archive those, you throw away their value. If you Revise them, you leave the cannibalization in place across multiple 'improved' pages.
 >
 > Our platform treats Consolidate as a real decision with a real workflow. We can scan the site for every overlap, pick the page that should survive, and automatically redirect the rest to it — including handling cases where the target page itself is moving to a new URL. It's the difference between catching consolidation opportunities and silently missing them."
 
@@ -127,7 +127,7 @@ Use these as talking points. Adapt to context.
 
 ### What They Get
 
-> "The output isn't just a spreadsheet with 'Keep' or 'Kill' in a column. Every decision has context — tags, notes, group assignments. Pages are mapped to your sitemap. Our redirect editor lets strategists assign specific destinations for every killed or moved page — pulling from the planned sitemap or pointing to external URLs — and then export a ready-to-implement redirect map. You get content briefs for pages that need work, and a clear picture of what your site looks like after the audit.
+> "The output isn't just a spreadsheet with 'Migrate' or 'Archive' in a column. Every decision has context — tags, notes, group assignments. Pages are mapped to your sitemap. Our redirect editor lets strategists assign specific destinations for every archived or moved page — pulling from the planned sitemap or pointing to external URLs — and then export a ready-to-implement redirect map. You get content briefs for pages that need work, and a clear picture of what your site looks like after the audit.
 >
 > And when it's time for your subject matter experts to review — we don't just email them a spreadsheet and hope for the best. We generate a structured review sheet with dropdown menus for their decisions, merge their responses back automatically, and flag any disagreements for our strategist to resolve. The whole back-and-forth that usually takes a week of emails happens in minutes.
 >
@@ -151,7 +151,7 @@ Use these as talking points. Adapt to context.
 
 ### Closing
 
-> "Content audits are one of those things where the methodology matters as much as the expertise. Everyone in our space knows what Keep/Kill/Evolve means. The difference is in how efficiently and consistently you execute it. We invested in building the tooling to do it better."
+> "Content audits are one of those things where the methodology matters as much as the expertise. Everyone in our space knows what Keep/Kill/Evolve means (we call it Migrate/Revise/Archive). The difference is in how efficiently and consistently you execute it. We invested in building the tooling to do it better."
 
 ---
 
@@ -159,7 +159,7 @@ Use these as talking points. Adapt to context.
 
 Use selectively based on the conversation:
 
-- **QuickBooks case study:** Deleted 2,000 underperforming blog posts. Saw a 20% traffic increase within weeks, ultimately leading to 72% more signups. Proof that killing content works.
+- **QuickBooks case study:** Deleted 2,000 underperforming blog posts. Saw a 20% traffic increase within weeks, ultimately leading to 72% more signups. Proof that archiving content works.
 - **Google's crawl budget:** Search engines allocate limited resources to crawling each site. Thousands of low-value pages dilute that budget, making it harder for your best content to get indexed and ranked.
 - **Content decay:** The average piece of web content loses 50%+ of its organic traffic within 12 months of publication if not maintained. An audit identifies what's decaying and what's worth saving.
 - **Migration risk:** Sites that migrate without auditing content first typically see 10–30% traffic drops that take 6–12 months to recover. A proper audit before migration significantly reduces this risk.
