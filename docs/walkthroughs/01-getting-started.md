@@ -9,7 +9,7 @@ How to install the app, open your first crawl export, and understand what the fi
 ## 0. The mental model
 
 - The app is a **viewer and editor for your spreadsheet** — it doesn't own a database. Your `.xlsx` *is* the project.
-- On open, it **injects its audit columns** (KKE_Recommendation, Tags, Notes, …) if they aren't already there, and adds a handful of **structural sheets** (Sitemap, KKE_Settings, etc.) to hold project state.
+- On open, it **injects its audit columns** (MRA_Recommendation, Tags, Notes, …) if they aren't already there, and adds a handful of **structural sheets** (Sitemap, MRA_Settings, etc.) to hold project state.
 - Everything you do saves **back into that same file**. Hand the file to a colleague with the app and they see exactly your state — decisions, sitemap, settings, change log.
 - So: **one file = one project**, fully portable.
 
@@ -37,12 +37,12 @@ How to install the app, open your first crawl export, and understand what the fi
 
 On open, the app ensures these exist (and adds them if missing):
 
-- **Audit columns** — KKE_Recommendation lands first; Tags, Notes, Group, Primary Tag sit right after the URL column; the rest (SME, migration, CMS, Design_Patterns…) are appended. See the *Audit Columns* reference.
+- **Audit columns** — MRA_Recommendation lands first; Tags, Notes, Group, Primary Tag sit right after the URL column; the rest (SME, migration, CMS, Design_Patterns…) are appended. See the *Audit Columns* reference.
 - **Structural sheets** (hidden from the data-sheet picker), each carrying part of the project:
   - **Sitemap** — the future-state sitemap.
-  - **KKE_Settings** — project settings, saved filters, computed-column config.
-  - **KKE_ChangeLog** — the audit trail of decision changes.
-  - **KKE_Glossary**, **ContentTypeRegistry**, **PatternLibrary** (Target Spec Library), **DesignPatternLibrary** (Component Library).
+  - **MRA_Settings** — project settings, saved filters, computed-column config.
+  - **MRA_ChangeLog** — the audit trail of decision changes.
+  - **MRA_Glossary**, **ContentTypeRegistry**, **PatternLibrary** (Target Spec Library), **DesignPatternLibrary** (Component Library).
 
 ---
 
@@ -50,10 +50,10 @@ On open, the app ensures these exist (and adds them if missing):
 
 A persistent **tab strip** below the titlebar (mirrored in the **View** menu) switches between the app's five views — always one click away:
 
-- **Audit** (**Cmd+1**) — the default: sidebar row list + the embedded browser and field bar. Where you make each Keep/Kill/Evolve call.
+- **Audit** (**Cmd+1**) — the default: sidebar row list + the embedded browser and field bar. Where you make each Migrate/Revise/Archive call.
 - **Table** (**Cmd+T**) — a full-width spreadsheet of every row and column, with inline editing.
 - **Sitemap** (**Cmd+Shift+T**) — the drag-and-drop editor for the future-state sitemap.
-- **Redirects** (**Cmd+Shift+R**) — every Kill or URL-changed page with an editable destination.
+- **Redirects** (**Cmd+Shift+R**) — every Archive or URL-changed page with an editable destination.
 - **Menus** (**Cmd+Shift+M**) — build independent navigation menus that reference your sitemap pages.
 
 > You can build navigation right from the **Audit** view without switching tabs: the audit bar's **Sitemap** button places the current page on the sitemap (and, if the sitemap is still empty, offers a quick form to create its first node), and the **Menu** button drops the page into one of your menus.
@@ -75,7 +75,7 @@ Seeding only stages the data — **save** to commit it to the file.
 ## 6. Save & round-trip
 
 1. **File → Save** (**Cmd+S**). The titlebar shows the dirty state; a toast confirms the write.
-2. On save the app resolves redirect destinations, writes all audit + structural sheets, and appends this session's changes to **KKE_ChangeLog**.
+2. On save the app resolves redirect destinations, writes all audit + structural sheets, and appends this session's changes to **MRA_ChangeLog**.
 3. Reopen the file (it's also in **File → Open Recent**) and everything is exactly as you left it.
 
 > Data ownership: the file is the single source of truth and is **portable** — no cloud, no separate database. Back it up like any document. Per-*user* preferences (below) live outside the file and don't travel with it.
@@ -93,4 +93,4 @@ Seeding only stages the data — **save** to commit it to the file.
 
 ---
 
-*Next: **Project Setup** — configure identity, KKE states, suggestion sources, and the migration vocabularies. See also [the User Guide](../USER_GUIDE.md) and the *Audit Columns* reference.*
+*Next: **Project Setup** — configure identity, decision states, suggestion sources, and the migration vocabularies. See also [the User Guide](../USER_GUIDE.md) and the *Audit Columns* reference.*

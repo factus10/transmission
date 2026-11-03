@@ -11,14 +11,14 @@ Every label, menu path, and shortcut here is verified against the 2.16.1 source 
 2. [Project Setup](02-project-setup.md) — Project Settings vs App Settings; what travels with the file
 
 **B. The core audit**
-3. [Running the Audit Pass](03-running-the-audit-pass.md) — the field-bar clusters, KKE keys (1–5), the embedded browser
+3. [Running the Audit Pass](03-running-the-audit-pass.md) — the field-bar clusters, MRA keys (1–5), the embedded browser
 4. [Finding the Work](04-finding-the-work.md) — search scopes, filters, saved filters, Global Search
 5. [Bulk Operations](05-bulk-operations.md) — multi-select + the Multi-bar, batch assess
 6. [Tagging, Grouping & the Glossary](06-tagging-grouping-glossary.md) — Group vs Primary vs Tags; the glossary
 
 **C. Classify for migration**
 7. [Content Types & the Crosswalk](07-content-types-crosswalk.md) — Content Type → Renders as → Target; the registry
-8. [Suggested_KKE](08-suggested-kke.md) — rubrics, AI, GA; how the sources combine
+8. [Suggested_MRA](08-suggested-kke.md) — rubrics, AI, GA; how the sources combine
 9. [Consolidate](09-consolidate.md) — the picker, candidates, dead-target warnings
 10. [Non-200 Triage](10-non-200-triage.md) — clearing redirects/404s/errors in one sweep
 

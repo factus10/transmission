@@ -48,7 +48,7 @@ In the **Classify** cluster, set **Content Type** (its UI label; the underlying 
 When a row's **Content Type** is set (or changed), the app looks it up in the registry and fills **blank** `Renders as`, `Migration Track`, and `Target Content Type` from the matched entry — **never overwriting** anything you typed. Each auto-filled field is logged to the change log.
 
 - Lookup is case-insensitive exact match first; if that misses, it splits compound types (`Article / blog post`) on separators and tries each token — so you don't have to register every variant.
-- The **Migrate** cluster shows **Renders as** and **Track**, plus a **ghost suggestion** next to Track when it's blank (derived from KKE + Renders as) — click to accept.
+- The **Migrate** cluster shows **Renders as** and **Track**, plus a **ghost suggestion** next to Track when it's blank (derived from MRA + Renders as) — click to accept.
 
 > **Renders as = Fragment (embeddable, no URL)** marks content with no public URL — it's skipped in redirects and sitemap coverage downstream. A news post, event or profile migrated as a structured record is **Record**, not Fragment: it still has a page and needs a redirect.
 
@@ -63,7 +63,7 @@ When a row's **Content Type** is set (or changed), the app looks it up in the re
 
 ## Quick checklist for "classified for migration"
 
-- [ ] Every keep/evolve page has a **Content Type**
+- [ ] Every migrate/revise page has a **Content Type**
 - [ ] The **Content Type Registry** covers every type in use (no "no crosswalk" flags)
 - [ ] **Renders as** populated (Unclassified count → 0)
 - [ ] **Target Content Type** and **→ Target Spec** mapped per type

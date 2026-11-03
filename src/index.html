@@ -107,7 +107,7 @@
         <span id="multi-bar-label" class="bulk-count">Apply to filtered:</span>
         <select id="multi-action" class="group-select" style="font-size:12px;padding:3px 6px;">
           <option value="">Action…</option>
-          <option value="kke">Set KKE</option>
+          <option value="kke">Set decision</option>
           <option value="published">Set Published Status</option>
           <option value="page-type">Set Content Type</option>
           <option value="content-theme">Set Content Theme</option>
@@ -175,7 +175,7 @@
             </div>
             <div id="cluster-quick-toggles" class="cluster-quick-toggles">
               <span class="qt-label" title="Reveal optional audit-bar clusters">+ More fields:</span>
-              <button type="button" id="qt-sme"      class="qt-chip" data-cluster="sme"      title="Show / hide SME review fields (read-only SME + Final KKE)" aria-pressed="false">SME</button>
+              <button type="button" id="qt-sme"      class="qt-chip" data-cluster="sme"      title="Show / hide SME review fields (read-only SME + Final MRA)" aria-pressed="false">SME</button>
               <button type="button" id="qt-migrate"  class="qt-chip" data-cluster="migrate"  title="Show / hide Migration fields (Nature + Track)" aria-pressed="false">Migrate</button>
               <button type="button" id="qt-patterns" class="qt-chip" data-cluster="patterns" title="Show / hide Components cluster" aria-pressed="false">Components</button>
               <button type="button" id="qt-audience" class="qt-chip" data-cluster="audience" title="Show / hide Audience cluster (who this page serves)" aria-pressed="false">Audience</button>
@@ -187,23 +187,23 @@
           <!-- Row 2: audit fields organized into labeled clusters -->
           <div id="field-bar-audit">
 
-            <!-- ── DECIDE: core KKE call + actions + SME readout/Final ─────── -->
+            <!-- ── DECIDE: core decision + actions + SME readout/Final ─────── -->
             <div class="audit-cluster cluster-decide" data-cluster="decide">
               <span class="cluster-pill" title="Click to collapse / expand"><span class="cluster-chev">▾</span>Decide</span>
               <span class="cluster-summary" aria-hidden="true"></span>
               <div class="audit-group">
-                <label class="audit-label" id="kke-buttons-label">KKE</label>
+                <label class="audit-label" id="kke-buttons-label">MRA</label>
                 <div id="kke-buttons" class="kke-btn-group">
-                  <button class="kke-btn" data-kke="Keep">Keep</button>
-                  <button class="kke-btn" data-kke="Kill">Kill</button>
-                  <button class="kke-btn" data-kke="Evolve">Evolve</button>
+                  <button class="kke-btn" data-kke="Migrate">Migrate</button>
+                  <button class="kke-btn" data-kke="Revise">Revise</button>
+                  <button class="kke-btn" data-kke="Archive">Archive</button>
                   <button class="kke-btn" data-kke="Consolidate">Consolidate
                     <span id="consolidate-indicator" class="notes-indicator hidden"></span>
                   </button>
                   <button class="kke-btn" data-kke="Exclude">Exclude</button>
                 </div>
-                <!-- The client's Final_KKE, when it overrides the recommendation above. Always
-                     visible (not behind "Show SME fields"): Final_KKE is what every engine
+                <!-- The client's Final_MRA, when it overrides the recommendation above. Always
+                     visible (not behind "Show SME fields"): Final_MRA is what every engine
                      consumer acts on, so an override must never be invisible here. -->
                 <button type="button" id="final-kke-override" class="final-kke-override hidden"><span class="final-kke-override-label">Final</span><span id="final-kke-override-value"></span></button>
                 <div id="ga-kke-badge" class="ga-kke-badge hidden" title=""></div>
@@ -229,7 +229,7 @@
                 </div>
                 <div class="audit-group audit-group-compact">
                   <label class="audit-label">Final</label>
-                  <button type="button" id="final-kke-match" class="final-kke-match hidden" title="Final matches KKE — click to override"><span class="final-kke-check">✓</span><span id="final-kke-match-value">—</span></button>
+                  <button type="button" id="final-kke-match" class="final-kke-match hidden" title="Final matches MRA — click to override"><span class="final-kke-check">✓</span><span id="final-kke-match-value">—</span></button>
                   <select id="final-kke-select" class="final-kke-select">
                     <option value="">—</option>
                   </select>
@@ -351,9 +351,9 @@
                   <option value="Configure">Configure</option>
                   <option value="Manual Rebuild">Manual Rebuild</option>
                   <option value="Merge">Merge</option>
-                  <option value="Kill/Redirect">Kill/Redirect</option>
+                  <option value="Archive/Redirect">Archive/Redirect</option>
                 </select>
-                <span id="migration-track-suggestion" class="migration-track-suggestion hidden" title="Suggested track based on KKE + Content Nature"></span>
+                <span id="migration-track-suggestion" class="migration-track-suggestion hidden" title="Suggested track based on MRA + Content Nature"></span>
               </div>
             </div>
 
@@ -412,7 +412,7 @@
                     <button class="btn btn-sm btn-ghost" id="wv-error-retry">Retry</button>
                     <button class="btn btn-sm btn-ghost" id="wv-error-external">Open in browser ↗</button>
                   </div>
-                  <div class="wv-error-hint">If the page is genuinely gone, that's useful audit information — consider Kill (2) with a redirect.</div>
+                  <div class="wv-error-hint">If the page is genuinely gone, that's useful audit information — consider Archive with a redirect.</div>
                 </div>
               </div>
               <webview id="webview" allowpopups></webview>
@@ -441,7 +441,7 @@
           </label>
           <input id="redirect-search" type="text" class="re-search-input" placeholder="Filter by URL or title…">
           <button id="btn-redirect-find-replace" class="btn btn-sm btn-ghost" title="Find and replace in destination URLs">Find/Replace</button>
-          <button id="btn-redirect-resync-nav" class="btn btn-sm btn-ghost" title="Recompute redirect destinations from the current sitemap: every row placed on it, plus unplaced Kill/Consolidate rows whose destination the app derived (from a consolidation target or the live 3xx). Destinations you typed or picked are left untouched.">Re-derive from sitemap</button>
+          <button id="btn-redirect-resync-nav" class="btn btn-sm btn-ghost" title="Recompute redirect destinations from the current sitemap: every row placed on it, plus unplaced Archive/Consolidate rows whose destination the app derived (from a consolidation target or the live 3xx). Destinations you typed or picked are left untouched.">Re-derive from sitemap</button>
           <span style="flex:1"></span>
           <span id="redirect-editor-stats"></span>
         </div>
@@ -713,7 +713,7 @@
       <span style="flex:1;"></span>
       <button id="btn-assess-accept" class="btn btn-sm btn-primary hidden">Accept Suggestion</button>
       <button id="btn-assess-llm" class="btn btn-sm btn-ghost hidden" title="Requires Claude API key in Settings">AI Assess</button>
-      <button id="btn-assess-batch" class="btn btn-sm btn-ghost hidden" title="Run rubric on all filtered rows — results feed Suggested_KKE">Batch Assess</button>
+      <button id="btn-assess-batch" class="btn btn-sm btn-ghost hidden" title="Run rubric on all filtered rows — results feed Suggested_MRA">Batch Assess</button>
     </div>
   </div>
 
@@ -740,11 +740,11 @@
       </div>
       <label class="setting-row">
         <input type="checkbox" id="pref-auto-advance">
-        <span>Auto-advance to next row after assigning KKE status</span>
+        <span>Auto-advance to next row after making a decision</span>
       </label>
       <label class="setting-row">
         <input type="checkbox" id="pref-show-sme-fields">
-        <span>Show SME fields (SME Decision, Final KKE, Content Owner)</span>
+        <span>Show SME fields (SME Decision, Final MRA, Content Owner)</span>
       </label>
       <label class="setting-row">
         <input type="checkbox" id="pref-show-migration-fields">
@@ -827,7 +827,7 @@
         <label class="setting-label">Column mapping <span class="setting-hint">(which spreadsheet columns hold audit data)</span></label>
         <div class="setting-col-map">
           <div class="setting-row-inline">
-            <span class="setting-map-label">KKE</span>
+            <span class="setting-map-label">MRA</span>
             <select id="map-kke" class="setting-input"></select>
           </div>
           <div class="setting-row-inline">
@@ -864,7 +864,7 @@
       </div>
       <div class="ps-tabs" role="tablist">
         <button type="button" class="ps-tab active" data-tab="identity" role="tab">Identity</button>
-        <button type="button" class="ps-tab" data-tab="kke-states" role="tab">KKE States</button>
+        <button type="button" class="ps-tab" data-tab="kke-states" role="tab">Decision states</button>
         <button type="button" class="ps-tab" data-tab="suggestions" role="tab">Suggestions</button>
         <button type="button" class="ps-tab" data-tab="audience" role="tab">Audience</button>
         <button type="button" class="ps-tab" data-tab="sites" role="tab">Sites</button>
@@ -915,10 +915,10 @@
           </div>
         </div>
 
-        <!-- KKE States tab -->
+        <!-- Decision states tab -->
         <div class="ps-tab-content hidden" data-tab="kke-states">
           <div class="setting-group">
-            <label class="setting-label">Custom KKE states <span class="setting-hint">(beyond Keep/Kill/Evolve/Exclude)</span></label>
+            <label class="setting-label">Custom decision states <span class="setting-hint">(beyond Migrate/Revise/Archive/Consolidate/Exclude)</span></label>
             <div id="custom-kke-list" class="setting-col-map"></div>
             <div class="setting-row-inline" style="margin-top:6px">
               <input type="text" id="custom-kke-label" class="setting-input" placeholder="Label" style="flex:1">
@@ -926,7 +926,7 @@
               <button id="btn-add-custom-kke" class="btn btn-sm btn-primary">Add</button>
             </div>
             <div id="rogue-kke-section" class="hidden" style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border);">
-              <label class="setting-label" style="font-size:11px;color:var(--kke-kill);">Undefined values in data <span class="setting-hint" style="color:var(--text-muted);">(typos / unrecognized — merge into a defined state to clean up)</span></label>
+              <label class="setting-label" style="font-size:11px;color:var(--kke-archive);">Undefined values in data <span class="setting-hint" style="color:var(--text-muted);">(typos / unrecognized — merge into a defined state to clean up)</span></label>
               <div id="rogue-kke-list" class="setting-col-map"></div>
             </div>
           </div>
@@ -935,7 +935,7 @@
         <!-- Suggestions tab (GA + Rubric source orchestrator) -->
         <div class="ps-tab-content hidden" data-tab="suggestions">
           <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px;">
-            Suggestion sources compute a recommended KKE for each row. The audit-bar badge shows the strongest source. Tune per-source weights below; higher weight wins when sources disagree.
+            Suggestion sources compute a recommended decision for each row. The audit-bar badge shows the strongest source. Tune per-source weights below; higher weight wins when sources disagree.
           </p>
 
           <div class="setting-group">
@@ -948,7 +948,7 @@
 
           <div class="setting-group">
             <label class="setting-label">Rubric source <span class="setting-hint">field-rule + LLM assessment via Assess button</span></label>
-            <div style="font-size:12px;color:var(--text-muted);margin:4px 0 8px;">Run rubric on filtered rows from the File menu, or use the per-row <strong>Assess</strong> button. Results feed Suggested_KKE.</div>
+            <div style="font-size:12px;color:var(--text-muted);margin:4px 0 8px;">Run rubric on filtered rows from the File menu, or use the per-row <strong>Assess</strong> button. Results feed Suggested&nbsp;MRA.</div>
             <button id="ps-btn-run-rubric" class="btn btn-sm btn-primary">Run rubric on filtered rows…</button>
           </div>
           <div class="setting-divider"></div>
@@ -970,8 +970,8 @@
               </div>
             </div>
             <div class="setting-hint" style="margin-top:6px;">
-              Audience votes <strong>Keep</strong> when a page serves a Primary audience, <strong>Evolve</strong> when
-              everything it serves is Tertiary or off-target, and <strong>Kill</strong> only for the explicit
+              Audience votes <strong>Migrate</strong> when a page serves a Primary audience, <strong>Revise</strong> when
+              everything it serves is Tertiary or off-target, and <strong>Archive</strong> only for the explicit
               <em>— None</em> call. Untagged and Secondary-only pages abstain.
             </div>
             <div id="ps-suggested-last-run" style="margin-top:8px;font-size:11px;color:var(--text-muted);"></div>
@@ -985,7 +985,7 @@
         <div class="ps-tab-content hidden" data-tab="audience">
           <p style="color:var(--text-muted);font-size:12px;margin:0 0 14px;">
             The audience prioritization workshop's output. Tiers drive the Audience suggestion in
-            <strong>Suggested&nbsp;KKE</strong> and the ordering of the tagging picker, so ranking these
+            <strong>Suggested&nbsp;MRA</strong> and the ordering of the tagging picker, so ranking these
             is what turns audience tagging into a real audit input. Travels with the project on the
             <strong>Audiences</strong> sheet.
           </p>
@@ -1001,7 +1001,7 @@
             <div class="ps-section-hint">
               A <strong>blank</strong> Audiences cell means the page has not been reviewed yet.
               The reserved <em>— None (no target audience)</em> entry is the positive
-              "reviewed, serves nobody" call — only that one argues Kill.
+              "reviewed, serves nobody" call — only that one argues Archive.
             </div>
             <div id="ps-aud-list" class="ps-mig-list"></div>
             <div id="ps-aud-footer" style="font-size:11px;color:var(--text-muted);margin-top:8px;"></div>
@@ -1035,7 +1035,7 @@
             <strong>Source&nbsp;Site</strong> column, per-domain redirect maps, and the consolidation
             reports. Travels with the project on the <strong>Sites</strong> sheet.
           </p>
-          <div id="ps-sites-warn" class="hidden" style="background:var(--kke-kill-bg);border-left:3px solid var(--kke-kill);padding:8px 12px;font-size:12px;margin-bottom:12px;border-radius:var(--radius);"></div>
+          <div id="ps-sites-warn" class="hidden" style="background:var(--kke-archive-bg);border-left:3px solid var(--kke-archive);padding:8px 12px;font-size:12px;margin-bottom:12px;border-radius:var(--radius);"></div>
 
           <div class="ps-section">
             <div class="ps-section-head">
@@ -1082,7 +1082,7 @@
         <!-- Saved Filters tab -->
         <div class="ps-tab-content hidden" data-tab="saved-filters">
           <p style="color:var(--text-muted);font-size:12px;margin:0 0 12px;">
-            Saved filter combos travel with the file (sidebar text · KKE filter · group · field filters).
+            Saved filter combos travel with the file (sidebar text · MRA filter · group · field filters).
           </p>
           <div id="ps-saved-filters-list" class="setting-col-map"></div>
           <div id="ps-saved-filters-empty" class="hidden" style="text-align:center;color:var(--text-muted);font-size:12px;padding:24px;">No saved filters yet. Use the sidebar's saved-filters dropdown to capture a current filter.</div>
@@ -1205,6 +1205,10 @@
         <input type="checkbox" id="sme-export-split-owner">
         Split into separate files by Content Owner
       </label>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:4px;" title="For a client whose project started before the rename: the worksheet says Keep / Kill / Evolve. It imports back as Migrate / Archive / Revise either way.">
+        <input type="checkbox" id="sme-export-legacy-wording">
+        Use Keep / Kill / Evolve wording (for projects that started before the rename)
+      </label>
       <p id="sme-export-preview"></p>
     </div>
     <div id="sme-export-footer" class="modal-footer">
@@ -1291,6 +1295,7 @@
   <!-- Toast -->
   <div id="toast"></div>
 
+  <script src="terminology.js"></script>
   <script src="sitemap-layout.js"></script>
   <script src="sitemap-template.js"></script>
   <script src="treemap-template.js"></script>

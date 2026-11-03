@@ -110,7 +110,7 @@ const TOOLS = [
   },
   {
     name: 'project_overview',
-    description: 'Start here. Identity, last save, row counts, content vs non-content split, decision (KKE) mix, review progress, sitemap size, source sites, libraries, and saved filter names.',
+    description: 'Start here. Identity, last save, row counts, content vs non-content split, decision (Migrate/Revise/Archive) mix, review progress, sitemap size, source sites, libraries, and saved filter names.',
     inputSchema: { type: 'object', properties: {} },
     run: () => project().overview()
   },
@@ -129,7 +129,7 @@ const TOOLS = [
   },
   {
     name: 'aggregate',
-    description: 'Count rows grouped by one to three fields, optionally filtered. Use this for every "how many" question instead of paging through query_rows. Comma-separated columns (Tags, Audiences, Jobs_Served, Design_Patterns) are split so each value is tallied separately. Example: pages being killed per section → groupBy ["@path_1"], filters [{field:"@effective_kke", operator:"equals", value:"Kill"}, {field:"@content_kind", operator:"equals", value:"content"}].',
+    description: 'Count rows grouped by one to three fields, optionally filtered. Use this for every "how many" question instead of paging through query_rows. Comma-separated columns (Tags, Audiences, Jobs_Served, Design_Patterns) are split so each value is tallied separately. Example: pages being archived per section → groupBy ["@path_1"], filters [{field:"@effective_decision", operator:"equals", value:"Archive"}, {field:"@content_kind", operator:"equals", value:"content"}].',
     inputSchema: {
       type: 'object',
       properties: {
@@ -144,7 +144,7 @@ const TOOLS = [
   },
   {
     name: 'query_rows',
-    description: 'List matching rows, projected to chosen columns. Paged: default 25 rows, max 200. Long cells are truncated — use get_row for a full page record. Always name `columns`; the default is just URL, title, status code and effective KKE.',
+    description: 'List matching rows, projected to chosen columns. Paged: default 25 rows, max 200. Long cells are truncated — use get_row for a full page record. Always name `columns`; the default is just URL, title, status code and effective decision.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -187,7 +187,7 @@ const TOOLS = [
   },
   {
     name: 'get_redirects',
-    description: 'Redirect rules and their provenance. mode "summary" (default): per source site, how many are set, deliberately 404, or owed but still blank, and who wrote them. mode "list": the rules themselves, paged. Covers every row with a destination plus Kill/Consolidate rows still owing one.',
+    description: 'Redirect rules and their provenance. mode "summary" (default): per source site, how many are set, deliberately 404, or owed but still blank, and who wrote them. mode "list": the rules themselves, paged. Covers every row with a destination plus Archive/Consolidate rows still owing one.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -208,7 +208,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         url: { type: 'string' },
-        field: { type: 'string', description: 'e.g. KKE_Recommendation, Final_KKE, "(row deleted)"' },
+        field: { type: 'string', description: 'e.g. MRA_Recommendation, Final_MRA, "(row deleted)"' },
         auditor: { type: 'string' },
         since: { type: 'string', description: 'ISO timestamp, inclusive.' },
         until: { type: 'string', description: 'ISO timestamp, inclusive.' },
@@ -221,7 +221,7 @@ const TOOLS = [
   },
   {
     name: 'propose_changes',
-    description: 'Queue proposed changes for the auditor to accept or reject in Transmission. This is the ONLY way to change anything, and it changes nothing by itself: each item is a request — page URL, field, value, and the reason — that a person reviews in the app (sidebar "Proposals" button). Call it only when the person has asked you to queue proposals (e.g. after confirming a section-review worksheet); never speculatively. Allowed fields: ' + Object.keys(PROPOSAL_FIELDS).join(', ') + '. Controlled fields are checked against this project\'s own vocabularies (KKE states, audience and job libraries); to propose Consolidate use field Consolidate_Into with the TARGET page\'s URL as the value (KKE_Recommendation cannot be set to Consolidate directly, since a consolidation without a target is not a decision) — targets must be other pages in the audit, not ones that consolidate back or are marked Kill/Exclude; Tags/Audiences/Jobs_Served ADD to the cell, Notes appends to an existing note, the rest replace. A whole batch is validated before anything is written; a pending proposal for the same page + field is replaced by the newer one.',
+    description: 'Queue proposed changes for the auditor to accept or reject in Transmission. This is the ONLY way to change anything, and it changes nothing by itself: each item is a request — page URL, field, value, and the reason — that a person reviews in the app (sidebar "Proposals" button). Call it only when the person has asked you to queue proposals (e.g. after confirming a section-review worksheet); never speculatively. Allowed fields: ' + Object.keys(PROPOSAL_FIELDS).join(', ') + '. Controlled fields are checked against this project\'s own vocabularies (decision states, audience and job libraries); to propose Consolidate use field Consolidate_Into with the TARGET page\'s URL as the value (MRA_Recommendation cannot be set to Consolidate directly, since a consolidation without a target is not a decision) — targets must be other pages in the audit, not ones that consolidate back or are marked Archive/Exclude; Tags/Audiences/Jobs_Served ADD to the cell, Notes appends to an existing note, the rest replace. A whole batch is validated before anything is written; a pending proposal for the same page + field is replaced by the newer one.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -299,7 +299,7 @@ const RESOURCES = [
   {
     uri: 'transmission://semantics',
     name: 'How to read a Transmission audit',
-    description: 'What blank means, Kill vs Exclude vs Consolidate, content vs non-content rows, redirect provenance, audiences. Read before quoting numbers.',
+    description: 'What blank means, Archive vs Exclude vs Consolidate, content vs non-content rows, redirect provenance, audiences. Read before quoting numbers.',
     mimeType: 'text/markdown',
     read: () => SEMANTICS_MD
   },

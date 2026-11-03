@@ -10,14 +10,14 @@ How to reuse setup across projects and shape your reports — two distinct templ
 
 Two unrelated "template" features:
 
-- **Audit templates** (`.kke-template.json`) — a portable snapshot of your *setup*: field config, vocabularies, KKE states, column mapping, identity. Save once, apply to every new client file so you don't reconfigure from scratch.
+- **Audit templates** (`.kke-template.json`) — a portable snapshot of your *setup*: field config, vocabularies, decision states, column mapping, identity. Save once, apply to every new client file so you don't reconfigure from scratch.
 - **Report templates** (Markdown + Mustache) — files that control how a report *renders*. Currently they style the **Migration Direction Brief**.
 
 ---
 
 ## 1. Audit templates — save your setup
 
-1. Configure a file the way you like it (visible fields, tag/group libraries, sidebar columns, custom KKE states, column mapping, identity, saved filters).
+1. Configure a file the way you like it (visible fields, tag/group libraries, sidebar columns, custom decision states, column mapping, identity, saved filters).
 2. **File → Save Audit Template…**, name it. It writes a `.kke-template.json` capturing all of the above.
 3. On a new project: **File → Load Audit Template…** and pick the file — your setup is applied in one step.
 

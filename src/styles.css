@@ -19,12 +19,12 @@
   --accent-text:   #166534;
   --info:          #2563eb;
 
-  --kke-keep:      #15703a;
-  --kke-keep-bg:   #dcfce7;
-  --kke-kill:      #b91c1c;
-  --kke-kill-bg:   #fee2e2;
-  --kke-evolve:    #854d0e;
-  --kke-evolve-bg: #fef9c3;
+  --kke-migrate:      #15703a;
+  --kke-migrate-bg:   #dcfce7;
+  --kke-archive:      #b91c1c;
+  --kke-archive-bg:   #fee2e2;
+  --kke-revise:    #854d0e;
+  --kke-revise-bg: #fef9c3;
   --kke-consolidate:    #4338ca;
   --kke-consolidate-bg: #e0e7ff;
   --kke-exclude:   #636363;
@@ -318,7 +318,7 @@ html, body {
   padding: 0 2px;
   flex-shrink: 0;
 }
-.field-filter-chip button:hover { color: var(--kke-kill); }
+.field-filter-chip button:hover { color: var(--kke-archive); }
 
 /* Field filter popup */
 #field-filter-popup {
@@ -475,9 +475,9 @@ html, body {
   transition: background 100ms;
 }
 .row-item:hover { background: var(--bg-hover); }
-.row-item.row-kke-keep        { background: rgba(34,139,34,0.03); }
-.row-item.row-kke-kill        { background: rgba(220,38,38,0.03); }
-.row-item.row-kke-evolve      { background: rgba(234,179,8,0.02); }
+.row-item.row-kke-migrate        { background: rgba(34,139,34,0.03); }
+.row-item.row-kke-archive        { background: rgba(220,38,38,0.03); }
+.row-item.row-kke-revise      { background: rgba(234,179,8,0.02); }
 .row-item.row-kke-consolidate { background: rgba(67,56,202,0.04); }
 .row-item.row-kke-exclude     { background: rgba(107,114,128,0.03); }
 /* Same specificity as .row-kke-* above (two classes each) — declared after so
@@ -525,7 +525,7 @@ html, body {
   display: block;
   height: 100%;
   width: var(--pct, 0%);
-  background: var(--kke-keep);
+  background: var(--kke-migrate);
   border-radius: 2px;
   transition: width 300ms ease;
 }
@@ -609,10 +609,10 @@ html, body {
   border-radius: 2px;
   cursor: default;
 }
-.row-ind-sitemap  { background: var(--kke-keep-bg);   color: var(--kke-keep); }
-.row-ind-redirect { background: var(--kke-evolve-bg); color: var(--kke-evolve); }
+.row-ind-sitemap  { background: var(--kke-migrate-bg);   color: var(--kke-migrate); }
+.row-ind-redirect { background: var(--kke-revise-bg); color: var(--kke-revise); }
 .row-ind-consolidate { background: var(--kke-consolidate-bg); color: var(--kke-consolidate); }
-.row-ind-consolidate-missing { background: var(--kke-kill-bg); color: var(--kke-kill); }
+.row-ind-consolidate-missing { background: var(--kke-archive-bg); color: var(--kke-archive); }
 /* A consolidate target the client's Final_KKE overrode — still stored, not acted on */
 .row-ind-inactive { opacity: 0.45; text-decoration: line-through; }
 /* Sidebar KKE badge whose recommendation a Final_KKE overrides (title names the Final) */
@@ -663,9 +663,9 @@ html, body {
   text-transform: uppercase;
   white-space: nowrap;
 }
-.kke-badge.keep        { background: var(--kke-keep-bg);        color: var(--kke-keep); }
-.kke-badge.kill        { background: var(--kke-kill-bg);        color: var(--kke-kill); }
-.kke-badge.evolve      { background: var(--kke-evolve-bg);      color: var(--kke-evolve); }
+.kke-badge.migrate        { background: var(--kke-migrate-bg);        color: var(--kke-migrate); }
+.kke-badge.archive        { background: var(--kke-archive-bg);        color: var(--kke-archive); }
+.kke-badge.revise      { background: var(--kke-revise-bg);      color: var(--kke-revise); }
 .kke-badge.consolidate { background: var(--kke-consolidate-bg); color: var(--kke-consolidate); }
 .kke-badge.exclude     { background: var(--kke-exclude-bg);     color: var(--kke-exclude); }
 
@@ -870,10 +870,10 @@ body.resizing-sidebar iframe {
 }
 
 /* Status code coloring */
-.meta-input.status-2xx { color: var(--kke-keep); }
-.meta-input.status-3xx { color: var(--kke-evolve); }
+.meta-input.status-2xx { color: var(--kke-migrate); }
+.meta-input.status-3xx { color: var(--kke-revise); }
 .meta-input.status-4xx,
-.meta-input.status-5xx { color: var(--kke-kill); }
+.meta-input.status-5xx { color: var(--kke-archive); }
 
 /* Bottom row: audit fields */
 #field-bar-audit {
@@ -946,12 +946,12 @@ body.resizing-sidebar iframe {
   background: var(--text-muted);
   color: var(--bg-surface);
 }
-.ga-kke-badge.ga-kke-keep   { color: var(--kke-keep);   border-color: var(--kke-keep); background: var(--kke-keep-bg); }
-.ga-kke-badge.ga-kke-kill   { color: var(--kke-kill);   border-color: var(--kke-kill); background: var(--kke-kill-bg); }
-.ga-kke-badge.ga-kke-evolve { color: var(--kke-evolve); border-color: var(--kke-evolve); background: var(--kke-evolve-bg); }
-.ga-kke-badge.ga-kke-keep::before   { background: var(--kke-keep); }
-.ga-kke-badge.ga-kke-kill::before   { background: var(--kke-kill); }
-.ga-kke-badge.ga-kke-evolve::before { background: var(--kke-evolve); }
+.ga-kke-badge.ga-kke-migrate   { color: var(--kke-migrate);   border-color: var(--kke-migrate); background: var(--kke-migrate-bg); }
+.ga-kke-badge.ga-kke-archive   { color: var(--kke-archive);   border-color: var(--kke-archive); background: var(--kke-archive-bg); }
+.ga-kke-badge.ga-kke-revise { color: var(--kke-revise); border-color: var(--kke-revise); background: var(--kke-revise-bg); }
+.ga-kke-badge.ga-kke-migrate::before   { background: var(--kke-migrate); }
+.ga-kke-badge.ga-kke-archive::before   { background: var(--kke-archive); }
+.ga-kke-badge.ga-kke-revise::before { background: var(--kke-revise); }
 
 /* Suggested_KKE badge — text already includes the source name, so suppress the
    ::before "GA" prefix that the base .ga-kke-badge class adds. */
@@ -985,9 +985,9 @@ body.resizing-sidebar iframe {
 .skp-row.skp-winner .skp-src { font-weight: 700; }
 .skp-src { font-family: var(--font-mono); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; min-width: 50px; color: #475569; }
 .skp-rec { font-weight: 600; padding: 1px 6px; border-radius: 3px; border: 1px solid; }
-.skp-rec.rec-keep   { color: var(--kke-keep);   border-color: var(--kke-keep);   background: var(--kke-keep-bg); }
-.skp-rec.rec-kill   { color: var(--kke-kill);   border-color: var(--kke-kill);   background: var(--kke-kill-bg); }
-.skp-rec.rec-evolve { color: var(--kke-evolve); border-color: var(--kke-evolve); background: var(--kke-evolve-bg); }
+.skp-rec.rec-migrate   { color: var(--kke-migrate);   border-color: var(--kke-migrate);   background: var(--kke-migrate-bg); }
+.skp-rec.rec-archive   { color: var(--kke-archive);   border-color: var(--kke-archive);   background: var(--kke-archive-bg); }
+.skp-rec.rec-revise { color: var(--kke-revise); border-color: var(--kke-revise); background: var(--kke-revise-bg); }
 .skp-detail { color: var(--text-muted); font-size: 11px; }
 .skp-foot { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border-light, #eee); color: var(--text-muted); font-size: 11px; }
 
@@ -1037,9 +1037,9 @@ body.resizing-sidebar iframe {
 }
 .kke-btn:hover { border-color: var(--text-muted); }
 
-.kke-btn.kke-active-keep        { background-color: var(--kke-keep-bg);        color: var(--kke-keep);        border-color: var(--kke-keep); }
-.kke-btn.kke-active-kill        { background-color: var(--kke-kill-bg);        color: var(--kke-kill);        border-color: var(--kke-kill); }
-.kke-btn.kke-active-evolve      { background-color: var(--kke-evolve-bg);      color: var(--kke-evolve);      border-color: var(--kke-evolve); }
+.kke-btn.kke-active-migrate        { background-color: var(--kke-migrate-bg);        color: var(--kke-migrate);        border-color: var(--kke-migrate); }
+.kke-btn.kke-active-archive        { background-color: var(--kke-archive-bg);        color: var(--kke-archive);        border-color: var(--kke-archive); }
+.kke-btn.kke-active-revise      { background-color: var(--kke-revise-bg);      color: var(--kke-revise);      border-color: var(--kke-revise); }
 .kke-btn.kke-active-consolidate { background-color: var(--kke-consolidate-bg); color: var(--kke-consolidate); border-color: var(--kke-consolidate); }
 .kke-btn.kke-active-exclude     { background-color: var(--kke-exclude-bg);     color: var(--kke-exclude);     border-color: var(--kke-exclude); }
 
@@ -2001,7 +2001,7 @@ webview { width: 100%; height: 100%; display: flex; }
 
 .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 .btn-primary:hover { background: #15803d; }
-.btn-primary.btn-danger { background: var(--kke-kill); border-color: var(--kke-kill); color: #fff; }
+.btn-primary.btn-danger { background: var(--kke-archive); border-color: var(--kke-archive); color: #fff; }
 .btn-primary.btn-danger:hover { background: #991b1b; }
 
 .btn-ghost { background: transparent; color: var(--text-secondary); border-color: var(--border-light); }
@@ -2215,8 +2215,8 @@ webview { width: 100%; height: 100%; display: flex; }
 }
 
 .assess-rule-icon { flex-shrink: 0; font-size: 13px; }
-.assess-rule-pass .assess-rule-icon { color: var(--kke-keep); }
-.assess-rule-fail .assess-rule-icon { color: var(--kke-kill); }
+.assess-rule-pass .assess-rule-icon { color: var(--kke-migrate); }
+.assess-rule-fail .assess-rule-icon { color: var(--kke-archive); }
 
 .assess-content-rule {
   font-size: 12px;
@@ -2639,7 +2639,7 @@ body.dragging-popover iframe { pointer-events: none !important; }
   padding: 0 1px;
   opacity: 0.65;
 }
-.nav-badge .nb-clear:hover { opacity: 1; color: var(--kke-kill); }
+.nav-badge .nb-clear:hover { opacity: 1; color: var(--kke-archive); }
 
 /* Redirect indicator — audit-bar badge showing this page's redirect destination
    with an inline clear, next to the Sitemap/Menu buttons. Amber (evolve) to read
@@ -2650,9 +2650,9 @@ body.dragging-popover iframe { pointer-events: none !important; }
 .redirect-badge {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--kke-evolve);
-  background: var(--kke-evolve-bg);
-  border: 1px solid var(--kke-evolve);
+  color: var(--kke-revise);
+  background: var(--kke-revise-bg);
+  border: 1px solid var(--kke-revise);
   border-radius: 3px;
   padding: 1px 4px 1px 5px;
   margin-left: 4px;
@@ -2682,7 +2682,7 @@ body.dragging-popover iframe { pointer-events: none !important; }
   padding: 0 1px;
   opacity: 0.65;
 }
-.redirect-badge .rb-clear:hover { opacity: 1; color: var(--kke-kill); }
+.redirect-badge .rb-clear:hover { opacity: 1; color: var(--kke-archive); }
 
 /* ── Rubric editor modal ─────────────────────────────────────────────────── */
 
@@ -2844,7 +2844,7 @@ body.dragging-popover iframe { pointer-events: none !important; }
 }
 
 #import-merge-col-list label .import-col-badge-new {
-  background: var(--kke-evolve);
+  background: var(--kke-revise);
 }
 
 /* #import-merge-footer styling now provided by the global .modal-footer class. */
@@ -3022,12 +3022,12 @@ body.dragging-popover iframe { pointer-events: none !important; }
   --accent-text:   #86efac;
   --info:          #60a5fa;
 
-  --kke-keep:      #4ade80;
-  --kke-keep-bg:   #14532d;
-  --kke-kill:      #f87171;
-  --kke-kill-bg:   #450a0a;
-  --kke-evolve:    #fbbf24;
-  --kke-evolve-bg: #422006;
+  --kke-migrate:      #4ade80;
+  --kke-migrate-bg:   #14532d;
+  --kke-archive:      #f87171;
+  --kke-archive-bg:   #450a0a;
+  --kke-revise:    #fbbf24;
+  --kke-revise-bg: #422006;
   --kke-consolidate:    #a5b4fc;
   --kke-consolidate-bg: #1e1b4b;
   --kke-exclude:   #9ca3af;
@@ -3743,9 +3743,9 @@ body.dragging-popover iframe { pointer-events: none !important; }
   text-transform: uppercase;
 }
 
-.re-kke-badge.kill { background: var(--kke-kill-bg); color: var(--kke-kill); }
-.re-kke-badge.evolve { background: var(--kke-evolve-bg); color: var(--kke-evolve); }
-.re-kke-badge.keep { background: var(--kke-keep-bg); color: var(--kke-keep); }
+.re-kke-badge.archive { background: var(--kke-archive-bg); color: var(--kke-archive); }
+.re-kke-badge.revise { background: var(--kke-revise-bg); color: var(--kke-revise); }
+.re-kke-badge.migrate { background: var(--kke-migrate-bg); color: var(--kke-migrate); }
 
 .re-nav-btn {
   border: none;
@@ -3986,8 +3986,8 @@ body.dragging-popover iframe { pointer-events: none !important; }
   padding: 1px 5px; border-radius: 3px; flex-shrink: 0; font-weight: 600;
 }
 select.mi-kind { cursor: pointer; font-family: var(--font-sans); border: 1px solid var(--border); height: 18px; }
-.mi-kind-ref    { background: var(--kke-keep-bg, #e7f4ea); color: var(--kke-keep, #1a7f37); }
-.mi-kind-link   { background: var(--kke-evolve-bg, #fdf3d8); color: #8a6d1a; }
+.mi-kind-ref    { background: var(--kke-migrate-bg, #e7f4ea); color: var(--kke-migrate, #1a7f37); }
+.mi-kind-link   { background: var(--kke-revise-bg, #fdf3d8); color: #8a6d1a; }
 .mi-kind-header { background: var(--bg-field-bar); color: var(--text-muted); }
 .mi-label-input {
   flex: 1; min-width: 0; padding: 3px 6px;
@@ -3998,7 +3998,7 @@ select.mi-kind { cursor: pointer; font-family: var(--font-sans); border: 1px sol
 .mi-label-input:focus { border-color: var(--accent); background: var(--bg-panel); outline: none; }
 .mi-label-header { font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: 0.03em; }
 .mi-sub { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); flex-shrink: 0; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mi-sub.mi-broken { color: var(--kke-kill, #c0392b); }
+.mi-sub.mi-broken { color: var(--kke-archive, #c0392b); }
 .mi-add-child { position: relative; flex-shrink: 0; }
 .mi-add-child-btn {
   cursor: pointer; color: var(--text-muted); font-size: 13px; font-weight: 600;
@@ -4020,7 +4020,7 @@ select.mi-kind { cursor: pointer; font-family: var(--font-sans); border: 1px sol
 .mi-clone { cursor: pointer; color: var(--text-muted); font-size: 12px; padding: 0 4px; flex-shrink: 0; }
 .mi-clone:hover { color: var(--accent); }
 .mi-del { cursor: pointer; color: var(--text-muted); font-size: 12px; padding: 0 4px; flex-shrink: 0; }
-.mi-del:hover { color: var(--kke-kill, #c0392b); }
+.mi-del:hover { color: var(--kke-archive, #c0392b); }
 
 /* Drag indicators use the shared .tree-drop-* / .tree-row-dragging classes. */
 .menu-items-empty { font-size: 12px; color: var(--text-muted); padding: 10px 0; }
@@ -4028,8 +4028,8 @@ select.mi-kind { cursor: pointer; font-family: var(--font-sans); border: 1px sol
 /* Column widths for nav editor grid */
 .ne-left         { display: flex; align-items: center; flex: 1; min-width: 200px; overflow: hidden; }
 .ne-col-slug     { width: 140px; flex-shrink: 0; }
-.ne-slug-duplicate { background: var(--kke-kill-bg, #fff0f0); }
-.ne-slug-duplicate input { color: var(--kke-kill); }
+.ne-slug-duplicate { background: var(--kke-archive-bg, #fff0f0); }
+.ne-slug-duplicate input { color: var(--kke-archive); }
 .ne-col-path     { width: 220px; flex-shrink: 0; }
 .ne-col-breadcrumb { width: 220px; flex-shrink: 0; }
 .ne-col-count    { width: 50px; flex-shrink: 0; text-align: center; }
@@ -4220,7 +4220,7 @@ select.mi-kind { cursor: pointer; font-family: var(--font-sans); border: 1px sol
   letter-spacing: 0.5px;
   padding: 1px 5px;
   border-radius: 3px;
-  background: var(--kke-evolve, #e8a308);
+  background: var(--kke-revise, #e8a308);
   color: #fff;
   line-height: 1.4;
 }
@@ -4256,7 +4256,7 @@ select.mi-kind { cursor: pointer; font-family: var(--font-sans); border: 1px sol
   font-size: 13px;
 }
 .ne-row-hub {
-  background: color-mix(in srgb, var(--kke-evolve, #e8a308) 6%, transparent);
+  background: color-mix(in srgb, var(--kke-revise, #e8a308) 6%, transparent);
 }
 .ne-row-orphan {
   background: color-mix(in srgb, var(--warning) 5%, transparent);
@@ -4329,9 +4329,9 @@ select.mi-kind { cursor: pointer; font-family: var(--font-sans); border: 1px sol
 .ne-edit-btn:hover { opacity: 1 !important; color: var(--accent); }
 .ne-edit-btn.has-notes {
   opacity: 0.85;
-  color: var(--kke-evolve);
+  color: var(--kke-revise);
 }
-.ne-edit-btn.has-notes:hover { opacity: 1 !important; color: var(--kke-evolve); }
+.ne-edit-btn.has-notes:hover { opacity: 1 !important; color: var(--kke-revise); }
 /* Removed: legacy `.ne-cell-has-notes::after` rule that double-inserted a `·` —
  * the `.ne-label-text::after` rule above already shows the notes indicator dot
  * (accent-colored, after the label text). Keeping both produced two dots per
@@ -4776,7 +4776,7 @@ body.dragging-modal, body.dragging-modal * { cursor: grabbing !important; }
 }
 
 .cc-error {
-  color: var(--kke-kill);
+  color: var(--kke-archive);
   font-size: 11px;
   margin-top: 4px;
 }
@@ -4801,7 +4801,7 @@ body.dragging-modal, body.dragging-modal * { cursor: grabbing !important; }
   font-size: 14px;
   padding: 2px 4px;
 }
-.cc-delete-btn:hover { color: var(--kke-kill); }
+.cc-delete-btn:hover { color: var(--kke-archive); }
 
 /* ── Phase 1: unified audit-bar cluster system ────────────────────────────── */
 /* Each cluster card: bordered group with a pill label on the left.
@@ -4984,7 +4984,7 @@ body.dragging-modal, body.dragging-modal * { cursor: grabbing !important; }
    user went looking for, so it reads as a warning even when it is not applied —
    it only appears at all when there is something to fix. */
 #btn-consolidate-todo {
-  color: var(--kke-kill, #b91c1c);
+  color: var(--kke-archive, #b91c1c);
   border-color: #f0b4b4;
   flex-shrink: 0;
 }
