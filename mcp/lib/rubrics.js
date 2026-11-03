@@ -3,7 +3,7 @@
 // mcp/ folder) and the MCP server. One parser, so the app's assessment and a
 // Claude session reading the same rubric can never disagree about what it says.
 //
-// A rubric is one Markdown document per decision (keep, kill, evolve, exclude,
+// A rubric is one Markdown document per decision (migrate, revise, archive, exclude,
 // consolidate) with up to three sections:
 //
 //   ## Field Rules     - bullets in the field-rule grammar ("Word Count < 300"),
@@ -24,11 +24,13 @@
 // server's filter objects where an equivalent operator exists, so a session
 // can run them as queries directly.
 
-const RUBRIC_STATUSES = ['keep', 'kill', 'evolve', 'exclude', 'consolidate'];
+const Terminology = require('./terminology');
+
+const RUBRIC_STATUSES = ['migrate', 'revise', 'archive', 'exclude', 'consolidate'];
 
 // The per-page assessment (one row, no neighbours) can't name a consolidation
 // target, so it never offers Consolidate. Patterns are where Consolidate lives.
-const PAGE_LEVEL_STATUSES = ['keep', 'kill', 'evolve', 'exclude'];
+const PAGE_LEVEL_STATUSES = ['migrate', 'revise', 'archive', 'exclude'];
 
 const PATTERN_LABELS = {
   'applies when': 'appliesWhen',
@@ -104,12 +106,13 @@ function ruleToFilters(rule) {
   };
 }
 
-/** "Consolidate → parent", "Kill -> homepage", "Evolve" → {decision, target}. */
+/** "Consolidate → parent", "Archive -> homepage", "Revise" → {decision, target}.
+ *  A legacy word (Kill / Keep / Evolve) is read as its MRA decision. */
 function parseThen(text) {
   const t = String(text || '').trim();
   const m = t.match(/^([A-Za-z][\w /]*?)\s*(?:→|->|=>|\binto\b|\bto\b)\s*(.+)$/);
-  if (m) return { decision: m[1].trim(), target: m[2].trim(), raw: t };
-  return { decision: t, target: '', raw: t };
+  if (m) return { decision: Terminology.value(m[1].trim(), 'mra'), target: m[2].trim(), raw: t };
+  return { decision: Terminology.value(t, 'mra'), target: '', raw: t };
 }
 
 function newPattern(name) {
@@ -168,7 +171,9 @@ function parseRubricText(content) {
 function parseRubricSet(texts, statuses = RUBRIC_STATUSES) {
   const out = {};
   for (const s of statuses) {
-    out[s] = parseRubricText((texts && texts[s]) || '');
+    // A pre-MRA set is keyed keep/kill/evolve; read it under the new key.
+    const legacy = Terminology.rubricKey(s, 'kke');
+    out[s] = parseRubricText((texts && (texts[s] || texts[legacy])) || '');
   }
   return out;
 }

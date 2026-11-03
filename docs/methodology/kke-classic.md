@@ -6,22 +6,24 @@ last-reviewed: 2026-04-28
 
 # KKE — The Classic Framework
 
-The four-state vocabulary used in most content audits today, including most of ours. This page documents what KKE *is* and how it's used. The argument for moving past it lives in [Why KKE Falls Short](./the-five-dimensions.md).
+The four-state vocabulary used in most content audits today, and the one Transmission itself used until it adopted **Migrate / Revise / Archive** (MRA). This page documents what KKE *is* and how it's used. The argument for moving past single-column vocabularies like it lives in [Why MRA Falls Short](./the-five-dimensions.md).
+
+> **KKE and MRA in Transmission.** The app's decisions are now Migrate / Revise / Archive, a one-for-one rename of the states below: **Keep → Migrate**, **Evolve → Revise**, **Kill → Archive**. Exclude and Consolidate are unchanged. The definitions on this page carry over exactly: in Transmission, an Archived page is what a Killed page was, retired and owing a redirect. Files and worksheets that use the old KKE column names and values are read as MRA, and the SME export can write a single worksheet in KKE wording for a client mid-transition.
 
 ## The four states
 
 ### Keep
-Content is high-quality, on-strategy, performing well. Migrate as-is. URL may stay or move depending on IA changes; content stays.
+*Transmission: **Migrate**.* Content is high-quality, on-strategy, performing well. Migrate as-is. URL may stay or move depending on IA changes; content stays.
 
 **Typical signals:** healthy traffic, positive engagement metrics, current information, no overlap with other pages.
 
 ### Kill
-Content is low-quality, off-strategy, redundant, or has no audience. Remove it. URL retires (with a redirect to the most appropriate destination, or a deliberate 404).
+*Transmission: **Archive**.* Content is low-quality, off-strategy, redundant, or has no audience. Remove it. URL retires (with a redirect to the most appropriate destination, or a deliberate 404).
 
 **Typical signals:** zero or near-zero traffic, outdated information, broken purpose (e.g. event pages from past events), redundant with better-performing pages.
 
 ### Evolve
-Content has value but needs work. Improve in place — rewrite, expand, restructure, update — without changing its identity. URL typically stays.
+*Transmission: **Revise**.* Content has value but needs work. Improve in place — rewrite, expand, restructure, update — without changing its identity. URL typically stays.
 
 **Typical signals:** decent traffic but high bounce, partially current information, gaps in coverage, structurally outdated.
 
@@ -30,7 +32,7 @@ Page should not be part of the audit's recommendations. Either it shouldn't have
 
 **Typical signals:** crawl noise (sitemap fragments, JSON endpoints, search result pages), administrative URLs, pages owned by another team, regulated content under legal hold.
 
-> **Note:** the auditor convention has historically conflated several distinct uses of Exclude. See [Patterns: The Post-Launch Problem](./patterns.md#a-the-post-launch-problem) and [Why KKE Falls Short — Scope dimension](./the-five-dimensions.md#scope).
+> **Note:** the auditor convention has historically conflated several distinct uses of Exclude. See [Patterns: The Post-Launch Problem](./patterns.md#a-the-post-launch-problem) and [Why MRA Falls Short — Scope dimension](./the-five-dimensions.md#scope).
 
 ## Sibling frameworks
 
@@ -38,8 +40,8 @@ KKE is one of several four-bucket triage rubrics used in the industry. They shar
 
 | Framework | Values | Notes |
 |---|---|---|
-| **KKE** | Keep / Kill / Evolve / Exclude | The version we use most often. |
-| **MRA** | Migrate / Revise / Archive | Migration-flavored. "Archive" is closer to "Exclude" than to "Kill." |
+| **KKE** | Keep / Kill / Evolve / Exclude | The classic form, and Transmission's vocabulary until the MRA rename. |
+| **MRA** | Migrate / Revise / Archive | Migration-flavored, and what Transmission uses now. In some industry usage "Archive" sits closer to "Exclude" than to "Kill"; in Transmission it means exactly Kill (retired, owes a redirect), and Exclude stays its own state. |
 | **KKER** | Keep / Kill / Evolve / Replace | Adds Replace as distinct from Evolve. Closer to acknowledging Content Fate as a real dimension. |
 | **CCC** | Cull / Consolidate / Create | More strategic-flavored. Notably includes Consolidate as a first-class state — most other frameworks don't. |
 | **Triage** | Various, often Keep / Fix / Toss | Informal. |
@@ -67,7 +69,7 @@ KKE is genuinely useful as a **client-facing summary**:
 - The five labels fit on one line of a deck.
 - Stakeholders grasp the categories instantly.
 
-It also works fine for **simple sites** where the patterns in [Patterns Where KKE Breaks](./patterns.md) don't show up in volume.
+It also works fine for **simple sites** where the patterns in [Patterns Where MRA Breaks](./patterns.md) don't show up in volume.
 
 ## When KKE breaks down
 
@@ -84,6 +86,6 @@ The [Five Dimensions analysis](./the-five-dimensions.md) explains why these brea
 ## See also
 
 - [Content Audit Overview](./content-audit-overview.md)
-- [Why KKE Falls Short — The Five Dimensions](./the-five-dimensions.md)
-- [Patterns Where KKE Breaks](./patterns.md)
+- [Why MRA Falls Short — The Five Dimensions](./the-five-dimensions.md)
+- [Patterns Where MRA Breaks](./patterns.md)
 - [Content Audit Disposition (CAD)](./content-audit-disposition.md)

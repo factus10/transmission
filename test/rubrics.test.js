@@ -11,7 +11,7 @@ const { Project } = require('../mcp/lib/project');
 const ROOT = path.join(__dirname, '..');
 
 test('field and content rules parse as the app always parsed them', () => {
-  const p = R.parseRubricText(fs.readFileSync(path.join(ROOT, 'rubrics', 'evolve.md'), 'utf8'));
+  const p = R.parseRubricText(fs.readFileSync(path.join(ROOT, 'rubrics', 'revise.md'), 'utf8'));
   assert.ok(p.fieldRules.length >= 10);
   assert.ok(p.contentRules.length >= 5);
   const wc = p.fieldRules.find(r => r.raw.startsWith('Word Count >= 50'));
@@ -51,9 +51,9 @@ test('>= and <= have no filter operator: reported, not mistranslated', () => {
 });
 
 test('then: arrow forms and a bare decision', () => {
-  assert.deepEqual(R.parseThen('Kill -> homepage'), { decision: 'Kill', target: 'homepage', raw: 'Kill -> homepage' });
+  assert.deepEqual(R.parseThen('Kill -> homepage'), { decision: 'Archive', target: 'homepage', raw: 'Kill -> homepage' });
   assert.deepEqual(R.parseThen('Consolidate into the strongest sibling').target, 'the strongest sibling');
-  assert.deepEqual(R.parseThen('Evolve'), { decision: 'Evolve', target: '', raw: 'Evolve' });
+  assert.deepEqual(R.parseThen('Revise'), { decision: 'Revise', target: '', raw: 'Revise' });
 });
 
 test('unlabelled pattern bullets are kept as notes, not dropped', () => {
@@ -71,7 +71,7 @@ test('the per-page assessment never sees Consolidate', () => {
 function project(rows, settings = {}) {
   return new Project('/tmp/x.transmission', 'stamp', {
     meta: {}, settings, parseErrors: [], changelogCount: 0,
-    headers: ['Address', 'Title 1', 'Status Code', 'Word Count', 'KKE_Recommendation'],
+    headers: ['Address', 'Title 1', 'Status Code', 'Word Count', 'MRA_Recommendation'],
     rows, navNodes: []
   });
 }
@@ -101,11 +101,12 @@ test('get_rubrics: source none until the project carries its own', () => {
 
 test('get_rubrics: parsed project rubrics with ready-made filters', () => {
   const consolidate = fs.readFileSync(path.join(ROOT, 'rubrics', 'consolidate.md'), 'utf8');
+  // Stored under the legacy key "kill": the server reads it as "archive".
   const p = project([], { rubrics: { consolidate, kill: '# Kill\n## Field Rules\n- Word Count < 50\n' }, rubricsUpdatedAt: '2026-10-15T00:00:00Z' });
   const r = p.getRubrics();
   assert.equal(r.source, 'project');
-  assert.deepEqual(Object.keys(r.rubrics).sort(), ['consolidate', 'kill']);
-  assert.deepEqual(r.rubrics.kill.fieldRules[0].filters, [{ field: 'Word Count', operator: 'less-than', value: '50' }]);
+  assert.deepEqual(Object.keys(r.rubrics).sort(), ['archive', 'consolidate']);
+  assert.deepEqual(r.rubrics.archive.fieldRules[0].filters, [{ field: 'Word Count', operator: 'less-than', value: '50' }]);
   assert.equal(r.rubrics.consolidate.patterns[0].then.decision, 'Consolidate');
   assert.deepEqual(Object.keys(p.getRubrics({ statuses: ['Consolidate'] }).rubrics), ['consolidate']);
 });

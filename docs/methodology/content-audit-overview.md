@@ -22,7 +22,7 @@ The work is similar in all three cases. The deliverables differ.
 
 A finished audit produces (at minimum):
 
-- **Per-page disposition** — a recommendation for each URL (keep, kill, evolve, consolidate, defer, etc.)
+- **Per-page disposition** — a recommendation for each URL (migrate, revise, archive, consolidate, defer, etc.)
 - **Rationale** — why we made that call (notes, tags, rubric outputs)
 - **Downstream actions** — redirect maps, content briefs, IA assignments
 - **Reports** — summaries by section, by recommendation, by content owner
@@ -50,7 +50,7 @@ For every page, an auditor is implicitly answering five questions:
 4. **Confidence** — Are we sure, or do we need more input?
 5. **Authority** — Who's making this call (auditor / SME / analytics / AI)?
 
-The classic [KKE framework](./kke-classic.md) compresses these into a single column. Most of the [patterns we hit](./patterns.md) trace back to that compression.
+The classic single-column framework ([MRA, formerly KKE](./kke-classic.md)) compresses these into a single column. Most of the [patterns we hit](./patterns.md) trace back to that compression.
 
 The proposed [Content Audit Disposition (CAD)](./content-audit-disposition.md) framework decompresses them into separate columns.
 
@@ -71,6 +71,6 @@ The proposed [Content Audit Disposition (CAD)](./content-audit-disposition.md) f
 ## See also
 
 - [KKE: The Classic Framework](./kke-classic.md)
-- [Why KKE Falls Short — The Five Dimensions](./the-five-dimensions.md)
-- [Patterns Where KKE Breaks](./patterns.md)
+- [Why MRA Falls Short — The Five Dimensions](./the-five-dimensions.md)
+- [Patterns Where MRA Breaks](./patterns.md)
 - [Glossary](./glossary.md)

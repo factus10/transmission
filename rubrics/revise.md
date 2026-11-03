@@ -1,4 +1,4 @@
-# Evolve
+# Revise
 
 Each rule identifies a specific, fixable problem. A page matching even one has a concrete issue to address.
 

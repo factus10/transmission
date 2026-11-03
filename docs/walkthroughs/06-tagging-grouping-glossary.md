@@ -39,7 +39,7 @@ For many pages at once, use the **Multi-bar**: **Set Group**, **Set Primary Tag*
 - Add **Notes** (markdown) per term: what it means, when to apply it, examples.
 - Empty-notes entries are pruned on save, so only documented terms persist.
 
-The glossary travels with the file (the **KKE_Glossary** sheet), so the definitions move with the project.
+The glossary travels with the file (the **MRA_Glossary** sheet), so the definitions move with the project.
 
 ---
 

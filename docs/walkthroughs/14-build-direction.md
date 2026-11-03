@@ -2,7 +2,7 @@
 
 How to turn a placed sitemap into **work three people can pick up and execute** — the builder who constructs each page, the writer who fills it, and the migrator who maps the old content in. This is where the sitemap stops being a map and becomes a delivery plan.
 
-> Prerequisite: the future-state sitemap exists and your Keep/Evolve pages are placed on it (**need placement = 0**). See the **Sitemap & IA** walkthrough.
+> Prerequisite: the future-state sitemap exists and your Migrate/Revise pages are placed on it (**need placement = 0**). See the **Sitemap & IA** walkthrough.
 
 ---
 

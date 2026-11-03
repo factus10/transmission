@@ -40,7 +40,7 @@ const PRELUDE = String.raw`
 var state = null;
 var logged = [];
 function logChange(i, field, from, to) { logged.push({ i, field, from, to }); }
-function kkeCol() { return 'KKE_Recommendation'; }
+function kkeCol() { return 'MRA_Recommendation'; }
 function lookupContentTypeRegistry() { return null; }
 `;
 
@@ -114,7 +114,7 @@ describe('labels and track suggestion', () => {
   });
 
   test('Keep + Fragment suggests Migrate Records, same as Keep + Record', () => {
-    assert.equal(deriveMigrationTrackSuggestion({ KKE_Recommendation: 'Keep', Content_Nature: 'Fragment' }), 'Migrate Records');
-    assert.equal(deriveMigrationTrackSuggestion({ KKE_Recommendation: 'Keep', Content_Nature: 'Content Object' }), 'Migrate Records');
+    assert.equal(deriveMigrationTrackSuggestion({ MRA_Recommendation: 'Migrate', Content_Nature: 'Fragment' }), 'Migrate Records');
+    assert.equal(deriveMigrationTrackSuggestion({ MRA_Recommendation: 'Migrate', Content_Nature: 'Content Object' }), 'Migrate Records');
   });
 });

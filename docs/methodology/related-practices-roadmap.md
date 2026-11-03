@@ -6,7 +6,7 @@ last-reviewed: 2026-04-28
 
 # Related Practices — Roadmap
 
-Pages still to write. The method currently focuses on the [KKE / disposition framework](./README.md). The practices that *feed* and *consume* the framework deserve their own pages over time.
+Pages still to write. The method currently focuses on the [MRA / disposition framework](./README.md). The practices that *feed* and *consume* the framework deserve their own pages over time.
 
 This is a stub — the sections below name the pages and say what each would cover.
 
@@ -25,12 +25,12 @@ This is a stub — the sections below name the pages and say what each would cov
 - When rubrics fail / when not to use them
 
 ### Audience Prioritization & Jobs-to-be-Done
-**Why we need it:** we run these workshops on most engagements, and until the audit tool grew [audience tagging](../dev/AUDIENCE_TAGGING_PROPOSAL.md) their output never reached a single row — KKE got argued on traffic and quality, both of which are downstream proxies for relevance to a person. Audience is now a first-class authority source alongside GA and the rubric, so the methodology should catch up to the tooling.
+**Why we need it:** we run these workshops on most engagements, and until the audit tool grew [audience tagging](../dev/AUDIENCE_TAGGING_PROPOSAL.md) their output never reached a single row — MRA got argued on traffic and quality, both of which are downstream proxies for relevance to a person. Audience is now a first-class authority source alongside GA and the rubric, so the methodology should catch up to the tooling.
 
 **What the page should cover:**
 - Running the prioritization workshop (who's in the room, how the ranking is forced, how many tiers is too many)
 - Translating workshop output into a tiered audience library the audit can consume
-- What each tier *commits you to* downstream (Primary → Keep pressure; Tertiary → Evolve pressure)
+- What each tier *commits you to* downstream (Primary → Migrate pressure; Tertiary → Revise pressure)
 - Tagging strategy at scale: section-level bulk passes vs page-by-page, and when the tagging isn't worth it
 - Reading the disagreement cases (high traffic + no priority audience; low traffic + priority audience)
 - JTBD statements: capturing them, and using unserved jobs to justify net-new content
@@ -56,7 +56,7 @@ This is a stub — the sections below name the pages and say what each would cov
 - Mapping audit dispositions to nav locations
 
 ### Analytics-Informed Audits
-**Why we need it:** GA4 data is one of the strongest authority sources but methodology varies wildly across engagements. The current audit tool has a [GA KKE feature](../USER_GUIDE.md#8-suggested_kke) with documented methodology — this page should capture the strategy around when and how to use it.
+**Why we need it:** GA4 data is one of the strongest authority sources but methodology varies wildly across engagements. The current audit tool has a [GA MRA feature](../USER_GUIDE.md#8-suggested_mra) with documented methodology — this page should capture the strategy around when and how to use it.
 
 **What the page should cover:**
 - When analytics input is reliable vs misleading (low-traffic sites, recent migrations, tracking gaps)
@@ -90,7 +90,7 @@ This is a stub — the sections below name the pages and say what each would cov
 - Post-migration validation
 
 ### Content Briefs
-**Why we need it:** Evolve, Replace, and Consolidate-target pages all need content briefs. The format isn't standardized and varies by client.
+**Why we need it:** Revise, Replace, and Consolidate-target pages all need content briefs. The format isn't standardized and varies by client.
 
 **What the page should cover:**
 - Brief structure (problem, audience, scope, sources, success criteria)

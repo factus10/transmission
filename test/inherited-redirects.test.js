@@ -42,8 +42,8 @@ const REDIRECT_SRC_COL = '_RedirectSource';
 const CONSOLIDATE_COL = 'Consolidate_Into';
 const CONSOLIDATE_ID_COL = '_ConsolidateTargetId';
 var state = null;
-function kkeCol() { return 'KKE_Recommendation'; }
-function finalKkeCol() { return 'Final_KKE'; }
+function kkeCol() { return 'MRA_Recommendation'; }
+function finalKkeCol() { return 'Final_MRA'; }
 function consolidateTargetAddr(row) {
   return String(row['_ConsolidateTargetId'] || '').trim() || String(row['Consolidate_Into'] || '').trim();
 }
@@ -80,18 +80,18 @@ const HOST = 'https://example.edu';
 function seed(rows, opts = {}) {
   state = {
     urlColumn: 'Address',
-    headers: ['Address', 'Status Code', 'Redirect URL', 'KKE_Recommendation', 'Computed Path',
-              'Redirect_Destination', '_RedirectSource', '_ConsolidateTargetId', 'Final_KKE'],
+    headers: ['Address', 'Status Code', 'Redirect URL', 'MRA_Recommendation', 'Computed Path',
+              'Redirect_Destination', '_RedirectSource', '_ConsolidateTargetId', 'Final_MRA'],
     editedRows: rows.map(r => ({
       Address: r.url,
       'Status Code': r.sc || '200',
       'Redirect URL': r.redirectUrl || '',
-      KKE_Recommendation: r.kke || '',
+      MRA_Recommendation: r.kke || '',
       'Computed Path': r.computedPath || '',
       Redirect_Destination: r.dest || '',
       _RedirectSource: r.src || '',
       _ConsolidateTargetId: r.consolidateTo || '',
-      Final_KKE: '',
+      Final_MRA: '',
     })),
     navNodes: [],
     siteLibrary: opts.siteLibrary || [{ label: 'Example', hosts: ['example.edu'], inScope: true }],
@@ -110,8 +110,8 @@ describe('carry-forward — the destination follows what the target becomes', ()
     // that will not exist.
     seed([
       { url: `${HOST}/old`, sc: '301', redirectUrl: `${HOST}/programs/nursing`,
-        kke: 'Kill', dest: `${HOST}/programs/nursing`, src: 'inherited' },
-      { url: `${HOST}/programs/nursing`, kke: 'Keep', computedPath: 'academics/nursing' },
+        kke: 'Archive', dest: `${HOST}/programs/nursing`, src: 'inherited' },
+      { url: `${HOST}/programs/nursing`, kke: 'Migrate', computedPath: 'academics/nursing' },
     ]);
     resolveRedirectDestinations();
     assert.equal(destOf(`${HOST}/old`), `${HOST}/academics/nursing`);
@@ -120,9 +120,9 @@ describe('carry-forward — the destination follows what the target becomes', ()
 
   test('it follows the target through a consolidation to the surviving page', () => {
     seed([
-      { url: `${HOST}/old`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill', src: 'inherited' },
+      { url: `${HOST}/old`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive', src: 'inherited' },
       { url: `${HOST}/b`, kke: 'Consolidate', consolidateTo: `${HOST}/c` },
-      { url: `${HOST}/c`, kke: 'Keep', computedPath: 'merged' },
+      { url: `${HOST}/c`, kke: 'Migrate', computedPath: 'merged' },
     ]);
     resolveRedirectDestinations();
     assert.equal(destOf(`${HOST}/old`), `${HOST}/merged`);
@@ -132,9 +132,9 @@ describe('carry-forward — the destination follows what the target becomes', ()
     // A → B → C on the live site, B untriaged. Shipping a rule to B sends the
     // visitor through a URL that is itself being retired.
     seed([
-      { url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill', src: 'inherited' },
+      { url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive', src: 'inherited' },
       { url: `${HOST}/b`, sc: '301', redirectUrl: `${HOST}/c` },
-      { url: `${HOST}/c`, kke: 'Keep', computedPath: 'final' },
+      { url: `${HOST}/c`, kke: 'Migrate', computedPath: 'final' },
     ]);
     resolveRedirectDestinations();
     assert.equal(destOf(`${HOST}/a`), `${HOST}/final`);
@@ -142,7 +142,7 @@ describe('carry-forward — the destination follows what the target becomes', ()
 
   test('a live-site redirect loop terminates instead of hanging', () => {
     seed([
-      { url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill', src: 'inherited' },
+      { url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive', src: 'inherited' },
       { url: `${HOST}/b`, sc: '301', redirectUrl: `${HOST}/a` },
     ]);
     resolveRedirectDestinations();               // must not blow the stack
@@ -151,8 +151,8 @@ describe('carry-forward — the destination follows what the target becomes', ()
 
   test('an intentional 404 on the target propagates', () => {
     seed([
-      { url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill', src: 'inherited' },
-      { url: `${HOST}/b`, kke: 'Kill', dest: '404', src: 'manual' },
+      { url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive', src: 'inherited' },
+      { url: `${HOST}/b`, kke: 'Archive', dest: '404', src: 'manual' },
     ]);
     resolveRedirectDestinations();
     assert.equal(destOf(`${HOST}/a`), '404');
@@ -160,7 +160,7 @@ describe('carry-forward — the destination follows what the target becomes', ()
 
   test('an off-site destination is carried verbatim', () => {
     seed([
-      { url: `${HOST}/a`, sc: '301', redirectUrl: 'https://other.org/page', kke: 'Kill', src: 'inherited' },
+      { url: `${HOST}/a`, sc: '301', redirectUrl: 'https://other.org/page', kke: 'Archive', src: 'inherited' },
     ]);
     resolveRedirectDestinations();
     assert.equal(destOf(`${HOST}/a`), 'https://other.org/page');
@@ -171,8 +171,8 @@ describe('carry-forward — what still outranks the inherited hop', () => {
   test('a sitemap placement wins over the live site’s answer', () => {
     // Someone placed this URL deliberately; that is a decision, the 301 is not.
     seed([
-      { url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill', src: 'inherited' },
-      { url: `${HOST}/b`, kke: 'Keep' },
+      { url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive', src: 'inherited' },
+      { url: `${HOST}/b`, kke: 'Migrate' },
     ]);
     state.editedRows[0]['Sitemap_ID'] = 'N001';
     state.navNodes = [{ id: 'N001', computedPath: 'chosen/by/hand' }];
@@ -182,18 +182,18 @@ describe('carry-forward — what still outranks the inherited hop', () => {
 
   test('a consolidation target wins too', () => {
     seed([
-      { url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill',
+      { url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive',
         src: 'inherited', consolidateTo: `${HOST}/c` },
-      { url: `${HOST}/b`, kke: 'Keep' },
-      { url: `${HOST}/c`, kke: 'Keep', computedPath: 'master' },
+      { url: `${HOST}/b`, kke: 'Migrate' },
+      { url: `${HOST}/c`, kke: 'Migrate', computedPath: 'master' },
     ]);
     resolveRedirectDestinations();
     assert.equal(destOf(`${HOST}/a`), `${HOST}/master`);
   });
 
   test('the inherited hop beats the blanket project default', () => {
-    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill', src: 'inherited' },
-          { url: `${HOST}/b`, kke: 'Keep' }],
+    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive', src: 'inherited' },
+          { url: `${HOST}/b`, kke: 'Migrate' }],
          { projectSettings: { defaultRedirectUrl: `${HOST}/` } });
     resolveRedirectDestinations();
     assert.equal(destOf(`${HOST}/a`), `${HOST}/b`);
@@ -201,9 +201,9 @@ describe('carry-forward — what still outranks the inherited hop', () => {
 
   test('a hand-typed destination is still never touched', () => {
     seed([
-      { url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill',
+      { url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive',
         dest: `${HOST}/deliberate`, src: 'manual' },
-      { url: `${HOST}/b`, kke: 'Keep', computedPath: 'moved' },
+      { url: `${HOST}/b`, kke: 'Migrate', computedPath: 'moved' },
     ]);
     resolveRedirectDestinations();
     assert.equal(destOf(`${HOST}/a`), `${HOST}/deliberate`);
@@ -212,8 +212,8 @@ describe('carry-forward — what still outranks the inherited hop', () => {
   test('a pre-provenance file (blank source) keeps the cautious old behavior', () => {
     // Every project written before _RedirectSource existed reads back blank.
     seed([
-      { url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill', dest: `${HOST}/b`, src: '' },
-      { url: `${HOST}/b`, kke: 'Keep', computedPath: 'moved' },
+      { url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive', dest: `${HOST}/b`, src: '' },
+      { url: `${HOST}/b`, kke: 'Migrate', computedPath: 'moved' },
     ]);
     resolveRedirectDestinations();
     assert.equal(destOf(`${HOST}/a`), `${HOST}/b`, 'an ambiguous existing value must not be rewritten');
@@ -226,9 +226,9 @@ describe('a migration that preserves URLs (no sitemap at all)', () => {
   // never build a tree. Placement-based warnings would fire on every single row.
   const preserved = () => {
     seed([
-      { url: `${HOST}/old-a`, sc: '301', redirectUrl: `${HOST}/keeper`, kke: 'Kill', src: 'inherited',
+      { url: `${HOST}/old-a`, sc: '301', redirectUrl: `${HOST}/keeper`, kke: 'Archive', src: 'inherited',
         dest: `${HOST}/keeper` },
-      { url: `${HOST}/keeper`, kke: 'Keep' },   // decided, no Computed Path, no node
+      { url: `${HOST}/keeper`, kke: 'Migrate' },   // decided, no Computed Path, no node
     ]);
   };
 
@@ -250,7 +250,7 @@ describe('a migration that preserves URLs (no sitemap at all)', () => {
   test('the SAME project with the destination still undecided IS flagged', () => {
     // Proves the signal comes from the decision, not from having a sitemap.
     preserved();
-    rowFor(`${HOST}/keeper`).KKE_Recommendation = '';
+    rowFor(`${HOST}/keeper`).MRA_Recommendation = '';
     assert.equal(inheritedRedirectFindings().byClass.undecided.length, 1);
   });
 });
@@ -265,31 +265,31 @@ describe('classification — the cases the app cannot resolve alone', () => {
   };
 
   test('destination is a page in the audit → ok', () => {
-    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill' },
-          { url: `${HOST}/b`, kke: 'Keep' }]);
+    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive' },
+          { url: `${HOST}/b`, kke: 'Migrate' }]);
     assert.equal(classOf(`${HOST}/a`), 'ok');
   });
 
   test('destination on our own site but NOT in the crawl → uncrawled, not external', () => {
     // The distinction that matters: a hole in the data, not an off-site link.
-    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/never-crawled`, kke: 'Kill' }]);
+    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/never-crawled`, kke: 'Archive' }]);
     assert.equal(classOf(`${HOST}/a`), 'uncrawled');
   });
 
   test('destination on another domain → external', () => {
-    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: 'https://elsewhere.com/x', kke: 'Kill' }]);
+    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: 'https://elsewhere.com/x', kke: 'Archive' }]);
     assert.equal(classOf(`${HOST}/a`), 'external');
   });
 
   test('destination returns 4xx → dead', () => {
-    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/gone`, kke: 'Kill' },
+    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/gone`, kke: 'Archive' },
           { url: `${HOST}/gone`, sc: '404' }]);
     assert.equal(classOf(`${HOST}/a`), 'dead');
   });
 
   test('destination is on an out-of-scope site → out-of-scope', () => {
-    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: 'https://legacy.edu/x', kke: 'Kill' },
-          { url: 'https://legacy.edu/x', kke: 'Keep' }],
+    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: 'https://legacy.edu/x', kke: 'Archive' },
+          { url: 'https://legacy.edu/x', kke: 'Migrate' }],
          { siteLibrary: [
              { label: 'Example', hosts: ['example.edu'], inScope: true },
              { label: 'Legacy', hosts: ['legacy.edu'], inScope: false }] });
@@ -297,71 +297,71 @@ describe('classification — the cases the app cannot resolve alone', () => {
   });
 
   test('a 3xx with no destination recorded → no-target', () => {
-    seed([{ url: `${HOST}/a`, sc: '301', kke: 'Kill' }]);
+    seed([{ url: `${HOST}/a`, sc: '301', kke: 'Archive' }]);
     assert.equal(classOf(`${HOST}/a`), 'no-target');
   });
 
   test('a redirect to itself → loop', () => {
-    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/a`, kke: 'Kill' }]);
+    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/a`, kke: 'Archive' }]);
     assert.equal(classOf(`${HOST}/a`), 'loop');
   });
 
   test('destination has no KKE decision yet → undecided', () => {
     // The risk that survives every workflow: that page may turn out to be Kill,
     // and then this rule points at nothing.
-    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill' },
+    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive' },
           { url: `${HOST}/b`, kke: '' }]);
     assert.equal(classOf(`${HOST}/a`), 'undecided');
   });
 
   test('destination is Kill with no redirect of its own → target-retired', () => {
-    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill' },
-          { url: `${HOST}/b`, kke: 'Kill' }]);
+    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive' },
+          { url: `${HOST}/b`, kke: 'Archive' }]);
     assert.equal(classOf(`${HOST}/a`), 'target-retired');
   });
 
   test('destination is Consolidate with no master picked → target-retired', () => {
-    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill' },
+    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive' },
           { url: `${HOST}/b`, kke: 'Consolidate' }]);
     assert.equal(classOf(`${HOST}/a`), 'target-retired');
   });
 
   test('a Kill destination that HAS its own redirect is fine — the walk passes through', () => {
-    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill' },
-          { url: `${HOST}/b`, kke: 'Kill', dest: `${HOST}/c` },
-          { url: `${HOST}/c`, kke: 'Keep' }]);
+    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive' },
+          { url: `${HOST}/b`, kke: 'Archive', dest: `${HOST}/c` },
+          { url: `${HOST}/c`, kke: 'Migrate' }]);
     assert.equal(classOf(`${HOST}/a`), 'ok');
   });
 
   test('a Consolidate destination with a master is fine', () => {
-    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill' },
+    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive' },
           { url: `${HOST}/b`, kke: 'Consolidate', consolidateTo: `${HOST}/c` },
-          { url: `${HOST}/c`, kke: 'Keep' }]);
+          { url: `${HOST}/c`, kke: 'Migrate' }]);
     assert.equal(classOf(`${HOST}/a`), 'ok');
   });
 
   test('an Excluded destination is not flagged — Exclude is a decision, and the page still exists', () => {
-    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill' },
+    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive' },
           { url: `${HOST}/b`, kke: 'Exclude' }]);
     assert.equal(classOf(`${HOST}/a`), 'ok');
   });
 
-  test('a Final_KKE counts as the decision when KKE_Recommendation is blank', () => {
-    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill' },
+  test('a Final_MRA counts as the decision when MRA_Recommendation is blank', () => {
+    seed([{ url: `${HOST}/a`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive' },
           { url: `${HOST}/b`, kke: '' }]);
-    rowFor(`${HOST}/b`).Final_KKE = 'Keep';
+    rowFor(`${HOST}/b`).Final_MRA = 'Migrate';
     assert.equal(classOf(`${HOST}/a`), 'ok');
   });
 
   test('only 3xx rows are classified at all', () => {
-    seed([{ url: `${HOST}/a`, kke: 'Keep' }, { url: `${HOST}/b`, sc: '404', kke: 'Kill' }]);
+    seed([{ url: `${HOST}/a`, kke: 'Migrate' }, { url: `${HOST}/b`, sc: '404', kke: 'Archive' }]);
     assert.equal(inheritedRedirectFindings().total, 0);
   });
 
   test('every class in the table is reachable and exactly one applies per row', () => {
     seed([
       { url: `${HOST}/ok`, sc: '301', redirectUrl: `${HOST}/live` },
-      { url: `${HOST}/live`, kke: 'Keep' },
+      { url: `${HOST}/live`, kke: 'Migrate' },
       { url: `${HOST}/ext`, sc: '301', redirectUrl: 'https://elsewhere.com/x' },
       { url: `${HOST}/none`, sc: '301' },
       { url: `${HOST}/self`, sc: '302', redirectUrl: `${HOST}/self` },
@@ -386,9 +386,9 @@ describe('recorded auto provenance re-derives on Kill and Consolidate', () => {
 
   test('a Kill 301 with a stale auto destination is corrected on save', () => {
     seed([
-      { url: `${HOST}/old`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill',
+      { url: `${HOST}/old`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive',
         dest: `${BAD}/new-b`, src: 'auto' },
-      { url: `${HOST}/b`, kke: 'Keep', computedPath: 'new-b' },
+      { url: `${HOST}/b`, kke: 'Migrate', computedPath: 'new-b' },
     ]);
     resolveRedirectDestinations();
     assert.equal(destOf(`${HOST}/old`), `${HOST}/new-b`);
@@ -398,7 +398,7 @@ describe('recorded auto provenance re-derives on Kill and Consolidate', () => {
   test('a Consolidate row with a stale auto destination is corrected on save', () => {
     seed([
       { url: `${HOST}/a`, kke: 'Consolidate', consolidateTo: `${HOST}/b`, dest: `${BAD}/new-b`, src: 'auto' },
-      { url: `${HOST}/b`, kke: 'Keep', computedPath: 'new-b' },
+      { url: `${HOST}/b`, kke: 'Migrate', computedPath: 'new-b' },
     ]);
     resolveRedirectDestinations();
     assert.equal(destOf(`${HOST}/a`), `${HOST}/new-b`);
@@ -406,9 +406,9 @@ describe('recorded auto provenance re-derives on Kill and Consolidate', () => {
 
   test('a manual Kill destination is still never touched', () => {
     seed([
-      { url: `${HOST}/old`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill',
+      { url: `${HOST}/old`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive',
         dest: `${HOST}/hand-picked`, src: 'manual' },
-      { url: `${HOST}/b`, kke: 'Keep', computedPath: 'new-b' },
+      { url: `${HOST}/b`, kke: 'Migrate', computedPath: 'new-b' },
     ]);
     resolveRedirectDestinations();
     assert.equal(destOf(`${HOST}/old`), `${HOST}/hand-picked`);
@@ -420,8 +420,8 @@ describe('Re-derive from sitemap covers unplaced Kill/Consolidate rows', () => {
 
   test('an unplaced Kill 301 with an auto destination is re-derived', () => {
     seed([
-      { url: `${HOST}/old`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill', dest: 'https://a.edu; https://b.edu/new-b', src: 'auto' },
-      { url: `${HOST}/b`, kke: 'Keep', computedPath: 'new-b' },
+      { url: `${HOST}/old`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive', dest: 'https://a.edu; https://b.edu/new-b', src: 'auto' },
+      { url: `${HOST}/b`, kke: 'Migrate', computedPath: 'new-b' },
     ]);
     withNav();
     resyncNavBasedRedirects();
@@ -430,10 +430,10 @@ describe('Re-derive from sitemap covers unplaced Kill/Consolidate rows', () => {
 
   test('inherited provenance is kept; manual and unknown-origin values are left alone', () => {
     seed([
-      { url: `${HOST}/i`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill', dest: `${HOST}/b`, src: 'inherited' },
-      { url: `${HOST}/m`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill', dest: `${HOST}/mine`, src: 'manual' },
-      { url: `${HOST}/u`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Kill', dest: `${HOST}/legacy`, src: '' },
-      { url: `${HOST}/b`, kke: 'Keep', computedPath: 'new-b' },
+      { url: `${HOST}/i`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive', dest: `${HOST}/b`, src: 'inherited' },
+      { url: `${HOST}/m`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive', dest: `${HOST}/mine`, src: 'manual' },
+      { url: `${HOST}/u`, sc: '301', redirectUrl: `${HOST}/b`, kke: 'Archive', dest: `${HOST}/legacy`, src: '' },
+      { url: `${HOST}/b`, kke: 'Migrate', computedPath: 'new-b' },
     ]);
     withNav();
     resyncNavBasedRedirects();

@@ -163,8 +163,8 @@ describe('computeSitemapShape — the flat-site case', () => {
     // shape — not about what survives the migration.
     const n = node('Retired');
     setTree([n], [
-      { Sitemap_ID: n.id, KKE_Recommendation: 'Kill' },
-      { Sitemap_ID: n.id, KKE_Recommendation: 'Kill' },
+      { Sitemap_ID: n.id, MRA_Recommendation: 'Archive' },
+      { Sitemap_ID: n.id, MRA_Recommendation: 'Archive' },
     ]);
     assert.equal(computeSitemapShape().singletons.length, 0, 'two Kill pages is still two pages');
   });
