@@ -11,11 +11,11 @@
 // exactly as test/mcp-server.test.js does, so this can't drift from the app.
 //
 // Planted, for the skills to find (see PLANTED at the bottom):
-//   - /news/2017 and /news/2018 are almost all Kill; three posts are Keep
-//   - one Keep page returns 404
+//   - /news/2017 and /news/2018 are almost all Archive; three posts are Migrate
+//   - one Migrate page returns 404
 //   - two Consolidate pages have no target
-//   - a Kill page in the Primary-audience /admissions section
-//   - SME overturned a cluster of Kill calls in /research
+//   - a Archive page in the Primary-audience /admissions section
+//   - SME overturned a cluster of Archive calls in /research
 //   - an undecided tail in /academics and /about
 // ════════════════════════════════════════════════════════════════════════════
 'use strict';
@@ -44,9 +44,9 @@ function liftSchemaSql() {
 const HEADERS = [
   'Address', 'Status Code', 'Title 1', 'Meta Description 1', 'H1-1', 'Word Count', 'Crawl Depth', 'Inlinks',
   'Canonical Link Element 1', 'Redirect URL', 'Last Modified', 'Crawl Timestamp', 'GA4 Sessions',
-  'KKE_Recommendation', 'Tags', 'Notes', 'Group', 'Primary Tag', 'SME_Decision', 'SME_Notes', 'Content_Owner', 'Final_KKE',
+  'MRA_Recommendation', 'Tags', 'Notes', 'Group', 'Primary Tag', 'SME_Decision', 'SME_Notes', 'Content_Owner', 'Final_MRA',
   '_Flagged', 'Redirect_Destination', '_RedirectSource', 'Consolidate_Into', '_ConsolidateTargetId',
-  'Published_Status', 'Page_Type', 'Content_Theme', 'Content_Nature', 'Migration_Track', 'Suggested_KKE', 'Suggested_KKE_Sources',
+  'Published_Status', 'Page_Type', 'Content_Theme', 'Content_Nature', 'Migration_Track', 'Suggested_MRA', 'Suggested_MRA_Sources',
   'Audiences', 'Primary_Audience', 'Jobs_Served', 'Source_Site', 'Sitemap_ID', 'Sitemap_Destination', 'Computed Path', 'Sitemap_SortID', 'Page_Breadcrumb'
 ];
 const blank = () => Object.fromEntries(HEADERS.map(h => [h, '']));
@@ -133,60 +133,60 @@ const sources = (ga, rubric, audience) => JSON.stringify({ sources: [{ key: 'ga'
 
 // Home
 {
-  const r = add({ Address: HOST + '/', 'Title 1': 'Alpha University', 'H1-1': 'Welcome to Alpha', KKE_Recommendation: 'Evolve', Final_KKE: 'Evolve', SME_Decision: 'Approve', Group: 'Home', Page_Type: 'Landing page', Content_Nature: 'Page', Audiences: aud(AUD.prospective, AUD.current, AUD.alumni, AUD.parents), Primary_Audience: AUD.prospective, Content_Owner: 'Comms', Notes: 'Rebuild on the new hero template; keep the three audience doors.', Tags: 'landing, hero', 'GA4 Sessions': '48210', Suggested_KKE: 'Keep', Suggested_KKE_Sources: sources('Keep', 'Keep', 'Keep') });
+  const r = add({ Address: HOST + '/', 'Title 1': 'Alpha University', 'H1-1': 'Welcome to Alpha', MRA_Recommendation: 'Revise', Final_MRA: 'Revise', SME_Decision: 'Approve', Group: 'Home', Page_Type: 'Landing page', Content_Nature: 'Page', Audiences: aud(AUD.prospective, AUD.current, AUD.alumni, AUD.parents), Primary_Audience: AUD.prospective, Content_Owner: 'Comms', Notes: 'Rebuild on the new hero template; keep the three audience doors.', Tags: 'landing, hero', 'GA4 Sessions': '48210', Suggested_MRA: 'Migrate', Suggested_MRA_Sources: sources('Migrate', 'Migrate', 'Migrate') });
   place(r, home);
 }
 
-// Admissions — mostly decided, Primary audience, one planted Kill
+// Admissions — mostly decided, Primary audience, one planted Archive
 const admPages = [
-  ['', 'Admissions', 'Landing page', 'Keep', 'Admissions'],
-  ['/apply', 'How to Apply', 'Process page', 'Keep', 'Undergraduate'],
-  ['/undergraduate', 'Undergraduate Admissions', 'Landing page', 'Keep', 'Undergraduate'],
-  ['/undergraduate/requirements', 'First-Year Requirements', 'Process page', 'Keep', 'Undergraduate'],
-  ['/undergraduate/transfer', 'Transfer Students', 'Process page', 'Evolve', 'Undergraduate'],
-  ['/undergraduate/international', 'International Applicants', 'Process page', 'Evolve', 'Undergraduate'],
-  ['/undergraduate/deadlines', 'Application Deadlines', 'Reference', 'Keep', 'Undergraduate'],
-  ['/graduate', 'Graduate Admissions', 'Landing page', 'Keep', 'Graduate'],
-  ['/graduate/programs', 'Graduate Programs', 'Listing', 'Evolve', 'Graduate'],
-  ['/graduate/how-to-apply', 'Graduate Application Process', 'Process page', 'Keep', 'Graduate'],
-  ['/tuition', 'Tuition and Fees', 'Reference', 'Evolve', 'Tuition and Aid'],
-  ['/tuition/2021-22', 'Tuition and Fees 2021–22', 'Reference', 'Kill', ''],
-  ['/tuition/2022-23', 'Tuition and Fees 2022–23', 'Reference', 'Kill', ''],
-  ['/tuition/2023-24', 'Tuition and Fees 2023–24', 'Reference', 'Kill', ''],
-  ['/financial-aid', 'Financial Aid', 'Landing page', 'Keep', 'Tuition and Aid'],
-  ['/financial-aid/scholarships', 'Scholarships', 'Listing', 'Evolve', 'Tuition and Aid'],
-  ['/financial-aid/fafsa', 'Completing the FAFSA', 'Process page', 'Keep', 'Tuition and Aid'],
-  ['/visit', 'Visit Campus', 'Landing page', 'Keep', 'Visit'],
-  ['/visit/tours', 'Campus Tours', 'Process page', 'Keep', 'Visit'],
-  ['/visit/directions', 'Directions and Parking', 'Reference', 'Keep', 'Visit'],
-  ['/visit/virtual-tour', 'Virtual Tour', 'Interactive', 'Evolve', 'Visit'],
-  ['/counselors', 'Information for Counselors', 'Landing page', 'Kill', ''],   // PLANTED: Kill in a Primary-audience section
-  ['/faq', 'Admissions FAQ', 'FAQ', 'Keep', 'Admissions'],
-  ['/contact', 'Contact Admissions', 'Contact', 'Keep', 'Admissions'],
+  ['', 'Admissions', 'Landing page', 'Migrate', 'Admissions'],
+  ['/apply', 'How to Apply', 'Process page', 'Migrate', 'Undergraduate'],
+  ['/undergraduate', 'Undergraduate Admissions', 'Landing page', 'Migrate', 'Undergraduate'],
+  ['/undergraduate/requirements', 'First-Year Requirements', 'Process page', 'Migrate', 'Undergraduate'],
+  ['/undergraduate/transfer', 'Transfer Students', 'Process page', 'Revise', 'Undergraduate'],
+  ['/undergraduate/international', 'International Applicants', 'Process page', 'Revise', 'Undergraduate'],
+  ['/undergraduate/deadlines', 'Application Deadlines', 'Reference', 'Migrate', 'Undergraduate'],
+  ['/graduate', 'Graduate Admissions', 'Landing page', 'Migrate', 'Graduate'],
+  ['/graduate/programs', 'Graduate Programs', 'Listing', 'Revise', 'Graduate'],
+  ['/graduate/how-to-apply', 'Graduate Application Process', 'Process page', 'Migrate', 'Graduate'],
+  ['/tuition', 'Tuition and Fees', 'Reference', 'Revise', 'Tuition and Aid'],
+  ['/tuition/2021-22', 'Tuition and Fees 2021–22', 'Reference', 'Archive', ''],
+  ['/tuition/2022-23', 'Tuition and Fees 2022–23', 'Reference', 'Archive', ''],
+  ['/tuition/2023-24', 'Tuition and Fees 2023–24', 'Reference', 'Archive', ''],
+  ['/financial-aid', 'Financial Aid', 'Landing page', 'Migrate', 'Tuition and Aid'],
+  ['/financial-aid/scholarships', 'Scholarships', 'Listing', 'Revise', 'Tuition and Aid'],
+  ['/financial-aid/fafsa', 'Completing the FAFSA', 'Process page', 'Migrate', 'Tuition and Aid'],
+  ['/visit', 'Visit Campus', 'Landing page', 'Migrate', 'Visit'],
+  ['/visit/tours', 'Campus Tours', 'Process page', 'Migrate', 'Visit'],
+  ['/visit/directions', 'Directions and Parking', 'Reference', 'Migrate', 'Visit'],
+  ['/visit/virtual-tour', 'Virtual Tour', 'Interactive', 'Revise', 'Visit'],
+  ['/counselors', 'Information for Counselors', 'Landing page', 'Archive', ''],   // PLANTED: Archive in a Primary-audience section
+  ['/faq', 'Admissions FAQ', 'FAQ', 'Migrate', 'Admissions'],
+  ['/contact', 'Contact Admissions', 'Contact', 'Migrate', 'Admissions'],
 ];
 for (const [p, title, type, kke, nodeLabel] of admPages) {
-  const r = add({ Address: HOST + '/admissions' + p, 'Title 1': title + ' | Alpha University', 'H1-1': title, KKE_Recommendation: kke, Final_KKE: kke, SME_Decision: 'Approve', Group: 'Admissions', Page_Type: type, Content_Nature: 'Page', Content_Owner: 'Admissions', Audiences: p.startsWith('/graduate') ? aud(AUD.prospective) : aud(AUD.prospective, AUD.parents), Primary_Audience: AUD.prospective, Jobs_Served: p.includes('tuition') || p.includes('financial') ? 'Work out what it costs' : (p === '' || p.includes('apply') || p.includes('requirements') ? 'Apply' : ''), Published_Status: 'Published', 'Last Modified': '2025-0' + (1 + Math.floor(rand() * 9)) + '-1' + Math.floor(rand() * 9), Notes: kke === 'Kill' ? 'Superseded by the current tuition page.' : '', Suggested_KKE: kke === 'Kill' ? 'Kill' : 'Keep', Suggested_KKE_Sources: sources(kke === 'Kill' ? 'Kill' : 'Keep', 'Keep', 'Keep') });
-  if (p === '/counselors') { r.Notes = ''; r.Suggested_KKE = 'Keep'; r.Suggested_KKE_Sources = sources('Keep', 'Keep', 'Keep'); r['GA4 Sessions'] = '1840'; }
+  const r = add({ Address: HOST + '/admissions' + p, 'Title 1': title + ' | Alpha University', 'H1-1': title, MRA_Recommendation: kke, Final_MRA: kke, SME_Decision: 'Approve', Group: 'Admissions', Page_Type: type, Content_Nature: 'Page', Content_Owner: 'Admissions', Audiences: p.startsWith('/graduate') ? aud(AUD.prospective) : aud(AUD.prospective, AUD.parents), Primary_Audience: AUD.prospective, Jobs_Served: p.includes('tuition') || p.includes('financial') ? 'Work out what it costs' : (p === '' || p.includes('apply') || p.includes('requirements') ? 'Apply' : ''), Published_Status: 'Published', 'Last Modified': '2025-0' + (1 + Math.floor(rand() * 9)) + '-1' + Math.floor(rand() * 9), Notes: kke === 'Archive' ? 'Superseded by the current tuition page.' : '', Suggested_MRA: kke === 'Archive' ? 'Archive' : 'Migrate', Suggested_MRA_Sources: sources(kke === 'Archive' ? 'Archive' : 'Migrate', 'Migrate', 'Migrate') });
+  if (p === '/counselors') { r.Notes = ''; r.Suggested_MRA = 'Migrate'; r.Suggested_MRA_Sources = sources('Migrate', 'Migrate', 'Migrate'); r['GA4 Sessions'] = '1840'; }
   if (nodeLabel) place(r, byLabel(nodeLabel));
-  if (kke === 'Kill') redirectTo(r, NEW + '/admissions/tuition-and-aid', 'manual');
+  if (kke === 'Archive') redirectTo(r, NEW + '/admissions/tuition-and-aid', 'manual');
   if (p === '/tuition/2023-24') { r.Redirect_Destination = ''; r._RedirectSource = ''; }   // owed, blank
 }
 
 // Academics — half decided, an undecided tail (PLANTED)
 const depts = ['Biology', 'Chemistry', 'Computer Science', 'Economics', 'English', 'History', 'Mathematics', 'Nursing', 'Physics', 'Psychology', 'Sociology', 'Art and Design'];
 {
-  const r = add({ Address: HOST + '/academics', 'Title 1': 'Academics | Alpha University', 'H1-1': 'Academics', KKE_Recommendation: 'Evolve', Group: 'Academics', Page_Type: 'Landing page', Content_Nature: 'Page', Content_Owner: 'Provost', Audiences: aud(AUD.prospective, AUD.current), Primary_Audience: AUD.prospective });
+  const r = add({ Address: HOST + '/academics', 'Title 1': 'Academics | Alpha University', 'H1-1': 'Academics', MRA_Recommendation: 'Revise', Group: 'Academics', Page_Type: 'Landing page', Content_Nature: 'Page', Content_Owner: 'Provost', Audiences: aud(AUD.prospective, AUD.current), Primary_Audience: AUD.prospective });
   place(r, academics);
-  const pr = add({ Address: HOST + '/academics/programs', 'Title 1': 'Programs of Study | Alpha University', 'H1-1': 'Programs of Study', KKE_Recommendation: 'Keep', Group: 'Academics', Page_Type: 'Listing', Content_Nature: 'Generated', Content_Owner: 'Provost', Audiences: aud(AUD.prospective), Primary_Audience: AUD.prospective, Jobs_Served: 'Compare programs' });
+  const pr = add({ Address: HOST + '/academics/programs', 'Title 1': 'Programs of Study | Alpha University', 'H1-1': 'Programs of Study', MRA_Recommendation: 'Migrate', Group: 'Academics', Page_Type: 'Listing', Content_Nature: 'Generated', Content_Owner: 'Provost', Audiences: aud(AUD.prospective), Primary_Audience: AUD.prospective, Jobs_Served: 'Compare programs' });
   place(pr, byLabel('Programs'));
 }
 depts.forEach((d, i) => {
   const slug = d.toLowerCase().replace(/ and /g, '-').replace(/\s+/g, '-');
   const decided = i < 7;
-  const r = add({ Address: HOST + '/academics/departments/' + slug, 'Title 1': 'Department of ' + d + ' | Alpha University', 'H1-1': 'Department of ' + d, KKE_Recommendation: decided ? 'Keep' : '', Group: 'Academics', Page_Type: 'Landing page', Content_Nature: 'Page', Content_Owner: 'Provost', Audiences: decided ? aud(AUD.prospective, AUD.current, AUD.faculty) : '', Primary_Audience: decided ? AUD.prospective : '', Published_Status: 'Published', Suggested_KKE: 'Keep', Suggested_KKE_Sources: sources('Keep', 'Keep', decided ? 'Keep' : '') });
+  const r = add({ Address: HOST + '/academics/departments/' + slug, 'Title 1': 'Department of ' + d + ' | Alpha University', 'H1-1': 'Department of ' + d, MRA_Recommendation: decided ? 'Migrate' : '', Group: 'Academics', Page_Type: 'Landing page', Content_Nature: 'Page', Content_Owner: 'Provost', Audiences: decided ? aud(AUD.prospective, AUD.current, AUD.faculty) : '', Primary_Audience: decided ? AUD.prospective : '', Published_Status: 'Published', Suggested_MRA: 'Migrate', Suggested_MRA_Sources: sources('Migrate', 'Migrate', decided ? 'Migrate' : '') });
   if (decided) place(r, byLabel('Departments'));
   for (const sub of ['faculty', 'courses', 'research']) {
-    const s = add({ Address: HOST + '/academics/departments/' + slug + '/' + sub, 'Title 1': d + ' ' + sub[0].toUpperCase() + sub.slice(1) + ' | Alpha University', 'H1-1': d + ' ' + sub, KKE_Recommendation: decided ? (sub === 'research' ? 'Consolidate' : 'Keep') : '', Group: 'Academics', Page_Type: sub === 'faculty' ? 'Directory' : (sub === 'courses' ? 'Listing' : 'Article'), Content_Nature: sub === 'courses' ? 'Generated' : 'Page', Content_Owner: 'Provost', Audiences: decided ? aud(AUD.current, AUD.faculty) : '', Primary_Audience: decided ? AUD.current : '', Published_Status: 'Published', Suggested_KKE: 'Keep', Suggested_KKE_Sources: sources('Keep', sub === 'research' ? 'Evolve' : 'Keep', decided ? 'Keep' : '') });
+    const s = add({ Address: HOST + '/academics/departments/' + slug + '/' + sub, 'Title 1': d + ' ' + sub[0].toUpperCase() + sub.slice(1) + ' | Alpha University', 'H1-1': d + ' ' + sub, MRA_Recommendation: decided ? (sub === 'research' ? 'Consolidate' : 'Migrate') : '', Group: 'Academics', Page_Type: sub === 'faculty' ? 'Directory' : (sub === 'courses' ? 'Listing' : 'Article'), Content_Nature: sub === 'courses' ? 'Generated' : 'Page', Content_Owner: 'Provost', Audiences: decided ? aud(AUD.current, AUD.faculty) : '', Primary_Audience: decided ? AUD.current : '', Published_Status: 'Published', Suggested_MRA: 'Migrate', Suggested_MRA_Sources: sources('Migrate', sub === 'research' ? 'Revise' : 'Migrate', decided ? 'Migrate' : '') });
     if (decided && sub !== 'research') place(s, byLabel('Departments'));
     if (decided && sub === 'research') {
       if (i < 5) { s.Consolidate_Into = 'research/centers-and-institutes'; s._ConsolidateTargetId = HOST + '/research'; redirectTo(s, NEW + '/research/centers-and-institutes', 'auto'); }
@@ -196,22 +196,22 @@ depts.forEach((d, i) => {
 });
 for (const t of ['academic-calendar', 'academic-calendar/2024-25', 'academic-calendar/2025-26', 'catalog', 'catalog/2023', 'catalog/2024', 'registrar', 'registrar/forms', 'registrar/transcripts']) {
   const old = /2023|2024-25/.test(t);
-  const r = add({ Address: HOST + '/academics/' + t, 'Title 1': t.split('/').pop().replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) + ' | Alpha University', KKE_Recommendation: old ? 'Kill' : (t.startsWith('registrar') ? '' : 'Keep'), Group: 'Academics', Page_Type: t.includes('calendar') ? 'Reference' : (t.includes('catalog') ? 'Document' : 'Process page'), Content_Nature: 'Page', Content_Owner: 'Registrar', Audiences: old ? '' : aud(AUD.current), Primary_Audience: old ? '' : AUD.current, Published_Status: 'Published', Suggested_KKE: old ? 'Kill' : 'Keep', Suggested_KKE_Sources: sources(old ? 'Kill' : 'Keep', old ? 'Kill' : 'Keep', '') });
-  if (!old && r.KKE_Recommendation) place(r, byLabel('Academic Calendar'));
+  const r = add({ Address: HOST + '/academics/' + t, 'Title 1': t.split('/').pop().replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) + ' | Alpha University', MRA_Recommendation: old ? 'Archive' : (t.startsWith('registrar') ? '' : 'Migrate'), Group: 'Academics', Page_Type: t.includes('calendar') ? 'Reference' : (t.includes('catalog') ? 'Document' : 'Process page'), Content_Nature: 'Page', Content_Owner: 'Registrar', Audiences: old ? '' : aud(AUD.current), Primary_Audience: old ? '' : AUD.current, Published_Status: 'Published', Suggested_MRA: old ? 'Archive' : 'Migrate', Suggested_MRA_Sources: sources(old ? 'Archive' : 'Migrate', old ? 'Archive' : 'Migrate', '') });
+  if (!old && r.MRA_Recommendation) place(r, byLabel('Academic Calendar'));
   if (old) redirectTo(r, NEW + '/academics/' + t.split('/')[0], 'auto');
 }
 
-// Research — decided Kill by auditor, SME overturned a cluster (PLANTED)
+// Research — decided Archive by auditor, SME overturned a cluster (PLANTED)
 {
-  const r = add({ Address: HOST + '/research', 'Title 1': 'Research | Alpha University', 'H1-1': 'Research at Alpha', KKE_Recommendation: 'Evolve', Final_KKE: 'Evolve', SME_Decision: 'Approve', Group: 'Research', Page_Type: 'Landing page', Content_Nature: 'Page', Content_Owner: 'Research Office', Audiences: aud(AUD.faculty, AUD.media), Primary_Audience: AUD.faculty });
+  const r = add({ Address: HOST + '/research', 'Title 1': 'Research | Alpha University', 'H1-1': 'Research at Alpha', MRA_Recommendation: 'Revise', Final_MRA: 'Revise', SME_Decision: 'Approve', Group: 'Research', Page_Type: 'Landing page', Content_Nature: 'Page', Content_Owner: 'Research Office', Audiences: aud(AUD.faculty, AUD.media), Primary_Audience: AUD.faculty });
   place(r, research);
 }
 const centers = ['Center for Climate Science', 'Institute for Data Ethics', 'Center for Urban Policy', 'Materials Lab', 'Center for Medieval Studies', 'Language Acquisition Lab', 'Center for Rural Health', 'Quantum Computing Initiative'];
 centers.forEach((c, i) => {
   const slug = c.toLowerCase().replace(/[^a-z0-9]+/g, '-');
   const overturned = i < 4;
-  const r = add({ Address: HOST + '/research/centers/' + slug, 'Title 1': c + ' | Alpha University', 'H1-1': c, KKE_Recommendation: 'Kill', Final_KKE: overturned ? 'Keep' : 'Kill', SME_Decision: overturned ? 'Change: Keep' : 'Approve', SME_Notes: overturned ? 'Active center with external funding — must stay.' : '', Group: 'Research', Page_Type: 'Landing page', Content_Nature: 'Page', Content_Owner: 'Research Office', Audiences: aud(AUD.faculty), Primary_Audience: AUD.faculty, Notes: 'No updates since 2019; traffic negligible.', 'Last Modified': '2019-0' + (3 + i % 6) + '-12', Published_Status: 'Published', Suggested_KKE: 'Kill', Suggested_KKE_Sources: sources('Kill', 'Kill', 'Keep') });
-  // The note says "traffic negligible"; make that true for the ones that stay Kill, and modest for the
+  const r = add({ Address: HOST + '/research/centers/' + slug, 'Title 1': c + ' | Alpha University', 'H1-1': c, MRA_Recommendation: 'Archive', Final_MRA: overturned ? 'Migrate' : 'Archive', SME_Decision: overturned ? 'Change: Migrate' : 'Approve', SME_Notes: overturned ? 'Active center with external funding — must stay.' : '', Group: 'Research', Page_Type: 'Landing page', Content_Nature: 'Page', Content_Owner: 'Research Office', Audiences: aud(AUD.faculty), Primary_Audience: AUD.faculty, Notes: 'No updates since 2019; traffic negligible.', 'Last Modified': '2019-0' + (3 + i % 6) + '-12', Published_Status: 'Published', Suggested_MRA: 'Archive', Suggested_MRA_Sources: sources('Archive', 'Archive', 'Migrate') });
+  // The note says "traffic negligible"; make that true for the ones that stay Archive, and modest for the
   // ones the SME kept (so the override reads as funding, not traffic — which is what SME_Notes says).
   r['GA4 Sessions'] = String(overturned ? 300 + Math.floor(rand() * 900) : Math.floor(rand() * 15));
   if (overturned) place(r, byLabel('Centers and Institutes'));
@@ -219,79 +219,79 @@ centers.forEach((c, i) => {
 });
 for (const t of ['funding', 'funding/internal-grants', 'funding/external', 'compliance', 'compliance/irb', 'compliance/export-controls', 'annual-report-2019', 'annual-report-2020', 'annual-report-2021']) {
   const old = t.startsWith('annual');
-  const r = add({ Address: HOST + '/research/' + t, 'Title 1': t.split('/').pop().replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) + ' | Alpha University', KKE_Recommendation: old ? 'Kill' : 'Keep', Final_KKE: old ? 'Kill' : 'Keep', SME_Decision: 'Approve', Group: 'Research', Page_Type: old ? 'Document' : 'Process page', Content_Nature: 'Page', Content_Owner: 'Research Office', Audiences: aud(AUD.faculty), Primary_Audience: AUD.faculty, Published_Status: 'Published' });
+  const r = add({ Address: HOST + '/research/' + t, 'Title 1': t.split('/').pop().replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) + ' | Alpha University', MRA_Recommendation: old ? 'Archive' : 'Migrate', Final_MRA: old ? 'Archive' : 'Migrate', SME_Decision: 'Approve', Group: 'Research', Page_Type: old ? 'Document' : 'Process page', Content_Nature: 'Page', Content_Owner: 'Research Office', Audiences: aud(AUD.faculty), Primary_Audience: AUD.faculty, Published_Status: 'Published' });
   if (!old) place(r, byLabel(t.startsWith('funding') ? 'Funding' : 'Research'));
   if (old) r.Redirect_Destination = '404', r._RedirectSource = 'manual';
 }
 
 // About — small, partly undecided
-for (const [t, title, type, kke] of [['', 'About Alpha', 'Landing page', 'Keep'], ['/leadership', 'Leadership', 'Directory', 'Keep'], ['/leadership/president', 'Office of the President', 'Landing page', 'Keep'], ['/history', 'Our History', 'Article', 'Evolve'], ['/mission', 'Mission and Values', 'Article', ''], ['/accreditation', 'Accreditation', 'Reference', ''], ['/contact', 'Contact Us', 'Contact', 'Keep'], ['/maps', 'Campus Maps', 'Reference', ''], ['/strategic-plan-2018', 'Strategic Plan 2018–2023', 'Document', 'Kill'], ['/strategic-plan', 'Strategic Plan 2024–2029', 'Document', 'Keep']]) {
-  const r = add({ Address: HOST + '/about' + t, 'Title 1': title + ' | Alpha University', 'H1-1': title, KKE_Recommendation: kke, Group: 'About', Page_Type: type, Content_Nature: 'Page', Content_Owner: 'Comms', Audiences: kke ? aud(AUD.prospective, AUD.community) : '', Primary_Audience: kke ? AUD.community : '', Published_Status: 'Published' });
-  if (kke && kke !== 'Kill') place(r, byLabel(t.startsWith('/leadership') ? 'Leadership' : t === '/history' ? 'History' : t === '/contact' ? 'Contact' : 'About'));
-  if (kke === 'Kill') redirectTo(r, NEW + '/about/strategic-plan', 'manual');
+for (const [t, title, type, kke] of [['', 'About Alpha', 'Landing page', 'Migrate'], ['/leadership', 'Leadership', 'Directory', 'Migrate'], ['/leadership/president', 'Office of the President', 'Landing page', 'Migrate'], ['/history', 'Our History', 'Article', 'Revise'], ['/mission', 'Mission and Values', 'Article', ''], ['/accreditation', 'Accreditation', 'Reference', ''], ['/contact', 'Contact Us', 'Contact', 'Migrate'], ['/maps', 'Campus Maps', 'Reference', ''], ['/strategic-plan-2018', 'Strategic Plan 2018–2023', 'Document', 'Archive'], ['/strategic-plan', 'Strategic Plan 2024–2029', 'Document', 'Migrate']]) {
+  const r = add({ Address: HOST + '/about' + t, 'Title 1': title + ' | Alpha University', 'H1-1': title, MRA_Recommendation: kke, Group: 'About', Page_Type: type, Content_Nature: 'Page', Content_Owner: 'Comms', Audiences: kke ? aud(AUD.prospective, AUD.community) : '', Primary_Audience: kke ? AUD.community : '', Published_Status: 'Published' });
+  if (kke && kke !== 'Archive') place(r, byLabel(t.startsWith('/leadership') ? 'Leadership' : t === '/history' ? 'History' : t === '/contact' ? 'Contact' : 'About'));
+  if (kke === 'Archive') redirectTo(r, NEW + '/about/strategic-plan', 'manual');
 }
 
-// News — the bulk. 2016–2024 posts; old years Kill, three planted Keeps in 2017/2018, 2023+ Keep, some undecided
+// News — the bulk. 2016–2024 posts; old years Archive, three planted Migrates in 2017/2018, 2023+ Migrate, some undecided
 const headlines = ['Alpha Announces New Dean of Engineering', 'Commencement Draws Record Crowd', 'Research Team Wins Federal Grant', 'Campus Opens Renovated Library Wing', 'Students Place First in National Competition', 'Alpha Ranked Among Top Regional Universities', 'New Scholarship Honors Longtime Professor', 'Fall Enrollment Reaches New High', 'Alumni Gift Funds Science Center', 'Faculty Member Named Fellow', 'Alpha Hosts Regional Climate Summit', 'Nursing Program Earns Reaccreditation'];
 {
-  const r = add({ Address: HOST + '/news', 'Title 1': 'News | Alpha University', 'H1-1': 'News', KKE_Recommendation: 'Keep', Final_KKE: 'Keep', SME_Decision: 'Approve', Group: 'News', Page_Type: 'Listing', Content_Nature: 'Generated', Content_Owner: 'Comms', Audiences: aud(AUD.media, AUD.alumni, AUD.community), Primary_Audience: AUD.media });
+  const r = add({ Address: HOST + '/news', 'Title 1': 'News | Alpha University', 'H1-1': 'News', MRA_Recommendation: 'Migrate', Final_MRA: 'Migrate', SME_Decision: 'Approve', Group: 'News', Page_Type: 'Listing', Content_Nature: 'Generated', Content_Owner: 'Comms', Audiences: aud(AUD.media, AUD.alumni, AUD.community), Primary_Audience: AUD.media });
   place(r, byLabel('News'));
 }
-let plantedKeep = 0;
+let plantedMigrate = 0;
 for (let year = 2016; year <= 2024; year++) {
   const n = year < 2020 ? 14 : (year < 2023 ? 11 : 9);
   for (let i = 0; i < n; i++) {
     const h = headlines[(year * 7 + i) % headlines.length];
     const slug = h.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + year;
-    let kke = year <= 2021 ? 'Kill' : (year >= 2023 ? 'Keep' : (chance(0.6) ? 'Kill' : ''));
-    let notes = kke === 'Kill' ? 'Archival news; no traffic.' : '';
-    if ((year === 2017 && i === 3) || (year === 2017 && i === 9) || (year === 2018 && i === 6)) { kke = 'Keep'; notes = ''; plantedKeep++; }   // PLANTED
-    const r = add({ Address: HOST + '/news/' + year + '/' + slug, 'Title 1': h + ' | Alpha University', 'H1-1': h, 'Meta Description 1': h + '. Read more about this story from Alpha University.', KKE_Recommendation: kke, Final_KKE: year <= 2019 && kke ? kke : '', SME_Decision: year <= 2019 && kke ? 'Approve' : '', Group: 'News', Page_Type: 'News article', Content_Theme: pick(['Campus life', 'Research', 'Achievements', 'Giving']), Content_Nature: 'Content Object', Content_Owner: 'Comms', Audiences: kke === 'Keep' ? aud(AUD.media, AUD.alumni) : (kke === 'Kill' ? NONE : ''), Primary_Audience: kke === 'Keep' ? AUD.media : '', 'Last Modified': year + '-' + String(1 + i % 12).padStart(2, '0') + '-1' + (i % 9), Published_Status: 'Published', 'GA4 Sessions': String(year >= 2023 ? 40 + Math.floor(rand() * 900) : Math.floor(rand() * 12)), Notes: notes, Tags: year <= 2019 ? 'archival' : '', Suggested_KKE: year <= 2021 ? 'Kill' : 'Keep', Suggested_KKE_Sources: sources(year <= 2021 ? 'Kill' : 'Keep', year <= 2021 ? 'Kill' : 'Keep', kke === 'Kill' ? 'Kill' : (kke === 'Keep' ? 'Keep' : '')) });
-    if (kke === 'Keep') place(r, byLabel('News'));
-    if (kke === 'Kill') redirectTo(r, NEW + '/news', 'auto');
+    let kke = year <= 2021 ? 'Archive' : (year >= 2023 ? 'Migrate' : (chance(0.6) ? 'Archive' : ''));
+    let notes = kke === 'Archive' ? 'Archival news; no traffic.' : '';
+    if ((year === 2017 && i === 3) || (year === 2017 && i === 9) || (year === 2018 && i === 6)) { kke = 'Migrate'; notes = ''; plantedMigrate++; }   // PLANTED
+    const r = add({ Address: HOST + '/news/' + year + '/' + slug, 'Title 1': h + ' | Alpha University', 'H1-1': h, 'Meta Description 1': h + '. Read more about this story from Alpha University.', MRA_Recommendation: kke, Final_MRA: year <= 2019 && kke ? kke : '', SME_Decision: year <= 2019 && kke ? 'Approve' : '', Group: 'News', Page_Type: 'News article', Content_Theme: pick(['Campus life', 'Research', 'Achievements', 'Giving']), Content_Nature: 'Content Object', Content_Owner: 'Comms', Audiences: kke === 'Migrate' ? aud(AUD.media, AUD.alumni) : (kke === 'Archive' ? NONE : ''), Primary_Audience: kke === 'Migrate' ? AUD.media : '', 'Last Modified': year + '-' + String(1 + i % 12).padStart(2, '0') + '-1' + (i % 9), Published_Status: 'Published', 'GA4 Sessions': String(year >= 2023 ? 40 + Math.floor(rand() * 900) : Math.floor(rand() * 12)), Notes: notes, Tags: year <= 2019 ? 'archival' : '', Suggested_MRA: year <= 2021 ? 'Archive' : 'Migrate', Suggested_MRA_Sources: sources(year <= 2021 ? 'Archive' : 'Migrate', year <= 2021 ? 'Archive' : 'Migrate', kke === 'Archive' ? 'Archive' : (kke === 'Migrate' ? 'Migrate' : '')) });
+    if (kke === 'Migrate') place(r, byLabel('News'));
+    if (kke === 'Archive') redirectTo(r, NEW + '/news', 'auto');
   }
 }
-// PLANTED: a Keep page that is a 404
+// PLANTED: a Migrate page that is a 404
 {
-  const r = add({ Address: HOST + '/news/2023/alpha-launches-new-brand', 'Status Code': '404', 'Title 1': '', KKE_Recommendation: 'Keep', Group: 'News', Page_Type: 'News article', Content_Nature: 'Content Object', Content_Owner: 'Comms', 'Word Count': '0' });
+  const r = add({ Address: HOST + '/news/2023/alpha-launches-new-brand', 'Status Code': '404', 'Title 1': '', MRA_Recommendation: 'Migrate', Group: 'News', Page_Type: 'News article', Content_Nature: 'Content Object', Content_Owner: 'Comms', 'Word Count': '0' });
   place(r, byLabel('News'));
 }
 
 // Events — undecided, mostly, plus past-event pages
 for (let i = 0; i < 18; i++) {
   const past = i < 12;
-  const r = add({ Address: HOST + '/events/' + (past ? '2024' : '2026') + '/event-' + (i + 1), 'Title 1': (past ? 'Past event ' : 'Upcoming: ') + ['Open House', 'Lecture Series', 'Homecoming', 'Career Fair', 'Gala', 'Symposium'][i % 6] + ' | Alpha University', KKE_Recommendation: past ? (i < 8 ? 'Kill' : '') : '', Group: 'Events', Page_Type: 'Event', Content_Nature: 'Content Object', Content_Owner: 'Comms', Audiences: past && i < 8 ? NONE : '', Published_Status: 'Published', Suggested_KKE: past ? 'Kill' : 'Keep', Suggested_KKE_Sources: sources(past ? 'Kill' : 'Keep', past ? 'Kill' : 'Keep', '') });
+  const r = add({ Address: HOST + '/events/' + (past ? '2024' : '2026') + '/event-' + (i + 1), 'Title 1': (past ? 'Past event ' : 'Upcoming: ') + ['Open House', 'Lecture Series', 'Homecoming', 'Career Fair', 'Gala', 'Symposium'][i % 6] + ' | Alpha University', MRA_Recommendation: past ? (i < 8 ? 'Archive' : '') : '', Group: 'Events', Page_Type: 'Event', Content_Nature: 'Content Object', Content_Owner: 'Comms', Audiences: past && i < 8 ? NONE : '', Published_Status: 'Published', Suggested_MRA: past ? 'Archive' : 'Migrate', Suggested_MRA_Sources: sources(past ? 'Archive' : 'Migrate', past ? 'Archive' : 'Migrate', '') });
   if (past) r['GA4 Sessions'] = String(Math.floor(rand() * 30));   // a past event page has no traffic
   if (past && i < 8) redirectTo(r, NEW + '/news-and-events/events', 'auto');
 }
-{ const r = add({ Address: HOST + '/events', 'Title 1': 'Events | Alpha University', KKE_Recommendation: 'Keep', Group: 'Events', Page_Type: 'Listing', Content_Nature: 'Generated', Content_Owner: 'Comms', Audiences: aud(AUD.current, AUD.community, AUD.alumni), Primary_Audience: AUD.community }); place(r, byLabel('Events')); }
+{ const r = add({ Address: HOST + '/events', 'Title 1': 'Events | Alpha University', MRA_Recommendation: 'Migrate', Group: 'Events', Page_Type: 'Listing', Content_Nature: 'Generated', Content_Owner: 'Comms', Audiences: aud(AUD.current, AUD.community, AUD.alumni), Primary_Audience: AUD.community }); place(r, byLabel('Events')); }
 
 // Alumni — decided, fine
 for (const [t, title, type] of [['', 'Alumni', 'Landing page'], ['/events', 'Alumni Events', 'Listing'], ['/giving', 'Give to Alpha', 'Landing page'], ['/giving/ways-to-give', 'Ways to Give', 'Reference'], ['/giving/annual-fund', 'The Annual Fund', 'Article'], ['/benefits', 'Alumni Benefits', 'Reference'], ['/directory', 'Alumni Directory', 'Interactive'], ['/magazine', 'Alpha Magazine', 'Listing']]) {
-  const r = add({ Address: HOST + '/alumni' + t, 'Title 1': title + ' | Alpha University', 'H1-1': title, KKE_Recommendation: 'Keep', Final_KKE: 'Keep', SME_Decision: 'Approve', Group: 'Alumni', Page_Type: type, Content_Nature: type === 'Interactive' ? 'Generated' : 'Page', Content_Owner: 'Advancement', Audiences: aud(AUD.alumni), Primary_Audience: AUD.alumni, Jobs_Served: t.includes('giving') ? 'Make a gift' : '', Published_Status: 'Published' });
+  const r = add({ Address: HOST + '/alumni' + t, 'Title 1': title + ' | Alpha University', 'H1-1': title, MRA_Recommendation: 'Migrate', Final_MRA: 'Migrate', SME_Decision: 'Approve', Group: 'Alumni', Page_Type: type, Content_Nature: type === 'Interactive' ? 'Generated' : 'Page', Content_Owner: 'Advancement', Audiences: aud(AUD.alumni), Primary_Audience: AUD.alumni, Jobs_Served: t.includes('giving') ? 'Make a gift' : '', Published_Status: 'Published' });
   place(r, byLabel(t.includes('giving') ? 'Giving' : 'Alumni'));
 }
 
 // Student life — undecided, no audiences yet (a classification gap)
 for (const t of ['housing', 'dining', 'clubs', 'health', 'counseling', 'recreation', 'campus-safety', 'parking']) {
-  add({ Address: HOST + '/student-life/' + t, 'Title 1': t.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) + ' | Alpha University', Group: 'Student Life', Page_Type: 'Landing page', Content_Nature: 'Page', Content_Owner: 'Student Affairs', Published_Status: 'Published', Suggested_KKE: 'Keep', Suggested_KKE_Sources: sources('Keep', 'Keep', '') });
+  add({ Address: HOST + '/student-life/' + t, 'Title 1': t.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) + ' | Alpha University', Group: 'Student Life', Page_Type: 'Landing page', Content_Nature: 'Page', Content_Owner: 'Student Affairs', Published_Status: 'Published', Suggested_MRA: 'Migrate', Suggested_MRA_Sources: sources('Migrate', 'Migrate', '') });
 }
 
-// Non-content rows: inherited 301s and 404s, triaged Kill
+// Non-content rows: inherited 301s and 404s, triaged Archive
 for (let i = 0; i < 22; i++) {
-  const r = add({ Address: HOST + '/old/page-' + (i + 1), 'Status Code': '301', 'Redirect URL': HOST + ['/admissions', '/academics', '/about', '/news', '/research'][i % 5], KKE_Recommendation: 'Kill', Group: '', Content_Owner: '', 'Word Count': '' });
+  const r = add({ Address: HOST + '/old/page-' + (i + 1), 'Status Code': '301', 'Redirect URL': HOST + ['/admissions', '/academics', '/about', '/news', '/research'][i % 5], MRA_Recommendation: 'Archive', Group: '', Content_Owner: '', 'Word Count': '' });
   redirectTo(r, HOST + ['/admissions', '/academics', '/about', '/news', '/research'][i % 5], 'inherited');
 }
 for (let i = 0; i < 9; i++) {
-  add({ Address: HOST + '/broken/link-' + (i + 1), 'Status Code': '404', KKE_Recommendation: 'Kill', Redirect_Destination: '404', _RedirectSource: 'manual', 'Word Count': '' });
+  add({ Address: HOST + '/broken/link-' + (i + 1), 'Status Code': '404', MRA_Recommendation: 'Archive', Redirect_Destination: '404', _RedirectSource: 'manual', 'Word Count': '' });
 }
 // query-string variants, Excluded by triage
 for (let i = 0; i < 12; i++) {
-  add({ Address: HOST + '/academics/programs?page=' + (i + 1), 'Title 1': 'Programs of Study | Alpha University', KKE_Recommendation: 'Exclude', 'Canonical Link Element 1': HOST + '/academics/programs', Group: 'Academics', Page_Type: 'Listing', Content_Nature: 'Generated', Notes: 'Query-string variant of the canonical.' });
+  add({ Address: HOST + '/academics/programs?page=' + (i + 1), 'Title 1': 'Programs of Study | Alpha University', MRA_Recommendation: 'Exclude', 'Canonical Link Element 1': HOST + '/academics/programs', Group: 'Academics', Page_Type: 'Listing', Content_Nature: 'Generated', Notes: 'Query-string variant of the canonical.' });
 }
 // Legacy intranet — out of scope
 for (let i = 0; i < 15; i++) {
-  add({ Address: LEGACY + '/intranet/doc-' + (i + 1), 'Title 1': 'Internal document ' + (i + 1), KKE_Recommendation: 'Exclude', Group: 'Legacy', Page_Type: 'Document', Content_Owner: 'IT' });
+  add({ Address: LEGACY + '/intranet/doc-' + (i + 1), 'Title 1': 'Internal document ' + (i + 1), MRA_Recommendation: 'Exclude', Group: 'Legacy', Page_Type: 'Document', Content_Owner: 'IT' });
 }
 
 // ── settings ──
@@ -333,7 +333,7 @@ const settings = {
   ],
   savedFilters: [
     { name: 'Undecided content', filterText: '', kkeFilter: ['_unreviewed'], groupFilter: '', fieldFilters: [{ field: 'Status Code', operator: 'equals', value: '200' }] },
-    { name: 'News to review', filterText: '', kkeFilter: ['_unreviewed', 'Keep'], groupFilter: 'News', fieldFilters: [] },
+    { name: 'News to review', filterText: '', kkeFilter: ['_unreviewed', 'Migrate'], groupFilter: 'News', fieldFilters: [] },
     { name: 'Needs a home', filterText: '', kkeFilter: ['_needs-placement'], groupFilter: '', fieldFilters: [] },
     { name: 'Possible duplicates', filterText: '', kkeFilter: ['_duplicates'], groupFilter: '', fieldFilters: [] }
   ],
@@ -350,12 +350,12 @@ function logc(auditor, row, field, from, to, dayOffset) {
   log.push([new Date(t0 + dayOffset * 86400000 + (tick++) * 61000).toISOString(), auditor, rows.indexOf(row) + 1, row.Address, field, from, to]);
 }
 rows.forEach((r, i) => {
-  if (r.KKE_Recommendation && r['Status Code'] === '200') logc(i % 3 === 0 ? 'priya' : 'david', r, 'KKE_Recommendation', '', r.KKE_Recommendation, Math.floor(i / 25));
-  if (r.Final_KKE && r.Final_KKE !== r.KKE_Recommendation) logc('sme-import', r, 'Final_KKE', '', r.Final_KKE, 16);
-  else if (r.Final_KKE) logc('sme-import', r, 'Final_KKE', '', r.Final_KKE, 16);
+  if (r.MRA_Recommendation && r['Status Code'] === '200') logc(i % 3 === 0 ? 'priya' : 'david', r, 'MRA_Recommendation', '', r.MRA_Recommendation, Math.floor(i / 25));
+  if (r.Final_MRA && r.Final_MRA !== r.MRA_Recommendation) logc('sme-import', r, 'Final_MRA', '', r.Final_MRA, 16);
+  else if (r.Final_MRA) logc('sme-import', r, 'Final_MRA', '', r.Final_MRA, 16);
 });
 // a few late changes, last week
-[rows[30], rows[31], rows[32]].forEach(r => { if (r) logc('david', r, 'KKE_Recommendation', 'Keep', 'Evolve', 19); });
+[rows[30], rows[31], rows[32]].forEach(r => { if (r) logc('david', r, 'MRA_Recommendation', 'Migrate', 'Revise', 19); });
 
 // ── write ──
 const { DatabaseSync } = sqlite();
@@ -378,13 +378,13 @@ db.close();
 for (const p of [out + '-wal', out + '-shm']) if (fs.existsSync(p)) fs.unlinkSync(p);
 
 const PLANTED = [
-  `${plantedKeep} Keep posts inside otherwise-Kill /news/2017 and /news/2018`,
-  '1 Keep page returning 404 (/news/2023/alpha-launches-new-brand)',
+  `${plantedMigrate} Migrate posts inside otherwise-Archive /news/2017 and /news/2018`,
+  '1 Migrate page returning 404 (/news/2023/alpha-launches-new-brand)',
   '2 Consolidate pages with no target (two department /research pages)',
-  '1 Kill in the Primary-audience /admissions section (/admissions/counselors)',
-  '4 Kill calls overturned to Keep by the SME in /research/centers',
+  '1 Archive in the Primary-audience /admissions section (/admissions/counselors)',
+  '4 Archive calls overturned to Migrate by the SME in /research/centers',
   'undecided tails in /academics (5 departments), /about, /events, /student-life',
-  '1 Kill page owed a redirect with none (/admissions/tuition/2023-24)'
+  '1 Archive page owed a redirect with none (/admissions/tuition/2023-24)'
 ];
 console.log(`Wrote ${rows.length} rows, ${NAV.length} sitemap nodes, ${log.length} changelog entries → ${out}`);
 console.log('Planted for the skills to find:\n  - ' + PLANTED.join('\n  - '));

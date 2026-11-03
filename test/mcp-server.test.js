@@ -51,7 +51,7 @@ function liftSchemaSql() {
 }
 
 const HEADERS = [
-  'Address', 'Title 1', 'Status Code', 'Word Count', 'KKE_Recommendation', 'Final_KKE', 'Tags', 'Notes', 'Group',
+  'Address', 'Title 1', 'Status Code', 'Word Count', 'MRA_Recommendation', 'Final_MRA', 'Tags', 'Notes', 'Group',
   'Audiences', 'Redirect_Destination', '_RedirectSource', 'Sitemap_ID', 'Source_Site', 'Content_Nature',
   'Consolidate_Into', '_ConsolidateTargetId'
 ];
@@ -63,16 +63,16 @@ function row(o) {
 }
 
 const ROWS = [
-  row({ Address: 'https://www.alpha.edu/', 'Title 1': 'Alpha Home', 'Status Code': '200', 'Word Count': '1,250', KKE_Recommendation: 'Keep', Sitemap_ID: 'n1', Source_Site: 'Alpha', Audiences: 'Prospective Students, Alumni' }),
-  row({ Address: 'https://www.alpha.edu/news/a', 'Title 1': 'News A', 'Status Code': '200', 'Word Count': '300', KKE_Recommendation: 'Keep', Final_KKE: 'Kill', Sitemap_ID: 'n3', Source_Site: 'Alpha', Tags: 'outdated, thin-content', Redirect_Destination: 'https://new.alpha.edu/news', _RedirectSource: 'auto' }),
-  row({ Address: 'https://www.alpha.edu/news/b', 'Title 1': 'News B', 'Status Code': '200', 'Word Count': '90', KKE_Recommendation: 'Evolve', Sitemap_ID: 'n3', Source_Site: 'Alpha', Tags: 'thin-content', Audiences: 'Alumni' }),
-  row({ Address: 'https://www.alpha.edu/news/c', 'Title 1': 'News C', 'Status Code': '200', KKE_Recommendation: 'Consolidate', Source_Site: 'Alpha', Consolidate_Into: 'news/b', _ConsolidateTargetId: 'https://www.alpha.edu/news/b' }),
-  row({ Address: 'https://www.alpha.edu/old', 'Title 1': '', 'Status Code': '301', KKE_Recommendation: 'Kill', Source_Site: 'Alpha', Redirect_Destination: 'https://new.alpha.edu/', _RedirectSource: 'inherited' }),
-  row({ Address: 'https://www.alpha.edu/gone', 'Status Code': '404', KKE_Recommendation: 'Kill', Source_Site: 'Alpha', Redirect_Destination: '404', _RedirectSource: 'manual' }),
+  row({ Address: 'https://www.alpha.edu/', 'Title 1': 'Alpha Home', 'Status Code': '200', 'Word Count': '1,250', MRA_Recommendation: 'Migrate', Sitemap_ID: 'n1', Source_Site: 'Alpha', Audiences: 'Prospective Students, Alumni' }),
+  row({ Address: 'https://www.alpha.edu/news/a', 'Title 1': 'News A', 'Status Code': '200', 'Word Count': '300', MRA_Recommendation: 'Migrate', Final_MRA: 'Archive', Sitemap_ID: 'n3', Source_Site: 'Alpha', Tags: 'outdated, thin-content', Redirect_Destination: 'https://new.alpha.edu/news', _RedirectSource: 'auto' }),
+  row({ Address: 'https://www.alpha.edu/news/b', 'Title 1': 'News B', 'Status Code': '200', 'Word Count': '90', MRA_Recommendation: 'Revise', Sitemap_ID: 'n3', Source_Site: 'Alpha', Tags: 'thin-content', Audiences: 'Alumni' }),
+  row({ Address: 'https://www.alpha.edu/news/c', 'Title 1': 'News C', 'Status Code': '200', MRA_Recommendation: 'Consolidate', Source_Site: 'Alpha', Consolidate_Into: 'news/b', _ConsolidateTargetId: 'https://www.alpha.edu/news/b' }),
+  row({ Address: 'https://www.alpha.edu/old', 'Title 1': '', 'Status Code': '301', MRA_Recommendation: 'Archive', Source_Site: 'Alpha', Redirect_Destination: 'https://new.alpha.edu/', _RedirectSource: 'inherited' }),
+  row({ Address: 'https://www.alpha.edu/gone', 'Status Code': '404', MRA_Recommendation: 'Archive', Source_Site: 'Alpha', Redirect_Destination: '404', _RedirectSource: 'manual' }),
   row({ Address: 'https://www.alpha.edu/broken', 'Title 1': 'Broken', 'Status Code': '500', Source_Site: 'Alpha' }),
   row({ Address: 'https://www.alpha.edu/about', 'Title 1': 'About', 'Status Code': '200', Source_Site: 'Alpha' }),
-  row({ Address: 'https://www.alpha.edu/snippet', 'Title 1': 'Footer snippet', 'Status Code': '200', KKE_Recommendation: 'Keep', Source_Site: 'Alpha', Content_Nature: 'Fragment' }),
-  row({ Address: 'https://legacy.alpha.edu/page', 'Title 1': 'Legacy', 'Status Code': '200', KKE_Recommendation: 'Keep', Source_Site: 'Legacy' })
+  row({ Address: 'https://www.alpha.edu/snippet', 'Title 1': 'Footer snippet', 'Status Code': '200', MRA_Recommendation: 'Migrate', Source_Site: 'Alpha', Content_Nature: 'Fragment' }),
+  row({ Address: 'https://legacy.alpha.edu/page', 'Title 1': 'Legacy', 'Status Code': '200', MRA_Recommendation: 'Migrate', Source_Site: 'Legacy' })
 ];
 
 const NAV = [
@@ -90,19 +90,19 @@ const SETTINGS = {
     { label: 'Legacy', hosts: ['legacy.alpha.edu'], inScope: false }
   ],
   savedFilters: [
-    { name: 'Thin news', filterText: '', kkeFilter: ['Keep', '_unreviewed'], groupFilter: '', fieldFilters: [{ field: 'Address', operator: 'contains', value: '/news/' }] },
+    { name: 'Thin news', filterText: '', kkeFilter: ['Migrate', '_unreviewed'], groupFilter: '', fieldFilters: [{ field: 'Address', operator: 'contains', value: '/news/' }] },
     { name: 'Dupes', filterText: '', kkeFilter: ['_duplicates'], groupFilter: '', fieldFilters: [] }
   ],
   glossary: { tags: { 'thin-content': 'Under 150 words.' }, groups: {} }
 };
 
 const CHANGELOG = [
-  ['2026-09-01T10:00:00.000Z', 'david', 1, 'https://www.alpha.edu/news/a', 'KKE_Recommendation', '', 'Keep'],
-  ['2026-09-05T10:00:00.000Z', 'sme-import', 1, 'https://www.alpha.edu/news/a', 'Final_KKE', '', 'Kill'],
-  ['2026-09-06T10:00:00.000Z', 'david', 2, 'https://www.alpha.edu/news/b', 'KKE_Recommendation', 'Keep', 'Evolve']
+  ['2026-09-01T10:00:00.000Z', 'david', 1, 'https://www.alpha.edu/news/a', 'MRA_Recommendation', '', 'Migrate'],
+  ['2026-09-05T10:00:00.000Z', 'sme-import', 1, 'https://www.alpha.edu/news/a', 'Final_MRA', '', 'Archive'],
+  ['2026-09-06T10:00:00.000Z', 'david', 2, 'https://www.alpha.edu/news/b', 'MRA_Recommendation', 'Migrate', 'Revise']
 ];
 
-function buildFixture(file, { userVersion = 1, headers = HEADERS, rows = ROWS } = {}) {
+function buildFixture(file, { userVersion = 1, headers = HEADERS, rows = ROWS, settings = SETTINGS, changelog = CHANGELOG } = {}) {
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec(liftSchemaSql());
@@ -111,9 +111,9 @@ function buildFixture(file, { userVersion = 1, headers = HEADERS, rows = ROWS } 
   ins('INSERT INTO headers (pos, name) VALUES (?, ?)', headers.map((h, i) => [i, h]));
   ins('INSERT INTO rows (idx, data) VALUES (?, ?)', rows.map((r, i) => [i, JSON.stringify(r)]));
   ins('INSERT INTO nav_nodes (idx, data) VALUES (?, ?)', NAV.map((n, i) => [i, JSON.stringify(n)]));
-  ins('INSERT INTO settings (key, value) VALUES (?, ?)', Object.entries(SETTINGS).map(([k, v]) => [k, JSON.stringify(v)]));
+  ins('INSERT INTO settings (key, value) VALUES (?, ?)', Object.entries(settings).map(([k, v]) => [k, JSON.stringify(v)]));
   ins('INSERT INTO meta (key, value) VALUES (?, ?)', [['savedAt', '2026-09-10T12:00:00.000Z'], ['appVersion', '2.18.0']]);
-  ins('INSERT INTO changelog (timestamp, auditor, row, url, field, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?, ?)', CHANGELOG);
+  ins('INSERT INTO changelog (timestamp, auditor, row, url, field, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?, ?)', changelog);
   db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
   db.close();
 }
@@ -146,8 +146,8 @@ describe('loader', () => {
     const p = mcp.loadProject(file);
     assert.equal(p.rows.length, 10);
     assert.equal(p.urlColumn, 'Address');
-    assert.equal(p.columnMap.kke, 'KKE_Recommendation');
-    assert.equal(p.columnMap.finalKke, 'Final_KKE');
+    assert.equal(p.columnMap.kke, 'MRA_Recommendation');
+    assert.equal(p.columnMap.finalKke, 'Final_MRA');
     assert.equal(p.statusCodeColumn, 'Status Code');
     assert.equal(p.select({}).length, 9, 'the out-of-scope Legacy row is excluded by default');
     assert.equal(p.select({ scope: 'all' }).length, 10);
@@ -161,7 +161,7 @@ describe('loader', () => {
     db.close();
     const p = mcp.loadProject(f);
     assert.equal(p.columnMap.kke, 'Verdict');
-    assert.equal(p.columnMap.finalKke, 'Final_KKE', 'a stale saved name falls through to detection');
+    assert.equal(p.columnMap.finalKke, 'Final_MRA', 'a stale saved name falls through to detection');
   });
 
   test('DRIFT: the proposals table the app creates has exactly the columns the server writes', () => {
@@ -224,8 +224,8 @@ describe('read-only', () => {
     const p = mcp.loadProject(f);
     p.overview();
     p.describeColumns({});
-    p.describeColumns({ columns: ['Tags', '@effective_kke'] });
-    p.aggregate({ groupBy: ['@effective_kke', 'Tags'] });
+    p.describeColumns({ columns: ['Tags', '@effective_decision'] });
+    p.aggregate({ groupBy: ['@effective_decision', 'Tags'] });
     p.queryRows({ sortBy: 'Word Count', sortDir: 'desc' });
     p.getRow({ url: 'https://www.alpha.edu/news/a', includeInternal: true });
     p.getSitemap({ depth: 0 });
@@ -258,23 +258,23 @@ describe('overview', () => {
     assert.deepEqual([o.contentInventory.reviewed, o.contentInventory.of], [5, 7]);
   });
 
-  test('Final_KKE wins over the recommendation, and blank is unreviewed — never Keep', () => {
+  test('Final_MRA wins over the recommendation, and blank is unreviewed — never Keep', () => {
     const k = mcp.loadProject(file).overview().effectiveKke.contentOnly;
-    assert.deepEqual(k, { Keep: 2, Kill: 1, Evolve: 1, Consolidate: 1, '(unreviewed)': 2 });
+    assert.deepEqual(k, { Migrate: 2, Archive: 1, Revise: 1, Consolidate: 1, '(unreviewed)': 2 });
   });
 
   test('placement counts only Keep/Evolve content pages that are owed a home (fragments are not)', () => {
     const o = mcp.loadProject(file).overview();
-    assert.deepEqual(o.placement, { keepEvolveContentPages: 2, placedInSitemap: 2 });
+    assert.deepEqual(o.placement, { migrateReviseContentPages: 2, placedInSitemap: 2 });
   });
 });
 
 describe('aggregate', () => {
   test('groups by a virtual field and labels blank as (blank)', () => {
     const p = mcp.loadProject(file);
-    const res = p.aggregate({ groupBy: ['@effective_kke'] });
+    const res = p.aggregate({ groupBy: ['@effective_decision'] });
     assert.equal(res.matchedRows, 9);
-    assert.equal(group(res, 'Kill'), 3);
+    assert.equal(group(res, 'Archive'), 3);
     assert.equal(group(res, '(blank)'), 2);
   });
 
@@ -327,8 +327,8 @@ describe('filters', () => {
       ['fieldFilterNumber', 'fieldFilterCompare', 'fieldFilterMatches', 'statusCodeCategory'].map(extract).join('\n')
       + '\n({ fieldFilterMatches, statusCodeCategory })'
     );
-    const cells = ['', '  ', 'Keep', 'keep', 'KEEPER', '1,234', '1234', '99', '-5', '.5', '5.', 'abc', 'ABC', 'Zebra', 'a b', undefined, null, 0, 1234];
-    const needles = ['', 'keep', 'Keep', '1,000', '100', 'abc', 'b', '5', undefined];
+    const cells = ['', '  ', 'Migrate', 'keep', 'KEEPER', '1,234', '1234', '99', '-5', '.5', '5.', 'abc', 'ABC', 'Zebra', 'a b', undefined, null, 0, 1234];
+    const needles = ['', 'keep', 'Migrate', '1,000', '100', 'abc', 'b', '5', undefined];
     let compared = 0;
     for (const operator of [...mcp.FIELD_FILTER_OPERATORS, 'not-an-operator']) {
       for (const cell of cells) for (const value of needles) {
@@ -363,7 +363,7 @@ describe('filters', () => {
   test('filters can read virtual fields', () => {
     const p = mcp.loadProject(file);
     const rows = p.select({ filters: [
-      { field: '@effective_kke', operator: 'equals', value: 'kill' },
+      { field: '@effective_decision', operator: 'equals', value: 'kill' },
       { field: '@content_kind', operator: 'equals', value: 'content' }
     ] });
     assert.deepEqual(rows.map(r => p.url(r)), ['https://www.alpha.edu/news/a']);
@@ -371,7 +371,7 @@ describe('filters', () => {
 
   test('a saved filter applies the way the sidebar would: statuses OR specials, on the recommendation column', () => {
     const p = mcp.loadProject(file);
-    // News A is Keep by recommendation (Final_KKE Kill is irrelevant to the sidebar's
+    // News A is Keep by recommendation (Final_MRA Kill is irrelevant to the sidebar's
     // status match); News C is Consolidate, so it is out; nothing under /news/ is unreviewed.
     assert.deepEqual(p.select({ savedFilter: 'thin news' }).map(r => r['Title 1']), ['News A']);
   });
@@ -404,11 +404,11 @@ describe('rows', () => {
     const p = mcp.loadProject(file);
     const r = p.getRow({ url: 'https://www.alpha.edu/news/a/' });
     assert.equal(r.url, 'https://www.alpha.edu/news/a');
-    assert.equal(r.derived.effectiveKke, 'Kill');
+    assert.equal(r.derived.effectiveKke, 'Archive');
     assert.equal(r.fields._RedirectSource, undefined);
     assert.equal(p.getRow({ url: r.url, includeInternal: true }).fields._RedirectSource, 'auto');
     assert.equal(r.sitemapNode.label, 'Articles');
-    assert.deepEqual(r.history.map(h => h.field), ['Final_KKE', 'KKE_Recommendation'], 'newest first');
+    assert.deepEqual(r.history.map(h => h.field), ['Final_MRA', 'MRA_Recommendation'], 'newest first');
     assert.throws(() => p.getRow({ url: 'https://www.alpha.edu/nope' }), /No row with URL/);
   });
 
@@ -419,11 +419,11 @@ describe('rows', () => {
 });
 
 describe('sitemap', () => {
-  test('live pages exclude Kill; subtree rows count everything; a pageless parent of live pages is net new', () => {
+  test('live pages exclude Archive; subtree rows count everything; a pageless parent of live pages is net new', () => {
     const tree = mcp.loadProject(file).getSitemap({ depth: 0 }).tree;
     const home = tree[0], newsroom = home.children[0], articles = newsroom.children[0], later = home.children[1];
     assert.deepEqual([home.livePages, home.subtreeRows], [1, 3]);
-    assert.deepEqual([articles.livePages, articles.subtreeRows], [1, 2], 'News A is Final_KKE Kill — assigned, but not live');
+    assert.deepEqual([articles.livePages, articles.subtreeRows], [1, 2], 'News A is Final_MRA Archive — assigned, but not live');
     assert.equal(newsroom.netNew, true);
     assert.equal(home.netNew, undefined, 'has a page of its own');
     assert.equal(later.netNew, undefined);
@@ -463,7 +463,7 @@ describe('changelog', () => {
   test('filters by field and date, and summarizes by auditor', () => {
     const p = mcp.loadProject(file);
     assert.equal(p.changelog({}).total, 3);
-    assert.equal(p.changelog({ field: 'final_kke' }).entries[0].to, 'Kill');
+    assert.equal(p.changelog({ field: 'final_kke' }).entries[0].to, 'Archive');
     assert.equal(p.changelog({ since: '2026-09-05T00:00:00.000Z' }).total, 2);
     const s = p.changelog({ summary: true });
     assert.deepEqual(s.byAuditor.map(a => [a.auditor, a.count]), [['david', 2], ['sme-import', 1]]);
@@ -488,7 +488,7 @@ describe('proposals', () => {
     const before_ = dumpOthers(f);
     const p = mcp.loadProject(f);
     const r = p.proposeChanges({ source: 'test', changes: [
-      { url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: 'keep', rationale: 'Core page' },
+      { url: 'https://www.alpha.edu/about', field: 'MRA_Recommendation', value: 'keep', rationale: 'Core page' },
       { url: 'https://www.alpha.edu/about', field: 'Tags', value: 'landing, evergreen', rationale: 'Hub' },
       { url: 'https://www.alpha.edu/news/b', field: 'Notes', value: 'Thin; merge candidates nearby.', rationale: 'Thin content' }
     ] });
@@ -497,8 +497,8 @@ describe('proposals', () => {
     assert.deepEqual(dumpOthers(f), before_, 'rows/settings/nav/changelog/meta untouched and schema version unchanged');
     const list = p.listProposals({});
     assert.equal(list.total, 3);
-    assert.equal(list.proposals.find(x => x.field === 'KKE_Recommendation').value, 'Keep', 'case normalised to the project vocabulary');
-    assert.equal(list.proposals.find(x => x.field === 'KKE_Recommendation').current, '', 'joined with the live current value');
+    assert.equal(list.proposals.find(x => x.field === 'MRA_Recommendation').value, 'Migrate', 'case normalised to the project vocabulary');
+    assert.equal(list.proposals.find(x => x.field === 'MRA_Recommendation').current, '', 'joined with the live current value');
   });
 
   test('validates the whole batch before writing any of it', () => {
@@ -506,9 +506,9 @@ describe('proposals', () => {
     buildFixture(f);
     const p = mcp.loadProject(f);
     assert.throws(() => p.proposeChanges({ changes: [
-      { url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: 'Keep', rationale: 'ok' },
-      { url: 'https://www.alpha.edu/about', field: 'Final_KKE', value: 'Keep', rationale: 'not allowed' }
-    ] }), /Final_KKE.*not a field proposals may change|is not a field proposals may change/);
+      { url: 'https://www.alpha.edu/about', field: 'MRA_Recommendation', value: 'Migrate', rationale: 'ok' },
+      { url: 'https://www.alpha.edu/about', field: 'Final_MRA', value: 'Migrate', rationale: 'not allowed' }
+    ] }), /Final_MRA.*not a field proposals may change|is not a field proposals may change/);
     assert.equal(p.listProposals({}).total, 0, 'the valid first change was not written either');
   });
 
@@ -517,11 +517,11 @@ describe('proposals', () => {
     const one = c => () => p.proposeChanges({ changes: [c] });
     assert.throws(one({ url: 'https://www.alpha.edu/about', field: 'Sitemap_ID', value: 'n1', rationale: 'x' }), /not a field proposals may change/);
     assert.throws(one({ url: 'https://www.alpha.edu/about', field: '_RedirectSource', value: 'auto', rationale: 'x' }), /not a field proposals may change/);
-    assert.throws(one({ url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: 'Archive', rationale: 'x' }), /cannot be "Archive".*Keep · Kill · Evolve · Exclude/s);
-    assert.throws(one({ url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: 'Consolidate', rationale: 'x' }), /cannot be "Consolidate"/);
+    assert.throws(one({ url: 'https://www.alpha.edu/about', field: 'MRA_Recommendation', value: 'Delete', rationale: 'x' }), /cannot be "Delete".*Migrate · Revise · Archive · Exclude/s);
+    assert.throws(one({ url: 'https://www.alpha.edu/about', field: 'MRA_Recommendation', value: 'Consolidate', rationale: 'x' }), /cannot be "Consolidate"/);
     assert.throws(one({ url: 'https://www.alpha.edu/about', field: 'Audiences', value: 'Donors', rationale: 'x' }), /Audiences cannot be "Donors"/);
-    assert.throws(one({ url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: '', rationale: 'x' }), /cannot clear a field/);
-    assert.throws(one({ url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: 'Keep', rationale: '' }), /needs a `rationale`/);
+    assert.throws(one({ url: 'https://www.alpha.edu/about', field: 'MRA_Recommendation', value: '', rationale: 'x' }), /cannot clear a field/);
+    assert.throws(one({ url: 'https://www.alpha.edu/about', field: 'MRA_Recommendation', value: 'Migrate', rationale: '' }), /needs a `rationale`/);
   });
 
   test('skips what is already true, adds only what is new, and replaces a pending duplicate instead of stacking', () => {
@@ -529,19 +529,19 @@ describe('proposals', () => {
     buildFixture(f);
     const p = mcp.loadProject(f);
     const r1 = p.proposeChanges({ changes: [
-      { url: 'https://www.alpha.edu/news/a', field: 'KKE_Recommendation', value: 'Keep', rationale: 'already Keep' },
+      { url: 'https://www.alpha.edu/news/a', field: 'MRA_Recommendation', value: 'Migrate', rationale: 'already Keep' },
       { url: 'https://www.alpha.edu/news/a', field: 'Tags', value: 'outdated, stale', rationale: 'one of these is new' },
-      { url: 'https://www.alpha.edu/nowhere', field: 'KKE_Recommendation', value: 'Kill', rationale: 'no such page' },
-      { url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: 'Keep', rationale: 'first thought' }
+      { url: 'https://www.alpha.edu/nowhere', field: 'MRA_Recommendation', value: 'Archive', rationale: 'no such page' },
+      { url: 'https://www.alpha.edu/about', field: 'MRA_Recommendation', value: 'Migrate', rationale: 'first thought' }
     ] });
     assert.equal(r1.queued, 2);
-    assert.deepEqual(r1.skipped.map(x => x.reason), ['already "Keep"', 'no row with that URL']);
+    assert.deepEqual(r1.skipped.map(x => x.reason), ['already "Migrate"', 'no row with that URL']);
     assert.equal(p.listProposals({}).proposals.find(x => x.field === 'Tags').value, 'stale', 'only the tag the page lacks');
-    const r2 = p.proposeChanges({ changes: [{ url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: 'Evolve', rationale: 'second thought' }] });
+    const r2 = p.proposeChanges({ changes: [{ url: 'https://www.alpha.edu/about', field: 'MRA_Recommendation', value: 'Revise', rationale: 'second thought' }] });
     assert.equal(r2.replacedPending, 1);
-    const kke = p.listProposals({}).proposals.filter(x => x.url === 'https://www.alpha.edu/about' && x.field === 'KKE_Recommendation');
+    const kke = p.listProposals({}).proposals.filter(x => x.url === 'https://www.alpha.edu/about' && x.field === 'MRA_Recommendation');
     assert.equal(kke.length, 1);
-    assert.equal(kke[0].value, 'Evolve');
+    assert.equal(kke[0].value, 'Revise');
     assert.equal(kke[0].rationale, 'second thought');
   });
 
@@ -549,7 +549,7 @@ describe('proposals', () => {
     const f = path.join(dir, 'v2.transmission');
     buildFixture(f, { userVersion: 2 });
     const db = new DatabaseSync(f);
-    db.prepare("INSERT INTO proposals (created_at, batch, source, url, field, value, rationale, status, resolved_at, resolved_by) VALUES ('t','b','x','https://www.alpha.edu/about','KKE_Recommendation','Keep','r','accepted','t2','david')").run();
+    db.prepare("INSERT INTO proposals (created_at, batch, source, url, field, value, rationale, status, resolved_at, resolved_by) VALUES ('t','b','x','https://www.alpha.edu/about','MRA_Recommendation','Migrate','r','accepted','t2','david')").run();
     db.close();
     const p = mcp.loadProject(f);
     assert.equal(p.listProposals({}).total, 0);
@@ -673,15 +673,15 @@ describe('stdio server', () => {
     const f = path.join(dir, 'live.transmission');
     buildFixture(f);
     const s = startServer(t, ['--project', f]);
-    assert.equal(group((await callTool(s, 'aggregate', { groupBy: ['@effective_kke'] })).data, 'Evolve'), 1);
+    assert.equal(group((await callTool(s, 'aggregate', { groupBy: ['@effective_decision'] })).data, 'Revise'), 1);
 
     // What an autosave looks like from outside: a row rewritten through a second
     // connection, landing in the WAL while the main file's mtime stays put.
     const db = new DatabaseSync(f);
     t.after(() => { try { db.close(); } catch (_) { /* closed below on the happy path */ } });
-    const edited = { ...ROWS[7], KKE_Recommendation: 'Evolve' };
+    const edited = { ...ROWS[7], MRA_Recommendation: 'Revise' };
     db.prepare('UPDATE rows SET data = ? WHERE idx = 7').run(JSON.stringify(edited));
-    assert.equal(group((await callTool(s, 'aggregate', { groupBy: ['@effective_kke'] })).data, 'Evolve'), 2);
+    assert.equal(group((await callTool(s, 'aggregate', { groupBy: ['@effective_decision'] })).data, 'Revise'), 2);
     db.close();
     await s.close();
   });
@@ -715,5 +715,78 @@ describe('stdio server', () => {
     assert.match(glo.text, /### thin-content\n\nUnder 150 words\./);
     assert.equal((await s.request('resources/read', { uri: 'transmission://nope' })).error.code, -32002);
     await s.close();
+  });
+});
+
+// A project saved under the legacy Keep/Kill/Evolve preference stores KKE_*
+// columns and KKE words. The server reads it as MRA, and accepts either
+// spelling as input, so a session never has to know which the auditor chose.
+describe('legacy KKE vocabulary', () => {
+  const T = require(path.join(ROOT, 'mcp', 'lib', 'terminology.js'));
+  let ldir, lfile;
+  before(() => {
+    ldir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-kke-'));
+    lfile = path.join(ldir, 'legacy.transmission');
+    const t = T.convertTable(HEADERS, ROWS, 'kke', null);
+    buildFixture(lfile, {
+      headers: t.headers, rows: t.rows,
+      settings: { ...SETTINGS, savedFilters: SETTINGS.savedFilters.map(f => ({ ...f, kkeFilter: f.kkeFilter.map(v => T.value(v, 'kke')) })) },
+      changelog: CHANGELOG.map(e => [e[0], e[1], e[2], e[3], T.header(e[4], 'kke'), T.value(e[5], 'kke'), T.value(e[6], 'kke')])
+    });
+  });
+  after(() => fs.rmSync(ldir, { recursive: true, force: true }));
+
+  test('the fixture really is in the old words', () => {
+    const db = new DatabaseSync(lfile, { readOnly: true });
+    const names = db.prepare('SELECT name FROM headers').all().map(r => r.name);
+    db.close();
+    assert.ok(names.includes('KKE_Recommendation') && names.includes('Final_KKE'));
+    assert.ok(!names.includes('MRA_Recommendation'));
+  });
+
+  test('columns, values and the decision mix read as MRA', () => {
+    const p = mcp.loadProject(lfile);
+    assert.equal(p.columnMap.kke, 'MRA_Recommendation');
+    assert.equal(p.columnMap.finalKke, 'Final_MRA');
+    assert.equal(p.effectiveKke(p.findRows('https://www.alpha.edu/news/a')[0]), 'Archive');
+    const res = p.aggregate({ groupBy: ['@effective_decision'], scope: 'all' });
+    assert.equal(group(res, 'Migrate'), 3);
+    assert.equal(group(res, 'Archive'), 3);
+    assert.ok(!group(res, 'Keep') && !group(res, 'Kill'));
+  });
+
+  test('old field names and old words still filter', () => {
+    const p = mcp.loadProject(lfile);
+    const byOld = p.select({ filters: [{ field: 'KKE_Recommendation', operator: 'equals', value: 'Keep' }] }).length;
+    const byNew = p.select({ filters: [{ field: 'MRA_Recommendation', operator: 'equals', value: 'Migrate' }] }).length;
+    assert.ok(byNew > 0);
+    assert.equal(byOld, byNew);
+    assert.equal(p.select({ filters: [{ field: '@effective_kke', operator: 'equals', value: 'Kill' }] }).length,
+      p.select({ filters: [{ field: '@effective_decision', operator: 'equals', value: 'Archive' }] }).length);
+  });
+
+  test('a saved filter written with Keep still matches', () => {
+    const rows = mcp.loadProject(lfile).select({ savedFilter: 'Thin news' });
+    assert.ok(rows.length > 0);
+  });
+
+  test('the change log is reported in MRA, and a field filter matches either spelling', () => {
+    const p = mcp.loadProject(lfile);
+    const all = p.changelog({});
+    assert.ok(all.entries.every(e => !/KKE/.test(e.field)));
+    assert.ok(all.entries.some(e => e.field === 'Final_MRA' && e.to === 'Archive'));
+    assert.equal(p.changelog({ field: 'Final_MRA' }).total, 1);
+    assert.equal(p.changelog({ field: 'Final_KKE' }).total, 1);
+  });
+
+  test('a proposal in the old words is queued in the new ones', () => {
+    const f = path.join(ldir, 'propose.transmission');
+    fs.copyFileSync(lfile, f);
+    const p = mcp.loadProject(f);
+    const r = p.proposeChanges({ changes: [{ url: 'https://www.alpha.edu/about', field: 'KKE_Recommendation', value: 'Evolve', rationale: 'needs work' }] });
+    assert.equal(r.queued, 1);
+    const list = mcp.loadProject(f).listProposals({});
+    assert.equal(list.proposals[0].field, 'MRA_Recommendation');
+    assert.equal(list.proposals[0].value, 'Revise');
   });
 });

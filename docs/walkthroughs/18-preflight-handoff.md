@@ -18,10 +18,10 @@ The final pass before you ship: one command that runs every validation, plus the
 
 **Migration → Pre-Handoff Check…** runs all of these at once and reports "**Ready for handoff**" or "**N issues across M checks**":
 
-1. **Every page has a KKE decision** — no unreviewed rows.
+1. **Every page has an MRA decision** — no unreviewed rows.
 2. **Consolidate pages point to a target** — no dangling consolidations.
-3. **Consolidate targets are live** — none point at a Kill/Exclude page.
-4. **No redirect chains** — no Kill redirecting into another Kill/404.
+3. **Consolidate targets are live** — none point at an Archive/Exclude page.
+4. **No redirect chains** — no Archive redirecting into another Archive/404.
 5. **No duplicate nav IDs** — *(nav-tree files only)*.
 6. **No empty nav leaves** — *(nav-tree files only)*.
 
@@ -39,7 +39,7 @@ The Pre-Handoff Check is itself a report — export it to **PDF / HTML** as evid
 
 ## 3. The change log
 
-Every change to a decision field (KKE, SME Decision, Final KKE, and auto-filled classifications) is logged to **`_sessionChangeLog`** during the session and appended to the **KKE_ChangeLog** sheet on **Save** — timestamp, row, URL, field, old value, new value. It accumulates across sessions, so the file carries a complete history of how the inventory was decided.
+Every change to a decision field (MRA, SME Decision, Final MRA, and auto-filled classifications) is logged to **`_sessionChangeLog`** during the session and appended to the **MRA_ChangeLog** sheet on **Save** — timestamp, row, URL, field, old value, new value. It accumulates across sessions, so the file carries a complete history of how the inventory was decided.
 
 ---
 

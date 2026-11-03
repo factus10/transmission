@@ -1,12 +1,14 @@
-# KKE Rubric Files
+# Rubric Files
 
-This folder contains rubric definitions for the KKE content audit tool. Each `.md` file defines the rules for one KKE status. The app looks for these files:
+This folder contains rubric definitions for the content audit. Each `.md` file defines the rules for one decision. The app looks for these files:
 
-- `keep.md` — rules for pages that should be kept as-is
-- `kill.md` — rules for pages that should be removed
-- `evolve.md` — rules for pages that need improvement
+- `migrate.md` — rules for pages that move to the new site as-is
+- `revise.md` — rules for pages that move but need work first
+- `archive.md` — rules for pages that are retired (and owe a redirect)
 - `exclude.md` — rules for pages outside the scope of the audit
 - `consolidate.md` — patterns for pages whose content should merge into another page
+
+These were `keep.md`, `evolve.md` and `kill.md` before the Keep/Kill/Evolve → Migrate/Revise/Archive rename. A library that still uses the old file names keeps working: the app reads a legacy file when the new one is missing, and saves under the new name. A rubric's `Then:` line may use either vocabulary.
 
 This folder is your **personal library**. A project carries its own copy of its rubrics (Project → Rubrics… → **Copy from my library**), so everyone auditing it — and Claude, through the Transmission extension — applies the same ones. A project with no rubrics of its own uses this folder for the per-page assessment.
 
@@ -19,7 +21,7 @@ You can point the app at a different rubrics folder in **Settings > Rubrics fold
 Each file has two sections: **Field Rules** (evaluated automatically against spreadsheet data) and **Content Rules** (evaluated manually or by AI).
 
 ```markdown
-# Keep
+# Migrate
 
 ## Field Rules
 - Status Code is 200

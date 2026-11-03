@@ -38,9 +38,9 @@ Everything visual is driven by CSS custom properties. **Never hardcode a hex col
      Reuse the *hues* even if your app has no KKE concept:
      green=positive, red=destructive, amber=caution,
      indigo=merge/secondary, gray=neutral/inactive. */
-  --kke-keep:           #15703a;  --kke-keep-bg:        #dcfce7;
-  --kke-kill:           #b91c1c;  --kke-kill-bg:        #fee2e2;
-  --kke-evolve:         #854d0e;  --kke-evolve-bg:      #fef9c3;
+  --kke-migrate:           #15703a;  --kke-migrate-bg:        #dcfce7;
+  --kke-archive:           #b91c1c;  --kke-archive-bg:        #fee2e2;
+  --kke-revise:         #854d0e;  --kke-revise-bg:      #fef9c3;
   --kke-consolidate:    #4338ca;  --kke-consolidate-bg: #e0e7ff;
   --kke-exclude:        #636363;  --kke-exclude-bg:     #f0f0f0;
 
@@ -74,9 +74,9 @@ Because everything uses tokens, dark mode is just a token override. Wrap this in
 --bg-field-bar:#242424; --bg-audit-bar:#1e1e1e;
 --border:#3a3a3a; --border-light:#444444;
 --accent:#22c55e; --accent-dim:#1a3d2a; --accent-text:#86efac; --info:#60a5fa;
---kke-keep:#4ade80; --kke-keep-bg:#14532d;
---kke-kill:#f87171; --kke-kill-bg:#450a0a;
---kke-evolve:#fbbf24; --kke-evolve-bg:#422006;
+--kke-migrate:#4ade80; --kke-migrate-bg:#14532d;
+--kke-archive:#f87171; --kke-archive-bg:#450a0a;
+--kke-revise:#fbbf24; --kke-revise-bg:#422006;
 --kke-exclude:#9ca3af; --kke-exclude-bg:#374151;
 --text-primary:#e5e5e5; --text-secondary:#a3a3a3;
 --text-muted:#737373; --text-accent:#e5e5e5;
@@ -107,7 +107,7 @@ Because everything uses tokens, dark mode is just a token override. Wrap this in
 }
 .btn-primary { background: var(--accent); color:#fff; border-color: var(--accent); }
 .btn-primary:hover { background:#15803d; }
-.btn-primary.btn-danger { background: var(--kke-kill); border-color: var(--kke-kill); color:#fff; }
+.btn-primary.btn-danger { background: var(--kke-archive); border-color: var(--kke-archive); color:#fff; }
 .btn-primary.btn-danger:hover { background:#991b1b; }
 .btn-ghost { background: transparent; color: var(--text-secondary); border-color: var(--border-light); }
 .btn-ghost:hover { background: var(--bg-hover); color: var(--text-primary); }
@@ -119,7 +119,7 @@ Because everything uses tokens, dark mode is just a token override. Wrap this in
 **Rules:**
 - Exactly **one** `.btn-primary` (green) per dialog/footer — it is the affirmative action and sits **rightmost**.
 - Everything else is `.btn-ghost` (transparent, secondary).
-- Destructive **primary** action = `.btn-primary.btn-danger` (filled red). A destructive **secondary** action next to a Save uses a ghost button with red text: `style="color:var(--kke-kill)"`.
+- Destructive **primary** action = `.btn-primary.btn-danger` (filled red). A destructive **secondary** action next to a Save uses a ghost button with red text: `style="color:var(--kke-archive)"`.
 - Footer/toolbar buttons are `btn btn-sm …` — no full-size buttons in footers.
 - **Labels = the specific verb:** `Save`, `Export`, `Import`, `Apply`, `Assign`, `Delete`. Use `Done` only for live-saved dialogs. Use `Cancel` to dismiss without committing.
 
@@ -177,7 +177,7 @@ showToast('Nothing to apply to');  // neutral
 
 ## 5. Status pills & badges
 
-Transmission renders state as colored pills using the semantic palette: a colored text on a tinted background, e.g. Keep = `color:var(--kke-keep); background:var(--kke-keep-bg)`. Reuse this convention for any status in the other app:
+Transmission renders state as colored pills using the semantic palette: a colored text on a tinted background, e.g. Migrate = `color:var(--kke-migrate); background:var(--kke-migrate-bg)`. Reuse this convention for any status in the other app:
 - green = positive/done, red = destructive/blocked, amber = caution/in-progress, indigo = secondary/merge, gray = neutral/inactive.
 - Pills are small (≈11–12px), rounded (`var(--radius)`), padded `2px 6px`.
 

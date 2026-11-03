@@ -1,6 +1,6 @@
 # Project Setup Walkthrough
 
-How to configure a project so the rest of the audit runs smoothly — identity, the KKE vocabulary, where suggestions come from, and the migration vocabularies. Five minutes here saves friction everywhere downstream.
+How to configure a project so the rest of the audit runs smoothly — identity, the MRA vocabulary, where suggestions come from, and the migration vocabularies. Five minutes here saves friction everywhere downstream.
 
 > Prerequisite: a file is open (see **Getting Started**).
 
@@ -10,7 +10,7 @@ How to configure a project so the rest of the audit runs smoothly — identity, 
 
 There are **two tiers of configuration**, and they behave differently:
 
-- **Project Settings** — *"Saved with this file — travels with the spreadsheet."* Anything client-specific lives here: site domain, custom KKE states, suggestion weights, page statuses, assignees, saved filters. Hand off the file and these come with it.
+- **Project Settings** — *"Saved with this file — travels with the spreadsheet."* Anything client-specific lives here: site domain, custom decision states, suggestion weights, page statuses, assignees, saved filters. Hand off the file and these come with it.
 - **App Settings** — *"Applies to you, across all files."* Per-user UI preferences: auto-advance, which clusters are visible, your API key, sidebar columns, column mapping. These stay on your machine.
 
 If a setting should be the same for every auditor on this client, it belongs in **Project Settings**. If it's how *you* like to work, it's **App Settings**.
@@ -23,9 +23,9 @@ Open with **File → Project Settings…** (or **Project → Project Settings…
 
 **Identity** — **Client name**, **Project name**, **Site domain**, **Default redirect destination**. The site domain drives redirect URLs and sitemap paths; changing it offers to rewrite existing redirect destinations to the new domain.
 
-**KKE States** — add **custom KKE states** (with a color), beyond the five built-ins (Keep / Kill / Evolve / Consolidate / Exclude), and clean up rogue values. Custom states are stored both with the file *and* in your app prefs, so new files inherit them.
+**Decision states** — add **custom decision states** (with a color), beyond the five built-ins (Migrate / Revise / Archive / Consolidate / Exclude), and clean up rogue values. Custom states are stored both with the file *and* in your app prefs, so new files inherit them.
 
-**Suggestions** — configure the **Suggested_KKE** sources:
+**Suggestions** — configure the **Suggested_MRA** sources:
 - **GA Analytics** source — opens the GA column mapping + metric weights dialog.
 - **Rubric** source — runs the rubric batch.
 - **Source weights** (GA / Rubric, 0–5) with **Save weights & recompute**.
@@ -36,7 +36,7 @@ Open with **File → Project Settings…** (or **Project → Project Settings…
 
 **Saved Filters** — list of named filter bundles with **Apply** / **Delete** per row (created from the sidebar — see **Finding the Work**).
 
-> All of these save into the file's **KKE_Settings** sheet on **Cmd+S**.
+> All of these save into the file's **MRA_Settings** sheet on **Cmd+S**.
 
 ---
 
@@ -44,14 +44,14 @@ Open with **File → Project Settings…** (or **Project → Project Settings…
 
 Open with the **⚙** button (or **Transmission → Preferences…**, **Cmd+,** — on Windows and Linux it sits under **File**). The subtitle confirms it: *Applies to you, across all files.*
 
-- **Auto-advance** — jump to the next row after you assign a KKE status.
-- **Show SME fields** — reveal SME Decision / Final KKE / Content Owner in the audit bar.
+- **Auto-advance** — jump to the next row after you assign an MRA status.
+- **Show SME fields** — reveal SME Decision / Final MRA / Content Owner in the audit bar.
 - **Show Migration fields** — reveal Content Nature / Migration Track.
 - **Show Components cluster** — reveal the design-pattern (Components) cluster.
 - **Rubrics folder** — point at your rubric markdown; **Browse…** / **Edit…**.
 - **Claude API key** — optional, enables AI assessment.
 - **Sidebar columns** — extra columns to show in the row list.
-- **Column mapping** — tell the app which spreadsheet columns hold KKE / Tags / Notes / Group / Primary, then **Apply**. Use this when your file's columns are named differently from the defaults.
+- **Column mapping** — tell the app which spreadsheet columns hold MRA / Tags / Notes / Group / Primary, then **Apply**. Use this when your file's columns are named differently from the defaults.
 
 ---
 
@@ -70,12 +70,12 @@ Blank read-only metadata fields are hidden by default, and each audit-bar **clus
 ## Quick checklist for "project configured"
 
 - [ ] **Identity** filled — at least **Site domain** (redirects/paths depend on it)
-- [ ] Any **custom KKE states** the engagement needs are defined
-- [ ] **Suggestion sources** set up if you'll use Suggested_KKE (GA mapping and/or rubrics, weights)
+- [ ] Any **custom decision states** the engagement needs are defined
+- [ ] **Suggestion sources** set up if you'll use Suggested_MRA (GA mapping and/or rubrics, weights)
 - [ ] **Migration** vocab seeded if you'll do the build phase (statuses + assignees)
 - [ ] App Settings reflect how you want to work (auto-advance, visible clusters, API key)
 - [ ] **Saved** — Project Settings persist to the file
 
 ---
 
-*Next: **Running the Audit Pass** — the field bar, KKE keys, and the embedded browser. See also [the User Guide](../USER_GUIDE.md).*
+*Next: **Running the Audit Pass** — the field bar, MRA keys, and the embedded browser. See also [the User Guide](../USER_GUIDE.md).*

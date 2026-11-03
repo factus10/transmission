@@ -4,6 +4,19 @@ All notable changes to Transmission are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 major-version codenames drawn from The Smiths.
 
+## [Unreleased]
+
+### Changed
+
+- **The decisions are now Migrate / Revise / Archive.** Keep becomes Migrate, Evolve becomes Revise and Kill becomes Archive; Consolidate and Exclude are unchanged, and so are the meanings (an Archived page is retired and owes a redirect, as a Killed page did). Columns are `MRA_Recommendation` and `Final_MRA`, and the structural sheets `MRA_Settings`, `MRA_ChangeLog` and `MRA_Glossary`. Existing projects open as before and are saved in the new words.
+- **Keyboard shortcuts follow the new order:** 1 Migrate · 2 Revise · 3 Archive. Under the old names 2 was Kill and 3 was Evolve, so those two keys now do the opposite of what they used to.
+
+### Added
+
+- **Worksheets in the old words are read correctly.** An SME worksheet sent out before the rename, a second auditor's file, an audit template or a rubric folder can still say Keep / Kill / Evolve. Each is translated as it's read: "Change: Kill" becomes Archive, and a bare "Keep" next to a Migrate recommendation counts as approval. The import tells you how many decisions it re-worded.
+- **SME export: "Use Keep / Kill / Evolve wording".** For a client whose project began before the rename, this sends one worksheet in the words they know. It isn't remembered for the next export, and the worksheet imports back as Migrate / Revise / Archive either way.
+- **A warning when a custom decision state clashes with a built-in.** A custom state you named Archive or Revise would now be counted and filtered as the built-in decision; the app says so when you open the project and points you to Project Settings → Decision states.
+
 ## [2.22.1] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Added

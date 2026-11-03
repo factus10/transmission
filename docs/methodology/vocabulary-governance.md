@@ -20,7 +20,7 @@ Common failure modes:
 | **Whitespace drift** | `Post-Launch` and `Post-Launch ` (trailing space) treated as different | Excel paste, manual entry, copy from email |
 | **Case drift** | `POST LAUNCH`, `Post-Launch`, `post-launch` | Different SMEs, no normalization step |
 | **SME extensions** | `Change: Consolidate-with-X`, `Change: Defer to Phase 2` | SMEs writing prose where the dropdown should constrain |
-| **Legacy import** | `Migrate`, `Archive` from a prior MRA-framework audit imported into a KKE workflow | Mid-engagement framework changes, multi-vendor history |
+| **Legacy import** | `Retain`, `Remove`, `Fix` from a prior audit run in another framework (KKER, a vendor's own vocabulary) imported into an MRA workflow. (Transmission converts the old Keep / Kill / Evolve values itself; other frameworks are on you.) | Mid-engagement framework changes, multi-vendor history |
 
 Each failure mode is invisible until a downstream consumer (a report, a redirect map, a count) trips on it. By then it's already in the deliverable.
 
@@ -32,7 +32,7 @@ Active management of the vocabulary throughout the audit lifecycle. Three respon
 
 Surface mismatches automatically:
 
-- **Rogue value detection** — flag any KKE value present in row data that isn't in the defined custom states or built-ins
+- **Rogue value detection** — flag any MRA value present in row data that isn't in the defined custom states or built-ins
 - **Whitespace tolerance for matching** — `Post Launch` and `Post Launch ` should match the same defined state for purposes of counting
 - **Case awareness** — `POST LAUNCH` vs `Post-Launch` is intentionally different (so users can normalize) but should be obvious in the UI
 
@@ -40,7 +40,7 @@ Surface mismatches automatically:
 
 Provide tools to merge / rename / consolidate:
 
-- **Merge tooling** — pick a source value, pick a target, rewrite every row using the source. Update KKE_Recommendation, Final_KKE, and SME_Decision (`Change: <source>` → `Change: <target>`).
+- **Merge tooling** — pick a source value, pick a target, rewrite every row using the source. Update MRA_Recommendation, Final_MRA, and SME_Decision (`Change: <source>` → `Change: <target>`).
 - **Bulk rename** — change a state's label, every reference updates
 - **Per-row reassignment** — for cases where the same source value should split across multiple targets depending on context
 
@@ -60,14 +60,14 @@ The change log is itself a structural sheet that travels with the file. Reviewer
 
 In the audit tool today:
 
-- **Custom KKE merge** (Project Settings) — pick a custom state, click Merge, choose target. Rewrites KKE_Recommendation, Final_KKE, and SME_Decision values; logs every cell change to the `KKE_ChangeLog` sheet.
-- **Rogue value cleanup** — Project Settings shows a separate sub-section listing every KKE value present in row data that isn't built-in or in your custom states. Each gets a Merge button.
+- **Custom MRA merge** (Project Settings) — pick a custom state, click Merge, choose target. Rewrites MRA_Recommendation, Final_MRA, and SME_Decision values; logs every cell change to the `MRA_ChangeLog` sheet.
+- **Rogue value cleanup** — Project Settings shows a separate sub-section listing every MRA value present in row data that isn't built-in or in your custom states. Each gets a Merge button.
 - **Whitespace-tolerant matching** — built into the rogue detection so trailing spaces don't create false rogues.
-- **Change log** — every KKE / Final_KKE / SME_Decision change is logged with timestamp, row, URL, field, old value, new value. Persists across sessions in the `KKE_ChangeLog` sheet.
+- **Change log** — every MRA / Final_MRA / SME_Decision change is logged with timestamp, row, URL, field, old value, new value. Persists across sessions in the `MRA_ChangeLog` sheet.
 
 ## What governance still doesn't cover
 
-- **Multi-authority disagreement as a class** — when GA says Kill and SME says Evolve, that's not a vocabulary problem, but the absence of a clear escalation path means it gets resolved invisibly via Final_KKE.
+- **Multi-authority disagreement as a class** — when GA says Archive and SME says Revise, that's not a vocabulary problem, but the absence of a clear escalation path means it gets resolved invisibly via Final_MRA.
 - **Cross-engagement vocabulary** — if Engagement A used `Defer` and Engagement B uses `Post Launch`, there's no shared canonical vocabulary that survives across projects.
 - **Validation at entry time** — currently we detect rogues after they're in the data. Stricter validation (constrain SMEs to defined values via dropdown only) would prevent the problem upstream, but at the cost of SME flexibility.
 
@@ -79,6 +79,6 @@ The [proposed CAD framework](./content-audit-disposition.md) treats Authority as
 
 ## See also
 
-- [Why KKE Falls Short — Authority](./the-five-dimensions.md#5-authority--whose-decision-is-this)
+- [Why MRA Falls Short — Authority](./the-five-dimensions.md#5-authority--whose-decision-is-this)
 - [Content Audit Disposition (CAD)](./content-audit-disposition.md)
-- [Patterns Where KKE Breaks — Pattern G](./patterns.md#g-multiple-authorities-disagree)
+- [Patterns Where MRA Breaks — Pattern G](./patterns.md#g-multiple-authorities-disagree)
