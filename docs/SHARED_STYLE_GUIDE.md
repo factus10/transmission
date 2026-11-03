@@ -34,8 +34,8 @@ Everything visual is driven by CSS custom properties. **Never hardcode a hex col
   --accent-text:   #166534;
   --info:          #2563eb;
 
-  /* Semantic status palette (Keep/Kill/Evolve/Consolidate/Exclude).
-     Reuse the *hues* even if your app has no KKE concept:
+  /* Semantic status palette (Migrate/Revise/Archive/Consolidate/Exclude).
+     Reuse the *hues* even if your app has no such concept:
      green=positive, red=destructive, amber=caution,
      indigo=merge/secondary, gray=neutral/inactive. */
   --kke-migrate:           #15703a;  --kke-migrate-bg:        #dcfce7;
@@ -212,7 +212,7 @@ Transmission renders state as colored pills using the semantic palette: a colore
 
 ## 9. What is intentionally NOT shared
 These are Transmission specifics the Tauri app should **not** copy unless relevant:
-- The KKE methodology (Keep/Kill/Evolve/Consolidate/Exclude) and all `KKE_*` column/sheet names — that's a domain schema, not a style rule. Borrow the *color semantics*, not the vocabulary.
+- The decision methodology (Migrate/Revise/Archive/Consolidate/Exclude, formerly Keep/Kill/Evolve) and all `MRA_*` column/sheet names — that's a domain schema, not a style rule. Borrow the *color semantics*, not the vocabulary.
 - Electron's IPC architecture (main/preload/renderer split). The Tauri app uses Rust `#[tauri::command]` functions called from JS via `invoke()` — a different plumbing model. Keep the same *principle* though: the webview holds no privileged access; all file/OS work crosses a single typed boundary into Rust.
 - Full-panel view-switcher layout, sidebar dimensions — adapt to the Tauri app's own information architecture.
 

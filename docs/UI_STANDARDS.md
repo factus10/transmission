@@ -238,7 +238,7 @@ action the user cannot physically reach is worse than no action at all.
 ## 9. Keyboard
 
 - The modal factory owns **Esc** (closes top modal) and **Enter** (triggers the primary button, except inside `<textarea>`). Don't add competing global handlers inside a dialog.
-- App-level shortcuts live in the `window`/`document` keydown handlers in `renderer.js` and are documented in `SHORTCUT_GROUPS`. The canonical KKE keys are `1` Keep · `2` Kill · `3` Evolve · `4` Consolidate · `5` Exclude · `0` Clear. Keep the cheat-sheet, the code, and `USER_GUIDE.md` in agreement.
+- App-level shortcuts live in the `window`/`document` keydown handlers in `renderer.js` and are documented in `SHORTCUT_GROUPS`. The canonical decision keys are `1` Migrate · `2` Revise · `3` Archive · `4` Consolidate · `5` Exclude · `0` Clear. Keep the cheat-sheet, the code, and `USER_GUIDE.md` in agreement.
 
 ---
 
@@ -254,7 +254,7 @@ action the user cannot physically reach is worse than no action at all.
 
 - `state.rows` is the **read-only** original. All edits go to `state.editedRows[origIndex]`.
 - Mutating data → call `setDirty(true)` (triggers the autosave timer + dirty indicator).
-- KKE / SME / Final-KKE changes → call `logChange(origIndex, field, oldVal, newVal)` for the audit trail.
+- Decision / SME / Final_MRA changes → call `logChange(origIndex, field, oldVal, newVal)` for the audit trail.
 - Per-project data travels in xlsx structural sheets via `state.projectSettings`; per-user prefs go through `get-prefs` / `save-prefs` (remember to whitelist new keys in `main.js`'s `get-prefs`).
 
 ---
@@ -272,7 +272,7 @@ action the user cannot physically reach is worse than no action at all.
 - [ ] State-changing actions give feedback via `showToast`.
 - [ ] Any toast action is optional, singular, follows from the outcome, and confirms in a dialog if destructive (§5a).
 - [ ] New IPC channel touches all three files; new pref key whitelisted in `get-prefs`.
-- [ ] New shortcut added to `SHORTCUT_GROUPS`; KKE/shortcut docs updated.
+- [ ] New shortcut added to `SHORTCUT_GROUPS`; decision/shortcut docs updated.
 - [ ] User-facing changes reflected in `README.md`, `USER_GUIDE.md`, and `src/help.html`.
 - [ ] `node --check src/renderer.js main.js preload.js` passes; app boots clean (no console errors).
 
