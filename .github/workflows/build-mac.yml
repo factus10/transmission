@@ -32,6 +32,7 @@ on:
 
 permissions:
   contents: read
+  actions: write   # the prune step deletes older build artifacts
 
 concurrency:
   group: build-mac-${{ github.ref }}
@@ -202,6 +203,25 @@ jobs:
             dist/*.zip
           if-no-files-found: error
           retention-days: 30
+
+      # Each build is ~480 MB and private-repo artifacts count against the
+      # account's 0.5 GB of Actions storage, so keep only the two newest
+      # (this one and the one before it, in case this one turns out bad).
+      # Older builds aren't needed: releases are published from dist/ by
+      # publish-release.sh, not from these artifacts.
+      - name: Keep only the two newest builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP: 2
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?name=transmission-mac&per_page=100" \
+              --jq '.artifacts[] | select(.expired | not) | [.created_at, .id] | @tsv' \
+            | sort -r | tail -n +"$((KEEP + 1))" | cut -f2 \
+            | while read -r id; do
+                echo "Deleting older artifact $id"
+                gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
+              done
 
       - name: Remove signing keychain
         if: always()
