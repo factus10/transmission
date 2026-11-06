@@ -4,7 +4,7 @@
 npm test
 ```
 
-Node's built-in runner (`node --test`). **No dependencies, no config, no framework** — deliberately, because this is an Electron app whose entire dependency budget ships inside a signed and notarized universal binary, and a test framework earns its keep only once there is a lot to run.
+Node's built-in runner (`node --test`). **No dependencies, no config, no framework** — deliberately, because this is an Electron app whose entire dependency budget ships inside a signed and notarized app, and a test framework earns its keep only once there is a lot to run.
 
 Tests live in `test/*.test.js` and use `node:test` + `node:assert/strict`.
 
