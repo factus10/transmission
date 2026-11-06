@@ -1,4 +1,4 @@
-# Signed + notarized universal macOS build.
+# Signed + notarized Apple Silicon (arm64) macOS build. No Intel builds.
 #
 # Builds what `npm run build:signed:sandboxed` builds locally, on a clean
 # GitHub-hosted Mac, and uploads the .dmg/.zip as a workflow artifact. It does
@@ -139,12 +139,12 @@ jobs:
       # electron-builder signs with the keychain identity and, with the three
       # APPLE_API_* variables set, notarizes and staples the .app.
       - name: Build, sign and notarize the app
-        run: npx electron-builder --mac --universal --publish never
+        run: npx electron-builder --mac --arm64 --publish never
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           # Use the identity already in the keychain rather than re-importing a
-          # .p12 per codesign call, which hangs on universal builds.
+          # .p12 per codesign call, which hung on the old universal builds.
           CSC_IDENTITY_AUTO_DISCOVERY: 'true'
 
       # electron-builder staples the .app, not the disk image around it, so the
@@ -190,8 +190,8 @@ jobs:
 
           ARCHS="$(lipo -archs "$APP/Contents/MacOS/Transmission")"
           case "$ARCHS" in
-            *x86_64*arm64*|*arm64*x86_64*) echo "universal: $ARCHS" ;;
-            *) echo "::error::not a universal binary: $ARCHS"; exit 1 ;;
+            arm64) echo "Apple Silicon: $ARCHS" ;;
+            *) echo "::error::expected an arm64-only binary, got: $ARCHS"; exit 1 ;;
           esac
 
       - name: Upload artifacts

@@ -77,8 +77,8 @@ run()  { if [ "$DRY_RUN" = 1 ]; then printf '   (dry-run) %s\n' "$*"; else "$@";
 VERSION="$(node -p "require('$PROJECT_DIR/package.json').version")"
 TAG="v$VERSION"
 [ -n "$TITLE" ] || TITLE="Transmission $VERSION"
-DMG="$PROJECT_DIR/dist/Transmission-$VERSION-universal.dmg"
-ZIP="$PROJECT_DIR/dist/Transmission-$VERSION-universal-mac.zip"
+DMG="$PROJECT_DIR/dist/Transmission-$VERSION-arm64.dmg"
+ZIP="$PROJECT_DIR/dist/Transmission-$VERSION-arm64-mac.zip"
 
 say "Releasing $TAG"
 [ "$DRY_RUN" = 1 ] && warn "dry run — nothing will be published"
@@ -159,8 +159,8 @@ ok "bundle version is $VERSION"
 
 ARCHS="$(lipo -archs "$APP/Contents/MacOS/Transmission")"
 case "$ARCHS" in
-  *x86_64*arm64*|*arm64*x86_64*) ok "universal ($ARCHS)" ;;
-  *) die "not a universal binary: $ARCHS" ;;
+  arm64) ok "Apple Silicon ($ARCHS)" ;;
+  *) die "expected an arm64-only binary (Apple Silicon builds only), got: $ARCHS" ;;
 esac
 cleanup; trap - EXIT
 
