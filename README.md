@@ -247,6 +247,7 @@ The Action dropdown lists every applicable bulk operation: **Set MRA · Set Publ
 
 ### Sitemap Editor
 - Open the **Sitemap** tab (or `Cmd+Shift+T`) for a **full-width** sitemap editor (sidebar is hidden)
+- **Preview** (toolbar) docks a live web view beside the tree: click a node to see its assigned page, step through nodes with several pages, or jump to the page in the Audit view
 - **Seed an empty sitemap from the audit view** — with no nodes yet, clicking the audit bar's **Sitemap** button shows an inline form (Label prefilled from the page title, Slug from the URL) and a **Create & assign** button that creates the first root node and assigns the current page to it in one step — no need to visit the Sitemap tab first
 - Inline editing of node labels and slugs — changes cascade to all assigned pages
 - **Drag-and-drop** to reorder nodes or reparent them (subtrees move together). Between-node drops show a bold line indicator with a circle handle; drop-into-node targets show a blue left-border shadow. The dragged row fades to 35% opacity for clear visual feedback.

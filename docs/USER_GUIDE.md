@@ -1120,6 +1120,8 @@ Your audit rows answer *"what do we do with each existing page?"* The sitemap an
 
 Open the tree with **Cmd+Shift+T** (or the **Sitemap** tab). The **stats line** beneath the toolbar is your dashboard — more on reading it below.
 
+> **See the actual page without leaving the tree.** Click **Preview** in the Sitemap toolbar to open a page pane on the right. While it's open, clicking a row shows the web page assigned to that node. A node with several pages gets **‹ 1 / 3 ›** to step through them, live pages first. Clicking a page in a node's expanded page list (click the page count) previews that page. A node with no page says why: a header, a fragment, net-new content, or simply unassigned. The pane header has **↺** reload, **↗** open in your browser, and **Open in Audit** for when you do want to leave. The pane opens on the page you were last looking at in the Audit view; drag its left edge to resize (double-click resets). Whether it's open, and its width, are remembered.
+
 > **Starting from nothing?** You don't have to open the Sitemap first. If the sitemap is still empty, clicking the audit bar's **Sitemap** button offers an inline form (Label prefilled from the page title, Slug from the URL) with a **Create & assign** button that creates the first root node and drops the current page onto it in one step.
 
 ### Place every Migrate/Revise page
@@ -1272,7 +1274,7 @@ The columns are Node (number, toggle, label — it fills the width), Slug, Colla
 
 #### Reading the Pages column
 
-A link icon means an external URL, an arrow means a reference, **NEW** means net-new, an empty circle means an empty leaf, and a number is the page count (click it to expand). The **Menu Report** (Menus → Report) adds per-item badges: a page-count on each page reference, `↗` on an external link, `≡` on a header, and a red **missing** badge on a broken reference. These are purely informational — Transmission never blocks a save over coverage.
+A link icon means an external URL, an arrow means a reference, **NEW** means net-new, an empty circle means an empty leaf, and a number is the page count (click it to expand; click a page in the list to preview it, or **Audit →** to open it in the Audit view). The **Menu Report** (Menus → Report) adds per-item badges: a page-count on each page reference, `↗` on an external link, `≡` on a header, and a red **missing** badge on a broken reference. These are purely informational — Transmission never blocks a save over coverage.
 
 #### Colour rules in depth
 
