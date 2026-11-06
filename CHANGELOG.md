@@ -6,9 +6,15 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.24.0] — "Please, Please, Please, Let Me Get What I Want"
+
 ### Added
 
 - **Preview a node's page from the Sitemap.** The Sitemap toolbar's new **Preview** button opens the assigned web page beside the tree. Click a row to see its page, step through a node with several pages, and reload, open in your browser, or jump to the Audit view from the pane. Clicking a page in a node's page list now previews it instead of leaving the Sitemap; each one has an **Audit →** button for that.
+
+### Changed
+
+- **Apple Silicon only.** Transmission is now built for Apple Silicon Macs (M1 and later) only; there is no longer an Intel or universal download.
 
 ## [2.23.0] — "Please, Please, Please, Let Me Get What I Want"
 
