@@ -1,6 +1,6 @@
 # CLAUDE.md — Excel Browser
 
-Electron app for macOS (universal ARM + Intel). Runs on **Electron 44** (Chromium 152, Node 24) — keep it on a supported major (the latest three); `docs/dev/BUILD_SIGNED_BINARIES.md` notes what to check on a bump. Designed primarily for **Screaming Frog crawl exports** (`.xlsx`). Shows rows in a left sidebar, loads each row's URL in an embedded webview, and provides a persistent **field bar above the browser** for reading metadata and recording content audit decisions.
+Electron app for macOS, **Apple Silicon (arm64) only — no Intel/x64 or universal builds**. Runs on **Electron 44** (Chromium 152, Node 24) — keep it on a supported major (the latest three); `docs/dev/BUILD_SIGNED_BINARIES.md` notes what to check on a bump. Designed primarily for **Screaming Frog crawl exports** (`.xlsx`). Shows rows in a left sidebar, loads each row's URL in an embedded webview, and provides a persistent **field bar above the browser** for reading metadata and recording content audit decisions.
 
 ---
 
@@ -12,9 +12,7 @@ npm run rebuild      # rebuild native deps against Electron (only compiles if no
 npm test             # unit tests (node:test, no deps) — see docs/dev/TESTING.md
 npm run dev          # run with DevTools open
 npm start            # run normally
-npm run build        # universal .dmg → dist/
-npm run build:arm    # Apple Silicon only
-npm run build:intel  # Intel only
+npm run build        # Apple Silicon (arm64) .dmg + .zip → dist/  (the only build target; no Intel/universal)
 ```
 
 ---
@@ -494,7 +492,7 @@ Columns are injected into every file if not already present:
 - **Batching is the whole point.** The rubric path's one-row-per-request (~1s/row) is an hour for 3,600 pages. `AUDIENCE_AI_BATCH_SIZE = 20` pages share one prompt so the audience library — the bulk of the tokens — is sent once per batch rather than once per page, and `AUDIENCE_AI_CONCURRENCY = 3` workers pull from a shared cursor. Esc sets `_audienceAiAbort`; everything suggested up to that point is kept. `skipSuggested` keeps a second run from paying to re-answer pages already in the queue.
 - **Structured outputs constrain the answer to the library.** `suggest-audiences-llm` sends a JSON Schema whose `audiences`/`primary` items are an **enum of this project's audience names**, so the model cannot invent an audience — no fence-stripping, no fuzzy matching. `ingestAudienceSuggestions()` still filters against the live library (a library edited between request and response would otherwise slip through) and drops empty-audience results, which are the model's honest abstention on metadata too thin to judge.
 
-**Claude API surface (main.js):** every call goes through `callClaudeMessages({apiKey, model, system, prompt, schema, maxTokens, effort})` — raw HTTPS rather than `@anthropic-ai/sdk`, because this is the only Claude call surface in the app and an npm dependency in a signed/notarized universal build costs more than the helper does. It checks `stop_reason === 'refusal'` before reading `content` (safety classifiers decline with a 200 and an empty content array, which otherwise looks like a parse failure) and unwraps the API's JSON error envelope. `CLAUDE_MODELS` is the single source of truth for the model picker — Opus 5 (default) / Sonnet 5 / Haiku 4.5, with an `effort` flag because Haiku 4.5 rejects `output_config.effort`; the renderer reads it over `get-claude-models` rather than keeping a second copy. The per-project choice persists in `projectSettings.audienceAiModel`. `assess-row-llm` was migrated onto the same helper (it pinned the long-retired `claude-sonnet-4-20250514`).
+**Claude API surface (main.js):** every call goes through `callClaudeMessages({apiKey, model, system, prompt, schema, maxTokens, effort})` — raw HTTPS rather than `@anthropic-ai/sdk`, because this is the only Claude call surface in the app and an npm dependency in a signed/notarized build costs more than the helper does. It checks `stop_reason === 'refusal'` before reading `content` (safety classifiers decline with a 200 and an empty content array, which otherwise looks like a parse failure) and unwraps the API's JSON error envelope. `CLAUDE_MODELS` is the single source of truth for the model picker — Opus 5 (default) / Sonnet 5 / Haiku 4.5, with an `effort` flag because Haiku 4.5 rejects `output_config.effort`; the renderer reads it over `get-claude-models` rather than keeping a second copy. The per-project choice persists in `projectSettings.audienceAiModel`. `assess-row-llm` was migrated onto the same helper (it pinned the long-retired `claude-sonnet-4-20250514`).
 
 **Source sites (consolidation audits):** Transmission otherwise models an audit as *one site becoming one site*; in a merger the unit of work is often the **site**, which has an owner, a CMS to export from, its own redirect configuration, and its own in-scope decision. See `docs/dev/SOURCE_SITE_PROPOSAL.md`.
 
@@ -1306,7 +1304,7 @@ Manual, notify-and-link — **not** silent auto-download/install. On launch (mai
 
   **Skill zips ride along.** Before publishing, the script rebuilds `dist/skills/` from scratch (`package-skills.js --prefix transmission-skill-`; cleared first so a renamed or removed skill can't linger) and uploads each `transmission-skill-<name>.zip` in the same one-at-a-time, byte-verified loop as the dmg/zip, to both repos. The CHANGELOG-extracted release body gets a short footer on how to upload them. The `dist/*.zip` stray-artifact check doesn't see them (they're in a subfolder).
 
-  It also refuses to run on artifacts that are not shippable: dmg and inner `.app` both stapled, Gatekeeper `source=Notarized Developer ID`, `CFBundleShortVersionString` matching the version being released (catches a stale dmg renamed to look current), universal slices present, and `dist/` free of other versions' artifacts. The changelog regeneration is gated on the section count going up by exactly one, so a generator that drops history can't publish.
+  It also refuses to run on artifacts that are not shippable: dmg and inner `.app` both stapled, Gatekeeper `source=Notarized Developer ID`, `CFBundleShortVersionString` matching the version being released (catches a stale dmg renamed to look current), an arm64-only binary (`lipo -archs` = `arm64`; a universal or x64 build is refused), and `dist/` free of other versions' artifacts. The changelog regeneration is gated on the section count going up by exactly one, so a generator that drops history can't publish.
 
 - **Startup path**: `performUpdateCheck()` runs once; if `available`, main pushes the result to the renderer via `update-check-result` (`mainWindow.webContents.send`). Any failure (offline, bad manifest, untrusted host) is swallowed — a startup check should never interrupt the user with an error.
 - **Manual path**: Help → Check for Updates… sends `menu-check-updates`; the renderer calls `window.electronAPI.checkForUpdates()` (invoke/handle over `check-for-updates`) and always shows feedback — a toast either way (`"You're up to date (vX.Y.Z)"` / an error toast) or, when available, `showUpdateModal()`.
