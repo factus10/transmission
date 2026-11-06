@@ -3716,7 +3716,7 @@ ipcMain.handle('assess-row', (event, { row, texts }) => {
 
 // ─── Claude API ───────────────────────────────────────────────────────────────
 // Raw HTTPS rather than @anthropic-ai/sdk: this is the only Claude call surface
-// in the app and adding an npm dependency to a signed/notarized universal build
+// in the app and adding an npm dependency to a signed/notarized build
 // costs more than the two dozen lines below. Every request goes through
 // callClaudeMessages() so the model, headers, and error shape stay in one place.
 
