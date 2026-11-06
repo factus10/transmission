@@ -7,6 +7,12 @@ Don't copy the actual credential values into any file that's tracked by git,
 don't paste them into a chat transcript, and don't read/paste the private key's
 contents — only ever reference its file path.
 
+**Apple Silicon only.** Transmission ships as an arm64 build — no Intel (x64)
+or universal binaries. `npm run build`, the sandboxed script and CI all build
+`--arm64`, and `publish-release.sh` refuses any artifact whose binary isn't
+arm64-only. Artifacts are `Transmission-<version>-arm64.dmg` and
+`Transmission-<version>-arm64-mac.zip`.
+
 ## What's in `~/Documents/Apple Dev/`
 
 | File | What it is |
@@ -46,7 +52,7 @@ export APPLE_API_ISSUER="<ISSUER_UUID>"                    # "Issuer UUID" line 
 electron-builder auto-detects these and runs `@electron/notarize` whenever
 `APPLE_API_KEY`/`APPLE_API_KEY_ID`/`APPLE_API_ISSUER` are set. Unlike PCL,
 this repo's `package.json` does **not** force `mac.identity` to `null` in the
-base `build` config — so the plain `build`/`build:arm`/`build:intel` scripts
+base `build` config — so the plain `build` script
 already sign automatically whenever a matching identity is found via
 `APPLE_SIGNING_IDENTITY`. There's no separate signed/unsigned script split
 here the way PCL has `dist:mac` vs `dist:mac:signed`.
@@ -68,7 +74,7 @@ is the recovery path for an interrupted upload.
 
 It refuses to publish artifacts that are not shippable (unstapled dmg or app,
 Gatekeeper rejection, a bundle whose version does not match the one being
-released, a non-universal binary, or a `dist/` still holding other versions'
+released, a binary that isn't arm64-only, or a `dist/` still holding other versions'
 files), uploads each asset separately, verifies byte counts against the local
 files before publishing the draft, and asserts `releases/latest` resolves to the
 new tag on both repos before the manifest is touched. See the release section of
@@ -88,9 +94,9 @@ from the Actions tab (`gh workflow run build-mac.yml --ref <branch>`). It:
 
 1. runs `npm ci` and `npm test`, and for a tag checks it matches `package.json` and `package-lock.json`;
 2. imports the signing cert into a throwaway keychain;
-3. builds the universal app (electron-builder signs, notarizes and staples the `.app`);
+3. builds the Apple Silicon (arm64) app (electron-builder signs, notarizes and staples the `.app`);
 4. notarizes and staples the `.dmg` itself, as `build-signed-mac.sh` does;
-5. runs `publish-release.sh`'s artifact checks: dmg and app stapled, Gatekeeper `Notarized Developer ID`, bundle version, universal binary;
+5. runs `publish-release.sh`'s artifact checks: dmg and app stapled, Gatekeeper `Notarized Developer ID`, bundle version, arm64-only binary;
 6. uploads the `.dmg` and `.zip` as the `transmission-mac` artifact, kept 30 days;
 7. deletes all but the two newest `transmission-mac` artifacts (each is ~480 MB, and private-repo artifacts count against the account's 0.5 GB of Actions storage).
 
@@ -123,7 +129,7 @@ no `com.apple.provenance` problem, so the workflow builds in place.
 
 `cd ~/Documents/github/transmission` (or whichever worktree) first.
 
-- **`npm run build`** (or `build:arm` / `build:intel`) — normal path, run this
+- **`npm run build`** — normal path, run this
   if you're in a regular unsandboxed terminal (not through an agent's
   tool-mediated Bash).
 - **`npm run build:signed:sandboxed`** — use this if you're a Claude Code
@@ -212,9 +218,9 @@ round trip) and is skipped with a warning if `APPLE_API_KEY` / `APPLE_API_KEY_ID
 Doing it by hand, if you built some other way:
 
 ```bash
-xcrun notarytool submit dist/Transmission-X.Y.Z-universal.dmg \
+xcrun notarytool submit dist/Transmission-X.Y.Z-arm64.dmg \
   --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
-xcrun stapler staple dist/Transmission-X.Y.Z-universal.dmg
+xcrun stapler staple dist/Transmission-X.Y.Z-arm64.dmg
 ```
 
 `stapler staple` on a dmg that was never *submitted* fails with `Could not find
@@ -252,10 +258,10 @@ better-sqlite3 13. Things that bit, or had to be checked, on the 29 → 44 jump:
 - **better-sqlite3 13 is N-API.** It ships per-arch prebuilds
   (`prebuilds/darwin-arm64.node`, `darwin-x64.node`) that load in plain Node
   and in any Electron, so `electron-rebuild` finds nothing to compile. The
-  universal merge then sees the same two `.node` files in both arch builds and
-  refuses them unless they're covered by `build.mac.x64ArchFiles` — that rule
-  is in `package.json` for this reason. The non-mac prebuilds and the bundled
-  SQLite source are excluded from `files`.
+  non-arm64 prebuilds (linux, win32, `darwin-x64`) and the bundled SQLite
+  source are excluded from `files`. (The old universal build also needed a
+  `build.mac.x64ArchFiles` rule so the lipo merge would accept the two
+  `.node` files; that went away with the move to arm64-only.)
 - **The `electron` package no longer downloads its binary on `npm install`**
   (Electron 42). It downloads the first time `electron` runs. To fetch it up
   front, or to repair a half-installed one, run `npx install-electron --no`.
@@ -272,5 +278,5 @@ better-sqlite3 13. Things that bit, or had to be checked, on the 29 → 44 jump:
   uses them; move it to the `*Async` variants before going past 45.
   `decryptStringAsync()` reads data the sync API wrote, so no token migration
   is needed.
-- Verify an unsigned universal package before spending a notarization round
-  trip: `CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --universal --dir --publish never`.
+- Verify an unsigned package before spending a notarization round
+  trip: `CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --arm64 --dir --publish never`.

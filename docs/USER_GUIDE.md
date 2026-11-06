@@ -1,7 +1,7 @@
 # Transmission — User Guide
 
 **Version 2.16.1 "Please, Please, Please, Let Me Get What I Want"**
-macOS (Apple Silicon + Intel)
+macOS (Apple Silicon only)
 
 ---
 
@@ -2016,7 +2016,7 @@ Last opened file (reopened on launch), window bounds, sidebar width, search text
 npm install        # install dependencies
 npm start          # run the app
 npm run dev        # run with DevTools open
-npm run build      # build universal .dmg (output in dist/)
+npm run build      # build the Apple Silicon .dmg (output in dist/)
 ```
 
 ## Known Limitations

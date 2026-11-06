@@ -579,17 +579,11 @@ npm test
 ## Building for Distribution
 
 ```bash
-# Universal .dmg (ARM + Intel — recommended)
+# Apple Silicon (arm64) .dmg + .zip
 npm run build
-
-# Apple Silicon only
-npm run build:arm
-
-# Intel only
-npm run build:intel
 ```
 
-Build output is in `dist/`. The universal `.dmg` will be around 200–250 MB.
+Transmission is built for Apple Silicon Macs only; there are no Intel or universal builds. Build output is in `dist/` (`Transmission-<version>-arm64.dmg` and `-arm64-mac.zip`).
 
 The app is signed and notarized (Apple Developer ID), so it opens normally — no right-click-to-open or security override needed.
 
