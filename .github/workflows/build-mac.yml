@@ -205,14 +205,14 @@ jobs:
           retention-days: 30
 
       # Each build is ~480 MB and private-repo artifacts count against the
-      # account's 0.5 GB of Actions storage, so keep only the two newest
-      # (this one and the one before it, in case this one turns out bad).
+      # account's 0.5 GB of Actions storage, so keep only this build: two
+      # (~970 MB) were still over the limit.
       # Older builds aren't needed: releases are published from dist/ by
       # publish-release.sh, not from these artifacts.
-      - name: Keep only the two newest builds
+      - name: Keep only the newest build
         env:
           GH_TOKEN: ${{ github.token }}
-          KEEP: 2
+          KEEP: 1
         run: |
           set -euo pipefail
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?name=transmission-mac&per_page=100" \

@@ -92,7 +92,7 @@ from the Actions tab (`gh workflow run build-mac.yml --ref <branch>`). It:
 4. notarizes and staples the `.dmg` itself, as `build-signed-mac.sh` does;
 5. runs `publish-release.sh`'s artifact checks: dmg and app stapled, Gatekeeper `Notarized Developer ID`, bundle version, universal binary;
 6. uploads the `.dmg` and `.zip` as the `transmission-mac` artifact, kept 30 days;
-7. deletes all but the two newest `transmission-mac` artifacts (each is ~480 MB, and private-repo artifacts count against the account's 0.5 GB of Actions storage).
+7. deletes every older `transmission-mac` artifact, keeping only this build's (each is ~480 MB, and private-repo artifacts count against the account's 0.5 GB of Actions storage).
 
 It **does not publish**. Download the artifact into an empty `dist/` and
 release as usual:
