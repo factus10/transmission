@@ -529,6 +529,8 @@
             <button id="btn-nav-sitemap" class="btn btn-sm btn-ghost" title="Generate the Visual Sitemap diagram from visible nodes">Visual Sitemap</button>
             <button id="btn-nav-treemap" class="btn btn-sm btn-ghost" title="Content inventory as a treemap, sized by page count">Treemap</button>
             <button id="btn-nav-sankey" class="btn btn-sm btn-ghost" title="How pages flow from the current site's organization into the new sitemap">Content Flow</button>
+            <div class="nav-tb-sep"></div>
+            <button id="btn-nav-preview" class="btn btn-sm btn-ghost" title="Show the web page assigned to a node beside the tree (click a row to preview it)">Preview</button>
           </div>
           <div class="nav-tb-row2">
             <span id="nav-editor-stats"></span>
@@ -539,6 +541,8 @@
             </div>
           </div>
         </div>
+        <div id="nav-editor-split">
+        <div id="nav-editor-main">
         <div id="nav-editor-col-headers">
           <span class="ne-col-hdr ne-left"><input type="checkbox" id="nav-select-all-visible" title="Select all visible nodes" /> Node</span>
           <span class="ne-col-resize" data-col="ne-left"></span>
@@ -555,6 +559,37 @@
         <div id="nav-editor-body">
           <!-- tree nodes rendered here -->
         </div>
+        </div><!-- /nav-editor-main -->
+        <div id="nav-preview-resize" class="hidden" title="Drag to resize · double-click to reset"></div>
+        <aside id="nav-preview-pane" class="hidden">
+          <div id="nav-preview-header">
+            <div class="npv-row">
+              <span id="nav-preview-node" class="npv-node"></span>
+              <span id="nav-preview-pager" class="npv-pager hidden">
+                <button id="nav-preview-prev" class="icon-btn" title="Previous page on this node">‹</button>
+                <span id="nav-preview-pos"></span>
+                <button id="nav-preview-next" class="icon-btn" title="Next page on this node">›</button>
+              </span>
+              <span style="flex:1"></span>
+              <button id="nav-preview-reload" class="icon-btn" title="Reload">↺</button>
+              <button id="nav-preview-external" class="icon-btn" title="Open in your browser">↗</button>
+              <button id="nav-preview-audit" class="btn btn-sm btn-ghost" title="Leave the Sitemap and open this page in the Audit view">Open in Audit</button>
+              <button id="nav-preview-close" class="icon-btn" title="Close preview">✕</button>
+            </div>
+            <div class="npv-row npv-page">
+              <span id="nav-preview-kke" class="ne-page-kke hidden"></span>
+              <span id="nav-preview-title" class="npv-title"></span>
+              <span id="nav-preview-url" class="npv-url"></span>
+            </div>
+          </div>
+          <div id="nav-preview-body">
+            <div id="nav-preview-empty" class="npv-empty">Click a node to preview its page.</div>
+            <div id="nav-preview-loading" class="hidden"><div class="spinner"></div></div>
+            <div id="nav-preview-error" class="npv-empty hidden"></div>
+            <webview id="nav-preview-webview" class="hidden" allowpopups></webview>
+          </div>
+        </aside>
+        </div><!-- /nav-editor-split -->
       </div>
 
       <!-- Table View (full spreadsheet) -->

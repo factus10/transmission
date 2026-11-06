@@ -2957,6 +2957,8 @@ ipcMain.handle('get-prefs', () => {
     autoAdvance:   prefs.autoAdvance !== undefined ? prefs.autoAdvance : true,
     groupLibrary:  prefs.groupLibrary || [],
     sidebarWidth:  prefs.sidebarWidth  || null,
+    navPreviewOpen:  prefs.navPreviewOpen || false,
+    navPreviewWidth: prefs.navPreviewWidth || null,
     sortOrder:     prefs.sortOrder     || '',
     filterText:    prefs.filterText    || '',
     rubricDir:       prefs.rubricDir       || getDefaultRubricDir(),

@@ -532,6 +532,7 @@ async function init() {
   bindStaticEvents();
   bindIPCListeners();
   setupResizeHandle();
+  setupNavPreview(prefs);
   setupWebviewEvents();
   setupTagDropdown();
   setupFieldPicker();
@@ -16270,6 +16271,7 @@ function openNavEditor() {
 
   // Highlight the sitemap node assigned to the currently selected row
   highlightAssignedNavNode();
+  resumeNavPreview();
   if (typeof refreshViewSwitcher === 'function') refreshViewSwitcher();
 }
 
@@ -16304,6 +16306,7 @@ function highlightAssignedNavNode() {
 
 function closeNavEditor() {
   _navEditorOpen = false;
+  suspendNavPreview();
   document.getElementById('app').classList.remove('tv-active');
   $('nav-editor').classList.add('hidden');
 
@@ -19919,6 +19922,7 @@ function renderNavEditor() {
     Array.from(state.navMultiSelected).forEach(id => { if (!liveIds.has(id)) state.navMultiSelected.delete(id); });
   }
   updateNavMultiBar();
+  refreshNavPreview();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -21080,6 +21084,14 @@ function renderNavEditorNode(node, pageCounts, depth, dupSlugs, depthFilter) {
 
   const row = document.createElement('div');
   row.className = 'ne-row';
+  if (_navPreview.open && node.id === _navPreview.nodeId) row.classList.add('ne-row-previewing');
+  // While the preview pane is open, a click on the row (not on one of its
+  // controls) shows this node's page.
+  row.addEventListener('click', (e) => {
+    if (!_navPreview.open) return;
+    if (e.target.closest('button, input, select, textarea, a, label, .ne-toggle, .ne-grip, .ne-count-clickable, .ne-url-editor')) return;
+    previewNavNode(node);
+  });
 
   const count = pageCounts[node.id] || 0;
   const hasChildren = node.children && node.children.length > 0;
@@ -21581,6 +21593,327 @@ function selectEmptyNavBranches() {
   showToast(`Selected ${found} empty branch${found !== 1 ? 'es' : ''}`, 'success');
 }
 
+// ─── Sitemap page preview pane ─────────────────────────────────────────────────
+// The tree on the left and the selected node's assigned page on the right, so
+// you can see what a page looks like without leaving the Sitemap. While the pane
+// is open, clicking a row previews it. A node with several pages gets a pager.
+// "Open in Audit" is still there, but leaving the view is now a choice.
+const NAV_PREVIEW_MIN_W = 320;
+const NAV_PREVIEW_DEFAULT_W = 560;
+const NAV_PREVIEW_TREE_MIN_W = 360; // never squeeze the tree below this
+const _navPreview = { open: false, width: NAV_PREVIEW_DEFAULT_W, nodeId: null, pages: [], pos: 0, url: '', timer: null };
+
+function clampNavPreviewWidth(w) {
+  const total = $('nav-editor')?.offsetWidth || 0;
+  const max = total ? Math.max(NAV_PREVIEW_MIN_W, total - NAV_PREVIEW_TREE_MIN_W) : 1600;
+  return Math.round(Math.max(NAV_PREVIEW_MIN_W, Math.min(max, Number(w) || NAV_PREVIEW_DEFAULT_W)));
+}
+
+// A reference node is an alias, so preview the page of the node it points at.
+function navPreviewTargetNode(node) {
+  if (node && node.refNodeId) return state.navNodes.find(n => n.id === node.refNodeId) || null;
+  return node;
+}
+
+// The pages assigned to a node, live ones first: an Archive/Consolidate page is
+// still assigned, but it's not what the new page will be built from.
+function navPreviewPagesFor(node) {
+  const live = [], going = [];
+  state.editedRows.forEach((row, origIndex) => {
+    if (String(row['Sitemap_ID'] || '') !== node.id) return;
+    const url = String(row[state.urlColumn] || '').trim();
+    if (!url) return;
+    const k = effectiveKke(row);
+    (k === 'Archive' || k === 'Consolidate' ? going : live).push({ origIndex, row, url });
+  });
+  const pages = live.concat(going);
+  if (!pages.length && node.url && isValidUrl(String(node.url).trim())) {
+    pages.push({ origIndex: null, row: null, url: String(node.url).trim(), external: true });
+  }
+  return pages;
+}
+
+function setupNavPreview(prefs) {
+  _navPreview.width = Number(prefs?.navPreviewWidth) || NAV_PREVIEW_DEFAULT_W;
+  _navPreview.open = !!prefs?.navPreviewOpen;
+  $('nav-preview-pane').style.width = _navPreview.width + 'px';
+  applyNavPreviewChrome();
+
+  $('btn-nav-preview').addEventListener('click', () => setNavPreviewOpen(!_navPreview.open));
+  $('nav-preview-close').addEventListener('click', () => setNavPreviewOpen(false));
+  $('nav-preview-prev').addEventListener('click', () => stepNavPreview(-1));
+  $('nav-preview-next').addEventListener('click', () => stepNavPreview(1));
+  $('nav-preview-reload').addEventListener('click', () => {
+    if (!_navPreview.url) return;
+    try { $('nav-preview-webview').reload(); } catch (e) { /* not attached yet */ }
+  });
+  $('nav-preview-external').addEventListener('click', () => {
+    let url = _navPreview.url;
+    try { url = $('nav-preview-webview').getURL() || url; } catch (e) { /* no-op */ }
+    if (url) window.electronAPI.openExternal(url);
+  });
+  $('nav-preview-audit').addEventListener('click', () => {
+    const page = _navPreview.pages[_navPreview.pos];
+    if (!page || page.origIndex === null) return;
+    closeNavEditor();
+    selectRow(page.origIndex);
+  });
+
+  const wv = $('nav-preview-webview');
+  wv.addEventListener('did-start-loading', () => {
+    $('nav-preview-error').classList.add('hidden');
+    $('nav-preview-loading').classList.remove('hidden');
+  });
+  wv.addEventListener('did-stop-loading', () => $('nav-preview-loading').classList.add('hidden'));
+  wv.addEventListener('did-fail-load', e => {
+    $('nav-preview-loading').classList.add('hidden');
+    if (e.errorCode === -3 || e.errorCode === -2 || !e.isMainFrame) return; // navigation races
+    if (!_navPreview.url) return;
+    showNavPreviewMessage(`The page failed to load.\n${e.validatedURL || _navPreview.url}\n${e.errorDescription || ''} (${e.errorCode})`, { keepWebview: true });
+  });
+
+  setupNavPreviewResize();
+}
+
+function applyNavPreviewChrome() {
+  const open = _navPreview.open;
+  $('nav-preview-pane').classList.toggle('hidden', !open);
+  $('nav-preview-resize').classList.toggle('hidden', !open);
+  $('nav-editor').classList.toggle('nav-preview-on', open);
+  $('btn-nav-preview').classList.toggle('active', open);
+}
+
+function setNavPreviewOpen(open) {
+  _navPreview.open = !!open;
+  applyNavPreviewChrome();
+  window.electronAPI.savePrefs({ navPreviewOpen: _navPreview.open });
+  if (!_navPreview.open) {
+    _navPreview.nodeId = null;
+    _navPreview.pages = [];
+    blankNavPreview();
+    markNavPreviewRow();
+    return;
+  }
+  $('nav-preview-pane').style.width = clampNavPreviewWidth(_navPreview.width) + 'px';
+  if (!navPreviewSeedFromSelection()) renderNavPreview();
+}
+
+// When the pane opens with nothing chosen, start from the page you were last
+// looking at in the Audit view — it's usually the one you came here about.
+function navPreviewSeedFromSelection() {
+  if (state.selectedIndex === null || state.selectedIndex === undefined) return false;
+  const id = String(state.editedRows[state.selectedIndex]?.['Sitemap_ID'] || '');
+  const node = id && state.navNodes ? state.navNodes.find(n => n.id === id) : null;
+  if (!node) return false;
+  previewNavNode(node, { origIndex: state.selectedIndex });
+  return true;
+}
+
+function previewNavNode(node, opts = {}) {
+  if (!node) return;
+  if (!_navPreview.open) {
+    _navPreview.open = true;
+    applyNavPreviewChrome();
+    $('nav-preview-pane').style.width = clampNavPreviewWidth(_navPreview.width) + 'px';
+    window.electronAPI.savePrefs({ navPreviewOpen: true });
+  }
+  _navPreview.nodeId = node.id;
+  const target = navPreviewTargetNode(node);
+  _navPreview.pages = target ? navPreviewPagesFor(target) : [];
+  let pos = 0;
+  if (opts.origIndex !== undefined && opts.origIndex !== null) {
+    const i = _navPreview.pages.findIndex(p => p.origIndex === opts.origIndex);
+    if (i >= 0) pos = i;
+  }
+  _navPreview.pos = pos;
+  markNavPreviewRow();
+  renderNavPreview();
+}
+
+function stepNavPreview(delta) {
+  const n = _navPreview.pages.length;
+  if (n < 2) return;
+  _navPreview.pos = (_navPreview.pos + delta + n) % n;
+  renderNavPreview();
+}
+
+// Re-read the previewed node after a tree re-render (pages reassigned, node
+// deleted). Reloads only when the page to show actually changed.
+function refreshNavPreview() {
+  if (!_navPreview.open || !_navPreview.nodeId) return;
+  const node = (state.navNodes || []).find(n => n.id === _navPreview.nodeId);
+  if (!node) {
+    _navPreview.nodeId = null;
+    _navPreview.pages = [];
+    renderNavPreview();
+    return;
+  }
+  const current = _navPreview.pages[_navPreview.pos];
+  const target = navPreviewTargetNode(node);
+  _navPreview.pages = target ? navPreviewPagesFor(target) : [];
+  const keep = current ? _navPreview.pages.findIndex(p => p.url === current.url) : -1;
+  _navPreview.pos = keep >= 0 ? keep : 0;
+  markNavPreviewRow();
+  renderNavPreview();
+}
+
+function markNavPreviewRow() {
+  const body = $('nav-editor-body');
+  if (!body) return;
+  body.querySelectorAll('.ne-row-previewing').forEach(el => el.classList.remove('ne-row-previewing'));
+  body.querySelectorAll('.ne-page-previewing').forEach(el => el.classList.remove('ne-page-previewing'));
+  if (!_navPreview.open || !_navPreview.nodeId) return;
+  const wrap = body.querySelector(`[data-node-id="${CSS.escape(_navPreview.nodeId)}"]`);
+  wrap?.querySelector(':scope > .ne-row')?.classList.add('ne-row-previewing');
+  const page = _navPreview.pages[_navPreview.pos];
+  if (wrap && page && page.origIndex !== null) {
+    wrap.querySelector(`:scope > .ne-page-list .ne-page-item[data-orig-index="${page.origIndex}"]`)
+      ?.classList.add('ne-page-previewing');
+  }
+}
+
+function navPreviewEmptyReason(node) {
+  const target = navPreviewTargetNode(node);
+  const label = node.label || '(untitled)';
+  if (node.refNodeId && !target) return `${label} is a reference to a node that no longer exists.`;
+  const t = target || node;
+  if (t.nodeType === 'Header') return `${label} is a header: a grouping node with no page of its own.`;
+  if (t.nodeType === 'Fragment') return `${label} is a fragment: shared content embedded in other pages, with no page of its own.`;
+  if (navNodeContentStatus(t, _navPageCountsCache()) === 'hub') {
+    return `No page is assigned to ${label}.\nIts children have pages, so this one is net new content.`;
+  }
+  return `No page is assigned to ${label}.`;
+}
+
+function renderNavPreview() {
+  if (!_navPreview.open) return;
+  const node = _navPreview.nodeId ? (state.navNodes || []).find(n => n.id === _navPreview.nodeId) : null;
+  const pages = _navPreview.pages;
+  const page = pages[_navPreview.pos] || null;
+
+  const nodeEl = $('nav-preview-node');
+  if (node) {
+    const target = navPreviewTargetNode(node);
+    nodeEl.textContent = (node.number ? node.number + '  ' : '') + (node.label || '(untitled)')
+      + (node.refNodeId && target ? `  → ${target.label || ''}` : '');
+    nodeEl.title = node.breadcrumb || node.label || '';
+  } else {
+    nodeEl.textContent = 'Page preview';
+    nodeEl.title = '';
+  }
+
+  $('nav-preview-pager').classList.toggle('hidden', pages.length < 2);
+  $('nav-preview-pos').textContent = pages.length > 1 ? `${_navPreview.pos + 1} / ${pages.length}` : '';
+
+  const kkeEl = $('nav-preview-kke');
+  const kke = page && page.row ? effectiveKke(page.row) : '';
+  kkeEl.className = 'ne-page-kke' + (kke ? ' kke-badge-' + kke.toLowerCase() : ' hidden');
+  kkeEl.textContent = kke;
+  $('nav-preview-title').textContent = page
+    ? (page.external ? 'External link' : (page.row['Title 1'] || page.row['Title'] || '(no title)'))
+    : '';
+  $('nav-preview-url').textContent = page ? page.url : '';
+  $('nav-preview-url').title = page ? page.url : '';
+
+  $('nav-preview-reload').disabled = !page;
+  $('nav-preview-external').disabled = !page;
+  $('nav-preview-audit').disabled = !page || page.origIndex === null;
+
+  if (!node) { showNavPreviewMessage('Click a node in the tree to preview its page.'); return; }
+  if (!page) { showNavPreviewMessage(navPreviewEmptyReason(node)); return; }
+  if (!isValidUrl(page.url) || !/^https?:/i.test(page.url)) {
+    showNavPreviewMessage(`This URL can't be previewed:\n${page.url}`);
+    return;
+  }
+  loadNavPreviewUrl(page.url);
+}
+
+function showNavPreviewMessage(text, { keepWebview = false } = {}) {
+  if (!keepWebview) blankNavPreview();
+  $('nav-preview-loading').classList.add('hidden');
+  $('nav-preview-empty').classList.add('hidden');
+  const err = $('nav-preview-error');
+  err.textContent = text;
+  err.classList.remove('hidden');
+  $('nav-preview-webview').classList.add('hidden');
+}
+
+function loadNavPreviewUrl(url) {
+  $('nav-preview-empty').classList.add('hidden');
+  $('nav-preview-error').classList.add('hidden');
+  const wv = $('nav-preview-webview');
+  wv.classList.remove('hidden');
+  if (url === _navPreview.url) return; // already showing it
+  _navPreview.url = url;
+  $('nav-preview-loading').classList.remove('hidden');
+  // Short debounce: clicking quickly down the tree shouldn't fire a load per row.
+  clearTimeout(_navPreview.timer);
+  _navPreview.timer = setTimeout(() => {
+    if (_navPreview.url === url) wv.src = url;
+  }, 250);
+}
+
+// Stop whatever the pane was showing (a playing video keeps playing in a hidden
+// webview otherwise).
+function blankNavPreview() {
+  clearTimeout(_navPreview.timer);
+  const wv = $('nav-preview-webview');
+  if (_navPreview.url) {
+    _navPreview.url = '';
+    try { wv.src = 'about:blank'; } catch (e) { /* no-op */ }
+  }
+  wv.classList.add('hidden');
+  $('nav-preview-loading').classList.add('hidden');
+}
+
+// Leaving the Sitemap: stop the page. Coming back: show it again.
+function suspendNavPreview() { if (_navPreview.open) blankNavPreview(); }
+function resumeNavPreview() {
+  if (!_navPreview.open) return;
+  $('nav-preview-pane').style.width = clampNavPreviewWidth(_navPreview.width) + 'px';
+  if (!navPreviewSeedFromSelection()) refreshNavPreview();
+  if (!_navPreview.nodeId) renderNavPreview();
+}
+
+function setupNavPreviewResize() {
+  const handle = $('nav-preview-resize');
+  const pane = $('nav-preview-pane');
+  handle.addEventListener('mousedown', e => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = pane.offsetWidth;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.body.classList.add('resizing-sidebar'); // webviews eat mouse events mid-drag
+    const onMove = ev => { pane.style.width = clampNavPreviewWidth(startW - (ev.clientX - startX)) + 'px'; };
+    let released = false;
+    const onUp = () => {
+      if (released) return;
+      released = true;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('mouseleave', onUp);
+      window.removeEventListener('blur', onUp);
+      handle.classList.remove('dragging');
+      document.body.classList.remove('resizing-sidebar');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      _navPreview.width = pane.offsetWidth;
+      window.electronAPI.savePrefs({ navPreviewWidth: _navPreview.width });
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('mouseleave', onUp);
+    window.addEventListener('blur', onUp);
+  });
+  handle.addEventListener('dblclick', () => {
+    _navPreview.width = NAV_PREVIEW_DEFAULT_W;
+    pane.style.width = clampNavPreviewWidth(NAV_PREVIEW_DEFAULT_W) + 'px';
+    window.electronAPI.savePrefs({ navPreviewWidth: NAV_PREVIEW_DEFAULT_W });
+  });
+}
+
 function toggleNavPageList(wrapper, node, depth) {
   const existing = wrapper.querySelector('.ne-page-list');
   if (existing) {
@@ -21626,10 +21959,22 @@ function toggleNavPageList(wrapper, node, depth) {
     urlSpan.textContent = url;
     item.appendChild(urlSpan);
 
+    item.dataset.origIndex = String(origIndex);
+    item.title = 'Click to preview this page beside the tree';
     item.addEventListener('click', () => {
+      previewNavNode(node, { origIndex });
+    });
+
+    const auditBtn = document.createElement('button');
+    auditBtn.className = 'ne-page-audit';
+    auditBtn.textContent = 'Audit →';
+    auditBtn.title = 'Leave the Sitemap and open this page in the Audit view';
+    auditBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
       closeNavEditor();
       selectRow(origIndex);
     });
+    item.appendChild(auditBtn);
 
     list.appendChild(item);
   });
@@ -21637,6 +21982,7 @@ function toggleNavPageList(wrapper, node, depth) {
   // Insert after the row but before children container
   const rowEl = wrapper.querySelector('.ne-row');
   rowEl.after(list);
+  markNavPreviewRow();
 }
 
 // ─── Nav editor: inline editing ────────────────────────────────────────────
