@@ -194,25 +194,17 @@ jobs:
             *) echo "::error::expected an arm64-only binary, got: $ARCHS"; exit 1 ;;
           esac
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: transmission-mac
-          path: |
-            dist/*.dmg
-            dist/*.zip
-          if-no-files-found: error
-          retention-days: 30
-
-      # Each build is ~480 MB and private-repo artifacts count against the
-      # account's 0.5 GB of Actions storage, so keep only this build: two
-      # (~970 MB) were still over the limit.
-      # Older builds aren't needed: releases are published from dist/ by
-      # publish-release.sh, not from these artifacts.
-      - name: Keep only the newest build
+      # Each build is ~270-480 MB and private-repo artifacts count against the
+      # account's 0.5 GB of Actions storage, so even ONE older build plus this
+      # one is over the limit. Delete every older build BEFORE uploading: this
+      # step used to run after the upload, so once storage was full the upload
+      # failed and the cleanup never ran (2.23.0, 2.24.0 and 2.25.0 all failed
+      # this way). Older builds aren't needed: releases are published from
+      # dist/ by publish-release.sh, not from these artifacts.
+      - name: Remove older builds
         env:
           GH_TOKEN: ${{ github.token }}
-          KEEP: 1
+          KEEP: 0
         run: |
           set -euo pipefail
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?name=transmission-mac&per_page=100" \
@@ -222,6 +214,16 @@ jobs:
                 echo "Deleting older artifact $id"
                 gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"
               done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: transmission-mac
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Remove signing keychain
         if: always()
