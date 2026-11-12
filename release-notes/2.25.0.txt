@@ -1,0 +1,1 @@
+When you export a Visual Sitemap to Miro, collapsed sections can now be exported with their labels only: choose "Nothing (label only)" under "Stacked block shows" to leave off the "+3" or "3 pages hidden". The page counts on the board follow the sitemap's Counts setting, not the Numbers checkbox.
