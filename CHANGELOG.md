@@ -6,6 +6,10 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Added
+
+- **Label-only collapsed sections in Miro.** The Export to Miro dialog's "Stacked block shows" now has a **Nothing (label only)** choice, so a folded section keeps its stacked look without a "+3" or "3 pages hidden" on the card. When the sitemap's **Counts** is Off the choice is greyed out, since every card is already label-only. (The toolbar's **Numbers** checkbox never reached Miro, which is why turning it off left the counts in place.)
+
 ## [2.24.0] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Added
