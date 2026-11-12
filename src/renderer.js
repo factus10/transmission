@@ -17852,8 +17852,11 @@ function buildMiroSitemapPlan(baseData, st, opts = {}) {
     // review, where knowing the size of what's folded away matters. On a static
     // board a bare '+' is cryptic (nothing to expand), so 'plus' carries the
     // count too — '+3' — staying compact while still saying how much is folded.
+    // 'none' is the export dialog's label-only choice for stacked blocks: the
+    // stack shape still says "more here", without a figure on the card.
     const subVal = countMode === 'off' ? ''
-      : hidden ? (opts.hiddenLabel === 'plus' ? '+' + hidden : hidden + (hidden === 1 ? ' page hidden' : ' pages hidden'))
+      : hidden ? (opts.hiddenLabel === 'none' ? ''
+        : opts.hiddenLabel === 'plus' ? '+' + hidden : hidden + (hidden === 1 ? ' page hidden' : ' pages hidden'))
       : countMode === 'subpages' ? (() => {
           const below = countMiroDescendants(node);
           return below ? below + (below === 1 ? ' sub-page' : ' sub-pages') : '';
@@ -18112,7 +18115,13 @@ async function pickMiroBoard(hidden, settings) {
     '<select id="_mb-hidden-label" class="setting-input">' +
     '<option value="count">The hidden page count</option>' +
     '<option value="plus">Just a + (more pages)</option>' +
-    '</select></div>'
+    '<option value="none">Nothing (label only)</option>' +
+    '</select></div>' +
+    // Counts Off already makes every card label-only, so the choice above has
+    // nothing to add. Say so rather than leave a live-looking control.
+    (sitemapCountMode(settings) === 'off'
+      ? '<p class="sp-help" style="margin-left:24px">Counts is Off in the sitemap, so cards export with labels only.</p>'
+      : '')
   ) : '';
 
   // Appearance controls. Right-angle connectors + rounded corners default to the
@@ -18209,7 +18218,8 @@ async function pickMiroBoard(hidden, settings) {
     if (expandBox) expandBox.checked = !!(ps.miroExport && ps.miroExport.expandAll);
     if (labelSel) {
       labelSel.value = (ps.miroExport && ps.miroExport.hiddenLabel) || 'count';
-      const syncLabelState = () => { labelSel.disabled = !!(expandBox && expandBox.checked); };
+      const countsOff = sitemapCountMode(settings) === 'off';
+      const syncLabelState = () => { labelSel.disabled = countsOff || !!(expandBox && expandBox.checked); };
       if (expandBox) expandBox.addEventListener('change', syncLabelState);
       syncLabelState();
     }

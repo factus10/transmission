@@ -1121,7 +1121,7 @@ numeric "Rounded corners" field reads 0 (not a bug).
   pre-shrink the font to "fit" long labels: Miro rejects any shape whose fontSize
   is below its (undocumented) minimum with a generic `"invalid parameters"`, and a
   9–11px experiment broke every export until it was reverted to a flat 12.
-- **Collapsed marker carries a count.** The compact `hiddenLabel:'plus'` option
+- **Collapsed marker: `hiddenLabel` = `'count'` | `'plus'` | `'none'`.** `'none'` leaves the folded card label-only (the stack shapes still mark it); it only affects collapsed cards, so a Counts mode that labels every card still does. The select is disabled when Counts is Off, which is already label-only. The toolbar's Numbers (`showNumbers`) never reaches Miro. The compact `hiddenLabel:'plus'` option
   renders `+N` (e.g. `+3`), not a bare `+` — a lone `+` is cryptic on a static
   board where nothing expands. `'count'` still gives the full "N pages hidden".
 
