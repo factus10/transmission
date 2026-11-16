@@ -11,11 +11,12 @@ contents — only ever reference its file path.
 arm64 (Apple Silicon) build and an x64 (Intel) build, each single-arch — never
 a universal binary, which would double the download for everyone. `npm run
 build`, the sandboxed script and CI all build `--arm64 --x64`. Artifacts are
-`Transmission-<version>-arm64.dmg` / `-arm64-mac.zip` and
-`Transmission-<version>-x64.dmg` / `-x64-mac.zip`; `mac.artifactName` and
-`dmg.artifactName` in `package.json` put the arch in every name, because
-electron-builder otherwise drops it for x64. `publish-release.sh` refuses to
-publish unless all four are present and each binary is single-arch and the arch
+`Transmission-<version>-arm64.dmg` and `Transmission-<version>-x64.dmg`;
+`dmg.artifactName` in `package.json` puts the arch in both names, because
+electron-builder otherwise drops it for x64. There are no zips since 2.26.0:
+nothing used them (updates link to the release page; installs come from the
+dmg), and they pushed a two-arch CI build past the account's 0.5 GB of Actions
+storage. `publish-release.sh` refuses to publish unless both are present and each binary is single-arch and the arch
 its name says (`lipo -archs` reports Intel as `x86_64`).
 
 ## What's in `~/Documents/Apple Dev/`
@@ -102,8 +103,8 @@ from the Actions tab (`gh workflow run build-mac.yml --ref <branch>`). It:
 3. builds the Apple Silicon (arm64) and Intel (x64) apps (electron-builder signs, notarizes and staples each `.app`);
 4. notarizes and staples each `.dmg` itself, as `build-signed-mac.sh` does;
 5. runs `publish-release.sh`'s artifact checks: dmg and app stapled, Gatekeeper `Notarized Developer ID`, bundle version, binary and SQLite prebuild matching each file's arch;
-6. uploads the `.dmg` and `.zip` as the `transmission-mac` artifact, kept 30 days;
-7. deletes every older `transmission-mac` artifact, keeping only this build's (a two-arch build is ~570 MB, and private-repo artifacts count against the account's 0.5 GB of Actions storage — so the upload needs more storage on the account than the free 0.5 GB).
+6. uploads the two `.dmg`s as the `transmission-mac` artifact, kept 30 days;
+7. deletes every older `transmission-mac` artifact, keeping only this build's (a two-arch build is ~285 MB, and private-repo artifacts count against the account's 0.5 GB of Actions storage).
 
 It **does not publish**. Download the artifact into an empty `dist/` and
 release as usual:
@@ -170,9 +171,9 @@ won't hit this for most files, though see the caveat below.
 
 `npm run build:signed:sandboxed` runs `scripts/build-signed-mac.sh`, which
 rsyncs the project to a scratch `/tmp` dir, runs `npm install` + the real
-signed build there, and copies back only the sealed `.dmg`/`.zip` — never the
+signed build there, and copies back only the sealed `.dmg`s — never the
 loose `.app` bundle, which would get re-tainted by being copied back through
-the same sandboxed path. The `.dmg`/`.zip` are opaque containers; copying the
+the same sandboxed path. The `.dmg`s are opaque containers; copying the
 container file doesn't touch the signed bytes sealed inside it. The
 `afterPack` hook (`scripts/afterPack.js`) also strips `com.apple.provenance`
 from every file in the packaged `.app` as a general defensive measure, which
@@ -198,7 +199,7 @@ to `build:signed:sandboxed` — it works either way, just slower (fresh
 
 ```bash
 cd ~/Documents/github/transmission/dist
-APP=$(mktemp -d) && ditto *.zip "$APP" 2>/dev/null || hdiutil attach *.dmg -mountpoint "$APP"
+APP=$(mktemp -d) && hdiutil attach *.dmg -mountpoint "$APP"
 
 codesign --verify --deep --strict "$APP"/*.app   # should print nothing (success)
 spctl -a -vvv "$APP"/*.app                        # should say: accepted, source=Notarized Developer ID
@@ -234,8 +235,8 @@ done
 base64 encoded ticket in response` / `Error 65` — that means the container has
 no ticket of its own, not that the app is unsigned. Submit first.
 
-The `.zip` needs nothing extra: it contains the already-stapled `.app`, and a
-zip can't carry a ticket itself.
+(Releases before 2.26.0 also shipped a `.zip`; it needed nothing extra, since it
+contained the already-stapled `.app` and a zip can't carry a ticket itself.)
 
 ## Other gotchas already worked through
 

@@ -8,7 +8,11 @@ major-version codenames drawn from The Smiths.
 
 ### Added
 
-- **Intel Macs.** Every release now ships an Intel (x64) build beside the Apple Silicon one: `Transmission-<version>-x64.dmg` and `-x64-mac.zip`. They are two separate apps, not a universal one, so neither download grows. Each carries only its own SQLite module, and the release script and CI check that each file's binary is the architecture its name says.
+- **Intel Macs.** Every release now ships an Intel (x64) build beside the Apple Silicon one: `Transmission-<version>-x64.dmg`. They are two separate apps, not a universal one, so neither download grows. Each carries only its own SQLite module, and the release script and CI check that each file's binary is the architecture its name says.
+
+### Removed
+
+- **The `.zip` downloads.** Releases now carry only the `.dmg` for each architecture. Nothing used the zips (the update prompt links to the release page, and installs are from the dmg), and dropping them keeps a two-architecture CI build within GitHub's Actions storage limit.
 
 ## [2.25.0] — "Please, Please, Please, Let Me Get What I Want"
 
