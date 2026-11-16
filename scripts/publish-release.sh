@@ -77,14 +77,16 @@ run()  { if [ "$DRY_RUN" = 1 ]; then printf '   (dry-run) %s\n' "$*"; else "$@";
 VERSION="$(node -p "require('$PROJECT_DIR/package.json').version")"
 TAG="v$VERSION"
 [ -n "$TITLE" ] || TITLE="Transmission $VERSION"
-# One dmg + zip per architecture. arm64 is Apple Silicon; x64 is Intel, whose
-# binary lipo reports as x86_64. Both are separate single-arch builds — never a
-# universal one, which doubles the download for everyone.
+# One dmg per architecture. arm64 is Apple Silicon; x64 is Intel, whose binary
+# lipo reports as x86_64. Both are separate single-arch builds — never a
+# universal one, which nearly doubles the download for everyone. No zips since
+# 2.26.0: nothing consumed them (updates link to the release page and installs
+# are from the dmg), and they took a two-arch CI build past the 0.5 GB of
+# Actions storage.
 ARCHES=(arm64 x64)
 ARTIFACTS=()
 for a in "${ARCHES[@]}"; do
-  ARTIFACTS+=("$PROJECT_DIR/dist/Transmission-$VERSION-$a.dmg" \
-              "$PROJECT_DIR/dist/Transmission-$VERSION-$a-mac.zip")
+  ARTIFACTS+=("$PROJECT_DIR/dist/Transmission-$VERSION-$a.dmg")
 done
 
 say "Releasing $TAG"

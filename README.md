@@ -580,11 +580,11 @@ npm test
 ## Building for Distribution
 
 ```bash
-# Apple Silicon (arm64) and Intel (x64) .dmg + .zip
+# Apple Silicon (arm64) and Intel (x64) .dmg
 npm run build
 ```
 
-Transmission is built as two separate apps, one for Apple Silicon Macs and one for Intel Macs (no universal build). Build output is in `dist/`: `Transmission-<version>-arm64.dmg` and `-arm64-mac.zip` for Apple Silicon, `Transmission-<version>-x64.dmg` and `-x64-mac.zip` for Intel.
+Transmission is built as two separate apps, one for Apple Silicon Macs and one for Intel Macs (no universal build). Build output is in `dist/`: `Transmission-<version>-arm64.dmg` for Apple Silicon and `Transmission-<version>-x64.dmg` for Intel.
 
 The app is signed and notarized (Apple Developer ID), so it opens normally — no right-click-to-open or security override needed.
 
