@@ -9,7 +9,7 @@
     "dev": "electron . --dev",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
-    "build": "electron-builder --mac --arm64",
+    "build": "electron-builder --mac --arm64 --x64",
     "build:signed:sandboxed": "bash scripts/build-signed-mac.sh",
     "changelog:html": "node scripts/generate-changelog-html.js",
     "docs:html": "node scripts/generate-docs-site.js",
@@ -46,13 +46,8 @@
         {
           "target": "dmg",
           "arch": [
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "arm64"
+            "arm64",
+            "x64"
           ]
         }
       ],
@@ -63,6 +58,7 @@
       "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "dmg": {
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
       "title": "Transmission",
       "contents": [
         {
@@ -96,7 +92,8 @@
       "node_modules/**/*",
       "!node_modules/*/{CHANGELOG.md,README.md,readme.md,*.d.ts}",
       "!node_modules/.cache",
-      "!node_modules/better-sqlite3/prebuilds/{linux,linuxmusl,win32,darwin-x64}*.node",
+      "!node_modules/better-sqlite3/prebuilds/*.node",
+      "node_modules/better-sqlite3/prebuilds/darwin-${arch}.node",
       "!node_modules/better-sqlite3/{deps,src}/**"
     ]
   }
