@@ -204,9 +204,16 @@ if [ -z "$NOTES_FILE" ]; then
     f {print}
   ' "$PROJECT_DIR/CHANGELOG.md" > "$NOTES_FILE"
   [ -s "$NOTES_FILE" ] || die "extracted empty release notes for $VERSION"
-  cat >> "$NOTES_FILE" <<'EOS'
+  # A release page lists one dmg per architecture side by side, and someone
+  # who lands there from the update prompt has to pick one. Unquoted heredoc:
+  # the file names carry $VERSION.
+  cat >> "$NOTES_FILE" <<EOS
 
 ---
+
+**Which file to download.** \`Transmission-$VERSION-arm64.dmg\` is for Macs with Apple Silicon (M1 or later). \`Transmission-$VERSION-x64.dmg\` is for Intel Macs. Not sure which you have? Apple menu → About This Mac: a "Chip" line says Apple Silicon, a "Processor" line names an Intel CPU.
+EOS
+  cat >> "$NOTES_FILE" <<'EOS'
 
 **Skills for Claude.** The `transmission-skill-*.zip` files are the audit playbooks as Claude skills. Upload each in **Claude → Settings → Capabilities → Skills → Upload skill** and the Claude desktop app uses them on its own when a question calls for one. They need the Transmission extension (✦ → Open in Claude).
 EOS
