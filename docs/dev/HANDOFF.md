@@ -11,7 +11,7 @@ A macOS Electron desktop app for auditing website content. The primary workflow:
 
 **Version:** 2.0.0 "How Soon Is Now?"  
 **Stack:** Electron + plain JS (no React/Vue), SheetJS, ExcelJS, D3  
-**Platform:** macOS, Apple Silicon (arm64) only
+**Platform:** macOS, Apple Silicon (arm64) and Intel (x64), as separate builds
 
 ---
 

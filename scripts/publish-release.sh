@@ -16,7 +16,7 @@ set -euo pipefail
 #      then gets told to update and handed the old build.
 #
 #   2. Large uploads to the transmission-updates mirror have intermittently
-#      404'd or dropped an asset mid-flight. A release with one of its two
+#      404'd or dropped an asset mid-flight. A release missing one of its
 #      assets looks published and is broken.
 #
 # So: create as an explicit draft, upload each asset ON ITS OWN, verify every
@@ -77,8 +77,15 @@ run()  { if [ "$DRY_RUN" = 1 ]; then printf '   (dry-run) %s\n' "$*"; else "$@";
 VERSION="$(node -p "require('$PROJECT_DIR/package.json').version")"
 TAG="v$VERSION"
 [ -n "$TITLE" ] || TITLE="Transmission $VERSION"
-DMG="$PROJECT_DIR/dist/Transmission-$VERSION-arm64.dmg"
-ZIP="$PROJECT_DIR/dist/Transmission-$VERSION-arm64-mac.zip"
+# One dmg + zip per architecture. arm64 is Apple Silicon; x64 is Intel, whose
+# binary lipo reports as x86_64. Both are separate single-arch builds — never a
+# universal one, which doubles the download for everyone.
+ARCHES=(arm64 x64)
+ARTIFACTS=()
+for a in "${ARCHES[@]}"; do
+  ARTIFACTS+=("$PROJECT_DIR/dist/Transmission-$VERSION-$a.dmg" \
+              "$PROJECT_DIR/dist/Transmission-$VERSION-$a-mac.zip")
+done
 
 say "Releasing $TAG"
 [ "$DRY_RUN" = 1 ] && warn "dry run — nothing will be published"
@@ -103,9 +110,10 @@ grep -q "^## \[$VERSION\]" "$PROJECT_DIR/CHANGELOG.md" \
   || die "CHANGELOG.md has no '## [$VERSION]' section — promote [Unreleased] first"
 ok "CHANGELOG.md has a [$VERSION] section"
 
-[ -f "$DMG" ] || die "missing $(basename "$DMG") — run npm run build:signed:sandboxed"
-[ -f "$ZIP" ] || die "missing $(basename "$ZIP") — run npm run build:signed:sandboxed"
-ok "both artifacts present"
+for f in "${ARTIFACTS[@]}"; do
+  [ -f "$f" ] || die "missing $(basename "$f") — run npm run build:signed:sandboxed"
+done
+ok "all ${#ARTIFACTS[@]} artifacts present (${ARCHES[*]})"
 
 # Stale artifacts from earlier versions make build-signed-mac.sh re-notarize
 # every dmg it finds, and make it easy to upload the wrong file by glob.
@@ -133,36 +141,53 @@ ok "${#SKILL_ZIPS[@]} skill zips built"
 # ── The binary is actually shippable ────────────────────────────────────────
 say "Verifying the signed artifacts"
 
-xcrun stapler validate "$DMG" >/dev/null 2>&1 \
-  || die "dmg is not stapled — it cannot be opened offline on first use"
-ok "dmg carries a notarization ticket"
-
 MOUNT="$(mktemp -d /tmp/transmission-verify-XXXXXX)"
-cleanup() { hdiutil detach "$MOUNT" -quiet >/dev/null 2>&1 || true; rm -rf "$MOUNT"; }
-trap cleanup EXIT
-hdiutil attach "$DMG" -nobrowse -quiet -mountpoint "$MOUNT" \
-  || die "could not mount $(basename "$DMG")"
-APP="$MOUNT/Transmission.app"
-[ -d "$APP" ] || die "no Transmission.app inside the dmg"
+cleanup() { hdiutil detach "$MOUNT" -quiet >/dev/null 2>&1 || true; }
+trap 'cleanup; rm -rf "$MOUNT"' EXIT
 
-xcrun stapler validate "$APP" >/dev/null 2>&1 || die "the .app inside the dmg is not stapled"
-ok "app carries a notarization ticket"
+for a in "${ARCHES[@]}"; do
+  DMG="$PROJECT_DIR/dist/Transmission-$VERSION-$a.dmg"
+  case "$a" in arm64) WANT=arm64; LABEL="Apple Silicon" ;; x64) WANT=x86_64; LABEL="Intel" ;; esac
+  printf '   -- %s (%s)\n' "$(basename "$DMG")" "$LABEL"
 
-spctl -a -vvv -t install "$APP" 2>&1 | grep -q "source=Notarized Developer ID" \
-  || die "Gatekeeper does not accept the app as Notarized Developer ID"
-ok "Gatekeeper accepts it"
+  xcrun stapler validate "$DMG" >/dev/null 2>&1 \
+    || die "$a dmg is not stapled — it cannot be opened offline on first use"
+  ok "dmg carries a notarization ticket"
 
-APP_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")"
-[ "$APP_VERSION" = "$VERSION" ] \
-  || die "the bundle says $APP_VERSION but we are releasing $VERSION — stale artifact"
-ok "bundle version is $VERSION"
+  hdiutil attach "$DMG" -nobrowse -quiet -mountpoint "$MOUNT" \
+    || die "could not mount $(basename "$DMG")"
+  APP="$MOUNT/Transmission.app"
+  [ -d "$APP" ] || die "no Transmission.app inside $(basename "$DMG")"
 
-ARCHS="$(lipo -archs "$APP/Contents/MacOS/Transmission")"
-case "$ARCHS" in
-  arm64) ok "Apple Silicon ($ARCHS)" ;;
-  *) die "expected an arm64-only binary (Apple Silicon builds only), got: $ARCHS" ;;
-esac
-cleanup; trap - EXIT
+  xcrun stapler validate "$APP" >/dev/null 2>&1 || die "the .app inside the $a dmg is not stapled"
+  ok "app carries a notarization ticket"
+
+  spctl -a -vvv -t install "$APP" 2>&1 | grep -q "source=Notarized Developer ID" \
+    || die "Gatekeeper does not accept the $a app as Notarized Developer ID"
+  ok "Gatekeeper accepts it"
+
+  APP_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")"
+  [ "$APP_VERSION" = "$VERSION" ] \
+    || die "the $a bundle says $APP_VERSION but we are releasing $VERSION — stale artifact"
+  ok "bundle version is $VERSION"
+
+  # The file name is only a label: a dmg renamed (or misnamed by the builder)
+  # would otherwise hand Intel users an app that won't launch.
+  ARCHS="$(lipo -archs "$APP/Contents/MacOS/Transmission")"
+  [ "$ARCHS" = "$WANT" ] || die "$(basename "$DMG") should be $WANT-only, got: $ARCHS"
+  ok "$LABEL binary ($ARCHS)"
+
+  # SQLite is the one native module, and it ships one prebuild per arch
+  # (package.json `files` keeps only darwin-${arch}). The wrong one means the app
+  # opens but can't open a project.
+  PREBUILDS="$(ls "$APP/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/prebuilds/" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
+  [ "$PREBUILDS" = "darwin-$a.node" ] \
+    || die "$(basename "$DMG") carries SQLite prebuilds '$PREBUILDS', expected darwin-$a.node"
+  ok "SQLite module is darwin-$a"
+
+  cleanup
+done
+rm -rf "$MOUNT"; trap - EXIT
 
 # ── Release notes ───────────────────────────────────────────────────────────
 if [ -z "$NOTES_FILE" ]; then
@@ -208,7 +233,7 @@ publish_to() {
 
   # One at a time: a combined upload that dies partway leaves a drafted release
   # with an incomplete asset set, and gh reports nothing useful about which.
-  for f in "$DMG" "$ZIP" "${SKILL_ZIPS[@]}"; do
+  for f in "${ARTIFACTS[@]}" "${SKILL_ZIPS[@]}"; do
     printf '   uploading %s ...\n' "$(basename "$f")"
     run gh release upload "$TAG" "$f" --repo "$repo" --clobber
   done
@@ -217,7 +242,7 @@ publish_to() {
 
   # Byte-for-byte against the local file, because a truncated upload still
   # reports state=uploaded for whatever made it across.
-  node - "$repo" "$TAG" "$DMG" "$ZIP" "${SKILL_ZIPS[@]}" <<'NODE'
+  node - "$repo" "$TAG" "${ARTIFACTS[@]}" "${SKILL_ZIPS[@]}" <<'NODE'
 const { execSync } = require('child_process');
 const fs = require('fs');
 const [repo, tag, ...files] = process.argv.slice(2);
