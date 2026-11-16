@@ -12,7 +12,7 @@ npm run rebuild      # rebuild native deps against Electron (only compiles if no
 npm test             # unit tests (node:test, no deps) — see docs/dev/TESTING.md
 npm run dev          # run with DevTools open
 npm start            # run normally
-npm run build        # .dmg + .zip for arm64 AND x64 → dist/  (two single-arch builds; no universal)
+npm run build        # .dmg for arm64 AND x64 → dist/  (two single-arch builds; no universal, no zip)
 ```
 
 ---
@@ -1306,7 +1306,7 @@ Manual, notify-and-link — **not** silent auto-download/install. On launch (mai
 
   **Skill zips ride along.** Before publishing, the script rebuilds `dist/skills/` from scratch (`package-skills.js --prefix transmission-skill-`; cleared first so a renamed or removed skill can't linger) and uploads each `transmission-skill-<name>.zip` in the same one-at-a-time, byte-verified loop as the dmg/zip, to both repos. The CHANGELOG-extracted release body gets a short footer on how to upload them. The `dist/*.zip` stray-artifact check doesn't see them (they're in a subfolder).
 
-  It also refuses to run on artifacts that are not shippable: dmg and inner `.app` both stapled, Gatekeeper `source=Notarized Developer ID`, `CFBundleShortVersionString` matching the version being released (catches a stale dmg renamed to look current), all four artifacts (arm64 and x64 dmg + zip), each binary single-arch and matching its file name (`lipo -archs` = `arm64` / `x86_64`), and each app carrying only its own `darwin-<arch>` SQLite prebuild, and `dist/` free of other versions' artifacts. The changelog regeneration is gated on the section count going up by exactly one, so a generator that drops history can't publish.
+  It also refuses to run on artifacts that are not shippable: dmg and inner `.app` both stapled, Gatekeeper `source=Notarized Developer ID`, `CFBundleShortVersionString` matching the version being released (catches a stale dmg renamed to look current), both dmgs (arm64 and x64), each binary single-arch and matching its file name (`lipo -archs` = `arm64` / `x86_64`), and each app carrying only its own `darwin-<arch>` SQLite prebuild, and `dist/` free of other versions' artifacts. The changelog regeneration is gated on the section count going up by exactly one, so a generator that drops history can't publish.
 
 - **Startup path**: `performUpdateCheck()` runs once; if `available`, main pushes the result to the renderer via `update-check-result` (`mainWindow.webContents.send`). Any failure (offline, bad manifest, untrusted host) is swallowed — a startup check should never interrupt the user with an error.
 - **Manual path**: Help → Check for Updates… sends `menu-check-updates`; the renderer calls `window.electronAPI.checkForUpdates()` (invoke/handle over `check-for-updates`) and always shows feedback — a toast either way (`"You're up to date (vX.Y.Z)"` / an error toast) or, when available, `showUpdateModal()`.

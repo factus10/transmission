@@ -2,7 +2,7 @@
 # separate single-arch apps. No universal build.
 #
 # Builds what `npm run build:signed:sandboxed` builds locally, on a clean
-# GitHub-hosted Mac, and uploads the .dmg/.zip as a workflow artifact. It does
+# GitHub-hosted Mac, and uploads the two .dmgs as a workflow artifact. It does
 # NOT publish anything: releasing stays local, through scripts/publish-release.sh,
 # whose checks (and the mirror to transmission-updates) each trace to a release
 # that broke. To ship a CI build:
@@ -177,9 +177,7 @@ jobs:
           for a in arm64 x64; do
             case "$a" in arm64) WANT=arm64 ;; x64) WANT=x86_64 ;; esac
             DMG="dist/Transmission-$VERSION-$a.dmg"
-            ZIP="dist/Transmission-$VERSION-$a-mac.zip"
             [ -f "$DMG" ] || { echo "::error::missing $DMG"; exit 1; }
-            [ -f "$ZIP" ] || { echo "::error::missing $ZIP"; exit 1; }
             echo "== $DMG"
 
             xcrun stapler validate "$DMG"
@@ -203,11 +201,10 @@ jobs:
             hdiutil detach "$MOUNT" -quiet
           done
 
-      # One build is ~280 MB per architecture, ~570 MB for both, and private-repo
-      # artifacts count against the account's 0.5 GB of Actions storage. A
-      # two-arch build is therefore over that limit ON ITS OWN: the upload below
-      # needs more Actions storage on the account (the build, signing and
-      # verification steps above still run and prove the build either way).
+      # A build is two dmgs, ~285 MB together, and private-repo artifacts count
+      # against the account's 0.5 GB of Actions storage, so even ONE older
+      # build plus this one is over the limit. (Zips were dropped in 2.26.0
+      # partly for this: with them a two-arch build was ~570 MB on its own.)
       # Delete every older build BEFORE uploading: this step used to run after
       # the upload, so once storage was full the upload failed and the cleanup
       # never ran (2.23.0, 2.24.0 and 2.25.0 all failed this way). Older builds
@@ -233,7 +230,6 @@ jobs:
           name: transmission-mac
           path: |
             dist/*.dmg
-            dist/*.zip
           if-no-files-found: error
           retention-days: 30
 
