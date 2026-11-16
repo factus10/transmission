@@ -1,6 +1,6 @@
 # CLAUDE.md — Excel Browser
 
-Electron app for macOS, **Apple Silicon (arm64) only — no Intel/x64 or universal builds**. Runs on **Electron 44** (Chromium 152, Node 24) — keep it on a supported major (the latest three); `docs/dev/BUILD_SIGNED_BINARIES.md` notes what to check on a bump. Designed primarily for **Screaming Frog crawl exports** (`.xlsx`). Shows rows in a left sidebar, loads each row's URL in an embedded webview, and provides a persistent **field bar above the browser** for reading metadata and recording content audit decisions.
+Electron app for macOS, built as **two separate single-arch apps — Apple Silicon (arm64) and Intel (x64), never universal**. Runs on **Electron 44** (Chromium 152, Node 24) — keep it on a supported major (the latest three); `docs/dev/BUILD_SIGNED_BINARIES.md` notes what to check on a bump. Designed primarily for **Screaming Frog crawl exports** (`.xlsx`). Shows rows in a left sidebar, loads each row's URL in an embedded webview, and provides a persistent **field bar above the browser** for reading metadata and recording content audit decisions.
 
 ---
 
@@ -12,7 +12,7 @@ npm run rebuild      # rebuild native deps against Electron (only compiles if no
 npm test             # unit tests (node:test, no deps) — see docs/dev/TESTING.md
 npm run dev          # run with DevTools open
 npm start            # run normally
-npm run build        # Apple Silicon (arm64) .dmg + .zip → dist/  (the only build target; no Intel/universal)
+npm run build        # .dmg + .zip for arm64 AND x64 → dist/  (two single-arch builds; no universal)
 ```
 
 ---
@@ -1306,7 +1306,7 @@ Manual, notify-and-link — **not** silent auto-download/install. On launch (mai
 
   **Skill zips ride along.** Before publishing, the script rebuilds `dist/skills/` from scratch (`package-skills.js --prefix transmission-skill-`; cleared first so a renamed or removed skill can't linger) and uploads each `transmission-skill-<name>.zip` in the same one-at-a-time, byte-verified loop as the dmg/zip, to both repos. The CHANGELOG-extracted release body gets a short footer on how to upload them. The `dist/*.zip` stray-artifact check doesn't see them (they're in a subfolder).
 
-  It also refuses to run on artifacts that are not shippable: dmg and inner `.app` both stapled, Gatekeeper `source=Notarized Developer ID`, `CFBundleShortVersionString` matching the version being released (catches a stale dmg renamed to look current), an arm64-only binary (`lipo -archs` = `arm64`; a universal or x64 build is refused), and `dist/` free of other versions' artifacts. The changelog regeneration is gated on the section count going up by exactly one, so a generator that drops history can't publish.
+  It also refuses to run on artifacts that are not shippable: dmg and inner `.app` both stapled, Gatekeeper `source=Notarized Developer ID`, `CFBundleShortVersionString` matching the version being released (catches a stale dmg renamed to look current), all four artifacts (arm64 and x64 dmg + zip), each binary single-arch and matching its file name (`lipo -archs` = `arm64` / `x86_64`), and each app carrying only its own `darwin-<arch>` SQLite prebuild, and `dist/` free of other versions' artifacts. The changelog regeneration is gated on the section count going up by exactly one, so a generator that drops history can't publish.
 
 - **Startup path**: `performUpdateCheck()` runs once; if `available`, main pushes the result to the renderer via `update-check-result` (`mainWindow.webContents.send`). Any failure (offline, bad manifest, untrusted host) is swallowed — a startup check should never interrupt the user with an error.
 - **Manual path**: Help → Check for Updates… sends `menu-check-updates`; the renderer calls `window.electronAPI.checkForUpdates()` (invoke/handle over `check-for-updates`) and always shows feedback — a toast either way (`"You're up to date (vX.Y.Z)"` / an error toast) or, when available, `showUpdateModal()`.
