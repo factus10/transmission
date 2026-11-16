@@ -12,9 +12,9 @@ set -euo pipefail
 # not hit this.
 #
 # Workaround: build in a scratch /tmp directory instead, then copy back
-# only the sealed .dmg/.zip artifacts -- never the loose .app bundle,
+# only the sealed .dmg artifacts -- never the loose .app bundle,
 # which gets re-tainted by the act of copying it back through this same
-# sandbox. The .dmg/.zip are opaque containers; copying the container
+# sandbox. The .dmgs are opaque containers; copying the container
 # file doesn't touch the signed bytes sealed inside it.
 #
 # Usage:
@@ -37,7 +37,7 @@ rsync -a --exclude node_modules --exclude dist --exclude .git "$PROJECT_DIR/" "$
 )
 
 mkdir -p "$PROJECT_DIR/dist"
-cp "$BUILD_DIR"/dist/*.dmg "$BUILD_DIR"/dist/*.zip "$PROJECT_DIR/dist/"
+cp "$BUILD_DIR"/dist/*.dmg "$PROJECT_DIR/dist/"
 
 echo "Signed artifacts copied to $PROJECT_DIR/dist/"
 rm -rf "$BUILD_DIR"

@@ -1,7 +1,8 @@
-# Signed + notarized Apple Silicon (arm64) macOS build. No Intel builds.
+# Signed + notarized macOS builds: Apple Silicon (arm64) and Intel (x64), as two
+# separate single-arch apps. No universal build.
 #
 # Builds what `npm run build:signed:sandboxed` builds locally, on a clean
-# GitHub-hosted Mac, and uploads the .dmg/.zip as a workflow artifact. It does
+# GitHub-hosted Mac, and uploads the two .dmgs as a workflow artifact. It does
 # NOT publish anything: releasing stays local, through scripts/publish-release.sh,
 # whose checks (and the mirror to transmission-updates) each trace to a release
 # that broke. To ship a CI build:
@@ -139,7 +140,7 @@ jobs:
       # electron-builder signs with the keychain identity and, with the three
       # APPLE_API_* variables set, notarizes and staples the .app.
       - name: Build, sign and notarize the app
-        run: npx electron-builder --mac --arm64 --publish never
+        run: npx electron-builder --mac --arm64 --x64 --publish never
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -170,37 +171,45 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
-          DMG="$(ls dist/*-"$VERSION"-*.dmg 2>/dev/null | head -1 || true)"
-          [ -n "$DMG" ] || DMG="$(ls dist/*.dmg | head -1)"
-          ls dist/*.zip >/dev/null
-
-          xcrun stapler validate "$DMG"
           MOUNT="$(mktemp -d)"
-          hdiutil attach "$DMG" -nobrowse -quiet -mountpoint "$MOUNT"
-          trap 'hdiutil detach "$MOUNT" -quiet || true' EXIT
-          APP="$MOUNT/Transmission.app"
-          [ -d "$APP" ] || { echo "::error::no Transmission.app inside the dmg"; exit 1; }
+          trap 'hdiutil detach "$MOUNT" -quiet 2>/dev/null || true' EXIT
 
-          xcrun stapler validate "$APP"
-          spctl -a -vvv -t install "$APP" 2>&1 | tee /dev/stderr | grep -q "source=Notarized Developer ID" \
-            || { echo "::error::Gatekeeper does not accept the app as Notarized Developer ID"; exit 1; }
+          for a in arm64 x64; do
+            case "$a" in arm64) WANT=arm64 ;; x64) WANT=x86_64 ;; esac
+            DMG="dist/Transmission-$VERSION-$a.dmg"
+            [ -f "$DMG" ] || { echo "::error::missing $DMG"; exit 1; }
+            echo "== $DMG"
 
-          APP_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")"
-          [ "$APP_VERSION" = "$VERSION" ] || { echo "::error::bundle says $APP_VERSION, package.json says $VERSION"; exit 1; }
+            xcrun stapler validate "$DMG"
+            hdiutil attach "$DMG" -nobrowse -quiet -mountpoint "$MOUNT"
+            APP="$MOUNT/Transmission.app"
+            [ -d "$APP" ] || { echo "::error::no Transmission.app inside $DMG"; exit 1; }
 
-          ARCHS="$(lipo -archs "$APP/Contents/MacOS/Transmission")"
-          case "$ARCHS" in
-            arm64) echo "Apple Silicon: $ARCHS" ;;
-            *) echo "::error::expected an arm64-only binary, got: $ARCHS"; exit 1 ;;
-          esac
+            xcrun stapler validate "$APP"
+            spctl -a -vvv -t install "$APP" 2>&1 | tee /dev/stderr | grep -q "source=Notarized Developer ID" \
+              || { echo "::error::Gatekeeper does not accept the $a app as Notarized Developer ID"; exit 1; }
 
-      # Each build is ~270-480 MB and private-repo artifacts count against the
-      # account's 0.5 GB of Actions storage, so even ONE older build plus this
-      # one is over the limit. Delete every older build BEFORE uploading: this
-      # step used to run after the upload, so once storage was full the upload
-      # failed and the cleanup never ran (2.23.0, 2.24.0 and 2.25.0 all failed
-      # this way). Older builds aren't needed: releases are published from
-      # dist/ by publish-release.sh, not from these artifacts.
+            APP_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")"
+            [ "$APP_VERSION" = "$VERSION" ] || { echo "::error::$a bundle says $APP_VERSION, package.json says $VERSION"; exit 1; }
+
+            ARCHS="$(lipo -archs "$APP/Contents/MacOS/Transmission")"
+            [ "$ARCHS" = "$WANT" ] || { echo "::error::$DMG should be $WANT-only, got: $ARCHS"; exit 1; }
+
+            PREBUILDS="$(ls "$APP/Contents/Resources/app.asar.unpacked/node_modules/better-sqlite3/prebuilds/" | tr '\n' ' ' | sed 's/ $//')"
+            [ "$PREBUILDS" = "darwin-$a.node" ] || { echo "::error::$DMG carries SQLite prebuilds '$PREBUILDS', expected darwin-$a.node"; exit 1; }
+
+            hdiutil detach "$MOUNT" -quiet
+          done
+
+      # A build is two dmgs, ~285 MB together, and private-repo artifacts count
+      # against the account's 0.5 GB of Actions storage, so even ONE older
+      # build plus this one is over the limit. (Zips were dropped in 2.26.0
+      # partly for this: with them a two-arch build was ~570 MB on its own.)
+      # Delete every older build BEFORE uploading: this step used to run after
+      # the upload, so once storage was full the upload failed and the cleanup
+      # never ran (2.23.0, 2.24.0 and 2.25.0 all failed this way). Older builds
+      # aren't needed: releases are published from dist/ by publish-release.sh,
+      # not from these artifacts.
       - name: Remove older builds
         env:
           GH_TOKEN: ${{ github.token }}
@@ -221,7 +230,6 @@ jobs:
           name: transmission-mac
           path: |
             dist/*.dmg
-            dist/*.zip
           if-no-files-found: error
           retention-days: 30
 
