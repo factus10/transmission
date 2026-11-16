@@ -7,11 +7,17 @@ Don't copy the actual credential values into any file that's tracked by git,
 don't paste them into a chat transcript, and don't read/paste the private key's
 contents — only ever reference its file path.
 
-**Apple Silicon only.** Transmission ships as an arm64 build — no Intel (x64)
-or universal binaries. `npm run build`, the sandboxed script and CI all build
-`--arm64`, and `publish-release.sh` refuses any artifact whose binary isn't
-arm64-only. Artifacts are `Transmission-<version>-arm64.dmg` and
-`Transmission-<version>-arm64-mac.zip`.
+**Apple Silicon and Intel, as two separate apps.** Every release ships an
+arm64 (Apple Silicon) build and an x64 (Intel) build, each single-arch — never
+a universal binary, which would double the download for everyone. `npm run
+build`, the sandboxed script and CI all build `--arm64 --x64`. Artifacts are
+`Transmission-<version>-arm64.dmg` and `Transmission-<version>-x64.dmg`;
+`dmg.artifactName` in `package.json` puts the arch in both names, because
+electron-builder otherwise drops it for x64. There are no zips since 2.26.0:
+nothing used them (updates link to the release page; installs come from the
+dmg), and they pushed a two-arch CI build past the account's 0.5 GB of Actions
+storage. `publish-release.sh` refuses to publish unless both are present and each binary is single-arch and the arch
+its name says (`lipo -archs` reports Intel as `x86_64`).
 
 ## What's in `~/Documents/Apple Dev/`
 
@@ -74,8 +80,8 @@ is the recovery path for an interrupted upload.
 
 It refuses to publish artifacts that are not shippable (unstapled dmg or app,
 Gatekeeper rejection, a bundle whose version does not match the one being
-released, a binary that isn't arm64-only, or a `dist/` still holding other versions'
-files), uploads each asset separately, verifies byte counts against the local
+released, a binary that isn't the single arch its file name says, an app carrying
+the wrong SQLite prebuild, or a `dist/` still holding other versions' files), uploads each asset separately, verifies byte counts against the local
 files before publishing the draft, and asserts `releases/latest` resolves to the
 new tag on both repos before the manifest is touched. See the release section of
 CLAUDE.md for why each of those exists — every one traces to a release that
@@ -94,11 +100,11 @@ from the Actions tab (`gh workflow run build-mac.yml --ref <branch>`). It:
 
 1. runs `npm ci` and `npm test`, and for a tag checks it matches `package.json` and `package-lock.json`;
 2. imports the signing cert into a throwaway keychain;
-3. builds the Apple Silicon (arm64) app (electron-builder signs, notarizes and staples the `.app`);
-4. notarizes and staples the `.dmg` itself, as `build-signed-mac.sh` does;
-5. runs `publish-release.sh`'s artifact checks: dmg and app stapled, Gatekeeper `Notarized Developer ID`, bundle version, arm64-only binary;
-6. uploads the `.dmg` and `.zip` as the `transmission-mac` artifact, kept 30 days;
-7. deletes every older `transmission-mac` artifact, keeping only this build's (each is ~480 MB, and private-repo artifacts count against the account's 0.5 GB of Actions storage).
+3. builds the Apple Silicon (arm64) and Intel (x64) apps (electron-builder signs, notarizes and staples each `.app`);
+4. notarizes and staples each `.dmg` itself, as `build-signed-mac.sh` does;
+5. runs `publish-release.sh`'s artifact checks: dmg and app stapled, Gatekeeper `Notarized Developer ID`, bundle version, binary and SQLite prebuild matching each file's arch;
+6. uploads the two `.dmg`s as the `transmission-mac` artifact, kept 30 days;
+7. deletes every older `transmission-mac` artifact, keeping only this build's (a two-arch build is ~285 MB, and private-repo artifacts count against the account's 0.5 GB of Actions storage).
 
 It **does not publish**. Download the artifact into an empty `dist/` and
 release as usual:
@@ -165,9 +171,9 @@ won't hit this for most files, though see the caveat below.
 
 `npm run build:signed:sandboxed` runs `scripts/build-signed-mac.sh`, which
 rsyncs the project to a scratch `/tmp` dir, runs `npm install` + the real
-signed build there, and copies back only the sealed `.dmg`/`.zip` — never the
+signed build there, and copies back only the sealed `.dmg`s — never the
 loose `.app` bundle, which would get re-tainted by being copied back through
-the same sandboxed path. The `.dmg`/`.zip` are opaque containers; copying the
+the same sandboxed path. The `.dmg`s are opaque containers; copying the
 container file doesn't touch the signed bytes sealed inside it. The
 `afterPack` hook (`scripts/afterPack.js`) also strips `com.apple.provenance`
 from every file in the packaged `.app` as a general defensive measure, which
@@ -193,7 +199,7 @@ to `build:signed:sandboxed` — it works either way, just slower (fresh
 
 ```bash
 cd ~/Documents/github/transmission/dist
-APP=$(mktemp -d) && ditto *.zip "$APP" 2>/dev/null || hdiutil attach *.dmg -mountpoint "$APP"
+APP=$(mktemp -d) && hdiutil attach *.dmg -mountpoint "$APP"
 
 codesign --verify --deep --strict "$APP"/*.app   # should print nothing (success)
 spctl -a -vvv "$APP"/*.app                        # should say: accepted, source=Notarized Developer ID
@@ -218,17 +224,19 @@ round trip) and is skipped with a warning if `APPLE_API_KEY` / `APPLE_API_KEY_ID
 Doing it by hand, if you built some other way:
 
 ```bash
-xcrun notarytool submit dist/Transmission-X.Y.Z-arm64.dmg \
-  --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
-xcrun stapler staple dist/Transmission-X.Y.Z-arm64.dmg
+for a in arm64 x64; do
+  xcrun notarytool submit dist/Transmission-X.Y.Z-$a.dmg \
+    --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
+  xcrun stapler staple dist/Transmission-X.Y.Z-$a.dmg
+done
 ```
 
 `stapler staple` on a dmg that was never *submitted* fails with `Could not find
 base64 encoded ticket in response` / `Error 65` — that means the container has
 no ticket of its own, not that the app is unsigned. Submit first.
 
-The `.zip` needs nothing extra: it contains the already-stapled `.app`, and a
-zip can't carry a ticket itself.
+(Releases before 2.26.0 also shipped a `.zip`; it needed nothing extra, since it
+contained the already-stapled `.app` and a zip can't carry a ticket itself.)
 
 ## Other gotchas already worked through
 
@@ -257,11 +265,13 @@ better-sqlite3 13. Things that bit, or had to be checked, on the 29 → 44 jump:
 
 - **better-sqlite3 13 is N-API.** It ships per-arch prebuilds
   (`prebuilds/darwin-arm64.node`, `darwin-x64.node`) that load in plain Node
-  and in any Electron, so `electron-rebuild` finds nothing to compile. The
-  non-arm64 prebuilds (linux, win32, `darwin-x64`) and the bundled SQLite
-  source are excluded from `files`. (The old universal build also needed a
-  `build.mac.x64ArchFiles` rule so the lipo merge would accept the two
-  `.node` files; that went away with the move to arm64-only.)
+  and in any Electron, so `electron-rebuild` finds nothing to compile. `files`
+  excludes every prebuild and then re-includes `darwin-${arch}.node`, so each
+  app carries only its own (electron-builder expands `${arch}` per build, and
+  its patterns are last-match-wins, which is what makes the re-include work).
+  The bundled SQLite source is excluded too. (The old universal build also
+  needed a `build.mac.x64ArchFiles` rule so the lipo merge would accept the
+  two `.node` files; separate single-arch builds don't.)
 - **The `electron` package no longer downloads its binary on `npm install`**
   (Electron 42). It downloads the first time `electron` runs. To fetch it up
   front, or to repair a half-installed one, run `npx install-electron --no`.
@@ -279,4 +289,4 @@ better-sqlite3 13. Things that bit, or had to be checked, on the 29 → 44 jump:
   `decryptStringAsync()` reads data the sync API wrote, so no token migration
   is needed.
 - Verify an unsigned package before spending a notarization round
-  trip: `CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --arm64 --dir --publish never`.
+  trip: `CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --arm64 --x64 --dir --publish never`.
