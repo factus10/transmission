@@ -6,6 +6,8 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.26.0] — "Please, Please, Please, Let Me Get What I Want"
+
 ### Added
 
 - **Intel Macs.** Every release now ships an Intel (x64) build beside the Apple Silicon one: `Transmission-<version>-x64.dmg`. They are two separate apps, not a universal one, so neither download grows. Each carries only its own SQLite module, and the release script and CI check that each file's binary is the architecture its name says.
