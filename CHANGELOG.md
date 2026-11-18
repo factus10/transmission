@@ -6,6 +6,10 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Added
+
+- **Windows.** Every release now ships a 64-bit Windows installer beside the two Mac downloads: `Transmission-<version>-windows-x64-setup.exe`. It installs for your user account, without administrator rights, and opens `.transmission` files when you double-click them. It is not code-signed yet, so the first time Windows may say it "protected your PC": choose **More info → Run anyway**. **Open in Claude** works on Windows through the Claude app (the Transmission extension); the Claude Code routes stay Mac-only.
+
 ### Changed
 
 - **Docs, What's New and downloads moved to the main repository.** Transmission's source is public now, so the documentation site, the changelog and the update check are served from `https://factus10.github.io/transmission/`, and downloads come from the main repository's releases. The old `transmission-updates` site forwards here.
