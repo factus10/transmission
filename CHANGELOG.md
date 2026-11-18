@@ -6,12 +6,15 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.27.0] — "Please, Please, Please, Let Me Get What I Want"
+
 ### Added
 
 - **Windows.** Every release now ships a 64-bit Windows installer beside the two Mac downloads: `Transmission-<version>-windows-x64-setup.exe`. It installs for your user account, without administrator rights, and opens `.transmission` files when you double-click them. It is not code-signed yet, so the first time Windows may say it "protected your PC": choose **More info → Run anyway**. **Open in Claude** works on Windows through the Claude app (the Transmission extension); the Claude Code routes stay Mac-only.
 
 ### Changed
 
+- **Open source.** Transmission's source code is now public at `github.com/factus10/transmission`, under the MIT license.
 - **Docs, What's New and downloads moved to the main repository.** Transmission's source is public now, so the documentation site, the changelog and the update check are served from `https://factus10.github.io/transmission/`, and downloads come from the main repository's releases. The old `transmission-updates` site forwards here.
 - **New macOS bundle ID: `io.github.factus10.transmission`.** Your preferences, recent files and projects are unaffected, since they are stored by the app's name. macOS does treat this as a new app, though. The first time a Miro export reads your saved Miro token, macOS asks to let Transmission use its keychain item; choose **Always Allow**. If double-clicking a `.transmission` file opens an older copy of the app, delete that copy from Applications.
 
