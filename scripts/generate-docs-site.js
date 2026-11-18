@@ -1,25 +1,24 @@
 #!/usr/bin/env node
 //
 // Renders the user-facing documentation into a standalone HTML site for
-// https://factus10.github.io/transmission-updates/docs/ — the public home for
-// people who USE Transmission but have no access to this (private) repo.
+// https://factus10.github.io/transmission/docs/ — the docs for people who USE
+// Transmission, as opposed to the repo's own markdown.
 //
 // Usage, from the repo root:
 //   npm run docs:html                       # writes dist/docs-site/
 //   node scripts/generate-docs-site.js OUT   # writes OUT/
 //
-// Then copy dist/docs-site/ over docs/ in the transmission-updates repo and
-// push (see docs/dev/BUILD_SIGNED_BINARIES.md for the release flow this sits
-// alongside).
+// Publishing is automatic: scripts/build-site.js calls this, and
+// .github/workflows/pages.yml deploys the result.
 //
-// WHY GENERATED HTML RATHER THAN COMMITTING THE MARKDOWN: the updates repo
-// carries a .nojekyll file, so GitHub Pages serves a committed .md as plain
-// text rather than rendering it. Anyone following a docs URL from the app would
-// get raw markdown. This mirrors what generate-changelog-html.js already does
+// WHY GENERATED HTML RATHER THAN SERVING THE MARKDOWN: the site carries a
+// .nojekyll file, so GitHub Pages would serve a .md as plain text rather than
+// rendering it. Anyone following a docs URL from the app would get raw
+// markdown. This mirrors what generate-changelog-html.js already does
 // for CHANGELOG.md, and shares its styling so the two pages look like one site.
 //
 // PUBLISH is an explicit allow-list, never a directory walk. docs/ also holds
-// the pitch, the dev notes, the UI contract and the screenshot scripts — none
+// the dev notes, the UI contract and the screenshot scripts — none
 // of which belong on a public site, and a walk would ship them the moment
 // someone adds a file.
 
@@ -189,7 +188,8 @@ const SECTION_NOTE = {
   'Report templates': 'For customizing the briefs Transmission generates.',
 };
 let indexBody = `<h1>Transmission documentation</h1>
-<p>Everything you need to run a content audit and migration in Transmission. New here? Start with the <a href="quick-start.html">Quick Start</a>, then <a href="running-an-audit.html">Running an Audit</a>.</p>`;
+<p>Everything you need to run a content audit and migration in Transmission. New here? Start with the <a href="quick-start.html">Quick Start</a>, then <a href="running-an-audit.html">Running an Audit</a>.</p>
+<p>Many examples come from higher education, but Transmission isn't specific to it: it works the same for any industry's site.</p>`;
 for (const section of SECTION_ORDER) {
   // A section's own README is its overview, so it leads — alphabetically it
   // would sort behind the numbered walkthroughs and read as an afterthought.

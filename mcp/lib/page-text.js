@@ -30,7 +30,7 @@ const PAGE_TEXT_DDL = `
 const FETCH_TIMEOUT_MS = 15000;
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
 const DEFAULT_MAX_CHARS = 6000;
-const USER_AGENT = 'Mozilla/5.0 (compatible; Transmission-content-audit; +https://factus10.github.io/transmission-updates/)';
+const USER_AGENT = 'Mozilla/5.0 (compatible; Transmission-content-audit; +https://github.com/factus10/transmission)';
 
 // A paragraph worth counting: a sentence or more, not a caption or a button.
 const PARA_MIN_CHARS = 40;

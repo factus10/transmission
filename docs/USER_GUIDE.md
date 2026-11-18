@@ -11,6 +11,8 @@ Transmission is a desktop workspace for **content audits and site migrations**. 
 
 This guide takes you from *"I've never opened it"* to *"I could run an audit in my sleep,"* in the order you'll actually do the work.
 
+> **Works for any industry.** Many examples in this documentation come from higher education (universities, colleges, admissions offices, alumni), and the sample project is a fictional university. Nothing in Transmission is specific to higher ed: it works the same way for a company, a government agency, a nonprofit, a hospital or a store. Read the examples with your own audiences, content types and site sections in mind.
+
 ### Start here if you're new to an engagement
 
 This guide is organized **by feature** — it's the reference you come back to for
@@ -1699,7 +1701,7 @@ With a `.transmission` project open, click **✦** in the title bar (or Project 
 
 **Make the playbooks automatic (optional).** A prompt only runs when you pick it. Installed as **skills**, the same playbooks are used by Claude on its own whenever a question calls for one — ask "where does the audit stand?" and it follows the audit-status playbook without being told. To install them:
 
-1. Open the [latest release](https://github.com/factus10/transmission-updates/releases/latest) and download the five `transmission-skill-….zip` files (ask-the-audit, audit-status, section-review, decision-consistency, rubric-sweep). Don't unzip them.
+1. Open the [latest release](https://github.com/factus10/transmission/releases/latest) and download the five `transmission-skill-….zip` files (ask-the-audit, audit-status, section-review, decision-consistency, rubric-sweep). Don't unzip them.
 2. In the Claude app, open **Settings → Capabilities → Skills** and choose **Upload skill**, once for each zip. (On a Team or Enterprise plan, an admin can add them for everyone instead.)
 3. Start a new chat with the Transmission extension connected (✦ → **Open in Claude**).
 

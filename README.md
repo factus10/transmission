@@ -2,6 +2,8 @@
 
 A macOS desktop app for auditing website content. Load a Screaming Frog crawl export (or any spreadsheet with URLs), review each page in an embedded browser, and record Migrate/Revise/Archive decisions directly in the file.
 
+> **Works for any industry.** Many examples in this documentation come from higher education (universities, colleges, admissions offices, alumni), and the sample project is a fictional university. Nothing in Transmission is specific to higher ed: it works the same way for a company, a government agency, a nonprofit, a hospital or a store. Read the examples with your own audiences, content types and site sections in mind.
+
 > **Formerly Keep / Kill / Evolve.** The decision vocabulary is now **Migrate / Revise / Archive** (MRA): Keep → Migrate, Evolve → Revise, Kill → Archive, with Consolidate and Exclude unchanged. Older files with KKE column names and values open as before and are saved as MRA. Worksheets that come back in the old words (an SME round sent out before the rename, a second auditor's file, an audit template) are translated as they're read, and the app says how many decisions it re-worded. For a client still working in the old terms, the SME export has a one-off *Use Keep / Kill / Evolve wording* option.
 
 **Version 2.10.0** — "How Soon Is Now?"
