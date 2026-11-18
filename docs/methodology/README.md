@@ -10,6 +10,8 @@ A recommended method for the practice Transmission supports. The app implements 
 
 Nothing here is enforced by the software, and none of it is the only way to run an audit. Treat it as a starting position that has survived real engagements — adopt it, argue with it, or tailor it per client. The [Running an Audit](../RUNNING_AN_AUDIT.md) guide is the same method expressed as a sequence of steps in the app; this is the reasoning underneath it.
 
+The method is industry-neutral. Many of the examples come from higher education, but the decisions, dimensions and patterns apply unchanged to any organization's site.
+
 ---
 
 ## How to navigate

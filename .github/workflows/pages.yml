@@ -1,0 +1,83 @@
+# The public site: https://factus10.github.io/transmission/
+#
+#   /                       landing page (site/index.html)
+#   /docs/                  user docs, from docs/ via scripts/generate-docs-site.js
+#   /changelog.html         CHANGELOG.md, the app's What's New window
+#   /update-manifest.json   what every running copy (2.27.0 and later) checks
+#
+# Built from main by scripts/build-site.js, which derives the manifest from the
+# repo's own published releases (see that file for the rules).
+#
+# Deploys when a release is published, and on demand. Deliberately NOT on every
+# push to main: main runs ahead of the latest release, and the docs and What's
+# New should describe the app people can download. Run it by hand to ship a
+# docs fix between releases, or to announce a release whose
+# release-notes/<version>.txt landed after it was published:
+#
+#   gh workflow run pages.yml
+#
+# Requires Settings → Pages → Source: GitHub Actions.
+
+name: Publish site
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; a newer run replaces a queued one rather than racing it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      # --ignore-scripts: the site needs `marked` and nothing else; the
+      # postinstall would rebuild better-sqlite3 against Electron.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: List releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --paginate "repos/${{ github.repository }}/releases" > "$RUNNER_TEMP/releases.json"
+
+      - name: Build site
+        run: node scripts/build-site.js --releases "$RUNNER_TEMP/releases.json" _site
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5
