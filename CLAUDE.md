@@ -1437,14 +1437,13 @@ Key tokens:
 
 ## Documentation
 
-When adding features or making user-facing changes, update **all four** documentation sources:
+When adding features or making user-facing changes, update **all** of these documentation sources:
 
 | File | What it is |
 |------|------------|
 | `README.md` | Project overview, feature list, setup instructions |
 | `docs/RUNNING_AN_AUDIT.md` | **The opinionated engagement sequence** — what to do in what order, why the order matters, and the semantic decisions the tool bakes in (blank = unreviewed, Archive vs Exclude, canonical over inference). The onboarding doc for new auditors; update it whenever a step's *ordering* or a baked-in assumption changes, not for every feature |
 | `docs/USER_GUIDE.md` | Full user manual — assumes an intelligent reader new to KKE audits and the app |
-| `docs/PITCH.md` | Client-facing pitch (written + conversational versions) — describes Jakala's process and competitive advantages |
 | `src/help.html` | Help window — concise feature documentation opened as a separate window |
 
 ### Publishing the public docs site

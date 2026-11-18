@@ -2,6 +2,7 @@
   "name": "transmission",
   "version": "2.26.0",
   "description": "Content audit, IA, and migration workspace for website replatforms — assess every page, architect the new site, and direct the build",
+  "license": "MIT",
   "main": "main.js",
   "scripts": {
     "test": "node --test \"test/**/*.test.js\"",
