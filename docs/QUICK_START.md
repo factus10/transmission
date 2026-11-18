@@ -9,6 +9,8 @@
 
 > MRA = **Migrate · Archive · Revise** (+ **Consolidate** and **Exclude**). For every page on a site, you make one call.
 
+> **Works for any industry.** Many examples in this documentation come from higher education (universities, colleges, admissions offices, alumni), and the sample project is a fictional university. Nothing in Transmission is specific to higher ed: it works the same way for a company, a government agency, a nonprofit, a hospital or a store. Read the examples with your own audiences, content types and site sections in mind.
+
 ---
 
 ## 1. Open your crawl  ·  1 min

@@ -65,16 +65,19 @@ here the way PCL has `dist:mac` vs `dist:mac:signed`.
 
 ## After the build: publishing
 
-`scripts/publish-release.sh` (`npm run release:publish`) takes it from here —
-both GitHub releases and the update manifest. Run it from the project dir after
-a successful build:
+`scripts/publish-release.sh` (`npm run release:publish`) takes it from here:
+it publishes the GitHub release, then waits for the site deploy to announce it.
+Commit the update-dialog note as `release-notes/<version>.txt` on `main` first,
+then run it from the project dir after a successful build:
 
 ```bash
-npm run release:publish -- --manifest-notes /path/to/notes.txt
+npm run release:publish
 ```
 
-Omit `--manifest-notes` to create and verify the releases but leave the manifest
-alone; `--dry-run` runs every check and publishes nothing. Re-running is safe:
+Without that notes file on `main`, the release is published but not announced:
+the site deploy keeps the update manifest on the previous version until the file
+lands and `gh workflow run pages.yml` runs. `--dry-run` runs every check and
+publishes nothing. Re-running is safe:
 an existing release is reused and its assets re-uploaded with `--clobber`, which
 is the recovery path for an interrupted upload.
 
@@ -83,7 +86,9 @@ Gatekeeper rejection, a bundle whose version does not match the one being
 released, a binary that isn't the single arch its file name says, an app carrying
 the wrong SQLite prebuild, or a `dist/` still holding other versions' files), uploads each asset separately, verifies byte counts against the local
 files before publishing the draft, and asserts `releases/latest` resolves to the
-new tag on both repos before the manifest is touched. See the release section of
+new tag. The update manifest is built from the published releases by
+`scripts/build-site.js` in the *Publish site* workflow, so nothing announces a
+release that hasn't passed those checks. See the release section of
 CLAUDE.md for why each of those exists — every one traces to a release that
 broke.
 
@@ -112,7 +117,7 @@ release as usual:
 ```bash
 rm -f dist/*.dmg dist/*.zip
 gh run download <run-id> --name transmission-mac --dir dist
-npm run release:publish -- --manifest-notes release-notes/<version>.txt
+npm run release:publish
 ```
 
 It reads five repository secrets, the same names the ts2068-disk-browser

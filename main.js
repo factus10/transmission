@@ -45,23 +45,20 @@ try {
 } catch (e) { /* non-fatal — start with fresh prefs */ }
 
 // ─── Update check ─────────────────────────────────────────────────────────────
-// The main source repo (factus10/transmission) is private, so raw.githubusercontent.com
-// / github.com URLs into it 404 for an unauthenticated app. The manifest + changelog
-// instead live in a small dedicated PUBLIC repo (factus10/transmission-updates,
-// published via GitHub Pages) that holds nothing but those two files — no source code,
-// no client data. Bump `version` / `publishedAt` / `notes` in that repo's
-// update-manifest.json (and copy the changelog) on each release; see CLAUDE.md
-// "Update check" for the exact steps. The release DMG itself still lives on the
-// private repo's GitHub Releases, so the Download link only resolves for logged-in
-// collaborators — see the CLAUDE.md note.
-const UPDATE_MANIFEST_URL = 'https://factus10.github.io/transmission-updates/update-manifest.json';
+// The manifest, changelog and docs are this repo's GitHub Pages site, rebuilt by
+// .github/workflows/pages.yml whenever a release is published. The manifest is
+// derived from the published releases by scripts/build-site.js, never hand-edited;
+// see CLAUDE.md "Update check". (Up to 2.26.0 they lived in a separate public repo,
+// factus10/transmission-updates, while this one was private. Those builds still
+// check that repo's manifest, which points them here.)
+const UPDATE_MANIFEST_URL = 'https://factus10.github.io/transmission/update-manifest.json';
 const UPDATE_TRUSTED_HOSTS = new Set(['factus10.github.io', 'github.com']);
 
-// The user documentation, published to the same public Pages site from this
-// repo's docs/ via scripts/generate-docs-site.js. Opened in the user's browser
+// The user documentation, published to the same Pages site from this repo's
+// docs/ via scripts/generate-docs-site.js. Opened in the user's browser
 // rather than a BrowserWindow like the changelog: this is a multi-page site
 // people will want to search, bookmark and keep open beside the app.
-const DOCS_SITE_URL = 'https://factus10.github.io/transmission-updates/docs/';
+const DOCS_SITE_URL = 'https://factus10.github.io/transmission/docs/';
 
 // ─── Audit columns injected if not present in the xlsx ───────────────────────
 // The actual injection list lives in injectAndOrderAuditColumns()'s inline
