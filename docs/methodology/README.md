@@ -31,6 +31,7 @@ Each page is self-contained but cross-linked. Most pages end with a **See also**
 - [Content Audit Overview](./content-audit-overview.md) — what we're doing, why, and where this fits in an engagement
 - [KKE: The Classic Framework](./kke-classic.md) — Keep / Kill / Evolve / Exclude, the canonical definitions, where they came from, and how they map onto the Migrate / Revise / Archive vocabulary Transmission uses now
 - [Why MRA Falls Short](./the-five-dimensions.md) — the conceptual analysis: MRA compresses five independent dimensions into one column
+- [The Unit of Audit](./the-unit-of-audit.md) — the parallel analysis: the URL is a rendering, not a piece of content, so the row under the column is the wrong object
 
 ### Recognizing trouble
 
@@ -82,3 +83,5 @@ Each page is self-contained but cross-linked. Most pages end with a **See also**
         │  Governance        │
         └────────────────────┘
 ```
+
+**Two orthogonal critiques.** [The Five Dimensions](./the-five-dimensions.md) argues the *decision* is compressed — one column carrying five. [The Unit of Audit](./the-unit-of-audit.md) argues the *row* is wrong — we audit renderings rather than content entries. Fixing either leaves the other intact, and CAD only lands correctly once the unit does.
