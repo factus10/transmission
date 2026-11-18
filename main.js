@@ -2448,9 +2448,11 @@ ipcMain.handle('proposals-resolve', (_e, { ids, status } = {}) => {
 // ─── Open in Claude ───────────────────────────────────────────────────────────
 // Three routes to the bundled MCP server (mcp/ ships as an extraResource):
 //   chat     — the Claude app, via a desktop extension built from mcp/ (needs
-//              only the Claude app; the default)
+//              only the Claude app; the default). macOS and Windows.
 //   app      — the Claude app's Code tab, via the Claude Code plugin (needs the CLI)
 //   terminal — the `claude` CLI in Terminal with --plugin-dir (needs the CLI)
+// The two CLI routes are macOS-only: they drive a login shell, Terminal and
+// a `.command` file, none of which exist on Windows.
 // The server follows the project through current-project.json (or
 // TRANSMISSION_PROJECT in Terminal), so no per-project configuration is needed.
 // Nothing here talks to a model: it opens an app, exactly as the user would.
@@ -2463,6 +2465,7 @@ function mcpPluginDir() {
  *  user's terminal PATH (that is where ~/.local/bin and Homebrew live). */
 function findClaudeCli() {
   return new Promise(resolve => {
+    if (process.platform !== 'darwin') return resolve(null);   // the CLI routes are macOS-only
     const { execFile } = require('child_process');
     execFile('/bin/zsh', ['-lc', 'command -v claude'], { timeout: 8000 }, (err, stdout) => {
       const p = String(stdout || '').trim().split('\n').pop();
@@ -2484,9 +2487,17 @@ function runClaudeCli(args, timeout = 60000) {
   });
 }
 
-/** Is the Claude desktop app installed? (Its bundle id, via Launch Services.) */
+/** Is the Claude desktop app installed? On macOS, its bundle id via Launch
+ *  Services. On Windows, the installer's claude.exe, else whatever has
+ *  registered the claude:// scheme (the Microsoft Store build, which lives
+ *  under WindowsApps where its path can't be listed). */
 function findClaudeDesktopApp() {
   return new Promise(resolve => {
+    if (process.platform === 'win32') {
+      const exe = claudeWindowsExe();
+      if (exe) return resolve(exe);
+      return resolve(app.getApplicationNameForProtocol('claude://') ? 'claude://' : null);
+    }
     if (process.platform !== 'darwin') return resolve(null);
     const { execFile } = require('child_process');
     execFile('/usr/bin/mdfind', ['kMDItemCFBundleIdentifier == "com.anthropic.claudefordesktop"'], { timeout: 8000 }, (err, stdout) => {
@@ -2517,7 +2528,30 @@ async function ensurePluginInstalled() {
 }
 
 const claudeExtension = require('./claude-extension');
-const claudeSupportDir = () => path.join(app.getPath('home'), 'Library', 'Application Support', 'Claude');
+
+/** The Windows installer's claude.exe, or null. */
+function claudeWindowsExe() {
+  const exe = process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'AnthropicClaude', 'claude.exe');
+  return exe && fs.existsSync(exe) ? exe : null;
+}
+
+/** Where the Claude app keeps its data, including which extensions it has. */
+function claudeSupportDir() {
+  if (process.platform !== 'win32') return path.join(app.getPath('home'), 'Library', 'Application Support', 'Claude');
+  // The installer build uses %APPDATA%\Claude. The Microsoft Store (MSIX) build's
+  // %APPDATA% is virtualized into its package folder, so look there too.
+  const classic = path.join(app.getPath('appData'), 'Claude');
+  if (fs.existsSync(classic)) return classic;
+  try {
+    const pkgs = path.join(process.env.LOCALAPPDATA || '', 'Packages');
+    for (const name of fs.readdirSync(pkgs)) {
+      if (!/^Claude_/i.test(name)) continue;
+      const dir = path.join(pkgs, name, 'LocalCache', 'Roaming', 'Claude');
+      if (fs.existsSync(dir)) return dir;
+    }
+  } catch (_) { /* no Packages folder */ }
+  return classic;
+}
 
 ipcMain.handle('claude-launch-status', async () => {
   const reason = proposalsUnavailableReason();   // same precondition: a project file to point at
@@ -2538,19 +2572,49 @@ ipcMain.handle('claude-launch-status', async () => {
 async function launchClaudeChat() {
   const ext = claudeExtension.installedExtension(claudeSupportDir());
   const current = ext.installed && ext.version === app.getVersion();
-  const args = ['-b', claudeExtension.CLAUDE_BUNDLE_ID];
-  if (!current) {
-    const file = await claudeExtension.writeMcpb({
-      mcpDir: mcpPluginDir(),
-      iconPath: path.join(__dirname, 'assets', 'icon.png'),
-      version: app.getVersion(),
-      outDir: path.join(app.getPath('userData'), 'launch')
-    });
-    args.push(file);
+  const file = current ? null : await claudeExtension.writeMcpb({
+    mcpDir: mcpPluginDir(),
+    iconPath: path.join(__dirname, 'assets', 'icon.png'),
+    version: app.getVersion(),
+    outDir: path.join(app.getPath('userData'), 'launch')
+  });
+  if (process.platform === 'win32') await openClaudeWindows(file);
+  else {
+    const args = ['-b', claudeExtension.CLAUDE_BUNDLE_ID];
+    if (file) args.push(file);
+    const { execFile } = require('child_process');
+    await new Promise((resolve, reject) => execFile('/usr/bin/open', args, { timeout: 15000 }, err => err ? reject(err) : resolve()));
   }
-  const { execFile } = require('child_process');
-  await new Promise((resolve, reject) => execFile('/usr/bin/open', args, { timeout: 15000 }, err => err ? reject(err) : resolve()));
   return { installing: !current, updating: ext.installed && !current, enabled: ext.enabled || !ext.installed };
+}
+
+/**
+ * Windows: hand Claude the .mcpb through its file association (Claude
+ * registers .mcpb, which is how double-clicking one installs it), or, with
+ * nothing to install, just bring Claude forward. If nothing opens the file,
+ * select it in File Explorer and say how to install it by hand, rather than
+ * report success for a prompt that never appeared.
+ */
+async function openClaudeWindows(file) {
+  if (file) {
+    const err = await shell.openPath(file);   // '' on success
+    if (!err) return;
+    const exe = claudeWindowsExe();
+    if (exe) {
+      const { spawn } = require('child_process');
+      spawn(exe, [file], { detached: true, stdio: 'ignore' }).unref();
+      return;
+    }
+    shell.showItemInFolder(file);
+    throw new Error('Claude did not open the extension file. It is selected in File Explorer: drag it onto Claude → Settings → Extensions.');
+  }
+  const exe = claudeWindowsExe();
+  if (exe) {
+    const { spawn } = require('child_process');
+    spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
+  } else {
+    await shell.openExternal('claude://');
+  }
 }
 
 ipcMain.handle('claude-launch', async (_e, { mode } = {}) => {
@@ -2562,7 +2626,8 @@ ipcMain.handle('claude-launch', async (_e, { mode } = {}) => {
   try { projectStore.checkpoint(); } catch (_) { /* best effort */ }
   writeCurrentProjectPointer(currentFilePath);
   const cmd = `cd ${shQuote(path.dirname(currentFilePath))} && TRANSMISSION_PROJECT=${shQuote(currentFilePath)} claude --plugin-dir ${shQuote(plugin)}`;
-  if (process.platform !== 'darwin') return { success: false, error: 'unsupported-platform', command: cmd };
+  const chatPlatform = process.platform === 'darwin' || process.platform === 'win32';
+  if (mode === 'chat' ? !chatPlatform : process.platform !== 'darwin') return { success: false, error: 'unsupported-platform', command: cmd };
 
   if (mode === 'chat') {
     // The Claude app itself, through the extension: no CLI involved.
@@ -4698,6 +4763,7 @@ app.on('web-contents-created', (event, contents) => {
 });
 
 app.whenReady().then(() => {
+  if (lostInstanceLock) return;   // a second Windows instance, quitting (see below)
   clearStagedViews();   // left behind by a crash or force-quit
   buildMenu();
   createWindow();
@@ -4729,6 +4795,33 @@ app.on('open-file', (event, filePath) => {
     pendingOpenPath = filePath;
   }
 });
+
+// Windows opens a double-clicked .transmission (the installer registers the
+// association) by starting the app with the path as an argument — or, with
+// the app already running, by starting a SECOND instance carrying it. Keep one
+// instance: the second hands its path to the first and quits, so a project is
+// never open in two windows that would autosave over each other.
+// (macOS delivers both cases through 'open-file' above instead.)
+function fileArgFrom(argv) {
+  return argv.slice(1).find(a => !a.startsWith('-') && /\.(transmission|xlsx|xlsm|xls|csv)$/i.test(a) && fs.existsSync(a)) || null;
+}
+let lostInstanceLock = false;
+if (process.platform === 'win32') {
+  if (!app.requestSingleInstanceLock()) {
+    lostInstanceLock = true;
+    app.quit();
+  } else {
+    pendingOpenPath = fileArgFrom(process.argv);
+    app.on('second-instance', (_e, argv) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+      const p = fileArgFrom(argv);
+      if (p) openAnyPath(p);
+    });
+  }
+}
+
 app.on('browser-window-created', () => {
   if (pendingOpenPath) {
     const p = pendingOpenPath;
@@ -4745,6 +4838,9 @@ app.on('window-all-closed', () => {
 // Checkpoint + close the project DB cleanly on quit so the .transmission file
 // is a complete single-file snapshot (no stale -wal/-shm sidecars).
 app.on('before-quit', () => {
+  // A second Windows instance owns none of this: the pointer and the staged
+  // views belong to the instance that is still running.
+  if (lostInstanceLock) return;
   clearCurrentProjectPointer();
   try { projectStore.close(); } catch (e) { /* best effort */ }
   clearStagedViews();   // generated diagram pages; a stale one is never reopened
