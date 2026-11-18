@@ -766,3 +766,9 @@ Per-user preferences stored in `~/Library/Application Support/Transmission/prefs
 - **Window bounds, sidebar width, sort order, filter text, kkeFilter** — UI state persisted across sessions
 
 Access via `Cmd+,` or **Transmission → Preferences…** (macOS) / **File → Preferences…** (Windows/Linux).
+
+---
+
+## License
+
+Transmission is released under the [MIT License](LICENSE).
