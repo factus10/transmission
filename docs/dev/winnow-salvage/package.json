@@ -28,7 +28,7 @@
     "electron-builder": "^25.0.0"
   },
   "build": {
-    "appId": "com.jakala.winnow",
+    "appId": "io.github.factus10.winnow",
     "productName": "Winnow",
     "mac": {
       "category": "public.app-category.productivity",

@@ -70,7 +70,7 @@ The same project gives different totals depending on the report:
   - the Menu Report export
 
   They look different from the others, and have no scope banner.
-- ✔ **The Menu Report export has a hardcoded header** reading *"Jakala · CMS Migration & Consolidation"* and *"Internal — Not for client distribution"* (≈27395). That's on a report in the Reports menu that people will reasonably send to a client. It also loads Google Fonts, so it renders in a different font offline.
+- ✔ **The Menu Report export has a hardcoded header** naming a company and marking the report *"Internal — Not for client distribution"* (≈27395). That's on a report in the Reports menu that people will reasonably send to a client. It also loads Google Fonts, so it renders in a different font offline.
 - **The report header** shows today's date and the local **file name**. It doesn't show a "data as of" date, and it exposes internal file names to the client.
 - ✔ **The Audit Progress dashboard's bar** writes `var(--kke-keep)20` as a colour, which is invalid CSS. Built-in states lose their segment fill and only the border shows.
 

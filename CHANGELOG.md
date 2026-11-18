@@ -6,6 +6,10 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Changed
+
+- **New macOS bundle ID: `io.github.factus10.transmission`.** Your preferences, recent files and projects are unaffected, since they are stored by the app's name. macOS does treat this as a new app, though. The first time a Miro export reads your saved Miro token, macOS asks to let Transmission use its keychain item; choose **Always Allow**. If double-clicking a `.transmission` file opens an older copy of the app, delete that copy from Applications.
+
 ## [2.26.0] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Added
@@ -853,8 +857,8 @@ builds out an independent menu subsystem.
 ### Changed
 - **Renamed** the product from "KKE Audit Tool" to **Transmission** (a Joy Division
   song; version codenames remain Smiths titles). The **KKE** methodology and all
-  `KKE_*` columns/sheets are unchanged, so existing files stay compatible. App ID is
-  now `com.jakala.transmission`; a one-time migration carries old prefs to the new
+  `KKE_*` columns/sheets are unchanged, so existing files stay compatible. The app ID
+  changed too; a one-time migration carries old prefs to the new
   user-data folder.
 - **Content Type ↔ Registry sync.** The Content Type Registry editor now surfaces
   in-use content types that lack a crosswalk (split-aware), with a "Show all
