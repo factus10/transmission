@@ -4,12 +4,11 @@
 # Builds what `npm run build:signed:sandboxed` builds locally, on a clean
 # GitHub-hosted Mac, and uploads the two .dmgs as a workflow artifact. It does
 # NOT publish anything: releasing stays local, through scripts/publish-release.sh,
-# whose checks (and the mirror to transmission-updates) each trace to a release
-# that broke. To ship a CI build:
+# whose checks each trace to a release that broke. To ship a CI build:
 #
 #   rm -f dist/*.dmg dist/*.zip
 #   gh run download <run-id> --name transmission-mac --dir dist
-#   npm run release:publish -- --manifest-notes release-notes/<version>.txt
+#   npm run release:publish
 #
 # Secrets (Settings → Secrets and variables → Actions), same names as the
 # ts2068-disk-browser workflow:

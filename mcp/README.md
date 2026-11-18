@@ -74,7 +74,7 @@ Every release also carries them as `transmission-skill-<name>.zip` assets, so yo
 node mcp/sample/make-sample-project.js        # → mcp/sample/alpha-university.transmission
 ```
 
-That writes a deterministic 314-row fictional university audit with a sitemap, audiences, saved filters and three weeks of change history — and seven planted problems (a Migrate page that 404s, Consolidate pages with no target, an Archive in a priority-audience section, SME overrides, an undecided tail) for the skills to find. The script prints the list.
+That writes a deterministic 314-row fictional university audit (a university only because it's a familiar shape; nothing in the server or skills assumes higher ed) with a sitemap, audiences, saved filters and three weeks of change history — and seven planted problems (a Migrate page that 404s, Consolidate pages with no target, an Archive in a priority-audience section, SME overrides, an undecided tail) for the skills to find. The script prints the list.
 
 ## What it can do
 

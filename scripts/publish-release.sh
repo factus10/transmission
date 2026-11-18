@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-# Publish a built release: GitHub releases on both repos, then the update
-# manifest. Everything AFTER scripts/build-signed-mac.sh.
+# Publish a built release: the GitHub release, then the site deploy that
+# announces it. Everything AFTER scripts/build-signed-mac.sh.
 #
 # This exists because the manual sequence has two traps that have each bitten
 # a real release, and both are silent -- the release looks fine and users get
@@ -15,53 +15,48 @@ set -euo pipefail
 #      PREVIOUS version -- while the manifest says a new one exists. Every user
 #      then gets told to update and handed the old build.
 #
-#   2. Large uploads to the transmission-updates mirror have intermittently
-#      404'd or dropped an asset mid-flight. A release missing one of its
-#      assets looks published and is broken.
+#   2. Large uploads have intermittently 404'd or dropped an asset mid-flight
+#      (seen on the old transmission-updates mirror). A release missing one of
+#      its assets looks published and is broken.
 #
 # So: create as an explicit draft, upload each asset ON ITS OWN, verify every
 # byte count against the local file, and only then publish. After publishing,
-# assert the API agrees this tag is `latest`. The manifest -- the thing that
-# actually tells running copies an update exists -- is written LAST and only
-# once both repos have passed all of that.
+# assert the API agrees this tag is `latest`.
+#
+# The update manifest -- the thing that tells running copies an update exists
+# -- is no longer written here. .github/workflows/pages.yml rebuilds the public
+# site when a release is published, and scripts/build-site.js derives the
+# manifest from the published releases: it only announces a release that has
+# both dmgs AND a release-notes/<version>.txt on main. So the notes file is the
+# "announce" switch, and this script just waits for the site to serve it.
 #
 # Usage:
 #   scripts/publish-release.sh [options]
 #
-#     --manifest-notes <file>  Prose for the manifest's `notes` field (what the
-#                              user sees in the update dialog). Without it the
-#                              script publishes the releases and stops, telling
-#                              you what is left. This is deliberately not
-#                              auto-generated from the changelog: the changelog
-#                              is a developer record, the manifest note is a
-#                              paragraph written for the person being asked to
-#                              update.
 #     --notes-file <file>      Release body. Defaults to this version's section
 #                              extracted from CHANGELOG.md.
 #     --title <text>           Release title. Defaults to
 #                              "Transmission <version>".
-#     --updates-repo <path>    Checkout of factus10/transmission-updates.
-#                              Default: ../transmission-updates
 #     --dry-run                Run every check, publish nothing.
 #
 # Version comes from package.json -- bump it and promote the changelog first.
+# The update-dialog note is release-notes/<version>.txt; commit it to main
+# before running this to announce the release, or after to hold it back.
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PRIMARY_REPO="factus10/transmission"
-MIRROR_REPO="factus10/transmission-updates"
-UPDATES_DIR="$(cd "$PROJECT_DIR/.." && pwd)/transmission-updates"
+SITE_URL="https://factus10.github.io/transmission"
 
 NOTES_FILE=""
-MANIFEST_NOTES=""
 TITLE=""
 DRY_RUN=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --notes-file)     NOTES_FILE="$2"; shift 2 ;;
-    --manifest-notes) MANIFEST_NOTES="$2"; shift 2 ;;
+    --manifest-notes|--updates-repo)
+      echo "$1 is gone: the site deploy announces a release once release-notes/<version>.txt is on main" >&2; exit 2 ;;
     --title)          TITLE="$2"; shift 2 ;;
-    --updates-repo)   UPDATES_DIR="$2"; shift 2 ;;
     --dry-run)        DRY_RUN=1; shift ;;
     -h|--help)        sed -n '1,50p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -284,95 +279,43 @@ NODE
 }
 
 publish_to "$PRIMARY_REPO"
-publish_to "$MIRROR_REPO"
 
-# ── The manifest, last ──────────────────────────────────────────────────────
+# ── Announce: the site deploy, last ─────────────────────────────────────────
 #
-# This is what tells every running copy an update exists. Publishing it before
-# the assets are up and `latest` is correct hands users a dead Download button.
-if [ -z "$MANIFEST_NOTES" ]; then
-  say "Releases done — manifest NOT published"
+# Publishing the release fired .github/workflows/pages.yml. It announces this
+# version only if release-notes/$VERSION.txt is already on main.
+git -C "$PROJECT_DIR" fetch --quiet origin main || die "git fetch origin main failed"
+if ! git -C "$PROJECT_DIR" cat-file -e "origin/main:release-notes/$VERSION.txt" 2>/dev/null; then
+  say "Released $TAG — NOT announced"
   cat <<EOS
-   No --manifest-notes given, so the update manifest was left alone. Users will
-   not be offered $VERSION until it is published. To finish:
+   release-notes/$VERSION.txt is not on origin/main, so the site deploy leaves
+   the update manifest on the previous version. To announce $VERSION:
 
-     scripts/publish-release.sh --manifest-notes <file>
+     commit release-notes/$VERSION.txt to main, then: gh workflow run pages.yml
 
-   (re-running is safe: existing releases are reused and re-verified)
+   https://github.com/$PRIMARY_REPO/releases/tag/$TAG
 EOS
   exit 0
 fi
+ok "release-notes/$VERSION.txt is on main"
 
-[ -f "$MANIFEST_NOTES" ] || die "--manifest-notes $MANIFEST_NOTES not found"
-[ -d "$UPDATES_DIR/.git" ] || die "$UPDATES_DIR is not a git checkout (use --updates-repo)"
+if [ "$DRY_RUN" = 1 ]; then warn "dry run — not waiting for the site"; exit 0; fi
 
-say "Publishing the update manifest"
+# A re-run against an already-published release fires no release event, so ask
+# for a deploy explicitly. A duplicate deploy is harmless (they queue).
+run gh workflow run pages.yml --repo "$PRIMARY_REPO" --ref main >/dev/null \
+  && ok "site deploy requested" \
+  || warn "could not start pages.yml; the release event's deploy should still run"
 
-( cd "$UPDATES_DIR" && git pull --quiet )
-ok "updates repo synced"
-
-npm --prefix "$PROJECT_DIR" run --silent changelog:html >/dev/null \
-  || die "changelog:html failed (needs node_modules — npm install --ignore-scripts)"
-GENERATED="$PROJECT_DIR/dist/changelog.html"
-[ -f "$GENERATED" ] || die "changelog generator produced no output"
-
-# Section count must go UP by exactly one; anything else means the generator
-# dropped history rather than appending to it.
-node - "$UPDATES_DIR/changelog.html" "$GENERATED" "$VERSION" <<'NODE'
-const fs = require('fs');
-const [live, next, version] = process.argv.slice(2);
-const count = (p) => (fs.readFileSync(p, 'utf8').match(/<h2 id="\d+--/g) || []).length;
-const before = count(live), after = count(next);
-if (after !== before + 1) {
-  console.error(`   changelog sections went ${before} -> ${after}; expected exactly one more`);
-  process.exit(1);
-}
-const slug = version.replace(/\./g, '');
-if (!fs.readFileSync(next, 'utf8').includes(`id="${slug}--`)) {
-  console.error(`   regenerated changelog has no section for ${version}`);
-  process.exit(1);
-}
-console.log(`   ok   changelog sections ${before} -> ${after}, ${version} present`);
-NODE
-[ $? -eq 0 ] || die "changelog regeneration looks wrong — not publishing"
-
-if [ "$DRY_RUN" = 1 ]; then warn "dry run — manifest not written"; exit 0; fi
-
-cp "$GENERATED" "$UPDATES_DIR/changelog.html"
-node - "$UPDATES_DIR/update-manifest.json" "$VERSION" "$MANIFEST_NOTES" <<'NODE'
-const fs = require('fs');
-const [file, version, notesFile] = process.argv.slice(2);
-const m = JSON.parse(fs.readFileSync(file, 'utf8'));
-m.version = version;
-m.publishedAt = new Date().toISOString().slice(0, 10);
-m.notes = fs.readFileSync(notesFile, 'utf8').trim();
-// main.js refuses to act on a manifest whose URLs are not on these hosts, so a
-// typo here silently disables updates for everyone.
-const trusted = (u) => /^https:\/\/(factus10\.github\.io|github\.com)\//.test(u);
-for (const k of ['changelogUrl', 'downloadUrl']) {
-  if (!trusted(m[k])) { console.error(`   ${k} is not on a trusted host: ${m[k]}`); process.exit(1); }
-}
-fs.writeFileSync(file, JSON.stringify(m, null, 2) + '\n');
-console.log(`   ok   manifest -> ${version} (${m.notes.length} chars of notes)`);
-NODE
-[ $? -eq 0 ] || die "manifest update failed"
-
-( cd "$UPDATES_DIR" \
-  && git add update-manifest.json changelog.html \
-  && git commit -q -m "$VERSION" \
-  && git push --quiet origin HEAD )
-ok "manifest and changelog pushed"
-
-say "Waiting for GitHub Pages to serve $VERSION"
+say "Waiting for the site to announce $VERSION"
 for i in $(seq 1 60); do
-  SERVED="$(curl -s --max-time 5 https://factus10.github.io/transmission-updates/update-manifest.json \
+  SERVED="$(curl -s --max-time 5 "$SITE_URL/update-manifest.json?t=$(date +%s)" \
             | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{console.log(JSON.parse(d).version)}catch(e){console.log('')}})" || true)"
   [ "$SERVED" = "$VERSION" ] && break
   sleep 10
 done
-[ "$SERVED" = "$VERSION" ] || die "Pages still serving '$SERVED' after 10 minutes — check the updates repo"
-ok "Pages serving $VERSION"
+[ "$SERVED" = "$VERSION" ] || die "site still serving '$SERVED' after 10 minutes — check the Publish site workflow: gh run list --workflow pages.yml"
+ok "update manifest announces $VERSION"
 
 say "Released $TAG"
-echo "   primary: https://github.com/$PRIMARY_REPO/releases/tag/$TAG"
-echo "   mirror:  https://github.com/$MIRROR_REPO/releases/tag/$TAG"
+echo "   https://github.com/$PRIMARY_REPO/releases/tag/$TAG"

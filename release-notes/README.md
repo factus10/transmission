@@ -1,16 +1,17 @@
 # Release notes (update-manifest `notes`)
 
 One file per released version, named `<version>.txt`. Each is the prose shown in
-the **Update Available** dialog to someone still on an older build — passed to
-the publish script as:
+the **Update Available** dialog to someone still on an older build.
 
-```bash
-npm run release:publish -- --manifest-notes release-notes/2.18.0.txt
-```
+**A file here is what announces a release.** `scripts/build-site.js` (run by the
+*Publish site* workflow) puts the newest published release that has a
+`<version>.txt` on `main` into the update manifest. Commit the file before
+`npm run release:publish` to announce on release, or later (then
+`gh workflow run pages.yml`) to hold a release back.
 
 ## Why these live here rather than being generated
 
-`scripts/publish-release.sh` deliberately does not derive this text from
+The site build deliberately does not derive this text from
 `CHANGELOG.md`. The changelog is a developer record of everything that changed;
 this is a short paragraph written for a person deciding whether to update right
 now. They answer different questions and read nothing alike.
@@ -23,7 +24,7 @@ question is what the update dialog claimed at the time.
 
 ## Writing one
 
-The script does `readFileSync(...).trim()` and drops the result straight into
+The site build does `readFileSync(...).trim()` and drops the result straight into
 the manifest's `notes` field, which `showUpdateModal()` renders with
 `escapeHtml()` inside a single `<p>`. So:
 

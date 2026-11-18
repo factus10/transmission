@@ -6,6 +6,9 @@ Every other document describes **what the tool can do**. This one describes **wh
 
 *A note on the words: the decisions are **Migrate / Revise / Archive** (MRA), plus Consolidate and Exclude. They were called Keep / Kill / Evolve (KKE) until recently, and mean the same things — Migrate was Keep, Revise was Evolve, Archive was Kill. Files and worksheets in the old words are read as MRA automatically; for a client who still thinks in the old terms, the SME export can write that one worksheet as Keep / Kill / Evolve.*
 
+
+> **Works for any industry.** Many examples in this documentation come from higher education (universities, colleges, admissions offices, alumni), and the sample project is a fictional university. Nothing in Transmission is specific to higher ed: it works the same way for a company, a government agency, a nonprofit, a hospital or a store. Read the examples with your own audiences, content types and site sections in mind.
+
 ---
 
 ## Before anything: the opinions this tool holds

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 //
 // Renders CHANGELOG.md into the standalone changelog.html served at
-// https://factus10.github.io/transmission-updates/changelog.html — the page the
+// https://factus10.github.io/transmission/changelog.html — the page the
 // app's "What's New" button opens (see UPDATE_MANIFEST_URL / openChangelogWindow
 // in main.js).
 //
@@ -13,11 +13,12 @@
 //   npm run changelog:html                    # writes dist/changelog.html
 //   node scripts/generate-changelog-html.js CHANGELOG.md out.html
 //
-// Then copy the result over changelog.html in the transmission-updates repo and
-// push. ALWAYS diff against the live page first:
-//   curl -s https://factus10.github.io/transmission-updates/changelog.html > /tmp/live.html
+// Publishing is automatic: scripts/build-site.js calls this (and checks every
+// release section made it), and .github/workflows/pages.yml deploys it. When
+// changing the generator itself, diff against the live page:
+//   curl -s https://factus10.github.io/transmission/changelog.html > /tmp/live.html
 //   diff /tmp/live.html out.html
-// The only differences should be the new release's section, plus marked's
+// Expect only the new release's section, plus marked's
 // "-1"/"-2" renumbering of the repeated Added/Fixed/Changed anchors below it —
 // that shift is inherent to inserting a section and happens every release.
 

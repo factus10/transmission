@@ -8,6 +8,7 @@ major-version codenames drawn from The Smiths.
 
 ### Changed
 
+- **Docs, What's New and downloads moved to the main repository.** Transmission's source is public now, so the documentation site, the changelog and the update check are served from `https://factus10.github.io/transmission/`, and downloads come from the main repository's releases. The old `transmission-updates` site forwards here.
 - **New macOS bundle ID: `io.github.factus10.transmission`.** Your preferences, recent files and projects are unaffected, since they are stored by the app's name. macOS does treat this as a new app, though. The first time a Miro export reads your saved Miro token, macOS asks to let Transmission use its keychain item; choose **Always Allow**. If double-clicking a `.transmission` file opens an older copy of the app, delete that copy from Applications.
 
 ## [2.26.0] — "Please, Please, Please, Let Me Get What I Want"
