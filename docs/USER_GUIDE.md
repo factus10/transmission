@@ -1,7 +1,7 @@
 # Transmission — User Guide
 
 **Version 2.16.1 "Please, Please, Please, Let Me Get What I Want"**
-macOS (Apple Silicon or Intel)
+macOS (Apple Silicon or Intel) and Windows (64-bit)
 
 ---
 
@@ -78,13 +78,16 @@ Excel doesn't disappear — it just becomes the *deliverable* format instead of 
 
 ### Install and first launch
 
-1. Open the **`.dmg`** you were given and drag **Transmission** into your **Applications** folder.
-2. Double-click to launch. Because the app is **signed and notarized**, it opens like any other Mac app — no right-click trick and no security warnings.
+1. **Mac:** open the **`.dmg`** for your Mac (`arm64` for Apple Silicon, `x64` for Intel) and drag **Transmission** into your **Applications** folder.
+   **Windows:** run **`Transmission-<version>-windows-x64-setup.exe`**. It installs for your user account only, with no administrator rights needed, and adds a Start-menu shortcut.
+2. Launch it. On a Mac the app is **signed and notarized**, so it opens like any other Mac app — no right-click trick and no security warnings. The Windows installer isn't code-signed yet, so the first time Windows may say it "protected your PC": choose **More info → Run anyway**.
 3. You'll be greeted by a **Welcome** dialog, where you can open a file, view the keyboard shortcuts, or take a quick **Product Tour**.
 
 > **Tip:** you can reopen any of that later from the **Help** menu — **Getting Started** (the welcome screen), **Product Tour** (a 5-step guided spotlight), or **Keyboard Shortcuts** (also `Cmd+/`, or just press `?` anywhere in the app).
 
-Transmission also checks for a newer version each time it launches, and you can check any time via **Help → Check for Updates…**. If one's out, you'll see the new version number with a **What's New** button (opens the changelog in a small in-app window) and a **Download** button (opens the release page in your browser). Installing is still a manual drag-to-Applications, same as the first install — nothing downloads or replaces the running app on its own.
+Transmission also checks for a newer version each time it launches, and you can check any time via **Help → Check for Updates…**. If one's out, you'll see the new version number with a **What's New** button (opens the changelog in a small in-app window) and a **Download** button (opens the release page in your browser). Installing is still manual, same as the first install (drag to Applications on a Mac, run the new installer on Windows) — nothing downloads or replaces the running app on its own.
+
+> **On Windows,** read **Ctrl** wherever this guide says **Cmd**, and **Option** is **Alt**.
 
 ### Open your first file
 
@@ -2013,7 +2016,9 @@ Last opened file (reopened on launch), window bounds, sidebar width, search text
 
 ## Installation
 
-**From DMG:** open the `.dmg` → drag **Transmission** to Applications → double-click to launch. The app is **signed and notarized** (Apple Developer ID), so it opens normally — no right-click or security-override needed.
+**From DMG (Mac):** open the `.dmg` → drag **Transmission** to Applications → double-click to launch. The app is **signed and notarized** (Apple Developer ID), so it opens normally — no right-click or security-override needed.
+
+**From the installer (Windows):** run `Transmission-<version>-windows-x64-setup.exe`. It installs per user, without administrator rights. It isn't code-signed yet, so SmartScreen may warn on first run: **More info → Run anyway**.
 
 **From source** (Node 18+):
 ```bash
@@ -2029,7 +2034,7 @@ npm run build      # build the Apple Silicon and Intel .dmgs (output in dist/)
 - **Formulas are stripped on save** — replaced with cached values to prevent Excel corruption; keep a backup if you rely on formulas.
 - **Tag/group libraries are global** — shared across files, not per-file.
 - **Fixed-element screenshots** — full-page captures scroll-and-stitch, so fixed headers/footers may repeat.
-- **macOS only** — built and tested for macOS.
+- **Windows is new** — the Windows build is unsigned and has had less use than the Mac one. On Windows, **Open in Claude** uses the Claude app only; the Claude Code routes (Code tab, Terminal) are Mac-only.
 - **Miro: collapsed sections can't be unfolded on the board** — Miro has no collapse behaviour for shapes. Only Miro *mind maps* collapse, and those are text-only with no colour, so using them would lose all the colour coding. Collapsed sections export as a stacked block instead, which shows that something is folded away but can't be opened.
 - **Miro: corner radius exports as square-vs-rounded only** — Miro has no radius setting, so a specific radius value in the app arrives as simply "rounded".
 - **Miro: inner padding is app-only** — Miro centres shape text itself and has no padding control.

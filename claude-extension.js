@@ -45,7 +45,7 @@ function buildMcpbManifest(version) {
     prompts_generated: true,
     keywords: ['content-audit', 'content-strategy', 'migration'],
     compatibility: {
-      platforms: ['darwin'],
+      platforms: ['darwin', 'win32'],
       runtimes: { node: '>=22.13.0' }
     }
   };

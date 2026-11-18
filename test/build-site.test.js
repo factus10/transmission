@@ -21,10 +21,15 @@ function release(version, extra = {}) {
   return {
     tag_name: `v${version}`, draft: false, prerelease: false,
     published_at: '2026-11-16T12:00:00Z',
-    assets: [{ name: `Transmission-${version}-arm64.dmg` }, { name: `Transmission-${version}-x64.dmg` }],
+    assets: [
+      { name: `Transmission-${version}-arm64.dmg` }, { name: `Transmission-${version}-x64.dmg` },
+      { name: `Transmission-${version}-windows-x64-setup.exe` },
+    ],
     ...extra,
   };
 }
+
+const macOnly = v => [{ name: `Transmission-${v}-arm64.dmg` }, { name: `Transmission-${v}-x64.dmg` }];
 
 test('announces the newest qualifying release, compared numerically', () => {
   const dir = notesDir(['2.9.0', '2.10.0']);
@@ -55,6 +60,15 @@ test('drafts, prereleases, odd tags and missing dmgs are never announced', () =>
     assert.ok(announceBlocker(r, dir), JSON.stringify(r));
     assert.strictEqual(buildManifest([r, release('2.26.0')], dir).version, '2.26.0');
   }
+});
+
+test('from 2.27.0 a release needs its Windows installer; earlier ones do not', () => {
+  const dir = notesDir(['2.26.0', '2.27.0']);
+  assert.strictEqual(announceBlocker(release('2.26.0', { assets: macOnly('2.26.0') }), dir), '');
+  assert.strictEqual(announceBlocker(release('2.27.0', { assets: macOnly('2.27.0') }), dir), 'no Windows installer');
+  const m = buildManifest([release('2.26.0', { assets: macOnly('2.26.0') }), release('2.27.0', { assets: macOnly('2.27.0') })], dir);
+  assert.strictEqual(m.version, '2.26.0');
+  assert.strictEqual(buildManifest([release('2.27.0')], dir).version, '2.27.0');
 });
 
 test('no qualifying release yields null, not an empty manifest', () => {

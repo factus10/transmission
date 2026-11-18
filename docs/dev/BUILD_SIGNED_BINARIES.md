@@ -19,6 +19,20 @@ dmg), and they pushed a two-arch CI build past the account's 0.5 GB of Actions
 storage. `publish-release.sh` refuses to publish unless both are present and each binary is single-arch and the arch
 its name says (`lipo -archs` reports Intel as `x86_64`).
 
+**Windows** is a third artifact, built by `.github/workflows/build-windows.yml`
+on a Windows runner (on every `v*` tag, or by hand), never on the Mac: the SQLite
+prebuild is chosen by the platform electron-builder *runs* on, and
+`scripts/afterPack.js` fails a cross-build rather than pack the Mac binary. The
+installer is unsigned. Before publishing, download it next to the dmgs:
+
+```bash
+gh run download <run-id> --name transmission-windows --dir dist
+```
+
+`publish-release.sh` refuses to run without
+`dist/Transmission-<version>-windows-x64-setup.exe`, and from 2.27.0 the update
+manifest only announces a release that carries it.
+
 ## What's in `~/Documents/Apple Dev/`
 
 | File | What it is |
