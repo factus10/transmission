@@ -18,7 +18,7 @@
 //
 // THE MANIFEST IS DERIVED, NEVER HAND-EDITED. It announces the newest release
 // that is (a) published, not a draft or prerelease, (b) carries a dmg for
-// both architectures, and (c) has a release-notes/<version>.txt on this branch.
+// both architectures, and from 2.27.0 the Windows installer, and (c) has a release-notes/<version>.txt on this branch.
 // (c) is the "announce" switch: publish a release without its notes file and
 // running copies are not told about it until the file lands on main. Every
 // deploy (a docs edit, a release, a manual run) recomputes the manifest from
@@ -32,6 +32,9 @@ const ROOT = path.join(__dirname, '..');
 const REPO = 'factus10/transmission';
 const SITE_URL = 'https://factus10.github.io/transmission/';
 const ARCHES = ['arm64', 'x64'];
+// The first release with a Windows build. Earlier ones are announceable
+// without it, so an old release can still be the one the manifest names.
+const WINDOWS_FROM = [2, 27, 0];
 
 function parseVersion(tag) {
   const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(String(tag || ''));
@@ -53,6 +56,11 @@ function announceBlocker(release, notesDir) {
   const names = (release.assets || []).map(a => a.name);
   for (const arch of ARCHES) {
     if (!names.includes(`Transmission-${version}-${arch}.dmg`)) return `no ${arch} dmg`;
+  }
+  // Windows copies check this manifest too: never tell them about a release
+  // that has nothing for them to download.
+  if (compareVersions(v, WINDOWS_FROM) >= 0 && !names.includes(`Transmission-${version}-windows-x64-setup.exe`)) {
+    return 'no Windows installer';
   }
   if (!fs.existsSync(path.join(notesDir, `${version}.txt`))) return `no release-notes/${version}.txt`;
   return '';

@@ -1,6 +1,6 @@
 # Transmission
 
-A macOS desktop app for auditing website content. Load a Screaming Frog crawl export (or any spreadsheet with URLs), review each page in an embedded browser, and record Migrate/Revise/Archive decisions directly in the file.
+A desktop app for macOS and Windows for auditing website content. Load a Screaming Frog crawl export (or any spreadsheet with URLs), review each page in an embedded browser, and record Migrate/Revise/Archive decisions directly in the file.
 
 > **Works for any industry.** Many examples in this documentation come from higher education (universities, colleges, admissions offices, alumni), and the sample project is a fictional university. Nothing in Transmission is specific to higher ed: it works the same way for a company, a government agency, a nonprofit, a hospital or a store. Read the examples with your own audiences, content types and site sections in mind.
 
@@ -555,7 +555,7 @@ All reports use a shared infrastructure (`buildReportShell()`, `showReport()`, `
 ## Prerequisites
 
 - [Node.js](https://nodejs.org) 22.13 or later (24 recommended; CI builds with 24). better-sqlite3 13, @electron/rebuild 4 and the MCP server's `node:sqlite` all need 22.x.
-- To run the built app: macOS 13 (Ventura) or later, the minimum for Electron 44.
+- To run the built app: macOS 13 (Ventura) or later, or 64-bit Windows 10 or 11 — the minimums for Electron 44.
 - npm (included with Node.js)
 - **Miro export (optional)** — a Miro account. Nothing to install; connect once from **App Settings → Miro → Connect to Miro** and the sitemap's **Export to Miro** action is available from then on.
 
@@ -588,7 +588,18 @@ npm run build
 
 Transmission is built as two separate apps, one for Apple Silicon Macs and one for Intel Macs (no universal build). Build output is in `dist/`: `Transmission-<version>-arm64.dmg` for Apple Silicon and `Transmission-<version>-x64.dmg` for Intel.
 
-The app is signed and notarized (Apple Developer ID), so it opens normally — no right-click-to-open or security override needed.
+The Mac app is signed and notarized (Apple Developer ID), so it opens normally — no right-click-to-open or security override needed.
+
+### Windows
+
+```bash
+# 64-bit Windows installer (.exe) — run on Windows
+npm run build:win
+```
+
+One x64 NSIS installer, `Transmission-<version>-windows-x64-setup.exe`, that installs for the current user with no administrator rights. Build it on Windows (the *Build Windows app* workflow does, on every `v*` tag): electron-builder packs the SQLite module for the platform it runs on, so a build from a Mac would carry the Mac binary, and `scripts/afterPack.js` stops it. The installer is not code-signed yet, so SmartScreen warns on first run (**More info → Run anyway**).
+
+On Windows, **Open in Claude** offers the Claude app route (the desktop extension) only; the Claude Code routes (Code tab, Terminal) are macOS-only.
 
 ### App Icon
 
