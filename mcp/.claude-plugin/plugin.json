@@ -2,6 +2,7 @@
   "name": "transmission",
   "version": "0.3.0",
   "description": "Read-only access to a Transmission content-audit project (.transmission), plus skills that help a content strategist run the audit: status briefs, section review, decision-consistency checks, and disciplined ad hoc questions.",
+  "license": "MIT",
   "author": {
     "name": "David Anderson"
   },

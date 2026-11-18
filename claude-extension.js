@@ -31,6 +31,7 @@ function buildMcpbManifest(version) {
     description: 'Ask questions of the content audit open in Transmission, and queue proposed changes for the auditor to accept or reject.',
     long_description: 'Connects Claude to the .transmission project open in the Transmission app. Claude can read rows, decisions, the sitemap, libraries, redirects and the change history, and count across them. It cannot edit the audit: the one write it has queues proposals, which appear in Transmission for the auditor to accept or reject.\n\nThe server follows whichever project Transmission has open. Keep Transmission running while you work.',
     author: { name: 'David Anderson' },
+    license: 'MIT',
     icon: 'icon.png',
     server: {
       type: 'node',
