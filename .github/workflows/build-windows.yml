@@ -23,8 +23,6 @@ on:
   push:
     tags:
       - 'v*'
-    branches:
-      - claude/windows-build   # TEMPORARY: remove before merging
   workflow_dispatch:
 
 permissions:
