@@ -11,6 +11,7 @@
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
     "build": "electron-builder --mac --arm64 --x64",
+    "build:win": "electron-builder --win --x64 -c.npmRebuild=false",
     "build:signed:sandboxed": "bash scripts/build-signed-mac.sh",
     "changelog:html": "node scripts/generate-changelog-html.js",
     "docs:html": "node scripts/generate-docs-site.js",
@@ -74,6 +75,24 @@
         }
       ]
     },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "${productName}-${version}-windows-${arch}-setup.${ext}",
+      "differentialPackage": false,
+      "shortcutName": "Transmission"
+    },
     "extraResources": [
       {
         "from": "mcp",
@@ -94,7 +113,7 @@
       "!node_modules/*/{CHANGELOG.md,README.md,readme.md,*.d.ts}",
       "!node_modules/.cache",
       "!node_modules/better-sqlite3/prebuilds/*.node",
-      "node_modules/better-sqlite3/prebuilds/darwin-${arch}.node",
+      "node_modules/better-sqlite3/prebuilds/${platform}-${arch}.node",
       "!node_modules/better-sqlite3/{deps,src}/**"
     ]
   }
