@@ -44,7 +44,33 @@ function stripProvenance(file) {
   fs.renameSync(tmp, file);
 }
 
+// package.json packs exactly one better-sqlite3 prebuild, `${platform}-${arch}`.
+// electron-builder expands ${platform} to the platform it is RUNNING on, not the
+// one it is building for (and ignores a platform-level `files` entry for
+// node_modules), so a cross-build — Windows from a Mac — packs the wrong binary
+// and the app can't open a project. Fail that build here instead of shipping it.
+// Build each platform on its own OS: a Mac for the dmgs, the Windows workflow
+// (.github/workflows/build-windows.yml) for the installer.
+function checkSqlitePrebuild(context) {
+  const resources = context.electronPlatformName === 'darwin'
+    ? path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
+    : path.join(context.appOutDir, 'resources');
+  const dir = path.join(resources, 'app.asar.unpacked', 'node_modules', 'better-sqlite3', 'prebuilds');
+  const want = `${context.electronPlatformName}-${archName(context.arch)}.node`;
+  const got = fs.existsSync(dir) ? fs.readdirSync(dir).filter(f => f.endsWith('.node')) : [];
+  if (got.length !== 1 || got[0] !== want) {
+    throw new Error(`[afterPack] expected exactly the SQLite prebuild ${want}, packed: ${got.join(', ') || 'none'}. `
+      + `Build ${context.electronPlatformName} on ${context.electronPlatformName}; cross-building packs the host's binary.`);
+  }
+}
+
+function archName(arch) {
+  // electron-builder's Arch enum: 0 ia32, 1 x64, 2 armv7l, 3 arm64, 4 universal.
+  return typeof arch === 'string' ? arch : ['ia32', 'x64', 'armv7l', 'arm64', 'universal'][arch];
+}
+
 module.exports = async function afterPack(context) {
+  checkSqlitePrebuild(context);
   if (context.electronPlatformName !== 'darwin') return;
 
   const appName = `${context.packager.appInfo.productFilename}.app`;

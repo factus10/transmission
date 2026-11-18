@@ -27,7 +27,7 @@ set -euo pipefail
 # -- is no longer written here. .github/workflows/pages.yml rebuilds the public
 # site when a release is published, and scripts/build-site.js derives the
 # manifest from the published releases: it only announces a release that has
-# both dmgs AND a release-notes/<version>.txt on main. So the notes file is the
+# both dmgs, the Windows installer AND a release-notes/<version>.txt on main. So the notes file is the
 # "announce" switch, and this script just waits for the site to serve it.
 #
 # Usage:
@@ -83,6 +83,11 @@ ARTIFACTS=()
 for a in "${ARCHES[@]}"; do
   ARTIFACTS+=("$PROJECT_DIR/dist/Transmission-$VERSION-$a.dmg")
 done
+# Windows: one x64 NSIS installer, built and checked by
+# .github/workflows/build-windows.yml (it can't be built on a Mac; see
+# scripts/afterPack.js). Unsigned for now.
+WIN_EXE="$PROJECT_DIR/dist/Transmission-$VERSION-windows-x64-setup.exe"
+ARTIFACTS+=("$WIN_EXE")
 
 say "Releasing $TAG"
 [ "$DRY_RUN" = 1 ] && warn "dry run — nothing will be published"
@@ -108,13 +113,16 @@ grep -q "^## \[$VERSION\]" "$PROJECT_DIR/CHANGELOG.md" \
 ok "CHANGELOG.md has a [$VERSION] section"
 
 for f in "${ARTIFACTS[@]}"; do
-  [ -f "$f" ] || die "missing $(basename "$f") — run npm run build:signed:sandboxed"
+  case "$f" in
+    *.exe) [ -f "$f" ] || die "missing $(basename "$f") — gh run download <run-id> --name transmission-windows --dir dist (from the Build Windows app workflow)" ;;
+    *)     [ -f "$f" ] || die "missing $(basename "$f") — run npm run build:signed:sandboxed" ;;
+  esac
 done
-ok "all ${#ARTIFACTS[@]} artifacts present (${ARCHES[*]})"
+ok "all ${#ARTIFACTS[@]} artifacts present (${ARCHES[*]} dmgs, Windows x64 installer)"
 
 # Stale artifacts from earlier versions make build-signed-mac.sh re-notarize
 # every dmg it finds, and make it easy to upload the wrong file by glob.
-STRAY="$(ls "$PROJECT_DIR"/dist/*.dmg "$PROJECT_DIR"/dist/*.zip 2>/dev/null \
+STRAY="$(ls "$PROJECT_DIR"/dist/*.dmg "$PROJECT_DIR"/dist/*.exe "$PROJECT_DIR"/dist/*.zip 2>/dev/null \
          | grep -v -- "-$VERSION-" || true)"
 if [ -n "$STRAY" ]; then
   echo "$STRAY" | sed 's/^/        /'
@@ -186,6 +194,15 @@ for a in "${ARCHES[@]}"; do
 done
 rm -rf "$MOUNT"; trap - EXIT
 
+# The Windows installer was verified where it was built (the workflow opens a
+# database with the packaged app's own runtime); here, just make sure the file
+# is what its name says, so a truncated or mislabeled download can't ship.
+printf '   -- %s (Windows x64)\n' "$(basename "$WIN_EXE")"
+file "$WIN_EXE" | grep -q "PE32" || die "$(basename "$WIN_EXE") is not a Windows executable"
+[ "$(wc -c < "$WIN_EXE" | tr -d ' ')" -gt 50000000 ] \
+  || die "$(basename "$WIN_EXE") is under 50 MB — a truncated download?"
+ok "Windows installer is a PE executable ($(( $(wc -c < "$WIN_EXE") / 1048576 )) MB)"
+
 # ── Release notes ───────────────────────────────────────────────────────────
 if [ -z "$NOTES_FILE" ]; then
   # No .md suffix: BSD mktemp (macOS) requires the X's to be the LAST characters
@@ -207,6 +224,8 @@ if [ -z "$NOTES_FILE" ]; then
 ---
 
 **Which file to download.** \`Transmission-$VERSION-arm64.dmg\` is for Macs with Apple Silicon (M1 or later). \`Transmission-$VERSION-x64.dmg\` is for Intel Macs. Not sure which you have? Apple menu → About This Mac: a "Chip" line says Apple Silicon, a "Processor" line names an Intel CPU.
+
+\`Transmission-$VERSION-windows-x64-setup.exe\` is for 64-bit Windows 10 and 11. It installs for your user account only, with no administrator rights needed. It isn't code-signed yet, so Windows may say it "protected your PC": choose **More info → Run anyway**.
 EOS
   cat >> "$NOTES_FILE" <<'EOS'
 

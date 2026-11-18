@@ -1,0 +1,14 @@
+# Check every text file out with LF, on Windows too. The tests lift functions
+# out of src/renderer.js by matching "\n}\n", the MCP server reads SKILL.md
+# frontmatter line by line, and the shell scripts must stay LF to run at all;
+# a CRLF checkout (git's default on Windows) breaks all three.
+* text=auto eol=lf
+
+*.png  binary
+*.icns binary
+*.ico  binary
+*.dmg  binary
+*.zip  binary
+*.xlsx binary
+*.transmission binary
+*.pdf  binary

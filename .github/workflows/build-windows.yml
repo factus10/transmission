@@ -1,0 +1,106 @@
+# Windows build: an x64 NSIS installer, per-user (no admin rights needed).
+#
+#   Transmission-<version>-windows-x64-setup.exe
+#
+# UNSIGNED for now. Windows SmartScreen warns on first run ("Windows protected
+# your PC" → More info → Run anyway); the download page says so. Signing needs a
+# code-signing certificate and is a later change to this file.
+#
+# Like build-mac.yml this builds and uploads an artifact; it never publishes.
+# Releasing stays local, through scripts/publish-release.sh:
+#
+#   rm -f dist/*.exe
+#   gh run download <run-id> --name transmission-windows --dir dist
+#   npm run release:publish
+#
+# Windows has to be built ON Windows: package.json packs the SQLite prebuild for
+# the platform electron-builder runs on, and scripts/afterPack.js fails a
+# cross-build rather than ship the Mac binary inside a Windows app.
+
+name: Build Windows app
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      # --ignore-scripts skips the postinstall electron-rebuild, which would
+      # compile better-sqlite3 from source for nothing: it ships an N-API
+      # prebuild for win32-x64, and that prebuild is what the app loads.
+      # (electron-builder downloads its own copy of Electron.)
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Check tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          TAG="${GITHUB_REF_NAME#v}"
+          [ "$PKG" = "$TAG" ] || { echo "::error::tag $GITHUB_REF_NAME but package.json is $PKG"; exit 1; }
+
+      - name: Build the installer
+        run: npx electron-builder --win --x64 -c.npmRebuild=false --publish never
+        env:
+          # No certificate: don't let electron-builder go looking for one.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Verify the artifacts
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          EXE="dist/Transmission-$VERSION-windows-x64-setup.exe"
+          [ -f "$EXE" ] || { echo "::error::missing $EXE"; ls dist; exit 1; }
+
+          RES="dist/win-unpacked/resources"
+          PREBUILDS="$(ls "$RES/app.asar.unpacked/node_modules/better-sqlite3/prebuilds/" | tr '\n' ' ' | sed 's/ $//')"
+          [ "$PREBUILDS" = "win32-x64.node" ] || { echo "::error::SQLite prebuilds '$PREBUILDS', expected win32-x64.node"; exit 1; }
+          [ -f "$RES/mcp/server.js" ] || { echo "::error::the MCP server (resources/mcp) is missing"; exit 1; }
+
+          # Open a database with the packaged Electron's own runtime: the one
+          # thing a wrong or missing native binary breaks, and nothing else
+          # here would notice until a user opened a project.
+          ELECTRON_RUN_AS_NODE=1 dist/win-unpacked/Transmission.exe -e "
+            const path = require('path');
+            const Database = require(path.join(path.dirname(process.execPath), 'resources', 'app.asar', 'node_modules', 'better-sqlite3'));
+            const db = new Database(':memory:');
+            console.log('SQLite', db.prepare('select sqlite_version() v').get().v, 'loads in the packaged app');
+          "
+          ls -l "$EXE"
+
+      - name: Upload the installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: transmission-windows
+          path: dist/Transmission-*-windows-x64-setup.exe
+          if-no-files-found: error
+          retention-days: 30
