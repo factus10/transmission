@@ -8189,42 +8189,83 @@ function renderPickerLists() {
   }
   visibleList.forEach(({ h, idx: i }) => {
     const item = createPickerItem(h, dragEnabled);
-    item.draggable = dragEnabled;
     item.dataset.index = i;
 
     item.addEventListener('click', () => {
+      if (_pickerDrag.suppressClick) { _pickerDrag.suppressClick = false; return; }
       state.pickerSelected.visible   = h;
       state.pickerSelected.available = null;
       renderPickerLists();
     });
     if (state.pickerSelected.visible === h) item.classList.add('selected');
 
-    // Drag to reorder
-    item.addEventListener('dragstart', e => {
-      e.dataTransfer.setData('text/plain', i);
-      item.style.opacity = '0.4';
-    });
-    item.addEventListener('dragend', () => { item.style.opacity = ''; });
-    item.addEventListener('dragover', e => {
-      e.preventDefault();
-      document.querySelectorAll('#picker-visible .picker-item').forEach(
-        el => el.classList.remove('drag-over')
-      );
-      item.classList.add('drag-over');
-    });
-    item.addEventListener('drop', e => {
-      e.preventDefault();
-      item.classList.remove('drag-over');
-      const fromIndex = parseInt(e.dataTransfer.getData('text/plain'));
-      const toIndex   = i;
-      if (fromIndex === toIndex) return;
-      const moved = state.pickerVisible.splice(fromIndex, 1)[0];
-      state.pickerVisible.splice(toIndex, 0, moved);
-      renderPickerLists();
-    });
+    // Drag to reorder. Pointer events, not HTML5 drag-and-drop: a native drag
+    // session never started from these rows on macOS (issue #40), and pointer
+    // events behave the same in every Electron/Chromium build.
+    if (dragEnabled) item.addEventListener('pointerdown', e => startPickerReorder(e, item, i));
 
     els.pickerVisible.appendChild(item);
   });
+}
+
+// Pointer-driven reorder for the visible-fields list. A press only becomes a
+// drag after the pointer moves a few pixels, so a plain click still selects.
+const _pickerDrag = { suppressClick: false };
+
+function startPickerReorder(e, item, fromIndex) {
+  if (e.button !== 0) return;
+  const startY = e.clientY;
+  let dragging = false;
+  let toIndex = fromIndex;
+  const rows = () => [...els.pickerVisible.querySelectorAll('.picker-item')];
+  const clearMarks = () => rows().forEach(el => el.classList.remove('drag-over', 'drag-over-after'));
+
+  const onMove = ev => {
+    if (!dragging) {
+      if (Math.abs(ev.clientY - startY) < 4) return;
+      dragging = true;
+      item.classList.add('dragging');
+      document.body.classList.add('picker-reordering');
+    }
+    ev.preventDefault();
+    // Insertion point = the first row whose midpoint is below the pointer.
+    const list = rows();
+    let insertAt = list.length;
+    for (let k = 0; k < list.length; k++) {
+      const r = list[k].getBoundingClientRect();
+      if (ev.clientY < r.top + r.height / 2) { insertAt = k; break; }
+    }
+    clearMarks();
+    if (insertAt < list.length) list[insertAt].classList.add('drag-over');
+    else if (list.length) list[list.length - 1].classList.add('drag-over-after');
+    // Removing the dragged row first shifts every later slot up by one.
+    toIndex = insertAt > fromIndex ? insertAt - 1 : insertAt;
+  };
+  const finish = commit => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onCancel);
+    document.removeEventListener('keydown', onKey, true);
+    item.classList.remove('dragging');
+    document.body.classList.remove('picker-reordering');
+    clearMarks();
+    if (!dragging) return;
+    _pickerDrag.suppressClick = true;
+    setTimeout(() => { _pickerDrag.suppressClick = false; }, 0);
+    if (commit && toIndex !== fromIndex) {
+      const moved = state.pickerVisible.splice(fromIndex, 1)[0];
+      state.pickerVisible.splice(toIndex, 0, moved);
+      renderPickerLists();
+    }
+  };
+  const onUp = () => finish(true);
+  const onCancel = () => finish(false);
+  const onKey = ev => { if (ev.key === 'Escape' && dragging) { ev.stopPropagation(); finish(false); } };
+
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onCancel);
+  document.addEventListener('keydown', onKey, true);
 }
 
 function createPickerItem(label, showHandle) {

@@ -6,6 +6,10 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Reordering visible fields works again.** In **Choose visible fields**, dragging a field in the Visible list now moves it. Before, the drag handles showed but rows wouldn't move. A line shows where the field will land, and Esc cancels the drag. A plain click still selects the field.
+
 ## [2.28.0] — "Please, Please, Please, Let Me Get What I Want"
 
 ### Added
