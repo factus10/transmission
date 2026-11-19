@@ -8,7 +8,7 @@ The final pass before you ship: one command that runs every validation, plus the
 
 ## 0. The mental model
 
-- The **Pre-Handoff Check** rolls every validation the app knows how to do into a single pass/issue report — so you don't have to remember to run six separate checks.
+- The **Pre-Handoff Check** rolls every validation the app knows how to do into a single pass/issue report — so you don't have to remember to run each check separately.
 - It's a **gate, not a fix**: it tells you what's wrong and how to fix each, with a sample of offending rows. Fix, re-run, repeat until clean.
 - The **change log** is your audit trail — every decision change, captured automatically, written to the file on save.
 
@@ -19,11 +19,12 @@ The final pass before you ship: one command that runs every validation, plus the
 **Migration → Pre-Handoff Check…** runs all of these at once and reports "**Ready for handoff**" or "**N issues across M checks**":
 
 1. **Every page has an MRA decision** — no unreviewed rows.
-2. **Consolidate pages point to a target** — no dangling consolidations.
-3. **Consolidate targets are live** — none point at an Archive/Exclude page.
-4. **No redirect chains** — no Archive redirecting into another Archive/404.
-5. **No duplicate nav IDs** — *(nav-tree files only)*.
-6. **No empty nav leaves** — *(nav-tree files only)*.
+2. **No urgent client questions still open** — every page you marked **Urgent** with **Ask client** has an SME answer. Normal-priority questions don't block a handoff.
+3. **Consolidate pages point to a target** — no dangling consolidations.
+4. **Consolidate targets are live** — none point at an Archive/Exclude page.
+5. **No redirect chains** — no Archive redirecting into another Archive/404.
+6. **No duplicate nav IDs** — *(nav-tree files only)*.
+7. **No empty nav leaves** — *(nav-tree files only)*.
 
 Each failing check lists a sample of the offending pages and a one-line fix (which filter to use, which editor to open). Nav checks are skipped automatically if the file has no Sitemap sheet.
 
@@ -46,7 +47,7 @@ Every change to a decision field (MRA, SME Decision, Final MRA, and auto-filled 
 ## Quick checklist for "ready to hand off"
 
 - [ ] **Pre-Handoff Check** reports **Ready for handoff** (0 issues)
-- [ ] All six checks pass (or nav checks legitimately N/A)
+- [ ] All seven checks pass (or nav checks legitimately N/A)
 - [ ] Check report exported as evidence if the process requires it
 - [ ] Final **Save** — change log written to the file
 - [ ] Outputs generated: reports, **Redirect Map**, **Migration Tracker**
