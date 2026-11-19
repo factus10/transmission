@@ -199,7 +199,7 @@ These are your personal preferences. They follow you from project to project and
 
 ### Configure the project
 
-Open **File → Project Settings…** to find five tabs. You don't need to fill in everything up front, but a minute here smooths out the whole audit.
+Open **File → Project Settings…** to find seven tabs. Five are described below; **Audience** and **Sites** have their own sections ([Audience](#audience-who-is-this-page-for), [Consolidating several sites into one](#consolidating-several-sites-into-one)). You don't need to fill in everything up front, but a minute here smooths out the whole audit.
 
 #### Identity
 
@@ -214,6 +214,7 @@ Beyond the five built-in calls (Migrate, Revise, Archive, Consolidate, Exclude),
 This tab is also where you tidy up messy values:
 
 - **Merge a state.** Every state has a **Merge…** button that reassigns all its rows to another target. Targets are grouped into built-in states, your other custom states, and *undefined values found in the data* (typos like `POST LAUNCH`). Before committing, the dialog previews exactly how many `MRA_Recommendation`, `Final_MRA`, and `SME_Decision: Change: …` cells will change. Use it to fix typos from SMEs or earlier auditors, fold two redundant states into one, or retire a custom state into a built-in one.
+- **Client review reasons.** The list of reasons offered in the **Ask client** dialog (Accuracy, Compliance/legal, Ownership, Consolidate target, Domain knowledge and Other to start). Add, rename or delete them to suit the client's organization; each shows how many pages use it, and a rename or delete updates those pages in one undoable step. See [Questions to the client](#questions-to-the-client).
 - **Undefined values in data.** A sub-list shows MRA values sitting in the data that aren't built-in or custom — usually typos or legacy values. Each has its own **Merge…**. Whitespace is forgiven (`Post Launch` and `Post Launch ` match), but case matters (`POST LAUNCH` and `Post Launch` are listed separately, in case you want to normalize one into the other).
 
 #### Suggestions
@@ -323,7 +324,7 @@ A few things speed this up:
 
 - **Notes** — click **Notes** in the Decide cluster to record *why* you made a call. A small dot on the button marks the pages that have notes.
 - **Flag** — press **F** (or click the ★) to flag a page you want to revisit, then filter to flagged pages later. The flag is your own bookmark; the client never sees it.
-- **Ask client** — press **C** (or click **Ask client**) when the call needs the client. Choose **Needs decision** if you reviewed the page but can't make the call (you can leave the decision blank), or **Please confirm** if you made a call and want it checked. Say whether a wrong call would be **Normal** or **Urgent**, and pick a **reason** so the client knows who should answer. Then write the actual question in **Notes**, which go to the client in the SME worksheet. The page shows a blue **?** in the sidebar (red when urgent) until the SME answers it.
+- **Ask client** — press **C** (or click **Ask client**) when the call needs the client. Choose **Needs decision** if you reviewed the page but can't make the call (you can leave the decision blank), or **Please confirm** if you made a call and want it checked. Say whether a wrong call would be **Normal** or **Urgent**, and pick a **reason** so the client knows who should answer. Then write the actual question in **Notes**, which go to the client in the SME worksheet. The page shows a blue **?** in the sidebar (red when urgent) until the SME answers it. The whole loop, from asking to handoff, is in [Questions to the client](#questions-to-the-client).
 - **Assess** — runs your rubric against the page and suggests a call; more in [Suggested_MRA](#8-suggested_mra).
 
 ### Classify as you go (optional)
@@ -1039,7 +1040,7 @@ Three columns track the decision as it moves:
 
 ### Export for review
 
-Open **SME → Export for SME Review…**. You can scope the export to a **Group**, a **Primary Tag**, or **All**, and the file ships with data-validation dropdowns on the SME_Decision column so reviewers pick from valid options.
+Open **SME → Export for SME Review…**. You can scope the export to a **Group**, a **Primary Tag**, **All**, or **Open client-review items only**, and the file ships with data-validation dropdowns on the SME_Decision column so reviewers pick from valid options.
 
 > **Tip:** if different people own different sections, tick **Split by Content Owner** — Transmission writes one file per owner (named for them) into a folder you choose, so each reviewer sees only their pages.
 
@@ -1058,13 +1059,50 @@ For each page, the SME chooses **Approve** (they agree) or a **Change: …** opt
 
 The sidebar's **SME conflicts** and **SME pending** filters help you work the list down, and turning on **Show SME fields** lets you reconcile right in the audit bar.
 
+### Questions to the client
+
+Not every page needs the client, and the SME round is mostly them confirming your calls. Some pages are different: you looked and genuinely can't decide (who owns this? is it still accurate? is there a legal reason to keep it?), or you decided and aren't sure. **Client review** marks those pages so the question goes out with the SME worksheet, and so nobody mistakes them for pages you haven't looked at.
+
+**Asking.** Select the page and press **C** (or click **Ask client** in the Decide cluster). The dialog asks three things:
+
+| Field | Choices | What it means |
+|---|---|---|
+| **Status** | **Needs decision** · **Please confirm** | *Needs decision*: you reviewed the page but can't make the call, so the decision can stay blank. *Please confirm*: you made a call and want it checked. It needs a decision on the page, so it's greyed out until there is one. |
+| **Priority** | **Normal** · **Urgent** | How costly a wrong call would be (legal or compliance risk, a high-traffic page, a contractual requirement). It's a separate question from how confident you are: a page can be a confident call and still urgent to confirm. |
+| **Reason** | your project's list | Tells the client who should answer. Edit the list in **Project Settings → Decision states**. |
+
+Then write the question itself in **Notes**. The worksheet carries your notes, so be specific: "Is the 2023 tuition table still the one in force?" gets an answer; "please check" doesn't.
+
+To ask about many pages at once, filter or select them and use the Multi-bar's **Ask client**, **Set client-review priority** or **Set client-review reason** ([Bulk Operations](#5-bulk-operations)).
+
+> **Tip:** the ★ flag is still yours. Flag what *you* want to come back to; ask the client about what only *they* can answer. The flag never leaves your copy of the project.
+
+**Finding them.** A blue **?** marks the page in the sidebar: red when urgent, outlined for *Please confirm*, faded once answered. Three filters in the MRA list:
+
+- **Client review: open** — every question still waiting for an answer.
+- **Client review: urgent (open)** — the ones that matter most.
+- **Reviewed, undecided** — *Needs decision* pages with no decision yet. These count as unreviewed (nothing has been decided), but you have looked at them, so **]** (next unreviewed) skips them and the Audit Progress dashboard shows them on their own line under *Unreviewed*.
+
+**Sending them.** The SME export includes the three client-review columns whenever any exported page has a question. Open questions sort to the top (urgent, then needs decision, then please confirm), and the **Open client-review items only** scope sends just those. The reviewer answers them the same way as any other row.
+
+**When it's answered.** A question is **open** until `SME_Decision` has something in it: Approve, a Change, or a decision in the SME's own words. There's nothing to clear afterward. The request stays on the page as a record of what you asked, and the **?** fades. Then resolve as usual: an answer to a *Needs decision* page usually becomes its decision through **Resolve Conflicts**.
+
+**Reporting on them.**
+
+- **SME Review Status** has a *Questions to the Client* section: open, urgent and answered counts, open questions by owner and by reason (urgent first, so it reads as a chase list), and every open question with the page, its current call and your question.
+- The **Executive Summary** says how many pages are waiting on the client's team, and how many of those are urgent.
+- The **Pre-Handoff Check** won't report *Ready for handoff* while an **urgent** question is open. Normal ones don't block it: answer the urgent ones, or lower the priority of any that no longer matter.
+
 ### Quick self-check
 
+- [ ] Every page you couldn't call is marked **Needs decision**, with the question in Notes
+- [ ] Urgent is kept for the pages where a wrong call is costly
 - [ ] Exported (split by owner if there are multiple reviewers)
 - [ ] Their file imported — the SME columns are populated
 - [ ] You reviewed the divergence in **Compare MRA vs SME**
 - [ ] **Resolve Conflicts** is done — every reviewed page has a **Final MRA**
 - [ ] The **SME conflicts** and **SME pending** filters are empty
+- [ ] **Client review: urgent (open)** is empty
 
 ---
 
@@ -1686,7 +1724,7 @@ Claude never edits the audit. When you ask it to — typically after confirming 
 
 **Review Proposals** (either button, or Project → Review Proposals…) groups them by what is being proposed, so a hundred "Archive — archival news" rows are one decision. Each group shows how many pages, what they currently hold, and who proposed it; ▸ opens the pages with each one's current value and reason. Tick the groups you agree with and **Accept selected**: the values are written exactly as if you had made the edits — through the same paths, into the change log (with a second `(proposal accepted)` entry carrying the source and reason), and as one `Cmd+Z`. Accepting an Archive offers the same sitemap/redirect cleanup as any other Archive. **Reject selected** records the refusal so it isn't proposed again; unticked groups stay queued.
 
-What a proposal may touch is deliberately narrow: the decision, notes, tags, group, content type and theme, renders-as, migration track, published status, audiences, primary audience and jobs. Tags, audiences and jobs are *added* to a page, never removed; a note is appended under what's there. `Final_MRA`, sitemap placement, redirects and consolidation targets cannot be proposed — those are set in the app, by you. Proposals need a `.transmission` project (they live in the file), and the file moves to a newer format the first time this version opens it; older builds of Transmission will ask you to update before opening it.
+What a proposal may touch is deliberately narrow: the decision, notes, tags, group, content type and theme, renders-as, migration track, published status, audiences, primary audience, jobs, and a [client question](#questions-to-the-client) (status, priority and reason). A page Claude can't call is a good candidate for a proposed *Needs decision* with the question in a note. Tags, audiences and jobs are *added* to a page, never removed; a note is appended under what's there. `Final_MRA`, sitemap placement, redirects and consolidation targets cannot be proposed — those are set in the app, by you. Proposals need a `.transmission` project (they live in the file), and the file moves to a newer format the first time this version opens it; older builds of Transmission will ask you to update before opening it.
 
 **What it deliberately can't do**
 
@@ -1714,7 +1752,7 @@ With a `.transmission` project open, click **✦** in the title bar (or Project 
 
 The skills only work where the Transmission extension is connected — the Claude desktop app, not claude.ai in a browser. When a Transmission release changes a playbook, replace that skill in **Settings → Capabilities → Skills** with the new zip (remove the old one first if Claude won't take a second skill with the same name). Keeping the **+** prompts as well does no harm: they're the same instructions.
 
-**With Claude Code.** If the `claude` command is installed, the same dialog offers **Code tab** and **Terminal** links: a new Claude Code session with this project connected and the skills loaded. The plugin ships inside Transmission and registers itself with Claude Code the first time (a few seconds); this route also needs Node 22.13 or newer. The dialog tells you if anything is missing. Transmission also notes which project it has open, so a session you start by hand in Claude connects to it without being told. Migrate Transmission open while you work: Claude sees each autosave within a couple of seconds, and its proposals show up in the same dialog.
+**With Claude Code.** If the `claude` command is installed, the same dialog offers **Code tab** and **Terminal** links: a new Claude Code session with this project connected and the skills loaded. The plugin ships inside Transmission and registers itself with Claude Code the first time (a few seconds); this route also needs Node 22.13 or newer. The dialog tells you if anything is missing. Transmission also notes which project it has open, so a session you start by hand in Claude connects to it without being told. Keep Transmission open while you work: Claude sees each autosave within a couple of seconds, and its proposals show up in the same dialog.
 
 **Setting it up by hand** (if you'd rather register it once)
 
@@ -1754,7 +1792,7 @@ Then, in a conversation: *"Open the project at /path/to/audit.transmission and g
 
 The **Reports** menu holds everything above. The separate **Migration** menu is reserved for export and validation *tools* rather than reports — Pre-Handoff Check, Migration Tracker, Export Redirect Map (CSV), and Redirect Chain Check.
 
-For a live progress view rather than a formal report, open the **Progress Dashboard** with **Cmd+P** (or **View → Audit Progress**): client and project, total and percent reviewed, the MRA breakdown as a stacked bar, flagged/tagged/noted counts, a by-group breakdown, and SME stats. It exports to PDF or HTML using the same layout as every other report: the content-page split, SME review, and a by-section table with each decision's share.
+For a live progress view rather than a formal report, open the **Progress Dashboard** with **Cmd+P** (or **View → Audit Progress**): client and project, total and percent reviewed, the MRA breakdown as a stacked bar, flagged/tagged/noted counts, a by-group breakdown, and SME stats. When you've asked the client anything, *Unreviewed* is split into pages nobody has looked at and pages waiting on a client decision, and a *Client review* block counts open, urgent and answered questions. It exports to PDF or HTML using the same layout as every other report: the content-page split, SME review, and a by-section table with each decision's share.
 
 Every report's header shows the client and project, the date it was generated, and, when the crawl export includes Screaming Frog's **Crawl Timestamp** column, the dates the site was crawled. The crawl date is the real "as of" date for the page data; your decisions are always current.
 
@@ -1936,6 +1974,9 @@ Injected into every file on open if not already present.
 | **SME_Notes** | SME reviewer notes |
 | **Content_Owner** | Person responsible for the page |
 | **Final_MRA** | Resolved recommendation after SME review (incl. Consolidate) |
+| **Client_Review** | Your question to the client: Needs decision / Please confirm. Open until SME_Decision is filled |
+| **Client_Review_Priority** | Normal / Urgent: how costly a wrong call would be |
+| **Client_Review_Reason** | Why the client is needed (Project Settings → Decision states) |
 | **Consolidate_Into** | Consolidation target URL |
 | **Published_Status** | Published / Unpublished / Draft / 404 |
 | **Page_Type** | UI "Content Type"; key into the crosswalk |
@@ -1973,6 +2014,7 @@ Internal (hidden from the field bar, saved in the file): `_Flagged`, `_AssessedA
 | **1 / 2 / 3 / 4 / 5 / 0** | Migrate / Revise / Archive / Consolidate / Exclude / Clear (no input focused) |
 | **?** | Keyboard cheat-sheet |
 | **F** | Toggle flag on the selected row |
+| **C** | Ask client (client review) for the selected row |
 | **Arrow Up / k** · **Arrow Down / j** | Previous / next row |
 | **]** | Jump to next unreviewed row (wraps) |
 | **Escape** | Close popover, modal, or tour |

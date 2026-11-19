@@ -64,6 +64,8 @@ Recurring situations in real audits where the four-state MRA vocabulary doesn't 
 
 **What's really going on:** [Process State](./the-five-dimensions.md#4-process-state--where-is-this-decision-in-the-workflow) is a missing dimension. MRA assumes binary (decided / not decided).
 
+**In Transmission today:** press **C** (*Ask client*) and mark the page **Needs decision**, with the question in Notes. It stays out of the "nobody looked" count, goes to the client at the top of the SME worksheet, and counts as open until the SME answers. See [Questions to the client](../USER_GUIDE.md#questions-to-the-client).
+
 ---
 
 ## E. The Split

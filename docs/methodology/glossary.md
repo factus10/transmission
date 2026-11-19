@@ -28,6 +28,9 @@ The proposed framework that decompresses MRA into separate columns for Scope, Co
 ### Cannibalization
 When multiple URLs on the same site target the same query/topic and dilute each other's ranking. The textbook fix is consolidation. See Pattern B in [Patterns](./patterns.md#b-the-implicit-consolidate).
 
+### Client Review
+Transmission's record of a question for the client: `Client_Review` = **Needs decision** (the auditor looked and can't make the call) or **Please confirm** (a call made with low confidence), plus a priority (Normal / Urgent) and a reason. Open until the SME answers. Covers the stakeholder part of [Process State](#process-state). See [Questions to the client](../USER_GUIDE.md#questions-to-the-client).
+
 ### Compression problem
 The argument that MRA collapses five independent decisions into one column, hiding important distinctions. The central thesis of [Why MRA Falls Short](./the-five-dimensions.md).
 
@@ -83,7 +86,7 @@ Named patterns in [Patterns Where MRA Breaks](./patterns.md). Each is a recurrin
 Statistical normalization method used in the audit tool's [GA MRA](../USER_GUIDE.md#8-suggested_mra) feature: each page's metric value is converted to its percentile rank against all other pages, so values across radically different scales (sessions, engagement rate, duration) become comparable.
 
 ### Process State
-Where a decision sits in the audit workflow. One of the [Five Dimensions](./the-five-dimensions.md#4-process-state--where-is-this-decision-in-the-workflow). Values: Unreviewed, InReview, Decided, PendingSME, PendingStakeholder, Resolved.
+Where a decision sits in the audit workflow. One of the [Five Dimensions](./the-five-dimensions.md#4-process-state--where-is-this-decision-in-the-workflow). Values: Unreviewed, InReview, Decided, PendingSME, PendingStakeholder, Resolved. Transmission records the stakeholder part as [Client Review](#client-review).
 
 ### Revise
 MRA state (formerly **Evolve**): content has value but needs work. Improve in place — rewrite, expand, restructure, update — without changing its identity. See [KKE Classic](./kke-classic.md#evolve).

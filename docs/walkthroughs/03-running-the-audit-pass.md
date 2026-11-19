@@ -37,7 +37,8 @@ With a row selected, the **Decide** cluster shows the **MRA** buttons. Set the r
 ## 2. Record rationale and flag follow-ups
 
 - **Notes** (Decide cluster) opens a popover for rationale; a dot indicator shows when a row has notes.
-- **F** flags / unflags the current row (★). Flagged rows are filterable later (the **Flagged** special filter) — use it to mark "come back to this."
+- **F** flags / unflags the current row (★). Flagged rows are filterable later (the **Flagged** special filter) — use it to mark "come back to this." The flag is yours alone; the client never sees it.
+- **C** (or **Ask client**) sends the page to the client when the call is theirs to make. **Needs decision** = you looked and can't decide (leave the MRA blank); **Please confirm** = you decided and want it checked. Set **Urgent** when a wrong call would be costly, pick a reason, and write the question in **Notes**. A blue **?** marks the page until the SME answers, and **]** skips pages waiting on the client. More: [Questions to the client](../USER_GUIDE.md#questions-to-the-client).
 - **Assess** runs the rubric against the current page (see **Suggested_MRA**).
 
 ---
@@ -71,6 +72,7 @@ The **webview toolbar** below the field bar gives you:
 - [ ] Rationale captured in **Notes** where the call isn't obvious
 - [ ] **Content Type** set where it'll drive migration classification
 - [ ] Tricky pages **flagged (F)** for a second look
+- [ ] Pages only the client can call are marked **Ask client (C)**, with the question in Notes
 - [ ] Saved (**Cmd+S**) — calls and the change log persist to the file
 
 ---

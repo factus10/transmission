@@ -22,6 +22,7 @@ The SME's columns (**SME_Decision**, **SME_Notes**, **Content_Owner**) merge in 
 
 1. **SME → Export for SME Review…** opens the export modal.
 2. Optionally **split by Content Owner** — produces one file per owner so each reviewer sees only their pages.
+   Pages you asked the client about (**C**) travel with their status, priority and reason, sorted to the top (urgent first). Choose **Open client-review items only** to send just those.
 3. The export uses ExcelJS to embed **data-validation dropdowns** (so SMEs pick from a fixed list, not free-type), and ships.
 
 > The file is fully standalone — hand it off by email; the reviewer needs no install.
@@ -49,6 +50,8 @@ Each page row offers an **SME Decision**: **Approve** the recommendation, or **C
 
 Two sidebar special filters help you work the list: **SME conflicts** and **SME pending**.
 
+A client question counts as **answered** as soon as `SME_Decision` has anything in it; nothing needs clearing. **Reports → SME Review Status** lists the ones still open by owner and reason, and **Client review: urgent (open)** finds the urgent ones, which block the Pre-Handoff Check. More: [Questions to the client](../USER_GUIDE.md#questions-to-the-client).
+
 > Turn on **Show SME fields** (App Settings) to see SME Decision / Final MRA / Content Owner inline in the **Decide** cluster while you reconcile.
 
 ---
@@ -60,6 +63,7 @@ Two sidebar special filters help you work the list: **SME conflicts** and **SME 
 - [ ] **Compare MRA vs SME** reviewed for divergence
 - [ ] **Resolve Conflicts** run — every reviewed page has a **Final MRA**
 - [ ] **SME conflicts / pending** filters are empty
+- [ ] **Client review: urgent (open)** is empty
 - [ ] Saved (**Cmd+S**)
 
 ---

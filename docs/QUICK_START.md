@@ -57,7 +57,7 @@ Everything **auto-saves** 2 seconds after you stop — watch the title bar: *●
 
 ## 5. Check & hand off  ·  before you ship
 
-1. **Migration → Pre-Handoff Check** — one report flags everything that isn't ready: unreviewed pages, consolidate targets that don't exist (or point at an Archive page), redirect chains, duplicate nav IDs, empty sitemap nodes. Fix what it finds.
+1. **Migration → Pre-Handoff Check** — one report flags everything that isn't ready: unreviewed pages, urgent client questions with no answer yet, consolidate targets that don't exist (or point at an Archive page), redirect chains, duplicate nav IDs, empty sitemap nodes. Fix what it finds.
 2. **Reports** menu — Executive Summary, Content Inventory, SME Review Status, Sitemap Coverage, Migration Checklist, and more (export each as PDF or Word-compatible HTML).
 3. **File → Export… (Cmd+Shift+E)** — filtered rows, audit decisions (CSV/JSON), redirect map (CSV), or the multi-sheet Migration Tracker for engineering.
 
@@ -65,11 +65,11 @@ Everything **auto-saves** 2 seconds after you stop — watch the title bar: *●
 
 ## The shortcuts worth memorizing
 
-`1`–`5` set MRA · `0` clears · `]` next unreviewed · `F` flag · `j`/`k` or arrows move · `Cmd+F` global search · `Cmd+S` save · `?` all shortcuts.
+`1`–`5` set MRA · `0` clears · `]` next unreviewed · `F` flag · `C` ask the client · `j`/`k` or arrows move · `Cmd+F` global search · `Cmd+S` save · `?` all shortcuts.
 
 ## Bringing in a subject-matter expert?
 
-`SME → Export for SME Review` → they fill in decisions in Excel → `SME → Import SME Decisions` → `SME → Compare MRA vs SME` (side-by-side) → `Resolve Conflicts` to finalize.
+`SME → Export for SME Review` → they fill in decisions in Excel → `SME → Import SME Decisions` → `SME → Compare MRA vs SME` (side-by-side) → `Resolve Conflicts` to finalize. Pages only the client can call: press `C` (**Ask client**) as you audit and write the question in Notes; they go out at the top of the worksheet.
 
 ---
 
