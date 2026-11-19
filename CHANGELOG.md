@@ -6,6 +6,8 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+## [2.28.0] — "Please, Please, Please, Let Me Get What I Want"
+
 ### Added
 
 - **Ask the client.** When you can't make a call on a page, or made one you aren't sure of, click **Ask client** in the audit bar (or press **C**). Mark the page **Needs decision** (you reviewed it but can't decide; the decision can stay blank) or **Please confirm** (you made a call and want it checked), say whether a wrong call is **Normal** or **Urgent**, and pick a **reason** so the client can send it to the right person. Write the question itself in Notes. The page gets a blue **?** in the sidebar (red when urgent), and three new filters find them: *Client review: open*, *Client review: urgent (open)* and *Reviewed, undecided*. An item stays open until the SME answers it. The SME worksheet carries the three columns, lists open items first (urgent, then needs decision, then please confirm), and can export only the open ones. Audit Progress splits *Unreviewed* into pages nobody has looked at and pages waiting on the client, and **]** (next unreviewed) skips the ones waiting on the client. Edit the reasons in **Project Settings → Decision states**.
