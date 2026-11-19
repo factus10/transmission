@@ -27727,6 +27727,11 @@ function reportExecutiveSummary() {
     findings.push(`${pctOf(cCounts[st])} of content pages (${cCounts[st].toLocaleString()}) are marked ${st}`);
   });
   if (stats.contentUnreviewed > 0) findings.push(`${stats.contentUnreviewed.toLocaleString()} content pages (${pctOf(stats.contentUnreviewed)}) still pending review`);
+  if (stats.clientReviewOpen > 0) {
+    const n = stats.clientReviewOpen, u = stats.clientReviewUrgent;
+    const urgentText = !u ? '' : n === 1 ? ' (urgent)' : u === n ? ', all of them urgent' : `, ${u.toLocaleString()} of them urgent`;
+    findings.push(`${n.toLocaleString()} page${n !== 1 ? 's are' : ' is'} waiting on a decision or a confirmation from your team${urgentText}`);
+  }
   if (stats.nonContentRedirects > 0) {
     findings.push(`${stats.nonContentRedirects} crawled URL${stats.nonContentRedirects !== 1 ? 's are' : ' is'} an existing redirect, not a page — each needs a carry-forward decision, but none is content to migrate`);
   }
@@ -27751,6 +27756,7 @@ function reportExecutiveSummary() {
   if (stats.contentUnreviewed > 0) nextSteps.push(`Finish reviewing the ${stats.contentUnreviewed.toLocaleString()} content page${stats.contentUnreviewed !== 1 ? 's' : ''} still pending.`);
   const smePending = reportRows().filter(r => !String(r[finalKkeCol()] || '').trim()
     && parseSmeDecision(r[smeDecisionCol()], String(r[kkeCol()] || '').trim()).changed).length;
+  if (stats.clientReviewOpen > 0) nextSteps.push(`Answer the ${stats.clientReviewOpen.toLocaleString()} open question${stats.clientReviewOpen !== 1 ? 's' : ''} sent to your team${stats.clientReviewUrgent && stats.clientReviewUrgent < stats.clientReviewOpen ? ', urgent ones first' : ''} (they're in the SME worksheet).`);
   if (smePending > 0) nextSteps.push(`Resolve ${smePending.toLocaleString()} SME change request${smePending !== 1 ? 's' : ''} (SME → Resolve Conflicts).`);
   resolveRedirectDestinations();
   const tbdCount = reportRows().filter(r => { const e = redirectEntryForRow(r); return e && e.kind === 'tbd'; }).length;
@@ -27782,6 +27788,7 @@ function reportExecutiveSummary() {
     ${ncRows}
     <div class="stat-row"><span class="stat-label">Content pages audited</span><span class="stat-value">${cTotal}</span></div>
     <div class="stat-row"><span class="stat-label">Content pages reviewed</span><span class="stat-value">${stats.contentReviewed} (${stats.contentPct}%)</span></div>
+    ${stats.clientReviewOpen > 0 ? `<div class="stat-row"><span class="stat-label">Waiting on your team</span><span class="stat-value">${stats.clientReviewOpen.toLocaleString()}${stats.clientReviewUrgent ? ` (${stats.clientReviewUrgent.toLocaleString()} urgent)` : ''}</span></div>` : ''}
     ${ncNote}
     ${kkeBarHtml(cCounts, cTotal)}
     ${kkeStatsRows(cCounts, cTotal)}
@@ -27871,6 +27878,72 @@ function reportContentInventory() {
 
 // ─── Report: SME Review Status ───────────────────────────────────────────────
 
+// Open client-review items, tallied the three ways a client routes them: who
+// owns the page, how much a wrong call costs, and why the auditor asked. Pure
+// over its rows, so the report and the tests read the same numbers.
+function clientReviewTallies(rows) {
+  const owner = {}, reason = {};
+  const open = [];
+  let answered = 0;
+  rows.forEach(r => {
+    if (!clientReviewStatus(r)) return;
+    if (!clientReviewIsOpen(r)) { answered++; return; }
+    open.push(r);
+    const urgent = clientReviewIsUrgent(r);
+    const confirm = clientReviewStatus(r) === 'Please confirm';
+    const o = String(r[contentOwnerCol()] || '').trim() || 'Unassigned';
+    const why = String(r[CLIENT_REVIEW_REASON_COL] || '').trim() || 'No reason given';
+    [[owner, o], [reason, why]].forEach(([map, key]) => {
+      if (!map[key]) map[key] = { open: 0, urgent: 0, decide: 0, confirm: 0 };
+      map[key].open++;
+      if (urgent) map[key].urgent++;
+      if (confirm) map[key].confirm++; else map[key].decide++;
+    });
+  });
+  const ranked = (m) => Object.entries(m).sort((a, b) =>
+    b[1].urgent - a[1].urgent || b[1].open - a[1].open || a[0].localeCompare(b[0]));
+  open.sort((a, b) => clientReviewSortRank(a) - clientReviewSortRank(b));
+  return { open, answered, byOwner: ranked(owner), byReason: ranked(reason) };
+}
+
+// The SME Review Status section for client review. Empty when the project has
+// never asked the client anything, so those reports read as they always did.
+function clientReviewReportHtml(rows) {
+  const t = clientReviewTallies(rows);
+  if (!t.open.length && !t.answered) return '';
+  const urgentN = t.open.filter(clientReviewIsUrgent).length;
+  let html = `<h2>Questions to the Client</h2>
+    <p style="font-size:12px;color:#666;">Pages the auditor sent to the client for a decision or a confirmation. An item stays open until the SME answers it.</p>
+    <div class="stat-row"><span class="stat-label">Open</span><span class="stat-value">${t.open.length.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Urgent</span><span class="stat-value">${urgentN.toLocaleString()}</span></div>
+    <div class="stat-row"><span class="stat-label">Answered</span><span class="stat-value">${t.answered.toLocaleString()}</span></div>`;
+  if (!t.open.length) return html;
+  const tally = (label, list) => {
+    html += `<h3>Open by ${label}</h3><table><tr><th>${label[0].toUpperCase() + label.slice(1)}</th><th>Open</th><th>Urgent</th><th>Needs decision</th><th>Please confirm</th></tr>`;
+    list.slice(0, 30).forEach(([k, d]) => {
+      html += `<tr><td>${escapeHtml(k)}</td><td>${d.open.toLocaleString()}</td><td>${d.urgent ? d.urgent.toLocaleString() : '—'}</td><td>${d.decide.toLocaleString()}</td><td>${d.confirm.toLocaleString()}</td></tr>`;
+    });
+    if (list.length > 30) html += `<tr><td colspan="5" style="color:#666;font-style:italic;">…and ${list.length - 30} more.</td></tr>`;
+    html += '</table>';
+  };
+  tally('owner', t.byOwner);
+  tally('reason', t.byReason);
+  const urlCol = state.urlColumn || 'Address';
+  html += `<h3>Open items, urgent first</h3>`;
+  html += reportTableHtml(['Priority', 'Status', 'Owner', 'Reason', 'Page', 'Current call', 'Question (Notes)'],
+    t.open.map(r => [
+      clientReviewIsUrgent(r) ? 'Urgent' : 'Normal',
+      clientReviewStatus(r),
+      String(r[contentOwnerCol()] || '').trim() || 'Unassigned',
+      r[CLIENT_REVIEW_REASON_COL] || '',
+      r[urlCol] || '',
+      effectiveKke(r) || '(none)',
+      r[notesCol()] || '',
+    ]),
+    { cap: 100, moreNote: 'The sidebar filter "Client review: open" lists them all.' });
+  return html;
+}
+
 function reportSmeStatus() {
   if (state.editedRows.length === 0) { showToast('No data loaded', 'error'); return; }
   const stats = gatherProgressStats();
@@ -27907,7 +27980,9 @@ function reportSmeStatus() {
     `SMEs have reviewed ${stats.smeReviewed.toLocaleString()} of ${stats.smeTotal.toLocaleString()} pages (${stats.smePct}%).`,
     stats.smeChanged ? `They asked for ${stats.smeChanged.toLocaleString()} change${stats.smeChanged !== 1 ? 's' : ''}; ${conflictsN.toLocaleString()} ${conflictsN !== 1 ? 'are' : 'is'} still unresolved.` : '',
     slowOwners.length ? `${slowOwners.length} owner${slowOwners.length !== 1 ? 's have' : ' has'} not reviewed anything yet: ${slowOwners.slice(0, 8).join(', ')}${slowOwners.length > 8 ? '…' : ''}.` : '',
+    stats.clientReviewOpen ? `${stats.clientReviewOpen.toLocaleString()} question${stats.clientReviewOpen !== 1 ? 's' : ''} to the client still open${stats.clientReviewUrgent ? ` (${stats.clientReviewUrgent.toLocaleString()} urgent)` : ''}.` : '',
   ], [
+    stats.clientReviewUrgent ? `Get answers to the ${stats.clientReviewUrgent.toLocaleString()} urgent client question${stats.clientReviewUrgent !== 1 ? 's' : ''} first.` : '',
     conflictsN ? 'Resolve the open change requests (SME → Resolve Conflicts).' : '',
     slowOwners.length ? 'Follow up with the owners who haven\u2019t started.' : '',
     unassignedOwner ? `Assign a content owner to ${unassignedOwner.toLocaleString()} page${unassignedOwner !== 1 ? 's' : ''}.` : '',
@@ -27942,6 +28017,8 @@ function reportSmeStatus() {
     body += ownerRow(`${rest.length} other owner${rest.length !== 1 ? 's' : ''}`, m, ' style="color:#666;"');
   }
   body += `</table>`;
+
+  body += clientReviewReportHtml(reportRows());
 
   // Unresolved conflicts
   const conflicts = reportRows().filter(r => {
@@ -29747,6 +29824,17 @@ function runPreHandoffCheck() {
     title: 'Every page has a decision',
     items: unreviewed.map(u),
     fix: `Filter the sidebar to "Unreviewed" and assign a status (or run a Suggested-MRA pass).`,
+  });
+
+  // An urgent question to the client is, by the auditor's own judgment, one a
+  // wrong call is costly on. Handing off with it unanswered ships a guess.
+  // Normal-priority open items are left to the SME report: a handoff can
+  // reasonably go ahead with those still in flight.
+  const urgentOpen = rows.filter(r => clientReviewIsOpen(r) && clientReviewIsUrgent(r));
+  checks.push({
+    title: 'No urgent client questions still open',
+    items: urgentOpen.map(r => `${u(r)} <span style="color:var(--text-muted);">(${escapeHtml(clientReviewStatus(r))}${r[CLIENT_REVIEW_REASON_COL] ? ' · ' + escapeHtml(r[CLIENT_REVIEW_REASON_COL]) : ''})</span>`),
+    fix: `Use the "Client review: urgent (open)" sidebar filter. Each needs the SME's answer in SME_Decision (an SME import, or typed in), or lower its priority if it no longer matters.`,
   });
 
   const noTarget = rows.filter(rowConsolidateNeedsTarget);
@@ -32656,6 +32744,12 @@ function setupMultiBar() {
       addOpts(sortedJobLibrary().map(j => j.label));
     } else if (a === 'primary-audience') {
       addOpts(sortedAudienceLibrary().filter(e => e.name !== AUDIENCE_NONE).map(e => e.name), { blank: true });
+    } else if (a === 'client-review') {
+      addOpts(CLIENT_REVIEW_STATUSES, { blank: true });
+    } else if (a === 'client-review-priority') {
+      addOpts(['Normal', 'Urgent']);
+    } else if (a === 'client-review-reason') {
+      addOpts(clientReviewReasons(), { blank: true });
     } else if (a === 'assign-nav') {
       // No value select — Apply opens the bucket picker/creator dialog directly.
       applyBtn.classList.remove('hidden');
@@ -32708,6 +32802,7 @@ function setupMultiBar() {
       : a === 'remove-audience' ? 'Remove audience'
       : a === 'add-job' ? 'Add job'
       : a === 'remove-job' ? 'Remove job'
+      : (a === 'client-review' && !v) ? 'Clear client request'
       : (v ? 'Set' : 'Clear');
     const valLabel = v || '(blank)';
     if (!(await confirmDialog({ title: 'Apply to rows', message: `${verb} "${valLabel}" — apply to ${targets.length} ${using} row${targets.length !== 1 ? 's' : ''}?`, confirmLabel: verb }))) return;
@@ -32715,6 +32810,25 @@ function setupMultiBar() {
     // path does (the single-row KKE button, Final KKE, Table View inline edit).
     // Rows already Kill are excluded — they were cleaned when they got there.
     // Cancelling the cleanup cancels the whole action, as it does elsewhere.
+    // Client review writes all its rows as one undo entry and reports what it
+    // skipped (priority on a row with no request, Please confirm with no
+    // decision), so it doesn't go through the per-row loop below.
+    if (a === 'client-review' || a === 'client-review-priority' || a === 'client-review-reason') {
+      const res = bulkClientReview(targets, a, v);
+      if (state.multiSelected.size > 0) { state.multiSelected.clear(); updateMultiBar(); }
+      applyFilter();
+      if (state.selectedIndex !== null) populateAuditFields(state.editedRows[state.selectedIndex]);
+      const notes = [];
+      if (res.skippedNoRequest) notes.push(`${res.skippedNoRequest} skipped (no client request on them)`);
+      if (res.skippedNoDecision) notes.push(`${res.skippedNoDecision} skipped (no decision to confirm)`);
+      showToast(`Updated ${res.changed} row${res.changed !== 1 ? 's' : ''}${notes.length ? ' · ' + notes.join(' · ') : ''}`,
+        res.changed ? 'success' : 'info');
+      action.value = '';
+      valueSel.innerHTML = '';
+      valueSel.classList.add('hidden');
+      applyBtn.classList.add('hidden');
+      return;
+    }
     if (a === 'kke' && v === 'Archive') {
       const toAsk = targets.filter(i => String(state.editedRows[i][kkeCol()] || '').trim() !== 'Archive');
       if (!(await promptBulkKillCleanup(toAsk))) return;
@@ -33240,7 +33354,7 @@ function clientReviewReasons() {
  *  Clearing the status clears priority and reason too: they only mean
  *  something beside a request. Setting a status with no priority defaults to
  *  Normal. Returns true when anything changed. */
-function setClientReview(origIndex, { status = '', priority = '', reason = '' } = {}) {
+function setClientReview(origIndex, { status = '', priority = '', reason = '' } = {}, undoItems = null) {
   const row = state.editedRows[origIndex];
   if (!row) return false;
   const next = status
@@ -33257,9 +33371,46 @@ function setClientReview(origIndex, { status = '', priority = '', reason = '' } 
     row[field] = value;
   });
   if (!items.length) return false;
-  pushBulkEditUndo(items, 'client review');
+  // A caller batching many rows passes its own list, so a bulk action is one
+  // Cmd+Z rather than one entry per row (which would also flood the stack).
+  if (undoItems) undoItems.push(...items);
+  else pushBulkEditUndo(items, 'client review');
   setDirty(true);
   return true;
+}
+
+/** The Multi-bar's client-review actions, over many rows as ONE undo entry.
+ *  action: 'client-review' (value = a status, or '' to clear the request),
+ *          'client-review-priority' (Normal / Urgent),
+ *          'client-review-reason' (a reason, or '' to clear it).
+ *  Setting a status keeps each row's own priority and reason. Priority and
+ *  reason only apply to rows that already carry a request, and Please confirm
+ *  only to rows with a decision to confirm; the rest are counted as skipped
+ *  with the reason, never silently written.
+ *  Returns { changed, skippedNoRequest, skippedNoDecision }. */
+function bulkClientReview(targets, action, value) {
+  const undoItems = [];
+  let changed = 0, skippedNoRequest = 0, skippedNoDecision = 0;
+  targets.forEach(i => {
+    const row = state.editedRows[i];
+    if (!row) return;
+    const cur = {
+      status: clientReviewStatus(row),
+      priority: String(row[CLIENT_REVIEW_PRIORITY_COL] || '').trim(),
+      reason: String(row[CLIENT_REVIEW_REASON_COL] || '').trim(),
+    };
+    let next;
+    if (action === 'client-review') {
+      if (value === 'Please confirm' && !effectiveKke(row)) { skippedNoDecision++; return; }
+      next = Object.assign({}, cur, { status: value });
+    } else {
+      if (!cur.status) { skippedNoRequest++; return; }
+      next = Object.assign({}, cur, action === 'client-review-priority' ? { priority: value } : { reason: value });
+    }
+    if (setClientReview(i, next, undoItems)) changed++;
+  });
+  if (undoItems.length) pushBulkEditUndo(undoItems, 'client review');
+  return { changed, skippedNoRequest, skippedNoDecision };
 }
 
 /** Audit-bar button: "Ask client" when blank, the status (and Urgent) when set. */
@@ -33599,6 +33750,7 @@ function proposalFieldKind(field) {
     case 'Content_Nature': return 'content-nature';
     case 'Migration_Track': return 'migration-track';
     case CONSOLIDATE_COL: return 'consolidate';
+    case CLIENT_REVIEW_COL: case CLIENT_REVIEW_PRIORITY_COL: case CLIENT_REVIEW_REASON_COL: return 'client-review';
     default: return null;
   }
 }
@@ -33740,6 +33892,10 @@ async function resolveProposalGroups(ordered, api, decision) {
   const acceptedIds = [];
   const failures = [];
   let written = 0;
+  // A client-review priority or reason needs the request it qualifies, so a
+  // status accepted in the same batch is written first, whatever the group order.
+  const crLater = it => (it.p.field === CLIENT_REVIEW_PRIORITY_COL || it.p.field === CLIENT_REVIEW_REASON_COL) ? 1 : 0;
+  items.sort((a, b) => crLater(a) - crLater(b));
   for (const it of items) {
     const before = { ...it.row };
     let changed = false;
@@ -33849,6 +34005,26 @@ async function applyProposalToRow(item) {
       if (!res || !res.ok) throw new Error(res && res.reason ? res.reason : 'could not consolidate');
       item.targetIndex = res.targetIndex;   // for the batch's one Evolve question
       return res.changed;
+    }
+    case 'client-review': {
+      // Through setClientReview, so a status keeps its priority/reason and a
+      // proposed priority keeps its status. The caller snapshots the whole row
+      // for its one undo entry, so this one writes into a throwaway list.
+      const next = {
+        status: clientReviewStatus(row),
+        priority: String(row[CLIENT_REVIEW_PRIORITY_COL] || '').trim(),
+        reason: String(row[CLIENT_REVIEW_REASON_COL] || '').trim(),
+      };
+      if (p.field === CLIENT_REVIEW_COL) {
+        if (value === 'Please confirm' && !effectiveKke(row)) throw new Error('Please confirm needs a decision on the page first');
+        next.status = value;
+      } else {
+        if (!next.status) throw new Error('no client request on this page yet; accept its Client_Review proposal first');
+        if (p.field === CLIENT_REVIEW_PRIORITY_COL) next.priority = value; else next.reason = value;
+      }
+      const changed = setClientReview(origIndex, next, []);
+      if (changed && state.selectedIndex === origIndex) updateClientReviewButton(row);
+      return changed;
     }
     case 'content-nature': case 'migration-track': {
       const col = kind === 'content-nature' ? 'Content_Nature' : 'Migration_Track';

@@ -1,6 +1,6 @@
 # Proposal — Client Review field
 
-**Status:** approved · Phase 1 implemented 2026-11-19
+**Status:** approved · Phases 1 and 2 implemented 2026-11-19
 **Date:** 2026-11-19
 
 ## Phase 1 (implemented)
@@ -15,7 +15,13 @@
 
 Open questions, as answered for Phase 1: per row; Please confirm requires an MRA (enforced in the dialog); ★ Flag stays the auditor's private bookmark.
 
-**Phase 2 (not started):** SME Review Status and Executive Summary lines, the Pre-Handoff warning for open Urgent items, the MCP server changes in §5, and a Multi-bar bulk action.
+## Phase 2 (implemented)
+
+- **SME Review Status:** `clientReviewReportHtml()` over `clientReviewTallies(rows)` (pure: open items sorted by `clientReviewSortRank`, `byOwner` / `byReason` ranked urgent-first, `answered`). A *Questions to the Client* section, plus a finding and an "urgent first" next step. Absent when the project has no requests.
+- **Executive Summary:** a finding, a next step worded for the client, and a *Waiting on your team* stat line, all only when something is open.
+- **Pre-Handoff Check:** *No urgent client questions still open*. Normal-priority open items don't block a handoff.
+- **Multi-bar:** `client-review` (status or clear), `client-review-priority`, `client-review-reason` → `bulkClientReview(targets, action, value)`, one `pushBulkEditUndo`. Setting a status keeps each row's priority and reason; priority/reason skip rows with no request; Please confirm skips rows with no effective decision; the toast reports both skip counts. `setClientReview()` gained an optional `undoItems` list for this.
+- **MCP:** the three columns in `KNOWN_AUDIT_COLUMNS`; the three filters in `SUPPORTED_SPECIAL_FILTERS` (open = a status and a blank `SME_Decision`, the server's reading of `parseSmeDecision().reviewed`); the three fields in `PROPOSAL_FIELDS` (kind `set`; reasons from `settings.clientReviewReasons` or the defaults). Priority/reason proposals are skipped on a page with no request unless the same batch proposes one, and Please confirm is skipped on a page with no decision unless the batch proposes one. The app applies them through `setClientReview()` (`proposalFieldKind` → `client-review`), writing a batch's statuses before its priorities and reasons. `semantics.js` explains the columns and the open rule.
 
 **Scope:** give auditors a filterable way to send specific pages to the client for a decision, say how much it matters, and carry that request into the SME round.
 

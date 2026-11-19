@@ -150,7 +150,7 @@ Track progress with **Audit Progress** (`Cmd+P`).
 
 Where the client's experts confirm or overturn your calls. Usually the point of the engagement, and usually where schedules slip.
 
-`SME → Export for SME Review…` produces a standalone spreadsheet with dropdowns, optionally split per content owner. Audience columns ride along — SMEs are frequently the only people who know who actually reads a page. So do your client-review questions: open items come first in the worksheet (urgent, then needs decision, then please confirm), and you can export only those. A question counts as answered as soon as the SME fills in `SME_Decision`; nothing needs clearing afterward.
+`SME → Export for SME Review…` produces a standalone spreadsheet with dropdowns, optionally split per content owner. Audience columns ride along — SMEs are frequently the only people who know who actually reads a page. So do your client-review questions: open items come first in the worksheet (urgent, then needs decision, then please confirm), and you can export only those. A question counts as answered as soon as the SME fills in `SME_Decision`; nothing needs clearing afterward. **SME Review Status** tracks them by owner and reason, and the **Pre-Handoff Check** won't call the project ready while an *urgent* one is open. Mark priority honestly: urgent is what blocks a handoff.
 
 Then `Import SME Decisions…`, `Compare MRA vs SME…` to see the conflicts side by side, and `Resolve Conflicts…` to produce `Final_MRA`. From that point on, `Final_MRA` is what every report and export reads.
 

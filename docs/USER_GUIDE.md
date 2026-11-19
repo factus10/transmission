@@ -490,11 +490,13 @@ If you've both selected rows and applied a filter, your **selection wins**.
 
 ### Apply an action
 
-1. Pick an **Action** — Set MRA, Set Published Status, Set Content Type, Set Content Theme, Set Group, Set Primary Tag, Add Tag, **Assign to Sitemap…**, or **⚠ Delete rows permanently…**.
+1. Pick an **Action** — Set MRA, Set Published Status, Set Content Type, Set Content Theme, Set Group, Set Primary Tag, Add Tag, Ask client, Set client-review priority, Set client-review reason, **Assign to Sitemap…**, or **⚠ Delete rows permanently…**.
 2. Choose the **value** (every list except *Add Tag* offers a `— Clear` option at the top, so bulk-clearing a field is easy).
 3. Click **Apply**. Every change is written to the audit trail.
 
 **Clear selection** drops your multi-selection and hands the target back to the filter.
+
+> **Asking the client in bulk:** **Ask client** sets the status (or clears the request) and keeps each page's own priority and reason. **Set client-review priority** and **reason** only touch pages that already have a question. **Please confirm** skips pages with no decision to confirm. The toast says how many were skipped and why, and the whole action is one **Cmd+Z**.
 
 > **Heads-up:** bulk-setting **Archive** on pages that already have a sitemap assignment or redirect triggers the same cleanup prompt as a single Archive — so you decide whether to clear those too, rather than leaving redirects pointing nowhere.
 
@@ -1563,7 +1565,7 @@ Reports are read-only views, generated on demand from the current file — run t
 
 ### For stakeholders
 
-- **Executive Summary** — the top-line story: the content inventory, the MRA distribution, auto-generated key findings, SME status, and a section breakdown. Lead a client readout with this.
+- **Executive Summary** — the top-line story: the content inventory, the MRA distribution, auto-generated key findings, SME status, and a section breakdown. Lead a client readout with this. When pages are waiting on the client, it says how many (and how many are urgent).
 
   **It counts content pages, not crawled URLs, and the difference is usually large.** A crawl lists every URL that *responded* — including every inherited 301 and every dead link. Reporting those as pages invites the one question you don't want mid-readout: *"we're really migrating twelve thousand pages?"* So the Overview leads with `URLs crawled`, breaks out **existing redirects (3xx)** and **not found / gone (4xx)**, and then gives **content pages audited** — and every figure below it, including the Archive percentage, is over content pages only. On a real higher-ed crawl that moved the headline "recommended for removal" figure from 66% to 31%; the first number was mostly redirects.
 
@@ -1571,7 +1573,7 @@ Reports are read-only views, generated on demand from the current file — run t
 
   To see the rows behind the numbers, use the sidebar's **Existing redirect (3xx — not content)** or **Not content (3xx or 4xx)** filters.
 - **Content Inventory by Section** — content pages by section. One ranked table shows every section's size and the share of each decision. Then a closer look at the ten largest sections: MRA distribution, a few sample pages, and notes counts. Your detailed appendix. Its section counts are the same as the Executive Summary's By Section.
-- **SME Review Status** — where expert review stands: overall completion plus a per-Content-Owner table (assigned, reviewed, %, approved vs changed, unresolved conflicts) and a conflict list.
+- **SME Review Status** — where expert review stands: overall completion plus a per-Content-Owner table (assigned, reviewed, %, approved vs changed, unresolved conflicts) and a conflict list. When you've asked the client anything, a **Questions to the Client** section adds open, urgent and answered counts, open items by owner and by reason, and the open items themselves with your question from Notes, urgent first.
 - **Audience Coverage** — per audience in priority order: how many pages serve them, how many treat them as the *primary* audience, what you're doing to that content, and which sections it lives in. Flags any Primary-tier audience with almost nothing aimed at it, usually the most actionable finding in the set. A **Risks** section (formerly the separate Audience Debt report) counts:
   - pages serving only non-priority audiences
   - pages reviewed as serving no audience
@@ -1812,11 +1814,12 @@ The **Pre-Handoff Check** rolls every validation Transmission knows how to run i
 **Migration → Pre-Handoff Check…** reports either "**Ready for handoff**" or "**N issues across M checks**," covering:
 
 1. Every page has an MRA decision.
-2. Consolidate pages point to a target.
-3. Consolidate targets are live (not Archive/Exclude).
-4. No redirect chains.
-5. No duplicate sitemap IDs *(sitemap files only)*.
-6. No empty sitemap leaves *(sitemap files only)*.
+2. No urgent client questions are still open (normal-priority ones don't block a handoff).
+3. Consolidate pages point to a target.
+4. Consolidate targets are live (not Archive/Exclude).
+5. No redirect chains.
+6. No duplicate sitemap IDs *(sitemap files only)*.
+7. No empty sitemap leaves *(sitemap files only)*.
 
 Each failing check lists a sample of the pages plus a one-line fix (which filter to use, which editor to open); the sitemap checks are skipped automatically if the file has no Sitemap sheet. Work top-down — clear unreviewed pages first (they cascade into the other checks), then consolidations, then redirects, then sitemap — re-running after each batch. The check is itself a report, so you can export it to **PDF / HTML** as evidence that the audit passed its gate.
 
