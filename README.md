@@ -208,6 +208,9 @@ A dedicated **SME** top-level menu for subject-matter-expert review:
 - Sidebar: a blue **?** (red when urgent, outlined for Please confirm, faded once answered). Filters: *Client review: open*, *Client review: urgent (open)*, *Reviewed, undecided (needs client decision)*.
 - The SME export includes the three columns whenever an exported row has one, lists open items first (urgent, then needs decision, then please confirm), and can export **open client-review items only**.
 - Audit Progress splits Unreviewed into *not looked at yet* and *reviewed, waiting on a client decision*, and `]` skips the latter.
+- **SME Review Status** lists open questions by owner, by reason and page by page (urgent first); the **Executive Summary** gives the count; the **Pre-Handoff Check** warns about urgent ones still open.
+- In bulk: the Multi-bar's **Ask client**, **Set client-review priority** and **Set client-review reason**, as one undo.
+- Claude (MCP) can filter on open / urgent / undecided and can propose a client question (`Client_Review`, `_Priority`, `_Reason`) for you to accept.
 
 ### Row Color Coding
 - Sidebar rows have subtle MRA-tinted backgrounds — light green for Migrate, light red for Archive, light yellow for Revise, light gray for Exclude

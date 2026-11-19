@@ -89,8 +89,17 @@ const PROPOSAL_FIELDS = {
   // Consolidate, with its target: the value is the URL of the page the content
   // merges into. Accepting it in the app runs the same path as the Consolidate
   // picker (identity + display columns, cycle guards, the Revise nudge).
-  Consolidate_Into:   { kind: 'consolidate' }
+  Consolidate_Into:   { kind: 'consolidate' },
+  // Client review: a question for the client. Proposing one is the most useful
+  // thing a session can do with a page it cannot call. The status says what is
+  // asked; priority and reason only mean something beside a status, so they are
+  // skipped on a page with no request (unless the same batch asks one).
+  Client_Review:          { kind: 'set', vocab: ['Needs decision', 'Please confirm'], clientReview: 'status' },
+  Client_Review_Priority: { kind: 'set', vocab: ['Normal', 'Urgent'], clientReview: 'priority' },
+  Client_Review_Reason:   { kind: 'set', vocab: 'client-review-reasons', clientReview: 'reason' }
 };
+// The app's DEFAULT_CLIENT_REVIEW_REASONS, used until a project edits its list.
+const DEFAULT_CLIENT_REVIEW_REASONS = ['Accuracy', 'Compliance/legal', 'Ownership', 'Consolidate target', 'Domain knowledge', 'Other'];
 const PROPOSAL_MAX_BATCH = 2000;
 
 // ─── node:sqlite ─────────────────────────────────────────────────────────────
@@ -147,6 +156,7 @@ const KNOWN_AUDIT_COLUMNS = [
   'Suggested_MRA', 'Suggested_MRA_Sources', 'Source_CMS_URL', 'New_CMS_URL', 'Target_Content_Type',
   'Design_Patterns', 'Audiences', 'Primary_Audience', 'Jobs_Served', 'Source_Site', 'Page_Breadcrumb',
   '_ConsolidateTargetId', '_Suggested_Audiences', '_RedirectSource',
+  'Client_Review', 'Client_Review_Priority', 'Client_Review_Reason',
   'Sitemap_ID', 'Sitemap_Destination', 'Computed Path', 'Sitemap_SortID',
   'GA_MRA_Recommendation', 'GA_Score'
 ];
@@ -271,7 +281,8 @@ const VIRTUAL_FIELDS = {
 const SUPPORTED_SPECIAL_FILTERS = new Set([
   '_unreviewed', '_flagged', '_sme-pending', '_needs-placement', '_shared-nav',
   '_suggested-disagree', '_suggested-mismatch', '_needs-audience', '_audience-suggested',
-  '_needs-job', '_non-content', '_inherited-redirect'
+  '_needs-job', '_non-content', '_inherited-redirect',
+  '_client-review-open', '_client-review-urgent', '_client-review-undecided'
 ]);
 
 const CSV_COLUMNS_FIXED = ['Audiences', 'Jobs_Served', 'Design_Patterns'];
@@ -421,6 +432,26 @@ class Project {
   pathSegments(row) {
     const u = this._parsedUrl(row);
     return u ? u.pathname.split('/').filter(Boolean) : [];
+  }
+
+  /** renderer.js clientReviewStatus() */
+  clientReviewStatus(row) {
+    const raw = String((row && row.Client_Review) || '').trim();
+    const v = raw.toLowerCase();
+    if (v === 'needs decision') return 'Needs decision';
+    if (v === 'please confirm') return 'Please confirm';
+    return raw;
+  }
+
+  /** renderer.js clientReviewIsUrgent() */
+  clientReviewIsUrgent(row) {
+    return !!this.clientReviewStatus(row) && String(row.Client_Review_Priority || '').trim().toLowerCase() === 'urgent';
+  }
+
+  /** renderer.js clientReviewIsOpen(): a request with no SME answer yet. Any
+   *  non-blank SME_Decision is an answer (parseSmeDecision's `reviewed`). */
+  clientReviewIsOpen(row) {
+    return !!this.clientReviewStatus(row) && !String(row[this.columnMap.smeDecision] || '').trim();
   }
 
   /** renderer.js effectiveKke() */
@@ -601,6 +632,9 @@ class Project {
       case '_needs-job':         return this.jobLibrary.length > 0 && !parseCsvCell(row['Jobs_Served']).length && carried();
       case '_non-content':       return this.contentKind(row) !== 'content';
       case '_inherited-redirect': return this.contentKind(row) === 'redirect';
+      case '_client-review-open':      return this.clientReviewIsOpen(row);
+      case '_client-review-urgent':    return this.clientReviewIsOpen(row) && this.clientReviewIsUrgent(row);
+      case '_client-review-undecided': return this.clientReviewStatus(row) === 'Needs decision' && !this.effectiveKke(row);
       default:                   return false;
     }
   }
@@ -1123,7 +1157,7 @@ Project.prototype.proposalFieldInfo = function () {
   const out = {};
   for (const [canon, def] of Object.entries(PROPOSAL_FIELDS)) {
     const col = def.map ? this.columnMap[def.map] : canon;
-    out[col] = { kind: def.kind, canonical: canon, vocab: this._proposalVocab(def) };
+    out[col] = { kind: def.kind, canonical: canon, vocab: this._proposalVocab(def), clientReview: def.clientReview };
   }
   return out;
 };
@@ -1145,6 +1179,10 @@ Project.prototype._proposalVocab = function (def) {
     return v === 'audiences' ? names : names.filter(n => n !== AUDIENCE_NONE);
   }
   if (v === 'jobs') return this.jobLibrary.map(j => j.label).filter(Boolean);
+  if (v === 'client-review-reasons') {
+    const lib = this.settings.clientReviewReasons;
+    return Array.isArray(lib) ? lib.map(String).filter(Boolean) : DEFAULT_CLIENT_REVIEW_REASONS.slice();
+  }
   return null;
 };
 
@@ -1217,6 +1255,16 @@ Project.prototype._checkProposal = function (c) {
   if (!rows.length) return { ok: false, reason: 'no row with that URL' };
   const row = rows[0];
   if (f.kind === 'consolidate') return this._checkConsolidateProposal(row, values[0], rationale);
+  if (f.clientReview) {
+    const batch = this._batchClientReview || { status: new Set(), decision: new Set() };
+    const key = looseUrl(this.url(row));
+    if (f.clientReview !== 'status' && !this.clientReviewStatus(row) && !batch.status.has(key)) {
+      return { ok: false, reason: 'no client-review request on this page; propose a Client_Review status with it' };
+    }
+    if (f.clientReview === 'status' && values[0] === 'Please confirm' && !this.effectiveKke(row) && !batch.decision.has(key)) {
+      return { ok: false, reason: 'Please confirm needs a decision to confirm; propose Needs decision, or a decision with it' };
+    }
+  }
   const current = String(row[f.column] ?? '').trim();
   const value = f.kind === 'add' ? values.join(', ') : values.join('\n');
   if (f.kind === 'set' && current.toLowerCase() === value.toLowerCase()) return { ok: false, reason: `already "${current}"` };
@@ -1240,7 +1288,20 @@ Project.prototype.proposeChanges = function ({ changes, source, batch } = {}) {
   if (changes.length > PROPOSAL_MAX_BATCH) throw new Error(`At most ${PROPOSAL_MAX_BATCH} changes per call.`);
   const src = String(source || 'mcp').trim().slice(0, 80);
   const batchId = String(batch || '').trim() || (new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14) + '-' + Math.random().toString(36).slice(2, 6));
-  const checked = changes.map(c => this._checkProposal(c));   // throws on the first invalid one
+  // A batch may ask the client a question and set its priority in one go, so
+  // the client-review checks look at what else the batch proposes per page.
+  const batchCr = { status: new Set(), decision: new Set() };
+  for (const c of changes) {
+    if (!c || typeof c !== 'object') continue;
+    const fld = String(c.field || '').trim().toLowerCase();
+    const key = looseUrl(String(c.url || '').trim());
+    if (fld === 'client_review') batchCr.status.add(key);
+    if (fld === 'mra_recommendation' || fld === 'kke_recommendation') batchCr.decision.add(key);
+  }
+  this._batchClientReview = batchCr;
+  let checked;
+  try { checked = changes.map(c => this._checkProposal(c)); }   // throws on the first invalid one
+  finally { this._batchClientReview = null; }
   const skipped = [], queued = [];
   checked.forEach((r, i) => { if (r.ok) queued.push(r); else skipped.push({ url: String(changes[i].url), field: String(changes[i].field), reason: r.reason }); });
   let inserted = 0, replaced = 0;
