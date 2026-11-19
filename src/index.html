@@ -215,6 +215,8 @@
                   Notes
                   <span id="notes-indicator" class="notes-indicator hidden"></span>
                 </button>
+                <!-- Client review: the auditor's question to the client (updateClientReviewButton) -->
+                <button id="btn-client-review" class="btn btn-sm btn-ghost client-review-btn" title="Send this page to the client for a decision (C)" disabled>Ask client</button>
                 <button id="btn-nav" class="btn btn-sm btn-ghost" title="Sitemap placement for this page" disabled>Sitemap</button>
                 <button id="btn-menu-assign" class="btn btn-sm btn-ghost" title="Add this page to a navigation menu" disabled>Menu</button>
                 <!-- Redirect destination indicator (populated by populateRedirectIndicator when this page has one) -->
@@ -965,6 +967,17 @@
               <div id="rogue-kke-list" class="setting-col-map"></div>
             </div>
           </div>
+
+          <div class="setting-divider"></div>
+          <div class="ps-section">
+            <div class="ps-section-head">
+              <span class="ps-section-title">Client review reasons</span>
+              <span style="flex:1;"></span>
+              <button id="ps-cr-reason-add" class="btn btn-sm btn-primary">+ Add reason</button>
+            </div>
+            <div class="ps-section-hint">Why a page needs the client, so they can send it to the right person. Chosen in the audit bar's <strong>Ask client</strong> dialog (C).</div>
+            <div id="ps-cr-reason-list" class="ps-mig-list"></div>
+          </div>
         </div>
 
         <!-- Suggestions tab (GA + Rubric source orchestrator) -->
@@ -1234,6 +1247,7 @@
         <option value="">All rows</option>
         <option value="group">Group</option>
         <option value="primaryTag">Primary Tag</option>
+        <option value="clientReview">Open client-review items only</option>
       </select>
       <select id="sme-export-filter-value" class="hidden"></select>
       <label style="display:flex;align-items:center;gap:6px;margin-top:4px;">

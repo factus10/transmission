@@ -172,6 +172,7 @@ A dedicated **SME** top-level menu for subject-matter-expert review:
 | `Cmd+Shift+Z` | Redo |
 | `1` / `2` / `3` / `4` / `0` | Migrate / Revise / Archive / Exclude / Clear (when no input focused) |
 | `F` | Toggle flag on selected row |
+| `C` | Ask client: send the selected row to the client for a decision |
 | `↑` / `↓` or `k` / `j` | Navigate rows |
 
 ### Filtering & Selection
@@ -199,6 +200,14 @@ A dedicated **SME** top-level menu for subject-matter-expert review:
 - Star icon in every sidebar row — click or press `F` to flag
 - Flagged state persists in the spreadsheet as a `_Flagged` column
 - Filter to flagged rows only via the status dropdown
+
+### Client Review (ask the client)
+- **Ask client** in the audit bar's Decide cluster (or press `C`) sends a page to the client for a decision. The flag is your private bookmark; this goes to the client.
+- Two questions, kept apart: **status** (`Needs decision`: you reviewed it but can't make the call, and MRA can stay blank; `Please confirm`: you made a call and want it checked, so it needs an MRA) and **priority** (`Normal` / `Urgent`: how much a wrong call costs). A **reason** (Accuracy, Compliance/legal, Ownership, Consolidate target, Domain knowledge, Other; editable in Project Settings → Decision states) tells the client who should answer. The question itself goes in Notes.
+- An item is **open** until the SME answers it in `SME_Decision`. Nothing needs clearing after the SME round; the request stays on the row as a record of what was asked.
+- Sidebar: a blue **?** (red when urgent, outlined for Please confirm, faded once answered). Filters: *Client review: open*, *Client review: urgent (open)*, *Reviewed, undecided (needs client decision)*.
+- The SME export includes the three columns whenever an exported row has one, lists open items first (urgent, then needs decision, then please confirm), and can export **open client-review items only**.
+- Audit Progress splits Unreviewed into *not looked at yet* and *reviewed, waiting on a client decision*, and `]` skips the latter.
 
 ### Row Color Coding
 - Sidebar rows have subtle MRA-tinted backgrounds — light green for Migrate, light red for Archive, light yellow for Revise, light gray for Exclude
@@ -627,6 +636,9 @@ The app injects these columns if not already present:
 | `Group` | Page group assignment |
 | `Primary Tag` | Single primary categorization tag |
 | `_Flagged` | Row bookmark (1 = flagged) |
+| `Client_Review` | Blank, Needs decision or Please confirm: the auditor's question to the client |
+| `Client_Review_Priority` | Normal or Urgent: how much a wrong call costs |
+| `Client_Review_Reason` | Why the client is needed (project vocabulary) |
 | `_AssessedAt` | ISO timestamp of last assessment |
 | `_AssessmentResult` | Result of last assessment |
 | `Redirect_Destination` | Custom redirect URL for Archive/moved pages |

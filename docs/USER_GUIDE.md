@@ -322,7 +322,8 @@ A few things speed this up:
 ### Capture your reasoning
 
 - **Notes** — click **Notes** in the Decide cluster to record *why* you made a call. A small dot on the button marks the pages that have notes.
-- **Flag** — press **F** (or click the ★) to flag a page you want to revisit, then filter to flagged pages later.
+- **Flag** — press **F** (or click the ★) to flag a page you want to revisit, then filter to flagged pages later. The flag is your own bookmark; the client never sees it.
+- **Ask client** — press **C** (or click **Ask client**) when the call needs the client. Choose **Needs decision** if you reviewed the page but can't make the call (you can leave the decision blank), or **Please confirm** if you made a call and want it checked. Say whether a wrong call would be **Normal** or **Urgent**, and pick a **reason** so the client knows who should answer. Then write the actual question in **Notes**, which go to the client in the SME worksheet. The page shows a blue **?** in the sidebar (red when urgent) until the SME answers it.
 - **Assess** — runs your rubric against the page and suggests a call; more in [Suggested_MRA](#8-suggested_mra).
 
 ### Classify as you go (optional)
@@ -414,6 +415,7 @@ Click **Site order** again to turn it off, or click the Address header to go bac
 Click the **MRA filter** to open a checkbox list. Check as many as you like and they combine with OR — so **Migrate + Revise** shows everything you're keeping. Alongside the five calls, the list includes useful **special filters**:
 
 - **Unreviewed** and **Flagged**
+- **Client review: open**, **Client review: urgent (open)**, and **Reviewed, undecided** (pages you marked *Needs decision* that nobody has decided yet)
 - **Duplicates** (identical Title, H1, or Meta Description)
 - **SME conflicts** and **SME pending**
 - **Consolidate (no target)** and **Consolidate (dead target)**

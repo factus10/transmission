@@ -1,7 +1,21 @@
 # Proposal — Client Review field
 
-**Status:** proposed
+**Status:** approved · Phase 1 implemented 2026-11-19
 **Date:** 2026-11-19
+
+## Phase 1 (implemented)
+
+- The three columns are added to every project on open (`injectAndOrderAuditColumns()`).
+- **Ask client** button in the Decide cluster and the **C** shortcut open `openClientReviewDialog()`; `setClientReview()` writes all three fields as one change-logged undo entry. Clearing the status clears priority and reason.
+- Sidebar **?** indicator (blue, red when urgent and open, outlined for Please confirm, faded once answered).
+- Filters `_client-review-open`, `_client-review-urgent`, `_client-review-undecided`.
+- `gatherProgressStats()` adds `awaitingClient` and the `clientReview*` counts; the dashboard and its PDF show them. `]` skips rows waiting on the client.
+- SME export: the columns ride along when any exported row has one, open items sort first, and a filter exports open items only.
+- Reason vocabulary in Project Settings → Decision states (`projectSettings.clientReviewReasons`).
+
+Open questions, as answered for Phase 1: per row; Please confirm requires an MRA (enforced in the dialog); ★ Flag stays the auditor's private bookmark.
+
+**Phase 2 (not started):** SME Review Status and Executive Summary lines, the Pre-Handoff warning for open Urgent items, the MCP server changes in §5, and a Multi-bar bulk action.
 
 **Scope:** give auditors a filterable way to send specific pages to the client for a decision, say how much it matters, and carry that request into the SME round.
 

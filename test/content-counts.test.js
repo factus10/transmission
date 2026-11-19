@@ -58,6 +58,10 @@ vm.runInThisContext(
   extract('reportRows') +
   // Decision counts read the effective KKE (Final_MRA wins) — real, not stubbed.
   extract('effectiveKke') +
+  // Client-review counts (awaiting a client decision is split out of Unreviewed).
+  extract('clientReviewStatus') +
+  extract('clientReviewIsUrgent') +
+  extract('clientReviewIsOpen') +
   // Sections come from the shared tally that Content Inventory and the
   // Executive Summary also read.
   extract('sectionTally') +

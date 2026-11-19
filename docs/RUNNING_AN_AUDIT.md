@@ -138,6 +138,7 @@ Now go page by page. The loop is: read the page in the built-in browser, make th
 - **Migrate · Archive · Revise · Consolidate · Exclude** — keyboard shortcuts for each; the sidebar advances automatically if you want it to.
 - **Notes are the deliverable.** Six months later the note is why anyone believes the decision. Write for the client, not for yourself.
 - **Watch the Suggested MRA badge.** It shows the winning source (`GA: Archive`, `Audience: Migrate`) and flags disagreement with a ⚠. Disagreement is signal: *high traffic, no priority audience* is usually a legacy hub; *low traffic, priority audience* argues for promotion, not removal.
+- **When the call isn't yours to make, ask the client (`C`).** *Needs decision* says you looked and can't decide, so a blank MRA no longer reads as "nobody looked". *Please confirm* says you decided and want it checked. Priority (*Urgent* vs *Normal*) is a separate question from confidence: how much a wrong call would cost. Put the question itself in Notes. Don't use the flag for this: the flag is your private bookmark and never reaches the client.
 - **Consolidate opens a picker** so you name the surviving page. That relationship writes the redirect later, so it's worth getting right at the point of decision.
 - **Record components if the build team needs them.** The `Components` quick-chip reveals a chip input for the UI patterns on the page — hero, card grid, accordion. This is the only thing that feeds the **Component Inventory** report, and it's cheap while you're already looking at the page. Skip it entirely if nobody downstream asked.
 
@@ -149,7 +150,7 @@ Track progress with **Audit Progress** (`Cmd+P`).
 
 Where the client's experts confirm or overturn your calls. Usually the point of the engagement, and usually where schedules slip.
 
-`SME → Export for SME Review…` produces a standalone spreadsheet with dropdowns, optionally split per content owner. Audience columns ride along — SMEs are frequently the only people who know who actually reads a page.
+`SME → Export for SME Review…` produces a standalone spreadsheet with dropdowns, optionally split per content owner. Audience columns ride along — SMEs are frequently the only people who know who actually reads a page. So do your client-review questions: open items come first in the worksheet (urgent, then needs decision, then please confirm), and you can export only those. A question counts as answered as soon as the SME fills in `SME_Decision`; nothing needs clearing afterward.
 
 Then `Import SME Decisions…`, `Compare MRA vs SME…` to see the conflicts side by side, and `Resolve Conflicts…` to produce `Final_MRA`. From that point on, `Final_MRA` is what every report and export reads.
 
