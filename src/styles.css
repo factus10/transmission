@@ -1812,6 +1812,12 @@ body.resizing-sidebar iframe {
 .picker-item.drag-over {
   border-top: 2px solid var(--accent);
 }
+.picker-item.drag-over-after {
+  border-bottom: 2px solid var(--accent);
+}
+.picker-item.dragging { opacity: 0.4; }
+body.picker-reordering,
+body.picker-reordering * { cursor: grabbing !important; }
 
 /* #field-picker-footer styling now provided by the global .modal-footer class. */
 
