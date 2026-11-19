@@ -131,6 +131,8 @@ Auditor reviews a page, can't decide between Migrate and Revise, wants to flag f
 
 **Underlying issue:** Process state is a missing dimension.
 
+*Since addressed in part:* Transmission's **Ask client** (`Client_Review`: Needs decision / Please confirm, with a priority and reason) gives the stakeholder half of this a column of its own.
+
 ### Pattern E: The Split
 
 One page is doing three jobs. Decision: split into three pages. MRA has no value for this. The auditor adds a Note. The migration team has to read every Note hoping to catch it.
@@ -267,7 +269,7 @@ Examples of operational tooling that addresses §3 patterns without resolving th
 | **A — Post-Launch problem** | Filter bar in Consolidation Candidates can exclude rows by MRA state or Group. Custom MRA merge cleans up typo variants. | The MRA column still can't natively distinguish "out of crawl scope" from "deferred." Reports that group by MRA still mis-categorize. |
 | **B — Implicit Consolidate** | Consolidate is now a first-class MRA state with a target picker, redirect chasing, and a Consolidation Candidates workflow modal. | Largely *resolved* by tooling — but only because the framework recognized Consolidate as a missing concept and the tooling implemented it. This is the exception that proves the rule: when conceptual gaps are addressed, tooling can fully close them. |
 | **C — Migrate but moved** | Computed Path + Redirect_Destination columns capture the URL change separately from MRA. | The MRA column doesn't reflect the URL change. A reader looking at "Migrate" can't tell that the URL is moving without checking other columns. |
-| **D — The half-decision** | Notes field, Flagged bookmark, "Pending Final MRA" filter. | No clean "needs decision from someone" state. Auditors still park decisions in Notes and hope someone reads them. |
+| **D — The half-decision** | **Ask client** (`Client_Review`: Needs decision / Please confirm, with priority and reason), counted apart from Unreviewed, sent first in the SME worksheet, open until the SME answers; urgent ones block the Pre-Handoff Check. Notes carry the question. | Largely *resolved* for stakeholder questions. The auditor's own "I need to research this" (InReview) still has only the Flag bookmark. |
 | **E — The split** | None. Auditors note it in Notes. | No data structure for "this page becomes 2+ pages." |
 | **F — Cross-engagement orphan** | Custom MRA states + Group filtering. | The vocabulary still treats them as Excludes for downstream tooling that doesn't know about custom states. |
 | **G — Multiple authorities disagree** | Separate columns per authority + SME conflict resolution UI. The framework *codified* this pattern. | Final_MRA flattens disagreements. Reports rarely surface authority-level conflict as a signal in its own right. |

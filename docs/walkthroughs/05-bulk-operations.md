@@ -32,11 +32,13 @@ Two ways to define the target:
 
 In the **Multi-bar**:
 
-1. Pick an **Action…**: **Set MRA**, **Set Published Status**, **Set Content Type**, **Set Content Theme**, **Set Group**, **Set Primary Tag**, or **Add Tag**.
+1. Pick an **Action…**: **Set MRA**, **Set Published Status**, **Set Content Type**, **Set Content Theme**, **Set Group**, **Set Primary Tag**, **Add Tag**, or one of the client-review actions: **Ask client**, **Set client-review priority**, **Set client-review reason**.
 2. Pick the **value** (the second dropdown populates from your libraries).
 3. **Apply**.
 
 **Clear selection** drops the multi-selection (returning the target to "filtered").
+
+> Asking the client in bulk: **Ask client** keeps each page's own priority and reason. Priority and reason only change pages that already have a question, and **Please confirm** skips pages with no MRA. The toast says how many were skipped, and the whole run is one **Cmd+Z**.
 
 > Gotcha: bulk-setting MRA to **Archive** on pages that already have a sitemap assignment or redirect triggers a **cleanup prompt** — choose whether to clear those too, so you don't leave orphaned redirects.
 

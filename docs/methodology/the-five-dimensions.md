@@ -88,6 +88,8 @@ MRA has implicit Unreviewed (blank) and Decided (filled in). The middle states a
 
 The audit tool's `Final_MRA` column hints at this dimension: it's a separate column because the resolution is a separate moment from the initial recommendation. But the pattern stops at SME — it doesn't generalize to "needs research" or "pending stakeholder."
 
+**In Transmission today:** the *Ask client* control (the `Client_Review` column) records the stakeholder half of this dimension. **Needs decision** is PendingStakeholder with no decision yet, so it's counted apart from Unreviewed. **Please confirm** is Decided, pending confirmation. A priority (Normal / Urgent) records how costly a wrong call would be, kept separate from confidence on purpose. The item resolves when the SME answers. *InReview* in the auditor's own sense ("I need to research this") still has no column; the Flag bookmark covers it. See [Questions to the client](../USER_GUIDE.md#questions-to-the-client).
+
 ---
 
 ## 5. Authority — Whose decision is this?
