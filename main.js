@@ -148,7 +148,10 @@ function injectAndOrderAuditColumns(headers, rows, columnMap) {
                      // Internal: who wrote Redirect_Destination — 'auto' (derived from the sitemap)
                      // or 'manual' (a person typed or picked it). Blank = unknown, which is what
                      // every file predating this column has; consumers must fall back to heuristics.
-                     '_RedirectSource'];
+                     '_RedirectSource',
+                     // Client review: the auditor's question to the client (status, how much a
+                     // wrong call costs, and why — so the client can route it to the right SME)
+                     'Client_Review', 'Client_Review_Priority', 'Client_Review_Reason'];
   auditCols.forEach(col => {
     if (!headers.includes(col)) {
       headers.push(col);
