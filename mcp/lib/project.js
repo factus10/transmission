@@ -1194,7 +1194,7 @@ Project.prototype._resolveProposalField = function (name) {
     || Object.keys(info).find(c => info[c].canonical.toLowerCase() === n.toLowerCase())
     // Legacy KKE spellings (KKE_Recommendation) name the same field.
     || Object.keys(info).find(c => info[c].canonical.toLowerCase() === Terminology.header(n, 'mra').toLowerCase());
-  if (!hit) throw new Error(`"${n}" is not a field proposals may change. Allowed: ${Object.keys(info).join(', ')}. Final_MRA, sitemap placement, redirects and consolidation targets can only be set in the app.`);
+  if (!hit) throw new Error(`"${n}" is not a field proposals may change. Allowed: ${Object.keys(info).join(', ')}. Final_MRA, sitemap placement and redirects can only be set in the app; propose a consolidation on Consolidate_Into with the target page's URL.`);
   return { column: hit, ...info[hit] };
 };
 
