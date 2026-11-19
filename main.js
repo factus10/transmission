@@ -6,6 +6,7 @@ const ExcelJS = require('exceljs');
 const { ProjectStore, PROJECT_EXT } = require('./project-store');
 const Terminology = require('./src/terminology.js');
 const miro = require('./miro');
+const { orderAuditColumns } = require('./column-order');
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -116,8 +117,10 @@ function computeColumnMap(headers, filePath, projectMap) {
   };
 }
 
-// Inject missing audit columns (blank values) and reorder: KKE first, then
-// Tags/Notes/Group/Primary Tag right after the URL column. Mutates headers +
+// Inject missing audit columns (blank values) and put every audit column in its
+// canonical place (column-order.js: Final_MRA and MRA_Recommendation first, the
+// auditor's working columns right after the URL, the rest after the crawl
+// columns). Mutates headers +
 // rows in place. Shared by the xlsx reader and the .transmission project
 // reader — running it on project open is what lets a new app version add new
 // audit columns to projects created by an older version.
@@ -159,23 +162,9 @@ function injectAndOrderAuditColumns(headers, rows, columnMap) {
     }
   });
 
-  function moveCol(col, targetIdx) {
-    const curIdx = headers.indexOf(col);
-    if (curIdx === -1 || curIdx === targetIdx) return;
-    headers.splice(curIdx, 1);
-    headers.splice(targetIdx, 0, col);
-  }
-
-  // KKE goes to position 0
-  moveCol(columnMap.kke, 0);
-
-  // Tags, Notes, Group, Primary Tag go right after Address (in that order)
-  const urlCol = detectUrlColumn(headers);
-  const afterUrl = urlCol ? headers.indexOf(urlCol) + 1 : 1;
-  const postUrlCols = [columnMap.tags, columnMap.notes, columnMap.group, columnMap.primaryTag];
-  postUrlCols.forEach((col, i) => {
-    moveCol(col, afterUrl + i);
-  });
+  // Put every column in its place (decision first, the auditor's work after the
+  // URL, the rest after the crawl columns). See column-order.js.
+  orderAuditColumns(headers, columnMap, detectUrlColumn(headers));
 }
 
 // Historical column names — renamed for client-facing clarity (a raw "NavID"/
@@ -773,6 +762,7 @@ function readWorkbook(filePath, targetSheet) {
         NAV_COLUMNS.forEach(col => {
           if (!headers.includes(col)) headers.push(col);
         });
+        orderAuditColumns(headers, columnMap, detectUrlColumn(headers));
         // Canonicalize to 'Sitemap' regardless of the on-disk name — writeWorkbook()
         // physically renames the sheet the next time this file is saved.
         navSheetInfo = { sheetName: 'Sitemap' };
@@ -925,6 +915,7 @@ function readProject(filePath) {
         NAV_COLUMNS.forEach(col => {
           if (!headers.includes(col)) headers.push(col);
         });
+        orderAuditColumns(headers, columnMap, detectUrlColumn(headers));
       }
     }
     // No xlsx behind a project — exports build the Sitemap sheet from scratch.

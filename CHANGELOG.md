@@ -6,6 +6,10 @@ major-version codenames drawn from The Smiths.
 
 ## [Unreleased]
 
+### Changed
+
+- **The audit columns have a sensible order.** The columns Transmission adds used to land wherever each feature put them, scattered through and after a crawl's dozens of columns. Now **Final_MRA** and **MRA_Recommendation** come first. Your working columns follow the URL: tags, notes, group, primary tag, consolidation target, redirect, then the SME and client-review columns. Everything else (classification, audience, sitemap placement, source site and CMS links, suggestions) goes after the crawl columns, with the app's internal columns last. Existing files are rearranged the next time you open them and keep the new order when saved. Table View keeps any column order you've set there.
+
 ### Fixed
 
 - **Reordering visible fields works again.** In **Choose visible fields**, dragging a field in the Visible list now moves it. Before, the drag handles showed but rows wouldn't move. A line shows where the field will land, and Esc cancels the drag. A plain click still selects the field.
