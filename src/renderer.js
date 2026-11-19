@@ -908,6 +908,13 @@ function bindStaticEvents() {
       toggleFlag(state.selectedIndex);
       return;
     }
+
+    // Client review: C opens the Ask client dialog
+    if ((e.key === 'c' || e.key === 'C') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      openClientReviewDialog(state.selectedIndex);
+      return;
+    }
   });
 
   // KKE buttons
@@ -964,6 +971,9 @@ function bindStaticEvents() {
 
   // Notes
   els.btnNotes.addEventListener('click', e => toggleNotesPopover(e));
+  $('btn-client-review')?.addEventListener('click', () => {
+    if (state.selectedIndex !== null) openClientReviewDialog(state.selectedIndex);
+  });
   els.btnNotesClose.addEventListener('click', closeNotesPopover);
   els.btnNotesSave.addEventListener('click', closeNotesPopover);
   $('notes-template-select').addEventListener('change', onNoteTemplateSelect);
@@ -2333,11 +2343,12 @@ const SHORTCUT_GROUPS = [
     ['5', 'Exclude'],
     ['0', 'Clear decision'],
     ['F', 'Flag / unflag row'],
+    ['C', 'Ask client (client review)'],
   ]},
   { title: 'Navigating', items: [
     ['↑ / k', 'Previous row'],
     ['↓ / j', 'Next row'],
-    [']', 'Next unreviewed row'],
+    [']', 'Next unreviewed row (skips ones waiting on a client decision)'],
     ['⌘F', 'Global search'],
     ['?', 'This cheat-sheet'],
     ['Esc', 'Close popover or dialog'],
@@ -3145,7 +3156,7 @@ function applyFilter() {
 
   if (kf && kf.length > 0) {
     // Separate status values from special filters
-    const specialFilters = new Set(['_unreviewed', '_flagged', '_duplicates', '_sme-conflicts', '_sme-pending', '_consolidate-no-target', '_consolidate-review', '_consolidate-dead-target', '_shared-nav', '_needs-placement', '_suggested-disagree', '_suggested-mismatch', '_needs-audience', '_audience-orphan', '_audience-suggested', '_cross-site-duplicate', '_url-variant', '_variant-target-missing', '_needs-job', '_non-content', '_inherited-redirect', '_redirect-needs-review']);
+    const specialFilters = new Set(['_unreviewed', '_flagged', '_duplicates', '_sme-conflicts', '_sme-pending', '_consolidate-no-target', '_consolidate-review', '_consolidate-dead-target', '_shared-nav', '_needs-placement', '_suggested-disagree', '_suggested-mismatch', '_needs-audience', '_audience-orphan', '_audience-suggested', '_cross-site-duplicate', '_url-variant', '_variant-target-missing', '_needs-job', '_non-content', '_inherited-redirect', '_redirect-needs-review', '_client-review-open', '_client-review-urgent', '_client-review-undecided']);
     const statusValues = kf.filter(v => !specialFilters.has(v));
     const specials = kf.filter(v => specialFilters.has(v));
 
@@ -3183,6 +3194,9 @@ function applyFilter() {
       for (const s of specials) {
         if (s === '_unreviewed' && !kke) return true;
         if (s === '_flagged' && String(row['_Flagged'] || '').trim() === '1') return true;
+        if (s === '_client-review-open' && clientReviewIsOpen(row)) return true;
+        if (s === '_client-review-urgent' && clientReviewIsOpen(row) && clientReviewIsUrgent(row)) return true;
+        if (s === '_client-review-undecided' && clientReviewAwaitingDecision(row)) return true;
         if (s === '_duplicates' && _duplicateSet.has(origIndex)) return true;
         if (s === '_sme-conflicts') {
           if (parseSmeDecision(row[smeDecisionCol()], kke).changed) return true;
@@ -3742,6 +3756,24 @@ function renderVisibleRows() {
       c.title = 'Consolidate marked but no target set — click the Consolidate button to pick one';
       indicators.appendChild(c);
     }
+    // Client review: "?" while the client owes an answer (red when Urgent; outlined
+    // for Please confirm), muted once the SME has answered. Distinct from the ★
+    // flag, which is the auditor's private bookmark.
+    const crStatus = clientReviewStatus(row);
+    if (crStatus) {
+      const open = clientReviewIsOpen(row);
+      const urgent = clientReviewIsUrgent(row);
+      const q = document.createElement('span');
+      q.className = 'row-ind row-ind-client' +
+        (crStatus === 'Please confirm' ? ' row-ind-client-confirm' : '') +
+        (open && urgent ? ' row-ind-client-urgent' : '') +
+        (open ? '' : ' row-ind-client-answered');
+      q.textContent = '?';
+      const reason = String(row[CLIENT_REVIEW_REASON_COL] || '').trim();
+      q.title = `Client review: ${crStatus}${urgent ? ' (Urgent)' : ''}${reason ? ' · ' + reason : ''}` +
+        (open ? '' : ' — answered by the SME');
+      indicators.appendChild(q);
+    }
     // CMS link indicators (Phase 1) — small dots when source/new CMS URLs are populated
     const hasSrcCms = isProbablyUrl(row['Source_CMS_URL']);
     const hasNewCms = isProbablyUrl(row['New_CMS_URL']);
@@ -3950,15 +3982,22 @@ function jumpToNextUnreviewed() {
     ? -1
     : rows.findIndex(fr => fr.origIndex === state.selectedIndex);
   const n = rows.length;
+  // A blank MRA marked "Needs decision" was reviewed: the auditor is waiting on
+  // the client, so it isn't the auditor's next piece of work.
+  let awaiting = 0;
   for (let step = 1; step <= n; step++) {
     const pos = ((startPos + step) % n + n) % n;
     const origIndex = rows[pos].origIndex;
-    if (!String(state.editedRows[origIndex][kkeCol()] || '').trim()) {
+    const row = state.editedRows[origIndex];
+    if (!String(row[kkeCol()] || '').trim()) {
+      if (clientReviewStatus(row) === 'Needs decision') { awaiting++; continue; }
       selectRow(origIndex);
       return;
     }
   }
-  showToast('No unreviewed rows in the current list', 'info');
+  showToast(awaiting
+    ? `No unreviewed rows in the current list (${awaiting.toLocaleString()} waiting on a client decision)`
+    : 'No unreviewed rows in the current list', 'info');
 }
 
 function updateNavControls() {
@@ -4100,6 +4139,7 @@ function populateAuditFields(row) {
   updateSuggestedKkeBadge(row);
   updateConsolidateIndicator(row);
   updateFinalOverrideChip(row);
+  updateClientReviewButton(row);
 
   // Tags
   const tagsRaw = row[tagsCol()] || '';
@@ -4375,6 +4415,8 @@ function summarizeDecide(row) {
   if (kke) parts.push(kke);
   const notes = String(row[notesCol()] || '').trim();
   if (notes) parts.push('note');
+  const cr = clientReviewStatus(row);
+  if (cr) parts.push(`client: ${cr}${clientReviewIsUrgent(row) ? ' (urgent)' : ''}`);
   // Include SME / Final readout when SME fields are visible
   if (state.showSmeFields) {
     const sme = String(row[smeDecisionCol()] || '').trim();
@@ -10037,6 +10079,7 @@ function toggleProjectSettingsPopover() {
   // KKE States tab
   renderCustomKkeList();
   renderRogueKkeList();
+  renderClientReviewReasonList();
   // Suggestions tab
   refreshSuggestionsTab();
   // Audience tab
@@ -25187,6 +25230,13 @@ function gatherProgressStats() {
   state.customKkeStates.forEach(s => contentKkeCounts[s.label] = 0);
   let contentTotal = 0, contentUnreviewed = 0;
   let nonContentRedirects = 0, nonContentGone = 0;
+  // Client review. awaitingClient is the part of `unreviewed` that WAS
+  // reviewed: a blank decision the auditor marked "Needs decision". It stays
+  // inside `unreviewed` (nothing has been decided, and the sidebar's Unreviewed
+  // filter agrees), but is reported beside it so "nobody looked" and "looked,
+  // waiting on the client" are never read as the same number.
+  let awaitingClient = 0, clientReviewOpen = 0, clientReviewUrgent = 0,
+      clientReviewNeedsDecision = 0, clientReviewPleaseConfirm = 0, clientReviewAnswered = 0;
 
   rows.forEach(row => {
     // Decision counts use the EFFECTIVE KKE: once a client's Final_MRA is set, it
@@ -25212,6 +25262,18 @@ function gatherProgressStats() {
     if (!kke) unreviewed++;
     else kkeCounts[kke] = (kkeCounts[kke] || 0) + 1;
     if (String(row['_Flagged'] || '').trim() === '1') flagged++;
+    const crStatus = clientReviewStatus(row);
+    if (crStatus) {
+      if (!kke && crStatus === 'Needs decision') awaitingClient++;
+      if (clientReviewIsOpen(row)) {
+        clientReviewOpen++;
+        if (clientReviewIsUrgent(row)) clientReviewUrgent++;
+        if (crStatus === 'Please confirm') clientReviewPleaseConfirm++;
+        else clientReviewNeedsDecision++;
+      } else {
+        clientReviewAnswered++;
+      }
+    }
     if (String(row[tagsCol()] || '').trim()) tagged++;
     if (String(row[notesCol()] || '').trim()) noted++;
 
@@ -25249,7 +25311,9 @@ function gatherProgressStats() {
   return { total, reviewed, pct, kkeCounts, unreviewed, flagged, tagged, noted, groups,
            smeTotal, smeReviewed, smePct, smeApproved, smeChanged, finalResolved, finalPct,
            contentTotal, contentKkeCounts, contentUnreviewed, contentReviewed, contentPct,
-           contentGroups, sectionsContent, nonContent, nonContentRedirects, nonContentGone };
+           contentGroups, sectionsContent, nonContent, nonContentRedirects, nonContentGone,
+           awaitingClient, clientReviewOpen, clientReviewUrgent, clientReviewNeedsDecision,
+           clientReviewPleaseConfirm, clientReviewAnswered };
 }
 
 /** KKE color map (CSS variable values resolved at call time) */
@@ -25333,6 +25397,9 @@ function openProgressDashboard() {
 
   html += `
     <div class="progress-stat"><span class="progress-stat-label">Unreviewed</span><span class="progress-stat-value">${stats.unreviewed}</span></div>
+    ${stats.awaitingClient ? `
+    <div class="progress-stat"><span class="progress-stat-label" style="padding-left:10px;color:var(--text-muted);">not looked at yet</span><span class="progress-stat-value">${stats.unreviewed - stats.awaitingClient}</span></div>
+    <div class="progress-stat"><span class="progress-stat-label" style="padding-left:10px;color:var(--text-muted);">reviewed, waiting on a client decision</span><span class="progress-stat-value">${stats.awaitingClient}</span></div>` : ''}
     <div class="progress-section-title">Other</div>
     <div class="progress-stat"><span class="progress-stat-label">Flagged</span><span class="progress-stat-value">${stats.flagged}</span></div>
     <div class="progress-stat"><span class="progress-stat-label">Tagged</span><span class="progress-stat-value">${stats.tagged}</span></div>
@@ -25344,6 +25411,15 @@ function openProgressDashboard() {
     stats.groups.forEach(([g, c]) => {
       html += `<div class="progress-stat"><span class="progress-stat-label">${escapeHtml(g)}</span><span class="progress-stat-value">${c}</span></div>`;
     });
+  }
+
+  if (stats.clientReviewOpen > 0 || stats.clientReviewAnswered > 0) {
+    html += '<div class="progress-section-title" style="margin-top:16px;">Client review</div>';
+    html += `<div class="progress-stat"><span class="progress-stat-label">Open (no SME answer yet)</span><span class="progress-stat-value">${stats.clientReviewOpen}</span></div>`;
+    html += `<div class="progress-stat"><span class="progress-stat-label" style="padding-left:16px;">Urgent</span><span class="progress-stat-value" style="${stats.clientReviewUrgent ? 'color:var(--kke-archive);' : ''}">${stats.clientReviewUrgent}</span></div>`;
+    html += `<div class="progress-stat"><span class="progress-stat-label" style="padding-left:16px;">Needs decision</span><span class="progress-stat-value">${stats.clientReviewNeedsDecision}</span></div>`;
+    html += `<div class="progress-stat"><span class="progress-stat-label" style="padding-left:16px;">Please confirm</span><span class="progress-stat-value">${stats.clientReviewPleaseConfirm}</span></div>`;
+    html += `<div class="progress-stat"><span class="progress-stat-label">Answered</span><span class="progress-stat-value">${stats.clientReviewAnswered}</span></div>`;
   }
 
   // SME Review section
@@ -25403,6 +25479,17 @@ async function exportProgressPdf(format) {
     ${kkeBarHtml(stats.kkeCounts, stats.total)}
     ${kkeStatsRows(stats.kkeCounts, stats.total)}
   `;
+
+  if (stats.clientReviewOpen > 0 || stats.clientReviewAnswered > 0) {
+    body += `
+      <h2>Client review</h2>
+      <div class="stat-row"><span class="stat-label">Waiting on the client</span><span class="stat-value">${stats.clientReviewOpen.toLocaleString()}</span></div>
+      <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Urgent</span><span class="stat-value">${stats.clientReviewUrgent.toLocaleString()}</span></div>
+      <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Needs a decision</span><span class="stat-value">${stats.clientReviewNeedsDecision.toLocaleString()}</span></div>
+      <div class="stat-row"><span class="stat-label">&nbsp;&nbsp;Please confirm</span><span class="stat-value">${stats.clientReviewPleaseConfirm.toLocaleString()}</span></div>
+      <div class="stat-row"><span class="stat-label">Answered</span><span class="stat-value">${stats.clientReviewAnswered.toLocaleString()}</span></div>
+    `;
+  }
 
   if (stats.smeReviewed > 0 || stats.finalResolved > 0) {
     body += `
@@ -25483,6 +25570,9 @@ function renderKkeFilterOptions() {
   const specials = [
     { value: '_unreviewed', text: 'Unreviewed' },
     { value: '_flagged', text: 'Flagged' },
+    { value: '_client-review-open', text: 'Client review: open' },
+    { value: '_client-review-urgent', text: 'Client review: urgent (open)' },
+    { value: '_client-review-undecided', text: 'Reviewed, undecided (needs client decision)' },
     { value: '_duplicates', text: 'Duplicates' },
     { value: '_sme-conflicts', text: 'SME Conflicts' },
     { value: '_sme-pending', text: 'Pending Final MRA' },
@@ -30335,6 +30425,8 @@ function showSmeExportModal() {
       rows = rows.filter(r => String(r[groupCol()] || '').trim() === fv);
     } else if (ft === 'primaryTag' && fv) {
       rows = rows.filter(r => String(r[primaryTagCol()] || '').trim() === fv);
+    } else if (ft === 'clientReview') {
+      rows = rows.filter(clientReviewIsOpen);
     }
     return rows;
   }
@@ -30346,7 +30438,7 @@ function showSmeExportModal() {
   function populateFilterValues() {
     filterVal.innerHTML = '';
     const ft = filterType.value;
-    if (!ft) {
+    if (!ft || ft === 'clientReview') {
       filterVal.classList.add('hidden');
       updatePreview();
       return;
@@ -30397,7 +30489,7 @@ function showSmeExportModal() {
   }
 
   async function onExport() {
-    const rows = getFilteredRows();
+    let rows = getFilteredRows();
     if (rows.length === 0) { showToast('No rows to export', 'error'); return; }
 
     const urlCol = state.urlColumn || 'Address';
@@ -30405,9 +30497,18 @@ function showSmeExportModal() {
     // Audience columns ride along read-only: the SME is very often the only
     // person who actually knows who reads a given page, so showing them our
     // tagging is the cheapest correction loop available.
-    const exportHeaders = [urlCol, titleCol, kkeCol(), PRIMARY_AUDIENCE_COL, AUDIENCES_COL,
+    // Client review rides along (read-only) when any exported row carries one:
+    // it is the auditor's question to the client, and Notes beside it says
+    // exactly what is being asked. Projects that don't use it get the same
+    // worksheet as before.
+    const withClientReview = rows.some(r => clientReviewStatus(r));
+    const crCols = withClientReview ? [CLIENT_REVIEW_COL, CLIENT_REVIEW_PRIORITY_COL, CLIENT_REVIEW_REASON_COL] : [];
+    const exportHeaders = [urlCol, titleCol, kkeCol(), ...crCols, PRIMARY_AUDIENCE_COL, AUDIENCES_COL,
                            notesCol(), smeDecisionCol(), smeNotesCol(), contentOwnerCol()]
       .filter(h => state.headers.includes(h));
+    // Open client-review items first (Urgent, then Needs decision, then Please
+    // confirm); everything else keeps its order (Array.prototype.sort is stable).
+    if (withClientReview) rows = rows.slice().sort((a, b) => clientReviewSortRank(a) - clientReviewSortRank(b));
     const splitByOwner = $('sme-export-split-owner').checked;
     const vocabulary = $('sme-export-legacy-wording').checked ? 'kke' : 'mra';
 
@@ -30427,6 +30528,7 @@ function showSmeExportModal() {
     const ps = state.projectSettings;
     const filterLabel = filterType.value === 'group' ? filterVal.value
                       : filterType.value === 'primaryTag' ? filterVal.value
+                      : filterType.value === 'clientReview' ? 'Client Review'
                       : '';
     const smeOptions = ['Approve', ...allKkeStates().map(s => 'Change: ' + s)];
 
@@ -30840,7 +30942,10 @@ const TV_HIDDEN_BY_DEFAULT = new Set([
   'Source_CMS_URL',
   'New_CMS_URL',
   'Design_Patterns',
-  '_Suggested_Audiences'
+  '_Suggested_Audiences',
+  // Client review: the status column shows; priority and reason are one click away
+  'Client_Review_Priority',
+  'Client_Review_Reason'
 ]);
 
 // Plain-language explanations surfaced as column-header tooltips (Table View) so non-experts
@@ -33062,6 +33167,336 @@ function detectDuplicates() {
     const sites = new Set(indices.map(i => String(state.editedRows[i][SOURCE_SITE_COL] || '').trim()).filter(Boolean));
     if (sites.size > 1) indices.forEach(i => _crossSiteDupSet.add(i));
   });
+}
+
+// ─── Client review ────────────────────────────────────────────────────────────
+//
+// The auditor's question to the client: "I can't make this call" (Needs
+// decision) or "I made it, but check me" (Please confirm), how much a wrong call
+// would cost (Priority), and why (Reason, so the client can route it to the
+// right SME). The specific question itself goes in Notes. Design and rationale:
+// docs/dev/CLIENT_REVIEW_PROPOSAL.md.
+//
+// Two questions are kept apart on purpose: confidence (the status) and
+// consequence (the priority). One scale would mix them, and a client reads any
+// scale as urgency.
+//
+// An item is OPEN while the SME hasn't answered it. That is worked out from
+// SME_Decision, never stored: SME import needs no special logic, and the
+// auditor's question stays on the row as a record of what was asked.
+
+const CLIENT_REVIEW_COL          = 'Client_Review';
+const CLIENT_REVIEW_PRIORITY_COL = 'Client_Review_Priority';
+const CLIENT_REVIEW_REASON_COL   = 'Client_Review_Reason';
+const CLIENT_REVIEW_STATUSES     = ['Needs decision', 'Please confirm'];
+const DEFAULT_CLIENT_REVIEW_REASONS = ['Accuracy', 'Compliance/legal', 'Ownership',
+                                       'Consolidate target', 'Domain knowledge', 'Other'];
+
+/** The row's client-review status, normalized: '' | 'Needs decision' |
+ *  'Please confirm'. Any other non-blank value (typed into Table View or an
+ *  imported sheet) is returned as-is: it is still a request to the client. */
+function clientReviewStatus(row) {
+  const raw = String((row && row.Client_Review) || '').trim();
+  const v = raw.toLowerCase();
+  if (v === 'needs decision') return 'Needs decision';
+  if (v === 'please confirm') return 'Please confirm';
+  return raw;
+}
+
+function clientReviewIsUrgent(row) {
+  return !!clientReviewStatus(row) &&
+    String((row && row.Client_Review_Priority) || '').trim().toLowerCase() === 'urgent';
+}
+
+/** Open = asked, and the SME hasn't answered yet (any SME_Decision counts as
+ *  an answer, including a bare value or "Approve"). */
+function clientReviewIsOpen(row) {
+  if (!clientReviewStatus(row)) return false;
+  return !parseSmeDecision(row[smeDecisionCol()], row[kkeCol()]).reviewed;
+}
+
+/** "Reviewed, undecided": the auditor looked and couldn't make the call, and
+ *  nobody has decided since (Final_MRA would count). This is what separates a
+ *  blank MRA that means "nobody looked" from one that means "I looked". */
+function clientReviewAwaitingDecision(row) {
+  return clientReviewStatus(row) === 'Needs decision' && !effectiveKke(row);
+}
+
+/** Order for the SME worksheet: open Urgent items first, then open Needs
+ *  decision, then open Please confirm, then everything else. */
+function clientReviewSortRank(row) {
+  if (!clientReviewIsOpen(row)) return 3;
+  if (clientReviewIsUrgent(row)) return 0;
+  return clientReviewStatus(row) === 'Please confirm' ? 2 : 1;
+}
+
+/** The project's reason vocabulary (Project Settings → Decision states). */
+function clientReviewReasons() {
+  const lib = state.projectSettings && state.projectSettings.clientReviewReasons;
+  return Array.isArray(lib) ? lib : DEFAULT_CLIENT_REVIEW_REASONS.slice();
+}
+
+/** Write a row's client-review fields as ONE undo entry, change-logged.
+ *  Clearing the status clears priority and reason too: they only mean
+ *  something beside a request. Setting a status with no priority defaults to
+ *  Normal. Returns true when anything changed. */
+function setClientReview(origIndex, { status = '', priority = '', reason = '' } = {}) {
+  const row = state.editedRows[origIndex];
+  if (!row) return false;
+  const next = status
+    ? { [CLIENT_REVIEW_COL]: status,
+        [CLIENT_REVIEW_PRIORITY_COL]: priority || 'Normal',
+        [CLIENT_REVIEW_REASON_COL]: reason || '' }
+    : { [CLIENT_REVIEW_COL]: '', [CLIENT_REVIEW_PRIORITY_COL]: '', [CLIENT_REVIEW_REASON_COL]: '' };
+  const items = [];
+  Object.entries(next).forEach(([field, value]) => {
+    const old = String(row[field] || '');
+    if (old === value) return;
+    items.push({ origIndex, field, oldValue: old, newValue: value });
+    logChange(origIndex, field, old, value);
+    row[field] = value;
+  });
+  if (!items.length) return false;
+  pushBulkEditUndo(items, 'client review');
+  setDirty(true);
+  return true;
+}
+
+/** Audit-bar button: "Ask client" when blank, the status (and Urgent) when set. */
+function updateClientReviewButton(row) {
+  const btn = $('btn-client-review');
+  if (!btn) return;
+  const status = row ? clientReviewStatus(row) : '';
+  const open = row ? clientReviewIsOpen(row) : false;
+  const urgent = row ? clientReviewIsUrgent(row) : false;
+  btn.disabled = !row;
+  btn.classList.toggle('client-review-set', !!status);
+  btn.classList.toggle('client-review-urgent', !!status && urgent && open);
+  btn.classList.toggle('client-review-answered', !!status && !open);
+  if (!status) {
+    btn.textContent = 'Ask client';
+    btn.title = 'Send this page to the client for a decision (C)';
+    return;
+  }
+  // Short label so the Decide cluster doesn't wrap; the title has the full wording.
+  const short = status === 'Needs decision' ? 'decide' : status === 'Please confirm' ? 'confirm' : 'asked';
+  btn.textContent = 'Client: ' + short + (urgent && open ? ' !' : '') + (open ? '' : ' ✓');
+  const reason = String(row[CLIENT_REVIEW_REASON_COL] || '').trim();
+  btn.title = `Client review: ${status}${urgent ? ' (Urgent)' : ''}${reason ? ' · ' + reason : ''}` +
+    (open ? '' : '\nAnswered: the SME has responded') + '\nClick to change (C)';
+}
+
+/** The set/change dialog. Esc or Cancel changes nothing. */
+function openClientReviewDialog(origIndex) {
+  const row = state.editedRows[origIndex];
+  if (!row) return;
+  const status = clientReviewStatus(row);
+  const priority = String(row[CLIENT_REVIEW_PRIORITY_COL] || '').trim() || 'Normal';
+  const reason = String(row[CLIENT_REVIEW_REASON_COL] || '').trim();
+  const hasDecision = !!effectiveKke(row);
+  const reasons = clientReviewReasons().slice();
+  // A reason typed elsewhere (Table View, an imported sheet) stays selectable.
+  if (reason && !reasons.includes(reason)) reasons.push(reason);
+  const hasNotes = !!String(row[notesCol()] || '').trim();
+  const answered = status && !clientReviewIsOpen(row);
+
+  const radio = (name, value, label, hint, { checked, disabled } = {}) => `
+    <label class="cr-option${disabled ? ' cr-option-disabled' : ''}">
+      <input type="radio" name="${name}" value="${escapeHtml(value)}"${checked ? ' checked' : ''}${disabled ? ' disabled' : ''}>
+      <span><strong>${escapeHtml(label)}</strong>${hint ? `<span class="cr-hint">${escapeHtml(hint)}</span>` : ''}</span>
+    </label>`;
+
+  const body = `
+    <div class="cr-dialog">
+      ${answered ? `<div class="cr-note cr-note-ok">The SME has answered this one (SME decision: ${escapeHtml(String(row[smeDecisionCol()] || '').trim())}). It no longer counts as open.</div>` : ''}
+      <div class="cr-section-label">What do you need from the client?</div>
+      ${radio('cr-status', '', 'Nothing', 'This page doesn’t need the client.', { checked: !status })}
+      ${radio('cr-status', 'Needs decision', 'Needs decision', 'I reviewed it but can’t make the call. MRA can stay blank.', { checked: status === 'Needs decision' })}
+      ${radio('cr-status', 'Please confirm', 'Please confirm',
+        hasDecision ? 'I made a call, but I’m not confident in it.' : 'Set an MRA first: this asks the client to confirm a call you made.',
+        { checked: status === 'Please confirm', disabled: !hasDecision && status !== 'Please confirm' })}
+      <div class="cr-fields">
+        <div class="cr-section-label">How much does a wrong call cost?</div>
+        <div class="cr-inline">
+          ${radio('cr-priority', 'Normal', 'Normal', '', { checked: priority !== 'Urgent' })}
+          ${radio('cr-priority', 'Urgent', 'Urgent', 'Legal or compliance risk, high traffic, a contractual requirement', { checked: priority === 'Urgent' })}
+        </div>
+        <label class="cr-section-label" for="cr-reason">Reason <span class="cr-hint">(helps the client route it to the right person)</span></label>
+        <select id="cr-reason" class="cr-select">
+          <option value="">—</option>
+          ${reasons.map(r => `<option value="${escapeHtml(r)}"${r === reason ? ' selected' : ''}>${escapeHtml(r)}</option>`).join('')}
+          <option value="__new__">+ New reason…</option>
+        </select>
+        <div class="cr-note">${hasNotes
+          ? 'Make sure <strong>Notes</strong> says exactly what you’re asking. Notes go to the client in the SME worksheet.'
+          : 'This page has no notes yet. Write the question for the client in <strong>Notes</strong>: they go to the client in the SME worksheet.'}</div>
+      </div>
+    </div>`;
+
+  const modal = openModal({
+    title: 'Client review',
+    body,
+    width: 480,
+    escapeValue: null,
+    buttons: [
+      { label: 'Cancel', value: null },
+      { label: 'Save', variant: 'primary', primary: true,
+        onClick: (api) => {
+          const q = sel => api.body.querySelector(sel);
+          return {
+            status: q('input[name="cr-status"]:checked')?.value || '',
+            priority: q('input[name="cr-priority"]:checked')?.value || 'Normal',
+            reason: q('#cr-reason').value === '__new__' ? '' : q('#cr-reason').value,
+          };
+        } },
+    ],
+    onClose: (result) => {
+      if (!result) return;
+      if (setClientReview(origIndex, result)) {
+        refreshRowInList(origIndex);
+        if (state.selectedIndex === origIndex) updateClientReviewButton(state.editedRows[origIndex]);
+        if (state.kkeFilter && state.kkeFilter.some(v => v.startsWith('_client-review'))) applyFilter();
+      }
+    },
+  });
+
+  // Priority and reason only mean something beside a request.
+  const fields = modal.body.querySelector('.cr-fields');
+  const syncFields = () => {
+    const s = modal.body.querySelector('input[name="cr-status"]:checked')?.value || '';
+    fields.classList.toggle('cr-fields-off', !s);
+    fields.querySelectorAll('input, select').forEach(el => { el.disabled = !s; });
+  };
+  modal.body.querySelectorAll('input[name="cr-status"]').forEach(r => r.addEventListener('change', syncFields));
+  syncFields();
+
+  const reasonSel = modal.body.querySelector('#cr-reason');
+  let lastReason = reasonSel.value;
+  reasonSel.addEventListener('change', async () => {
+    if (reasonSel.value !== '__new__') { lastReason = reasonSel.value; return; }
+    const name = await showPrompt('New client review reason', 'Reason', '');
+    const trimmed = name ? sanitizeText(name).trim() : '';
+    if (!trimmed) { reasonSel.value = lastReason; return; }
+    const lib = clientReviewReasons().slice();
+    const existing = lib.find(r => r.toLowerCase() === trimmed.toLowerCase());
+    const value = existing || trimmed;
+    if (!existing) {
+      lib.push(trimmed);
+      state.projectSettings.clientReviewReasons = lib;
+      setDirty(true);
+    }
+    if (![...reasonSel.options].some(o => o.value === value)) {
+      const opt = document.createElement('option');
+      opt.value = value; opt.textContent = value;
+      reasonSel.insertBefore(opt, reasonSel.querySelector('option[value="__new__"]'));
+    }
+    reasonSel.value = lastReason = value;
+  });
+}
+
+/** Rows whose client-review reason is each library entry, for the settings list. */
+function computeClientReviewReasonUsage() {
+  const usage = new Map();
+  (state.editedRows || []).forEach(r => {
+    const v = String(r[CLIENT_REVIEW_REASON_COL] || '').trim();
+    if (v) usage.set(v, (usage.get(v) || 0) + 1);
+  });
+  return usage;
+}
+
+/** Project Settings → Decision states → Client review reasons. Rename and
+ *  delete cascade onto rows (as one undo entry each), like the other libraries. */
+function renderClientReviewReasonList() {
+  const list = $('ps-cr-reason-list');
+  if (!list) return;
+  const lib = clientReviewReasons();
+  const usage = computeClientReviewReasonUsage();
+  list.innerHTML = '';
+  if (!lib.length) {
+    list.innerHTML = '<div class="ps-mig-empty">No reasons. Add one, or leave the Reason field blank when asking.</div>';
+  }
+  lib.forEach((name, idx) => {
+    const n = usage.get(name) || 0;
+    const row = document.createElement('div');
+    row.className = 'ps-mig-row';
+    row.innerHTML = `
+      <span class="ps-mig-name">${escapeHtml(name)}</span>
+      <span class="ps-mig-count">${n ? `${n} page${n !== 1 ? 's' : ''}` : ''}</span>
+      <span style="flex:1;"></span>
+      <button class="btn btn-sm btn-ghost" data-act="rename" data-idx="${idx}">Rename</button>
+      <button class="btn btn-sm btn-ghost" data-act="delete" data-idx="${idx}" style="color:var(--kke-archive);">Delete</button>`;
+    list.appendChild(row);
+  });
+
+  const commit = (newLib) => {
+    state.projectSettings.clientReviewReasons = newLib;
+    setDirty(true);
+    renderClientReviewReasonList();
+  };
+  const cascade = (from, to, label) => {
+    const items = [];
+    state.editedRows.forEach((r, i) => {
+      if (String(r[CLIENT_REVIEW_REASON_COL] || '').trim() !== from) return;
+      items.push({ origIndex: i, field: CLIENT_REVIEW_REASON_COL, oldValue: r[CLIENT_REVIEW_REASON_COL], newValue: to });
+      logChange(i, CLIENT_REVIEW_REASON_COL, r[CLIENT_REVIEW_REASON_COL], to);
+      r[CLIENT_REVIEW_REASON_COL] = to;
+    });
+    if (items.length) {
+      pushBulkEditUndo(items, label);
+      applyFilter();
+      if (state.selectedIndex !== null) updateClientReviewButton(state.editedRows[state.selectedIndex]);
+    }
+    return items.length;
+  };
+
+  list.querySelectorAll('button[data-act]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const lib2 = clientReviewReasons().slice();
+      const i = +btn.dataset.idx;
+      const old = lib2[i];
+      if (btn.dataset.act === 'rename') {
+        const v = await showPrompt('Rename reason', 'New name', old);
+        const trimmed = v ? sanitizeText(v).trim() : '';
+        if (!trimmed || trimmed === old) return;
+        if (lib2.some((r, j) => j !== i && r.toLowerCase() === trimmed.toLowerCase())) {
+          showToast('That reason already exists', 'error');
+          return;
+        }
+        lib2[i] = trimmed;
+        const n = cascade(old, trimmed, 'rename client review reason');
+        commit(lib2);
+        showToast(n ? `Renamed · ${n} page${n !== 1 ? 's' : ''} updated` : 'Renamed', 'success');
+      } else {
+        const n = usage.get(old) || 0;
+        const ok = await confirmDialog({
+          title: 'Delete reason',
+          message: n ? `Delete "${old}"? It will be cleared from ${n} page${n !== 1 ? 's' : ''}. Their client review status stays.` : `Delete "${old}"?`,
+          confirmLabel: 'Delete', danger: true,
+        });
+        if (!ok) return;
+        lib2.splice(i, 1);
+        cascade(old, '', 'delete client review reason');
+        commit(lib2);
+      }
+    });
+  });
+
+  const addBtn = $('ps-cr-reason-add');
+  if (addBtn && !addBtn._wired) {
+    addBtn._wired = true;
+    addBtn.addEventListener('click', async () => {
+      const v = await showPrompt('New client review reason', 'Reason', '');
+      const trimmed = v ? sanitizeText(v).trim() : '';
+      if (!trimmed) return;
+      const lib2 = clientReviewReasons().slice();
+      if (lib2.some(r => r.toLowerCase() === trimmed.toLowerCase())) {
+        showToast('That reason already exists', 'error');
+        return;
+      }
+      lib2.push(trimmed);
+      commit(lib2);
+    });
+  }
 }
 
 // ─── Row flagging ─────────────────────────────────────────────────────────────
