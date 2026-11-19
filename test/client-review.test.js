@@ -52,6 +52,7 @@ function notesCol() { return 'Notes'; }
 function groupCol() { return 'Group'; }
 function finalKkeCol() { return 'Final_MRA'; }
 function smeDecisionCol() { return 'SME_Decision'; }
+function contentOwnerCol() { return 'Content_Owner'; }
 function logChange(i, field, from, to) { if (from !== to) _log.push({ i, field, from, to }); }
 function pushBulkEditUndo(items, label) { if (items.length) _undo.push({ label, items }); }
 function setDirty(v) { _dirty = v; }
@@ -70,6 +71,8 @@ vm.runInThisContext(
   extract('clientReviewSortRank') +
   extract('clientReviewReasons') +
   extract('setClientReview') +
+  extract('bulkClientReview') +
+  extract('clientReviewTallies') +
   // Progress counts, with their real dependencies
   extract('statusCodeCategory') +
   extract('statusCodeCol') +
@@ -87,7 +90,7 @@ function row(fields = {}) {
   return Object.assign({
     Address: 'https://x.test/p', MRA_Recommendation: '', Final_MRA: '', SME_Decision: '',
     Client_Review: '', Client_Review_Priority: '', Client_Review_Reason: '',
-    Tags: '', Notes: '', Group: '', _Flagged: '',
+    Tags: '', Notes: '', Group: '', _Flagged: '', Content_Owner: '',
   }, fields);
 }
 
@@ -175,6 +178,65 @@ describe('setClientReview', () => {
     assert.equal(setClientReview(0, { status: 'Needs decision', priority: 'Normal' }), false);
     assert.equal(_undo.length, 0);
     assert.equal(_log.length, 0);
+  });
+});
+
+describe('bulk action', () => {
+  test('setting a status keeps each row\'s priority and reason, as ONE undo entry', () => {
+    seed([
+      row({ Client_Review: 'Please confirm', Client_Review_Priority: 'Urgent', Client_Review_Reason: 'Accuracy', MRA_Recommendation: 'Migrate' }),
+      row(),
+      row(),
+    ]);
+    const res = bulkClientReview([0, 1, 2], 'client-review', 'Needs decision');
+    assert.deepEqual(res, { changed: 3, skippedNoRequest: 0, skippedNoDecision: 0 });
+    const r0 = state.editedRows[0];
+    assert.deepEqual([r0.Client_Review, r0.Client_Review_Priority, r0.Client_Review_Reason], ['Needs decision', 'Urgent', 'Accuracy']);
+    assert.equal(state.editedRows[1].Client_Review_Priority, 'Normal');
+    assert.equal(_undo.length, 1, 'one Cmd+Z for the whole batch');
+    assert.equal(_undo[0].items.length, 1 + 2 + 2);
+  });
+
+  test('Please confirm skips rows with no decision to confirm', () => {
+    seed([row({ MRA_Recommendation: 'Revise' }), row(), row({ Final_MRA: 'Archive' })]);
+    const res = bulkClientReview([0, 1, 2], 'client-review', 'Please confirm');
+    assert.deepEqual(res, { changed: 2, skippedNoRequest: 0, skippedNoDecision: 1 });
+    assert.equal(state.editedRows[1].Client_Review, '');
+  });
+
+  test('priority and reason skip rows with no request; clearing the status clears all three', () => {
+    seed([row({ Client_Review: 'Needs decision', Client_Review_Priority: 'Normal' }), row()]);
+    assert.deepEqual(bulkClientReview([0, 1], 'client-review-priority', 'Urgent'), { changed: 1, skippedNoRequest: 1, skippedNoDecision: 0 });
+    assert.equal(state.editedRows[1].Client_Review_Priority, '', 'no priority without a request');
+    bulkClientReview([0], 'client-review-reason', 'Ownership');
+    assert.equal(state.editedRows[0].Client_Review_Reason, 'Ownership');
+    bulkClientReview([0], 'client-review', '');
+    const r = state.editedRows[0];
+    assert.deepEqual([r.Client_Review, r.Client_Review_Priority, r.Client_Review_Reason], ['', '', '']);
+  });
+
+  test('nothing to change pushes no undo entry', () => {
+    seed([row()]);
+    bulkClientReview([0], 'client-review-priority', 'Urgent');
+    assert.equal(_undo.length, 0);
+  });
+});
+
+describe('SME Review Status tallies', () => {
+  test('open items by owner and reason, urgent first; answered counted apart', () => {
+    const rows = [
+      row({ Address: 'n1', Client_Review: 'Needs decision', Content_Owner: 'Pat', Client_Review_Reason: 'Ownership' }),
+      row({ Address: 'u1', Client_Review: 'Please confirm', Client_Review_Priority: 'Urgent', MRA_Recommendation: 'Archive', Content_Owner: 'Lee', Client_Review_Reason: 'Compliance/legal' }),
+      row({ Address: 'n2', Client_Review: 'Please confirm', MRA_Recommendation: 'Migrate', Content_Owner: 'Pat' }),
+      row({ Address: 'done', Client_Review: 'Needs decision', SME_Decision: 'Approve', Content_Owner: 'Pat' }),
+      row({ Address: 'none', Content_Owner: 'Pat' }),
+    ];
+    const t = clientReviewTallies(rows);
+    assert.deepEqual(t.open.map(r => r.Address), ['u1', 'n1', 'n2']);
+    assert.equal(t.answered, 1);
+    // Lee has fewer items but an urgent one, so leads the chase list
+    assert.deepEqual(t.byOwner.map(([k, d]) => [k, d.open, d.urgent, d.decide, d.confirm]), [['Lee', 1, 1, 0, 1], ['Pat', 2, 0, 1, 1]]);
+    assert.deepEqual(t.byReason.map(([k]) => k), ['Compliance/legal', 'No reason given', 'Ownership']);
   });
 });
 

@@ -386,6 +386,83 @@ describe('filters', () => {
   });
 });
 
+// ─── Client review ───────────────────────────────────────────────────────────
+
+describe('client review', () => {
+  const CR_HEADERS = [...HEADERS, 'SME_Decision', 'Client_Review', 'Client_Review_Priority', 'Client_Review_Reason'];
+  const crRow = o => { const r = {}; for (const h of CR_HEADERS) r[h] = ''; return Object.assign(r, { 'Status Code': '200', Source_Site: 'Alpha' }, o); };
+  const CR_ROWS = [
+    crRow({ Address: 'https://www.alpha.edu/a', Client_Review: 'needs decision', Client_Review_Priority: 'Urgent' }),
+    crRow({ Address: 'https://www.alpha.edu/b', MRA_Recommendation: 'Migrate', Client_Review: 'Please confirm' }),
+    crRow({ Address: 'https://www.alpha.edu/c', Client_Review: 'Needs decision', SME_Decision: 'Change: Archive' }),
+    crRow({ Address: 'https://www.alpha.edu/d', MRA_Recommendation: 'Revise', Client_Review: 'Needs decision', Client_Review_Priority: 'Urgent' }),
+    crRow({ Address: 'https://www.alpha.edu/e' }),
+    crRow({ Address: 'https://www.alpha.edu/f', MRA_Recommendation: 'Migrate' })
+  ];
+  const CR_SETTINGS = Object.assign({}, SETTINGS, {
+    savedFilters: [
+      { name: 'open', kkeFilter: ['_client-review-open'], fieldFilters: [] },
+      { name: 'urgent', kkeFilter: ['_client-review-urgent'], fieldFilters: [] },
+      { name: 'undecided', kkeFilter: ['_client-review-undecided'], fieldFilters: [] }
+    ],
+    clientReviewReasons: ['Legal hold', 'Ownership']
+  });
+  let crFile;
+  before(() => {
+    crFile = path.join(dir, 'client-review.transmission');
+    buildFixture(crFile, { headers: CR_HEADERS, rows: CR_ROWS, settings: CR_SETTINGS });
+  });
+  const tail = r => r.Address.split('/').pop();
+
+  test('the three filters match the app: open until the SME answers, urgent, reviewed-undecided', () => {
+    const p = mcp.loadProject(crFile);
+    assert.deepEqual(p.select({ savedFilter: 'open' }).map(tail), ['a', 'b', 'd']);
+    assert.deepEqual(p.select({ savedFilter: 'urgent' }).map(tail), ['a', 'd']);
+    assert.deepEqual(p.select({ savedFilter: 'undecided' }).map(tail), ['a', 'c'], 'c is answered but still undecided');
+  });
+
+  test('a project predating the columns reads them blank rather than erroring', () => {
+    const p = mcp.loadProject(file);
+    assert.doesNotThrow(() => p.aggregate({ groupBy: ['Client_Review_Priority'] }));
+  });
+
+  test('proposals: vocabulary is the project\'s own reason list, and status/priority/reason ride together', () => {
+    const f = path.join(dir, 'client-review-propose.transmission');
+    buildFixture(f, { headers: CR_HEADERS, rows: CR_ROWS, settings: CR_SETTINGS });
+    const p = mcp.loadProject(f);
+    const one = c => () => p.proposeChanges({ changes: [c] });
+    assert.throws(one({ url: 'https://www.alpha.edu/e', field: 'Client_Review_Reason', value: 'Accuracy', rationale: 'x' }), /cannot be "Accuracy".*Legal hold · Ownership/s);
+    assert.throws(one({ url: 'https://www.alpha.edu/e', field: 'Client_Review', value: 'Maybe', rationale: 'x' }), /cannot be "Maybe"/);
+    // No request on f and none in the batch: a priority alone means nothing
+    const alone = p.proposeChanges({ changes: [{ url: 'https://www.alpha.edu/f', field: 'Client_Review_Priority', value: 'Urgent', rationale: 'x' }] });
+    assert.equal(alone.queued, 0);
+    assert.match(alone.skipped[0].reason, /no client-review request/);
+    const r = p.proposeChanges({ changes: [
+      // Please confirm on a page with no decision: nothing to confirm
+      { url: 'https://www.alpha.edu/e', field: 'Client_Review', value: 'please confirm', rationale: 'x' },
+      // A request and its priority in one batch is fine
+      { url: 'https://www.alpha.edu/f', field: 'Client_Review', value: 'please confirm', rationale: 'unsure the program still runs' },
+      { url: 'https://www.alpha.edu/f', field: 'Client_Review_Reason', value: 'legal hold', rationale: 'x' },
+      // A priority on a page that already has a request
+      { url: 'https://www.alpha.edu/b', field: 'Client_Review_Priority', value: 'Urgent', rationale: 'high traffic' }
+    ] });
+    assert.equal(r.queued, 3);
+    assert.deepEqual(r.skipped.map(x => x.url.split('/').pop() + ':' + x.field), ['e:Client_Review']);
+    assert.match(r.skipped[0].reason, /needs a decision/);
+    const list = p.listProposals({}).proposals;
+    assert.equal(list.find(x => x.field === 'Client_Review').value, 'Please confirm', 'case normalised');
+    assert.equal(list.find(x => x.field === 'Client_Review_Reason').value, 'Legal hold');
+  });
+
+  test('DRIFT: the renderer can apply every client-review field the server proposes', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
+    const fn = src.slice(src.indexOf('function proposalFieldKind('));
+    const body = fn.slice(0, fn.indexOf('\n}\n'));
+    for (const c of ['CLIENT_REVIEW_COL', 'CLIENT_REVIEW_PRIORITY_COL', 'CLIENT_REVIEW_REASON_COL']) assert.ok(body.includes(c), `${c} missing from proposalFieldKind`);
+    for (const f of ['Client_Review', 'Client_Review_Priority', 'Client_Review_Reason']) assert.ok(mcp.PROPOSAL_FIELDS[f], `${f} missing from PROPOSAL_FIELDS`);
+  });
+});
+
 // ─── Rows, sitemap, redirects, changelog ─────────────────────────────────────
 
 describe('rows', () => {
