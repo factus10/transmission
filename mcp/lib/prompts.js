@@ -1,5 +1,5 @@
 'use strict';
-// The four skills, offered as MCP prompts.
+// The five skills, offered as MCP prompts.
 //
 // Skills are a Claude Code feature; the Claude app's chat gets this server as a
 // desktop extension, which carries tools and prompts but no skills. A prompt is
