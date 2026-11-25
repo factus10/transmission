@@ -1,0 +1,80 @@
+{
+  "about": "Salted SHA-256 hashes of real client names and domains that must never appear in this repository. Hashed so the list does not itself publish them. Add with: node scripts/check-denylist.js --add \"term\" [--case-sensitive]",
+  "salt": "7fb3303a167863122cc5bdfacc92c2a6",
+  "maxWords": 4,
+  "entries": [
+    {
+      "h": "59856c7dbb1e97ecbcb1d500f67504d54b95963936f33358e1a6e6e258f03ce7"
+    },
+    {
+      "h": "046b9082cb9b6c1c919482912d4b4cce7060bc2b245322b12b161bb91d1061c3"
+    },
+    {
+      "h": "29c952979d748c134738c6edebf9dad236f491d958b4923e8d9f73289f1f0c51"
+    },
+    {
+      "h": "f315cd9454c69aa9a5435400bd108574a76fd2d46f7eb6ed1a73733ec973bd58"
+    },
+    {
+      "h": "c4ba2820b807217a70f4834070121912e65137d12ef537c8275d114fcd5ba507"
+    },
+    {
+      "h": "4eb6c4dc2ded6947251e267305c9903d67df6eb9560d41903e5340cb3e3b310a"
+    },
+    {
+      "h": "975805eb5297609f051bbffff1f8130226fb0ef0e74095c392c483e710988de5"
+    },
+    {
+      "h": "4c92108990cc375ecac660fe705b721ca6fdceebdc95ffba35905e409fc68d0b"
+    },
+    {
+      "h": "443cd9699f7b5cf094b5f277de7d167e8c3cc2281ce3d0f1ac98de862886616a"
+    },
+    {
+      "h": "2a8aea2fe920f99b39da3303a6a02f1c25144d5ed59f546783d6186caa6db375"
+    },
+    {
+      "h": "8e04a20d5775f8ea6e1e0389d6ee045b7a2dcc72ceddd89964840b9a27cc1191"
+    },
+    {
+      "h": "7069bc3fd19bea5bdb5d3f749a989d3bb73c33c7750f912150d112e4ce3846ad"
+    },
+    {
+      "h": "ba513e7e1060f9bef6425fb20b6e3f3fa8bb177e0e89e412d543074aaeda7bd6"
+    },
+    {
+      "h": "4af6b4b29db477c798b37b34c61082e9c7990d6643b9a93947330ff94c5cbcc5"
+    },
+    {
+      "h": "077d65301da344ca7589042cd155128db4980262cc2279f2ae54e211f31a5159"
+    },
+    {
+      "h": "35ba99bf6ae8d65b969c23340052b55fb861551d997429ee5e192d0ad59b56c5"
+    },
+    {
+      "h": "15c0c8596812b37692c166347316feb55ad4ef56622c0f3a2d8abacad3a9b2dd"
+    },
+    {
+      "h": "b6e18af7de66c0aec37147e93313dfacb0f490af144b8a689a7b60a253240b2c"
+    },
+    {
+      "h": "86c3baf28f6c8cec90c18c62c772fa922f4b8c7363eb13348fec5e157e004784"
+    },
+    {
+      "h": "e3b40c48ef6950dee8b750fa9cc36b821a37ef4e5eae586dab1e597eebe6f17d",
+      "cs": true
+    },
+    {
+      "h": "9316fa5b3ff575a1cab88d6ce6c0cd8e6fd761fd00661dc847dc1902ecda355b",
+      "cs": true
+    },
+    {
+      "h": "d25f7a141ed36ce35f953f4f5c04a540d4602fbcb9484208f7dfd734e9af391a",
+      "cs": true
+    },
+    {
+      "h": "1e51235ee19140457b6db72de521ac49f2631b11f8343c64a20f00ef736eb345",
+      "cs": true
+    }
+  ]
+}

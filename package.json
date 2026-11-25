@@ -6,6 +6,7 @@
   "main": "main.js",
   "scripts": {
     "test": "node --test \"test/**/*.test.js\"",
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "start": "electron .",
     "dev": "electron . --dev",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
@@ -16,7 +17,8 @@
     "changelog:html": "node scripts/generate-changelog-html.js",
     "docs:html": "node scripts/generate-docs-site.js",
     "skills:zip": "node scripts/package-skills.js",
-    "release:publish": "bash scripts/publish-release.sh"
+    "release:publish": "bash scripts/publish-release.sh",
+    "check:denylist": "node scripts/check-denylist.js --tree"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

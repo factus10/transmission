@@ -4,6 +4,14 @@ Electron app for macOS, built as **two separate single-arch apps — Apple Silic
 
 ---
 
+## Client confidentiality (hard rule)
+
+This repository is public. **Never put a real client's name, domain, URL, page title, people, or audit figures in code, comments, docs, tests, fixtures, file names, commit messages, PR text or release notes.** That holds even when the detail explains a bug well. Examples always use the fictional sample: **Alpha University / Beta College / `alpha.edu`** (`mcp/sample/make-sample-project.js`). When a real audit motivated a change, keep the technical point and drop whatever identifies it: write "a flat site with ~1,400 articles under one node", never which site, and round any measured figure.
+
+`scripts/check-denylist.js` enforces this. It runs as a **pre-commit** and **commit-msg** hook (`.githooks/`, enabled by `npm install` through the `prepare` script) and in CI (`.github/workflows/denylist.yml`, over the tree and every pushed commit message). The terms live in **one file, `scripts/denylist.json`, as salted hashes**, because a plaintext list would publish the names it protects. Errors therefore cite an entry number, never a term. To add a term: `node scripts/check-denylist.js --add "Name" [--case-sensitive]` (case-sensitive is for acronyms that are ordinary words in lower case). Never bypass a hit with `--no-verify`; reword instead. Covered by `test/denylist.test.js`.
+
+---
+
 ## Commands
 
 ```bash

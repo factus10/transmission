@@ -1,0 +1,5 @@
+#!/bin/sh
+# Refuse a commit that adds a real client name or domain (see CLAUDE.md,
+# "Client confidentiality"). Enabled by `npm install` (the "prepare" script
+# points core.hooksPath at .githooks), or by hand: git config core.hooksPath .githooks
+exec node "$(git rev-parse --show-toplevel)/scripts/check-denylist.js" --staged
