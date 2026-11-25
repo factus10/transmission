@@ -129,5 +129,5 @@ The contract already exists in the app: `Suggested_KKE` and `_Suggested_Audience
 ### Open decisions
 
 1. **Schema bump or optional table?** Bumping `SCHEMA_VERSION` to 2 makes older app builds refuse the file with the "update the app" error — correct but abrupt for a table they could safely ignore. The alternative is `CREATE TABLE IF NOT EXISTS` with no version bump and an app that treats the table as optional.
-2. **Where does the server live long-term?** `mcp/` in this (private) repo keeps the filter port and its drift test next to the code they track. A public repo — or a `.mcpb` bundle in `transmission-updates` — is what another auditor could actually install.
+2. **Where does the server live long-term?** `mcp/` in this repo keeps the filter port and its drift test next to the code they track. (Settled since: the repo is public, the plugin installs from it, and the `.mcpb` extension is built by the app itself.)
 3. **Client data.** The server hands crawl data to whichever model the client is connected to. That is the same exposure as the app's existing Claude calls, but at ad hoc query scale and under the *client's* configuration rather than the app's. Worth a line in `docs/RUNNING_AN_AUDIT.md` once this is in anyone else's hands.

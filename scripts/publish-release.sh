@@ -16,7 +16,7 @@ set -euo pipefail
 #      then gets told to update and handed the old build.
 #
 #   2. Large uploads have intermittently 404'd or dropped an asset mid-flight
-#      (seen on the old transmission-updates mirror). A release missing one of
+#      (seen on the old, since-deleted release mirror). A release missing one of
 #      its assets looks published and is broken.
 #
 # So: create as an explicit draft, upload each asset ON ITS OWN, verify every
