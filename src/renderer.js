@@ -243,8 +243,8 @@ function statusCodeCategory(code) {
 //
 // A crawl is a list of URLs that responded, not a list of pages — and the
 // headline number in a client report has to say which one it is counting. A
-// stakeholder reading "~13,000 pages audited" will ask whether they are really
-// migrating ~13,000 pages, and the honest answer subtracts the redirects and the
+// stakeholder reading "13,000 pages audited" will ask whether they are really
+// migrating 13,000 pages, and the honest answer subtracts the redirects and the
 // dead URLs, which were never content in the first place.
 //
 // Derived from the crawl's own Status Code rather than stored, so it is right
@@ -260,8 +260,8 @@ function statusCodeCategory(code) {
 //
 // This is orthogonal to KKE. Exclude is a decision a person made about scope;
 // this is a fact about what the URL returned. Keeping them separate is what
-// lets a report say "~6,500 content pages, of which 2,000 are being killed,
-// plus ~4,100 inherited redirects" instead of blurring the two together.
+// lets a report say "6,500 content pages, of which 2,000 are being killed,
+// plus 4,100 inherited redirects" instead of blurring the two together.
 
 /** The crawl's Status Code column, whatever case it was exported in. */
 function statusCodeCol() {
@@ -1876,7 +1876,7 @@ function contentNatureLabel(v, short = false) {
  *  Migrate Records track) AND — via a later UI label, "Fragment (embeddable)" —
  *  content with no URL, which isFragmentRow() dropped from redirects, placement
  *  checks and sitemap coverage. So every news post seeded from the registry was
- *  silently treated as a fragment (614 rows on a real audit, none of them one).
+ *  silently treated as a fragment (over 600 rows on a real audit, none of them one).
  *
  *  'Content Object' now means record; genuine fragments get 'Fragment'. For
  *  existing values the crawl is the evidence: a row with a status code was
@@ -6843,7 +6843,7 @@ function hostUsesLocalePrefixes(lists, depth) {
  *  Sections are read from the sitemap breadcrumb where a row has a nav home,
  *  and from the URL path otherwise (so the cross-tab still works on an audit
  *  that hasn't built its IA yet). Both axes get their shared prefix stripped:
- *  a crawl rooted below the domain (`alpha.edu/college/…`, `university.edu/college/…`)
+ *  a crawl rooted below the domain (`alpha.edu/college/…`)
  *  and a sitemap with a single site-root node BOTH collapse every page into one
  *  bucket otherwise, which is exactly the case this was first run against.
  */
@@ -15532,7 +15532,7 @@ function openCreateSitemapFromAuditDialog() {
   // Predict the tree BEFORE building it. This is the cheapest place to catch a
   // flat site: the generator keys top-level sections off the FIRST URL segment,
   // so the section count is fixed no matter which bucket depth is chosen — and
-  // saying so here prevents 548 sections rather than diagnosing them afterwards.
+  // saying so here prevents ~550 sections rather than diagnosing them afterwards.
   const predict = (includeAll) => {
     const segs = new Map();
     let eligible = 0;
@@ -20025,7 +20025,7 @@ function renderNavEditor() {
 // "Create Sitemap from Audit" derives hierarchy from URL segments, which only
 // produces an IA if the site HAS one in its URLs. A flat CMS — every article at
 // `/some-long-slug` — yields one top-level section per page, faithfully and
-// uselessly. A real audit produced 548 top-level sections from ~1,900 rows, and
+// uselessly. A real audit produced ~550 top-level sections from ~1,900 rows, and
 // the resulting diagram laid out ~38,000 × 105,000 px: not a rendering bug, an
 // IA finding, but one the tool previously reported as a blank screen.
 //
@@ -20061,7 +20061,7 @@ const SITEMAP_MANY_ROOTS = 40;
  *
  *  Uses window.SitemapLayout — the same pure geometry module the webview and the
  *  Miro exporter share — rather than estimating, so the size reported here is
- *  the size that renders. Verified against a live render of a 1,755-node tree:
+ *  the size that renders. Verified against a live render of a ~1,750-node tree:
  *  ~38,000 × 105,000 px, identical to the DOM. */
 // "Hide in diagram" (Sitemap column Hide_In_Visual_Sitemap). A node that's
 // part of the IA for mapping purposes — /user/NNN profiles, a feed, a search
@@ -20255,7 +20255,7 @@ function groupNavRootsUnderBucket(nodes, label) {
   const bucket = createBucketNode(label || 'Unsorted', null);
   // Collapsed on creation, and this is not cosmetic. A depth-0 node lays its
   // children out in ONE horizontal row (the engine's vertical flip needs depth
-  // >= 1), so an expanded bucket of 456 sections made the canvas ~86,000 px wide
+  // >= 1), so an expanded bucket of ~450 sections made the canvas ~86,000 px wide
   // — it moved the problem from height to width and improved the fit from 0.7%
   // to 1.7%, i.e. not at all. Collapsed, the pile is one card the user can open
   // whenever they want, via the Collapse checkbox this flag is bound to.
@@ -27737,8 +27737,8 @@ function reportExecutiveSummary() {
   const urlCol = state.urlColumn || 'Address';
 
   // Every number in this report is over CONTENT pages, not crawled URLs. This is
-  // the report a client reads, and "~13,000 pages audited" invites exactly one
-  // question — are we really migrating ~13,000 pages? — whose honest answer
+  // the report a client reads, and "13,000 pages audited" invites exactly one
+  // question — are we really migrating 13,000 pages? — whose honest answer
   // subtracts the redirects and dead URLs. Those are reported, separately and by
   // name, rather than folded into a total that overstates the migration.
   const cTotal = stats.contentTotal;
@@ -29577,8 +29577,8 @@ function checkRedirectChains() {
 // The pattern that produces this at scale is building a "current state" sitemap
 // in the working file — placing pages writes their Computed Path, the next save
 // derives redirects from it, and deleting the tree afterwards clears the
-// sitemap fields but not the redirects. Found on a real 3k-row audit where 967
-// of 1291 redirect values were fossils of a deleted tree, including pages
+// sitemap fields but not the redirects. Found on a real 3k-row audit where roughly
+// three-quarters of ~1,300 redirect values were fossils of a deleted tree, including pages
 // redirecting to themselves.
 //
 // This check finds that damage in any file, however it got there. It is the
@@ -33281,7 +33281,7 @@ function detectDuplicates() {
   // Rows already dispositioned Kill or Exclude are left out. The duplicates
   // filter is a worklist of duplicate content still needing a decision, and on
   // a CMS-driven crawl the alternate views (pagination, facets) share their
-  // parent's title and would otherwise flood it — ~9,000 of ~13,000 rows on the
+  // parent's title and would otherwise flood it — about 9,000 of 13,000 rows on the
   // crawl this was measured against, which is a filter that answers nothing.
   // Same reasoning as _navPageCountsCache() excluding Kill/Consolidate.
   const fingerprints = new Map(); // fingerprint → [origIndex, ...]

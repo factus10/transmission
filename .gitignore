@@ -26,9 +26,6 @@ dist-unsigned/
 *.csv
 *.winnow
 
-
-
-
 # Locally generated app prefs
 prefs.json
 
