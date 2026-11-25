@@ -13,8 +13,8 @@
 //   node scripts/build-site.js --releases releases.json [OUT]   # default dist/site
 //
 // The site used to live in a separate public repo (factus10/transmission-updates)
-// because this one was private. Copies of the app at 2.26.0 and earlier still
-// check that repo's manifest; see "Update check" in CLAUDE.md.
+// because this one was private. That repo is deleted, so copies of the app at
+// 2.26.0 and earlier no longer find updates; see "Update check" in CLAUDE.md.
 //
 // THE MANIFEST IS DERIVED, NEVER HAND-EDITED. It announces the newest release
 // that is (a) published, not a draft or prerelease, (b) carries a dmg for

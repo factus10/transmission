@@ -49,9 +49,9 @@ try {
 // The manifest, changelog and docs are this repo's GitHub Pages site, rebuilt by
 // .github/workflows/pages.yml whenever a release is published. The manifest is
 // derived from the published releases by scripts/build-site.js, never hand-edited;
-// see CLAUDE.md "Update check". (Up to 2.26.0 they lived in a separate public repo,
-// factus10/transmission-updates, while this one was private. Those builds still
-// check that repo's manifest, which points them here.)
+// see CLAUDE.md "Update check". (Up to 2.26.0 they lived in a separate repo,
+// factus10/transmission-updates, which has since been deleted. Builds that old
+// check its manifest, get a 404, and so never see an update.)
 const UPDATE_MANIFEST_URL = 'https://factus10.github.io/transmission/update-manifest.json';
 const UPDATE_TRUSTED_HOSTS = new Set(['factus10.github.io', 'github.com']);
 
