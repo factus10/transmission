@@ -728,8 +728,8 @@
     // it did not merely make such a tree small — it made it INVISIBLE: the fit
     // was clamped UP to 0.10 and the canvas then centred, so on a canvas ten
     // times wider than the viewport every card sat off the left edge and the
-    // view opened on empty space. Measured on a real 1,755-node / 548-root
-    // audit: 0 of 1,755 cards inside the viewport, which reads as "the sitemap
+    // view opened on empty space. Measured on a real ~1,750-node / ~550-root
+    // audit: none of ~1,750 cards inside the viewport, which reads as "the sitemap
     // never got built".
     //
     // Two fixes, and both are needed. The floor drops far enough that even an
@@ -764,8 +764,8 @@
     // ════════════════════════════════════════════════════════════════════════
     // Toolbar wiring + settings panel + legend
     // ════════════════════════════════════════════════════════════════════════
-    // Both re-fit. They change the canvas by orders of magnitude (the Alpha
-    // audit: 20,000 x 183,000px expanded, 308 x 364px collapsed), and keeping
+    // Both re-fit. They change the canvas by orders of magnitude (a flat
+    // ~2,000-page site: ~20,000 x 183,000px expanded, ~300 x 360px collapsed), and keeping
     // the old transform left a collapsed tree drawn at the 2% floor the
     // expanded one needed — two cards about 6px across, i.e. "nothing there".
     function expandAll() { collapsed.clear(); render(); pushState(); fitToScreen(); }

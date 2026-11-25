@@ -27,8 +27,6 @@ dist-unsigned/
 *.winnow
 
 
-
-
 # Locally generated app prefs
 prefs.json
 

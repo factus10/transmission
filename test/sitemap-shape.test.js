@@ -9,8 +9,8 @@
 // segments. On a flat CMS — every article at `/some-long-slug` — that produces
 // one top-level section per page, and the Visual Sitemap then laid the result
 // out at ~38,000 × 105,000 px. The old fit-to-screen clamped the zoom UP to 10%
-// and centred the canvas, so every card sat off the left edge: a real 1,755-node
-// audit opened with 0 of 1,755 cards inside the viewport, which reads as "the
+// and centred the canvas, so every card sat off the left edge: a real ~1,750-node
+// audit opened with none of ~1,750 cards inside the viewport, which reads as "the
 // sitemap was never built".
 //
 // The measurement is the whole point of the feature, so the tests run the REAL
@@ -315,7 +315,7 @@ describe('projectSitemapShape — what the fixes would actually buy', () => {
   test('the bucket must be collapsed — expanded, it is not a fix at all', () => {
     // The regression this guards, measured on the audit that prompted the work:
     // a depth-0 node lays its children out in ONE horizontal row (the engine's
-    // vertical flip needs depth >= 1), so an expanded bucket of 456 sections
+    // vertical flip needs depth >= 1), so an expanded bucket of ~450 sections
     // produced an ~86,000 px-wide canvas and moved the fit from 0.7% to 1.7% —
     // trading height for width and fixing nothing.
     flatSite();
@@ -363,7 +363,7 @@ describe('projectSitemapShape — what the fixes would actually buy', () => {
 
   test('a projection can still be unusable — the tool must be able to say so', () => {
     // The honest case, and the reason the projection exists: on a real audit
-    // every repair together still left 88 sections and a 2.4% fit. A dialog
+    // every repair together still left ~90 sections and a 2.4% fit. A dialog
     // that only offered fixes would have implied a cure it cannot deliver.
     const roots = [], rows = [];
     for (let i = 0; i < 120; i++) {
@@ -411,8 +411,8 @@ describe('applyGroupNavRoots — the repair', () => {
 });
 
 // ── Large branches: auto-collapse + a vertical bar for roots ──────────────────
-// A flat site (a flat ~2,000-page site) puts ~1,400 news articles under one node and
-// 106 profile pages under a top-level "User" node. The engine auto-collapses
+// A flat site can put ~1,400 news articles under one node and
+// ~100 profile pages under a top-level "User" node. The engine auto-collapses
 // the first and stacks the second; the shape check must measure that diagram,
 // not the unreadable one.
 function leaves(n, prefix) {
